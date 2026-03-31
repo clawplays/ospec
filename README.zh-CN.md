@@ -1,5 +1,11 @@
 # OSpec
 
+使用 npm 安装：
+
+```bash
+npm install -g @clawplays/ospec-cli
+```
+
 OSpec 是一个面向 AI 协作交付的 CLI 工作流系统。
 
 它不是一个“先生成一堆业务模板”的脚手架，而是一个协议壳优先的协作框架：先建立最小协作协议，再显式补齐项目知识层，最后用 change 流程管理需求的执行、验证和归档。

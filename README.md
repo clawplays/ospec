@@ -2,6 +2,12 @@
 
 [简体中文](README.zh-CN.md)
 
+Install with npm:
+
+```bash
+npm install -g @clawplays/ospec-cli
+```
+
 OSpec is a CLI workflow system for AI-assisted delivery.
 
 It is not a scaffold that starts by generating a pile of business templates. It is a collaboration framework built around a protocol-shell-first approach: establish the minimum collaboration protocol first, explicitly fill in the project knowledge layer second, and then manage execution, verification, and closure through the change workflow.

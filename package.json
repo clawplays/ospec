@@ -20,7 +20,14 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "index:rebuild": "node dist/tools/build-index.js",
     "validate": "node dist/cli/commands/validate.js",
-    "release:smoke": "node scripts/release-smoke.js"
+    "release:smoke": "node scripts/release-smoke.js",
+    "release:sync-version": "node scripts/sync-version.js",
+    "release:bump:patch": "npm version patch --no-git-tag-version",
+    "release:bump:minor": "npm version minor --no-git-tag-version",
+    "release:bump:major": "npm version major --no-git-tag-version",
+    "release:check": "npm pack --dry-run",
+    "release:publish": "npm publish --access public",
+    "version": "npm run release:sync-version"
   },
   "keywords": [
     "ospec",
