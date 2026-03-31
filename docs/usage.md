@@ -252,7 +252,7 @@ For a project that is already initialized, use this sequence:
 
 
 
-npm install -g ospec-cli@0.1.0
+npm install -g @clawplays/ospec-cli@0.1.1
 
 
 

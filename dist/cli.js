@@ -224,7 +224,7 @@ const services_1 = require("./services");
 
 
 
-const CLI_VERSION = '0.1.0';
+const CLI_VERSION = '0.1.1';
 
 
 

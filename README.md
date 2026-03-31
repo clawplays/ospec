@@ -8,7 +8,7 @@ It is not a scaffold that starts by generating a pile of business templates. It 
 
 Current version:
 
-- CLI: `0.1.0`
+- CLI: `0.1.1`
 
 Documentation:
 

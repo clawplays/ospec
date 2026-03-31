@@ -1,11 +1,14 @@
 {
-  "name": "ospec-cli",
-  "version": "0.1.0",
+  "name": "@clawplays/ospec-cli",
+  "version": "0.1.1",
   "description": "CLI tool for enforcing ospec workflow",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "ospec": "dist/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc",
@@ -25,7 +28,24 @@
     "cli",
     "automation"
   ],
-  "author": "",
+  "author": "clawplays <ai@clawplays.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clawplays/ospec.git"
+  },
+  "homepage": "https://github.com/clawplays/ospec",
+  "bugs": {
+    "url": "https://github.com/clawplays/ospec/issues"
+  },
+  "files": [
+    "dist/**",
+    "assets/**",
+    "scripts/postinstall.js",
+    ".ospec/templates/hooks/**",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
   "license": "MIT",
   "dependencies": {
     "body-parser": "^2.2.2",

@@ -70,7 +70,7 @@ ospec finalize [changes/active/<change>]
 如果是已经初始化过的项目，推荐按这个顺序升级：
 
 ```bash
-npm install -g ospec-cli@0.1.0
+npm install -g @clawplays/ospec-cli@0.1.1
 ospec update [path]
 ```
 
