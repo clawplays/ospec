@@ -18,15 +18,11 @@
 
 الأمر الموصى به:
 
-```text
-Use OSpec to initialize this project.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لتهيئة هذا المشروع.</code></pre>
 
 صيغة مهارة Claude / Codex:
 
-```text
-Use $ospec to initialize this project.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لتهيئة هذا المشروع.</code></pre>
 
 ما يعادله في واجهة سطر الأوامر (CLI):
 
@@ -34,7 +30,7 @@ Use $ospec to initialize this project.
 ospec init .
 ospec init . --summary "Internal admin portal for operations"
 ospec init . --summary "Internal admin portal for operations" --tech-stack node,react,postgres
-ospec init . --architecture "Single web app with API and shared auth" --document-language en-US
+ospec init . --architecture "Single web app with API and shared auth" --document-language ar
 ```
 
 ماذا يعني هذا:
@@ -47,15 +43,11 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 
 الأمر الموصى به:
 
-```text
-Use OSpec to create and advance a change for this requirement.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لإنشاء تغيير لهذا المتطلب ودفعه إلى الأمام.</code></pre>
 
 صيغة مهارة Claude / Codex:
 
-```text
-Use $ospec-change to create and advance a change for this requirement.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec-change</span> لإنشاء تغيير لهذا المتطلب ودفعه إلى الأمام.</code></pre>
 
 ما يعادله في واجهة سطر الأوامر (CLI):
 
@@ -69,15 +61,11 @@ ospec new update-billing-copy .
 
 الأمر الموصى به:
 
-```text
-Use OSpec to archive this accepted change.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لأرشفة هذا التغيير المقبول.</code></pre>
 
 صيغة مهارة Claude / Codex:
 
-```text
-Use $ospec to archive this accepted change.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لأرشفة هذا التغيير المقبول.</code></pre>
 
 ما يعادله في واجهة سطر الأوامر (CLI):
 

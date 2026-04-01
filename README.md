@@ -16,8 +16,9 @@
 
 <p align="center">
   <strong>English</strong> |
-  <a href="README.zh-CN.md">中文</a> |
-  <a href="README.ja.md">日本語</a>
+  <a href="docs/README.zh-CN.md">中文</a> |
+  <a href="docs/README.ja.md">日本語</a> |
+  <a href="docs/README.ar.md">العربية</a>
 </p>
 
 OSpec is a document-driven workflow for AI-assisted development, helping you define requirements and changes in docs first, then drive implementation, validation, and archive through AI collaboration.

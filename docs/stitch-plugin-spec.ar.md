@@ -22,15 +22,11 @@
 
 عبر محادثة الذكاء الاصطناعي:
 
-```text
-استخدم OSpec لمساعدتي في فتح إضافة Stitch.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لمساعدتي في فتح إضافة <span dir="ltr">Stitch</span>.</code></pre>
 
 عبر المهارة (Skill):
 
-```text
-استخدم $ospec لمساعدتي في فتح إضافة Stitch.
-```
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لمساعدتي في فتح إضافة <span dir="ltr">Stitch</span>.</code></pre>
 
 عبر سطر الأوامر:
 
