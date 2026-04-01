@@ -32,7 +32,8 @@ npm run release:smoke
 ## Notes
 
 - `npm install` installs the local runtime dependencies
-- `npm install -g .` makes the current release available as the global `ospec` command and automatically syncs only the `ospec-change` skill for Codex and Claude Code
-- If the matching `ospec-change` skill is already installed locally, the automatic sync overwrites it with the latest packaged version
+- `npm install -g .` makes the current release available as the global `ospec` command and automatically syncs the managed `ospec` and `ospec-change` skills for Codex and Claude Code
+- `ospec init [path]` and `ospec update [path]` also sync the same managed skill pair for Codex, and for Claude Code when `CLAUDE_HOME` or an existing `~/.claude` home is present
+- If a matching managed skill is already installed locally, the automatic sync overwrites it with the latest packaged version
 - If you want another OSpec skill, install it explicitly, for example `ospec skill install ospec-init`
 - this repository ships the release assets and public docs, not the development source workflow

@@ -8,81 +8,91 @@ OSpec 应该在内部自动展开检查、初始化、知识层维护和 change 
 
 ## 推荐提示词
 
-### 初始化项目
+日常使用 OSpec，可以直接理解为 3 类操作：
 
-推荐默认写法：
+1. 初始化项目
+2. 为文档更新、需求开发或 Bug 修复创建并推进一个 change
+3. 在需求验收通过后归档这个 change
+
+### 1. 初始化项目
+
+推荐提示词：
 
 ```text
 使用 OSpec 初始化这个项目。
 ```
 
-这里默认应包含：
-
-- 执行 `ospec init`，把仓库带到 `change-ready`
-- 用户不需要先要求执行 `ospec status`
-- 如果当前是 AI 协作流程且项目上下文缺失，只追问一次简短的项目概况或技术栈
-- 如果用户不补充，也继续初始化，并生成待补充的占位文档
-
-### 可选：在同一句里补充已知上下文
+Claude / Codex Skill 方式：
 
 ```text
-使用 OSpec 初始化这个项目。它是一个基于 Node.js、React 和 PostgreSQL 的内部管理后台。
+使用 $ospec 初始化这个项目。
 ```
 
-### 后续刷新知识层
+等价命令行：
 
-```text
-使用 OSpec 刷新或修复这个项目的知识层。
+```bash
+ospec init .
+ospec init . --summary "运营后台"
+ospec init . --summary "运营后台" --tech-stack node,react,postgres
+ospec init . --architecture "单体 Web 应用 + API + 统一鉴权" --document-language zh-CN
 ```
 
-### 开始一个需求
+这里的含义是：
+
+- `ospec init` 会把仓库直接带到 `change-ready`
+- 如果当前是 AI 协作流程且缺少上下文，可以只追问一次项目概况或技术栈
+- 如果用户不补充，也继续初始化，并生成待补充的默认文档
+
+### 2. 创建并推进一个 Change
+
+推荐提示词：
 
 ```text
 使用 OSpec 为这个需求创建并推进一个 change。
 ```
 
-### 建立队列但先不执行
+Claude / Codex Skill 方式：
 
 ```text
-使用 OSpec 读取这份 TODO，把它拆成多个 change，建立队列，并先展示队列状态，不要马上执行。
+使用 $ospec-change 为这个需求创建并推进一个 change。
 ```
 
-这里默认含义是：
+![OSpec Change Slash Command 示例](assets/ospecchange-slash-command.svg)
 
-- 先输出一个有序的 change 名称列表
-- change 名称使用 kebab-case
-- 每个 change 代表一个清晰执行单元，不要把多个不相干事项混成一个名字
+等价命令行：
 
-### 显式按队列推进
+```bash
+ospec new docs-homepage-refresh .
+ospec new fix-login-timeout .
+ospec new update-billing-copy .
+```
+
+### 3. 验收通过后归档
+
+推荐提示词：
 
 ```text
-使用 OSpec 建立 change 队列，并用 ospec run manual-safe 显式推进。
+使用 OSpec 归档这个已验收通过的 change。
 ```
 
-### 收口已完成的 Change
+Claude / Codex Skill 方式：
 
 ```text
-使用 OSpec 在提交前收口这个已完成的 change。
+使用 $ospec 归档这个已验收通过的 change。
 ```
 
-### 查看进度
+等价命令行：
 
-```text
-使用 OSpec 检查当前 active changes 和整体项目进度。
+```bash
+ospec verify changes/active/<change-name>
+ospec finalize changes/active/<change-name>
 ```
 
-## Skill 形式提示词
+这里的含义是：
 
-如果当前 AI 客户端已经安装 OSpec skills，优先直接使用技能名：
-
-```text
-使用 $ospec 初始化这个项目。
-使用 $ospec 刷新或修复这个项目的知识层。
-使用 $ospec 检查 active changes 和整体进度。
-使用 $ospec 读取这份 TODO，拆成多个 change，建立队列，并先展示队列状态。
-使用 $ospec 建立 change 队列，并用 ospec run manual-safe 显式推进。
-使用 $ospec-finalize 在提交前收口一个已完成的 change。
-```
+- 先完成你项目自己的部署、测试、QA 或验收流程
+- 再使用 `ospec verify` 检查当前 change 是否满足归档条件
+- 最后使用 `ospec finalize` 重建索引并归档这个已验收通过的 change
 
 ## 边界说明
 

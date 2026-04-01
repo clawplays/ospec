@@ -120,7 +120,7 @@ ospec update [path]
 
 - 刷新协议文档
 - 刷新项目 tooling 与 Git hooks
-- 同步托管安装的 `ospec-change` skills
+- 同步托管安装的 `ospec` 与 `ospec-change` skills
 - 刷新已启用插件的托管工作目录资产
 
 `ospec update [path]` 不会：

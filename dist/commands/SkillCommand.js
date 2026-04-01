@@ -1029,7 +1029,7 @@ ${markdownBody.trimStart()}`;
 
         if (/^---\r?\n/.test(definition.markdown)) {
 
-            return definition.markdown;
+            return this.ensureFrontmatterDescription(definition.markdown, definition.description);
 
         }
 
@@ -1046,6 +1046,24 @@ tags: [ospec, cli, workflow]
 
 
 ${definition.markdown.trimStart()}`;
+
+    }
+
+    ensureFrontmatterDescription(markdown, description) {
+
+        if (!/^---\r?\n/.test(markdown)) {
+
+            return markdown;
+
+        }
+
+        if (/^---\r?\n[\s\S]*?\r?\ndescription:\s+/m.test(markdown)) {
+
+            return markdown;
+
+        }
+
+        return markdown.replace(/^---\r?\n/, `---\ndescription: ${description}\n`);
 
     }
 

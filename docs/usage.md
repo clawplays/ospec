@@ -120,7 +120,7 @@ ospec update [path]
 
 - refresh protocol docs
 - refresh project tooling and Git hooks
-- sync managed `ospec-change` skills
+- sync managed `ospec` and `ospec-change` skills
 - refresh managed workspace assets for already-enabled plugins
 
 `ospec update [path]` will not:

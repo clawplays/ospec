@@ -81,16 +81,16 @@ commands:
     purpose: "List supported workflow feature flags."
   - id: skill_status
     command: "ospec skill status"
-    purpose: "Check whether the Codex-installed ospec skill is present and in sync."
+    purpose: "Check whether a Codex-installed OSpec skill is present and in sync. Managed defaults are ospec and ospec-change."
   - id: skill_install
     command: "ospec skill install"
-    purpose: "Install or sync the OSpec skill suite into ~/.codex/skills/."
+    purpose: "Install or sync one OSpec skill package into ~/.codex/skills/. Managed defaults are ospec and ospec-change."
   - id: skill_status_claude
     command: "ospec skill status-claude"
-    purpose: "Check whether the Claude Code-installed ospec skill is present and in sync."
+    purpose: "Check whether a Claude Code-installed OSpec skill is present and in sync. Managed defaults are ospec and ospec-change."
   - id: skill_install_claude
     command: "ospec skill install-claude"
-    purpose: "Install or sync the OSpec skill suite into ~/.claude/skills/."
+    purpose: "Install or sync one OSpec skill package into ~/.claude/skills/. Managed defaults are ospec and ospec-change."
 
 workflow:
   read_order:

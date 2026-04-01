@@ -1,5 +1,6 @@
 ---
 name: ospec
+description: Protocol-shell-first OSpec workflow for inspection, change-ready initialization, docs maintenance, change execution, verification, and archive readiness.
 tags: [cli, workflow, automation, typescript, ospec, bootstrap]
 ---
 
@@ -209,22 +210,27 @@ ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>]
 ospec archive [changes/active/<change>] --check
 ospec finalize [changes/active/<change>]
-ospec skill status
-ospec skill install
-ospec skill status-claude
-ospec skill install-claude
+ospec skill status ospec
+ospec skill install ospec
+ospec skill status ospec-change
+ospec skill install ospec-change
+ospec skill status-claude ospec
+ospec skill install-claude ospec
+ospec skill status-claude ospec-change
+ospec skill install-claude ospec-change
 ```
 
-The default `ospec skill install` and `ospec skill install-claude` commands now install an OSpec skill suite:
+Managed auto-sync targets for global install, `ospec init`, and `ospec update` are:
 
 - `ospec`
-- `ospec-init`
-- `ospec-inspect`
-- `ospec-backfill`
 - `ospec-change`
-- `ospec-verify`
-- `ospec-archive`
-- `ospec-finalize`
+
+Additional packaged skills remain available for explicit install, for example:
+
+```bash
+ospec skill install ospec-init
+ospec skill install-claude ospec-init
+```
 
 Preferred execution order for a new directory:
 

@@ -30,9 +30,9 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         if (toolingResult.hookInstalledFiles.length > 0) {
             this.info(`  git hooks refreshed: ${toolingResult.hookInstalledFiles.join(', ')}`);
         }
-        this.info(`  codex skill: ${skillResult.codex.targetDir}`);
-        if (skillResult.claude) {
-            this.info(`  claude skill: ${skillResult.claude.targetDir}`);
+        this.info(`  codex skills: ${this.formatManagedSkills(skillResult.codex)}`);
+        if (skillResult.claude.length > 0) {
+            this.info(`  claude skills: ${this.formatManagedSkills(skillResult.claude)}`);
         }
         if (pluginResult.enabledPlugins.length > 0) {
             this.info(`  plugin assets refreshed: ${pluginResult.enabledPlugins.join(', ')}`);
@@ -222,10 +222,24 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         }
         return { createdFiles, skippedFiles };
     }
+    getManagedSkillNames() {
+        return ['ospec', 'ospec-change'];
+    }
+    formatManagedSkills(results) {
+        return results.map(result => result.skillName).join(', ');
+    }
     async syncInstalledSkills() {
         const skillCommand = new SkillCommand_1.SkillCommand();
-        const codex = await skillCommand.installSkill('codex', 'ospec-change');
-        const claude = (await this.shouldSyncClaudeSkills()) ? await skillCommand.installSkill('claude', 'ospec-change') : null;
+        const codex = [];
+        for (const skillName of this.getManagedSkillNames()) {
+            codex.push(await skillCommand.installSkill('codex', skillName));
+        }
+        const claude = [];
+        if (await this.shouldSyncClaudeSkills()) {
+            for (const skillName of this.getManagedSkillNames()) {
+                claude.push(await skillCommand.installSkill('claude', skillName));
+            }
+        }
         return { codex, claude };
     }
     resolveProviderHome(provider) {

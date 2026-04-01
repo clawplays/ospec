@@ -1034,7 +1034,7 @@ Commands:
   docs [action] [path]      Docs helpers (status, generate)
   skills [action] [path]    Skills status helpers (status)
   plugins [action] [path]   Plugin helpers (list, status, enable, disable, approve, reject)
-  skill [action] [skill] [dir] Skill package helpers (default skill is ospec-change)
+  skill [action] [skill] [dir] Skill package helpers (managed skills: ospec, ospec-change)
   index [action] [path]     Index helpers (check, build)
   workflow [action]         Workflow configuration (show, list-flags)
   update [path]             Refresh protocol docs, tooling, hooks, and installed skills; does not enable or migrate plugins
@@ -1066,11 +1066,13 @@ Examples:
   ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
   ospec plugins run checkpoint ./changes/active/onboarding-flow
   ospec plugins approve stitch ./changes/active/onboarding-flow
-  ospec skill status
-  ospec skill install
+  ospec skill status ospec
+  ospec skill install ospec
+  ospec skill status ospec-change
+  ospec skill install ospec-change
   ospec skill install ospec-init
-  ospec skill status-claude
-  ospec skill install-claude
+  ospec skill status-claude ospec
+  ospec skill install-claude ospec
   ospec index build
   ospec batch stats
   ospec changes status

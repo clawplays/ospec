@@ -1,4 +1,4 @@
-# [OSpec](https://github.com/clawplays/ospec)
+<h1><a href="https://ospec.ai/" target="_blank" rel="noopener noreferrer">OSpec</a></h1>
 
 [简体中文](README.zh-CN.md)
 
@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 18+">
   <img src="https://img.shields.io/badge/npm-8%2B-CB3837?style=flat-square&logo=npm&logoColor=white" alt="npm 8+">
   <img src="https://img.shields.io/badge/language-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/workflow-protocol--shell--first-111827?style=flat-square" alt="Protocol-shell-first workflow">
+  <img src="https://img.shields.io/badge/workflow-3_steps-0F766E?style=flat-square" alt="3-step workflow">
 </p>
 
 OSpec is an AI-first CLI workflow system for initializing repositories to a change-ready state and delivering requirements through auditable change containers.
@@ -27,66 +27,115 @@ OSpec is an AI-first CLI workflow system for initializing repositories to a chan
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
-## Prompt Examples
+## Install With npm
 
-Preferred init prompt:
+```bash
+npm install -g @clawplays/ospec-cli
+```
+
+## Recommended Prompts
+
+Most teams only need 3 steps to use OSpec:
+
+1. initialize the project
+2. create and advance one change for a requirement, document update, or bug fix
+3. archive the accepted change after deployment and validation are complete
+
+### 1. Initialize The Project
+
+Recommended prompt:
 
 ```text
 Use OSpec to initialize this project.
 ```
 
-Other common prompts:
-
-```text
-Use OSpec to refresh or repair the project knowledge layer.
-
-Use OSpec to create and advance a change for this requirement.
-
-Use OSpec to break this TODO into multiple changes, create a queue, and show the queue first.
-```
-
-If your AI client supports installed skills, keep init the same short form:
+Claude / Codex skill mode:
 
 ```text
 Use $ospec to initialize this project.
 ```
 
-And for other actions:
+<details>
+<summary>Command line</summary>
+
+```bash
+ospec init .
+ospec init . --summary "Internal admin portal for operations"
+ospec init . --summary "Internal admin portal for operations" --tech-stack node,react,postgres
+ospec init . --architecture "Single web app with API and shared auth" --document-language en-US
+```
+
+CLI notes:
+
+- `--summary`: project overview text written into the generated docs
+- `--tech-stack`: comma-separated stack list such as `node,react,postgres`
+- `--architecture`: short architecture description
+- `--document-language`: generated doc language, usually `en-US` or `zh-CN`
+- if you pass these values, OSpec uses them directly when generating project docs
+- if you do not pass them, OSpec reuses existing docs when possible and otherwise creates placeholder docs first
+
+</details>
+
+### 2. Create And Advance A Change
+
+Use this for requirement delivery, documentation updates, refactors, and bug fixes.
+
+Recommended prompt:
+
+```text
+Use OSpec to create and advance a change for this requirement.
+```
+
+Claude / Codex skill mode:
 
 ```text
 Use $ospec-change to create and advance a change for this requirement.
 ```
 
-## Protocol-Shell-First Workflow
+![OSpec Change slash command example](docs/assets/ospecchange-slash-command.svg)
 
-The main idea in OSpec is simple: do not start by guessing the app stack or generating a pile of business templates. Start by creating the collaboration protocol and baseline project knowledge in one init pass, then execute the requirement in a tracked change container.
+<details>
+<summary>Command line</summary>
+
+```bash
+ospec new docs-homepage-refresh .
+ospec new fix-login-timeout .
+ospec new update-billing-copy .
+```
+
+</details>
+
+### 3. Archive After Acceptance
+
+After the requirement has passed deployment, testing, QA, or other acceptance checks, archive the validated change.
+
+Recommended prompt:
 
 ```text
-+--------------------------------------------------------------------------------------+
-| OSpec - RECOMMENDED DELIVERY FLOW                                                    |
-+--------------------------------------------------------------------------------------+
-| 1. INITIALIZE TO CHANGE-READY                                                        |
-|    ospec init .                                                                      |
-|    - Create the protocol shell                                                       |
-|    - Reuse existing project docs when available                                      |
-|    - Generate baseline project knowledge docs                                        |
-|    - Ask once for missing summary/tech stack in AI-assisted flows                    |
-|                                                                                      |
-| 2. EXECUTE A REQUIREMENT                                                             |
-|    ospec new landing-refresh .                                                       |
-|    - Work inside changes/active/<change>/                                            |
-|    - Track proposal, tasks, state, verification, and review                          |
-|                                                                                      |
-| 3. DEPLOY + VALIDATE                                                                 |
-|    project deploy / QA / ospec verify                                                |
-|    - Run your project-specific validation flow                                       |
-|    - Confirm the active change is ready to archive                                   |
-|                                                                                      |
-| 4. ARCHIVE THE REQUIREMENT                                                           |
-|    ospec finalize changes/active/landing-refresh                                     |
-|    - Rebuild indexes and archive the validated change                                |
-+--------------------------------------------------------------------------------------+
+Use OSpec to archive this accepted change.
 ```
+
+Claude / Codex skill mode:
+
+```text
+Use $ospec to archive this accepted change.
+```
+
+<details>
+<summary>Command line</summary>
+
+```bash
+ospec verify changes/active/<change-name>
+ospec finalize changes/active/<change-name>
+```
+
+Archive notes:
+
+- run your project-specific deploy, test, and QA flow first
+- use `ospec verify` to confirm the active change is ready
+- use `ospec finalize` to rebuild indexes and archive the accepted change
+
+</details>
 
 ## How The OSpec Workflow Works
 
@@ -148,90 +197,6 @@ The main idea in OSpec is simple: do not start by guessing the app stack or gene
 - **Plugin workflow gates**: built-in plugin commands support Stitch design review and Checkpoint automation.
 - **Skill management**: install and inspect OSpec skills for Codex and Claude Code.
 - **Standard closeout**: `finalize` verifies, rebuilds indexes, and archives the change before manual Git commit.
-
-## Installation
-
-### Using npm
-
-```bash
-npm install -g @clawplays/ospec-cli
-ospec --version
-ospec --help
-```
-
-### Using This Repository
-
-```bash
-npm install
-npm install -g .
-ospec --version
-```
-
-### Requirements
-
-- Node.js `>= 18`
-- npm `>= 8`
-
-## Quick Start
-
-### Standard Flow
-
-```bash
-# 1. Initialize the repository to change-ready state
-ospec init .
-
-# 2. Create a change for one requirement
-ospec new landing-refresh .
-
-# 3. Deploy and validate the change
-# Run your project deploy / test / QA commands here
-ospec verify changes/active/landing-refresh
-
-# 4. Archive the validated change
-ospec finalize changes/active/landing-refresh
-```
-
-### Refresh Knowledge Docs Later
-
-```bash
-ospec docs generate .
-```
-
-### Queue Flow
-
-```bash
-ospec queue add landing-refresh .
-ospec queue add billing-cleanup .
-ospec queue status .
-ospec run start . --profile manual-safe
-ospec run step .
-```
-
-### Plugin Flow
-
-```bash
-ospec plugins status .
-ospec plugins enable stitch .
-ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
-```
-
-## Skills
-
-If you install OSpec with `npm install -g @clawplays/ospec-cli` or `npm install -g .`, the managed default sync target is `ospec-change`.
-
-```bash
-ospec skill status
-ospec skill install
-ospec skill status-claude
-ospec skill install-claude
-```
-
-Install another skill explicitly when needed:
-
-```bash
-ospec skill install ospec-init
-ospec skill install-claude ospec-init
-```
 
 ## Documentation
 

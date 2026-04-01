@@ -36,10 +36,10 @@ Skills Commands:
 function getSkillHelpText() {
     return `
 Skill Package Commands:
-  ospec skill status [skill-name] [dir]          - inspect one Codex OSpec skill, defaults to ospec-change
-  ospec skill install [skill-name] [dir]         - install one Codex OSpec skill, defaults to ospec-change
-  ospec skill status-claude [skill-name] [dir]   - inspect one Claude Code OSpec skill, defaults to ospec-change
-  ospec skill install-claude [skill-name] [dir]  - install one Claude Code OSpec skill, defaults to ospec-change
+  ospec skill status [skill-name] [dir]          - inspect one Codex OSpec skill; managed skills are ospec and ospec-change
+  ospec skill install [skill-name] [dir]         - install one Codex OSpec skill; managed skills are ospec and ospec-change
+  ospec skill status-claude [skill-name] [dir]   - inspect one Claude Code OSpec skill; managed skills are ospec and ospec-change
+  ospec skill install-claude [skill-name] [dir]  - install one Claude Code OSpec skill; managed skills are ospec and ospec-change
   ospec skill help                  - show skill command help
 `;
 }

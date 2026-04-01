@@ -8,81 +8,91 @@ OSpec should expand the inspection, initialization, docs-maintenance, and change
 
 ## Recommended Prompts
 
-### Initialize A Project
+In normal delivery work, OSpec usage can be explained in 3 parts:
 
-Preferred default:
+1. initialize the project
+2. create and advance one change for a requirement, documentation update, or bug fix
+3. archive the accepted change after deployment and validation are complete
+
+### 1. Initialize The Project
+
+Recommended prompt:
 
 ```text
 Use OSpec to initialize this project.
 ```
 
-What this should imply:
-
-- run `ospec init` so the repo ends in change-ready state
-- the user does not need to ask for `ospec status` first
-- ask one concise follow-up for project summary or tech stack only when AI assistance is available and project context is missing
-- if the user skips that context, continue with placeholder docs instead of blocking init
-
-### Optional: Include Known Context In The Same Prompt
+Claude / Codex skill form:
 
 ```text
-Use OSpec to initialize this project. It is an internal admin portal built with Node.js, React, and PostgreSQL.
+Use $ospec to initialize this project.
 ```
 
-### Refresh The Knowledge Layer Later
+Equivalent CLI:
 
-```text
-Use OSpec to refresh or repair the project knowledge layer.
+```bash
+ospec init .
+ospec init . --summary "Internal admin portal for operations"
+ospec init . --summary "Internal admin portal for operations" --tech-stack node,react,postgres
+ospec init . --architecture "Single web app with API and shared auth" --document-language en-US
 ```
 
-### Start A Requirement
+What this means:
+
+- `ospec init` should take the repository to a change-ready state
+- if AI assistance is available and project context is missing, OSpec can ask once for summary or tech stack
+- if no extra context is provided, OSpec should still continue with placeholder docs
+
+### 2. Create And Advance One Change
+
+Recommended prompt:
 
 ```text
 Use OSpec to create and advance a change for this requirement.
 ```
 
-### Build A Queue First
+Claude / Codex skill form:
 
 ```text
-Use OSpec to break this TODO into multiple changes, create a queue, and show the queue first. Do not run it yet.
+Use $ospec-change to create and advance a change for this requirement.
 ```
 
-The default meaning here is:
+![OSpec Change slash command example](assets/ospecchange-slash-command.svg)
 
-- present an ordered list of change names first
-- keep each change name in kebab-case
-- make each change one clear execution unit instead of a mixed bundle
+Equivalent CLI:
 
-### Execute A Queue Explicitly
+```bash
+ospec new docs-homepage-refresh .
+ospec new fix-login-timeout .
+ospec new update-billing-copy .
+```
+
+### 3. Archive After Acceptance
+
+Recommended prompt:
 
 ```text
-Use OSpec to create a change queue and execute it explicitly with ospec run manual-safe.
+Use OSpec to archive this accepted change.
 ```
 
-### Close A Completed Change
+Claude / Codex skill form:
 
 ```text
-Use OSpec to finalize this completed change before commit.
+Use $ospec to archive this accepted change.
 ```
 
-### Inspect Progress
+Equivalent CLI:
 
-```text
-Use OSpec to inspect the current active changes and overall project progress.
+```bash
+ospec verify changes/active/<change-name>
+ospec finalize changes/active/<change-name>
 ```
 
-## Skill-Based Prompts
+What this means:
 
-When your AI client supports OSpec skills, prefer the skill name directly:
-
-```text
-Use $ospec to initialize this project.
-Use $ospec to refresh or repair the project knowledge layer.
-Use $ospec to inspect active changes and progress.
-Use $ospec to break this TODO into multiple changes, create a queue, and show the queue first.
-Use $ospec to create a change queue and execute it explicitly with ospec run manual-safe.
-Use $ospec-finalize to close a completed change before commit.
-```
+- first complete your project-specific deployment, test, QA, or acceptance flow
+- then use `ospec verify` to confirm the change is ready
+- finally use `ospec finalize` to rebuild indexes and archive the accepted change
 
 ## Prompt Boundaries
 

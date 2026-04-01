@@ -1,19 +1,32 @@
 # Skills Installation
 
+Managed skills:
+
+- `ospec`
+- `ospec-change`
+
+These two skills are synced automatically by:
+
+- `npm install -g .`
+- `ospec init [path]`
+- `ospec update [path]`
+
+`ospec init` and `ospec update` always sync Codex. They also sync Claude Code when `CLAUDE_HOME` or an existing `~/.claude` home is present.
+
 ## Codex
 
-If you install this release with `npm install -g .`, only `ospec-change` is synced automatically for Codex.
-
-Check status:
+Check one managed skill:
 
 ```bash
-ospec skill status
+ospec skill status ospec
+ospec skill status ospec-change
 ```
 
-Install or sync:
+Install or sync one managed skill explicitly:
 
 ```bash
-ospec skill install
+ospec skill install ospec
+ospec skill install ospec-change
 ```
 
 Default location:
@@ -21,8 +34,6 @@ Default location:
 ```text
 ~/.codex/skills/
 ```
-
-- `ospec-change`
 
 Install another skill explicitly:
 
@@ -32,18 +43,18 @@ ospec skill install ospec-init
 
 ## Claude Code
 
-If you install this release with `npm install -g .`, only `ospec-change` is synced automatically for Claude Code.
-
-Check status:
+Check one managed skill:
 
 ```bash
-ospec skill status-claude
+ospec skill status-claude ospec
+ospec skill status-claude ospec-change
 ```
 
-Install or sync:
+Install or sync one managed skill explicitly:
 
 ```bash
-ospec skill install-claude
+ospec skill install-claude ospec
+ospec skill install-claude ospec-change
 ```
 
 Default location:
@@ -51,10 +62,6 @@ Default location:
 ```text
 ~/.claude/skills/
 ```
-
-Default installed skill:
-
-- `ospec-change`
 
 Install another skill explicitly:
 
@@ -65,5 +72,7 @@ ospec skill install-claude ospec-init
 ## Prompt Naming
 
 Prefer `$ospec` in new prompts.
+
+Use `$ospec-change` when the user intent is specifically "create or advance a change".
 
 Use `$ospec-cli` only when older automation or habits still reference the legacy name.
