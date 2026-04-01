@@ -141,7 +141,7 @@ Always keep these rules:
 - do not generate `docs/project/bootstrap-summary.md`
 - do not create the first change automatically unless the user explicitly asks to create a change
 - do not enter queue mode unless the user explicitly asks for queue behavior
-- treat presets as planning defaults, not as init-time templates
+- treat planning defaults as guidance, not as init-time templates
 - use the CLI commands for verification, archiving, and targeted inspection instead of ad-hoc filesystem edits
 
 ## What The CLI Manages
@@ -152,8 +152,8 @@ This CLI now covers:
 - project knowledge maintenance
 - layered skill files
 - execution-layer change workflow
-- preset-based planning defaults
-- explicit business scaffold generation for supported presets
+- planning defaults for proposal and task setup
+- explicit business scaffold generation when that scope is requested
 - Codex and Claude Code skill install and sync checks
 
 ## Canonical Execution Files

@@ -202,7 +202,7 @@ changes/active/<change>/artifacts/stitch/
 
 ## 17. Runtime Bridge Specification
 
-The current version implements the Stitch runtime bridge MVP with the following conventions:
+The current version implements the Stitch runtime bridge with the following conventions:
 
 ### 17.1 Project Configuration
 

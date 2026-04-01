@@ -144,7 +144,7 @@ This document defines the goals, running contracts, and implementation boundarie
 Subsequent mentions of:
 
 - `Checkpoint Plugin`
-- `checkpoint MVP`
+- `checkpoint specification`
 - `Playwright Auto-Review Plugin`
 
 Refer to this document unless explicitly changed.
@@ -173,7 +173,7 @@ Confirmed decisions for implementation:
 1. `checkpoint` and `stitch` are peer plugins; `checkpoint` is not under `stitch`.
 2. The default executor for `checkpoint` is `Playwright`, but plugin semantics are not tied to the executor name.
 3. A `base_url` must be provided when enabling `checkpoint` for the first time.
-4. Phase 1 supports only one `base_url`, no multi-environment switching.
+4. Currently only one `base_url` is supported, with no multi-environment switching.
 5. `checkpoint` is an automated gate plugin; it does not introduce `approve / reject` manual commands.
 
 6. If the project has `stitch` enabled and the current change activates `stitch_design_review`, `checkpoint` prioritizes reusing the design baseline exported by Stitch.
@@ -194,7 +194,7 @@ A `plugin` represents a source of extensible capabilities. The name for this plu
 
 ### 3.2 Capability
 
-The `checkpoint` MVP is split into two capabilities:
+`checkpoint` is split into two capabilities:
 
 - `ui_review`
 - `flow_check`
@@ -222,9 +222,9 @@ A `gate artifact` is a machine-readable result used for `verify / archive / fina
 changes/active/<change>/artifacts/checkpoint/gate.json
 ```
 
-## 4. MVP Goals
+## 4. Goals
 
-The MVP goal is not to build a complete test platform at once, but to enable automated gates before archiving:
+The goal here is not to build a complete test platform at once, but to enable automated gates before archiving:
 
 1. Projects can enable the `checkpoint` plugin.
 2. New changes can activate `checkpoint_ui_review` and `checkpoint_flow_check` based on flags.
@@ -234,9 +234,9 @@ The MVP goal is not to build a complete test platform at once, but to enable aut
 6. `verify / archive / finalize` can block the flow based on `gate.json`.
 7. When `stitch` is also enabled, `checkpoint` can automatically sync Stitch approval status upon passing.
 
-## 5. MVP Non-Goals
+## 5. Non-Goals
 
-The following are not goals for the first phase:
+The following are currently out of scope:
 
 1. Multi-environment matrix execution.
 2. General database drivers or direct database connection adapter layers.

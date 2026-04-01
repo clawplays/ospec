@@ -38,16 +38,7 @@ ospec docs generate [path]
 
 ## 3. Structural Judgment After Initialization
 
-In the current implementation, the structural level is fixed to only use:
-
-- `none`
-
-The following will no longer be used:
-
-- `basic`
-- `full`
-
-This means that judgments after initialization no longer rely on structural level names, but directly look at:
+In the current implementation, judgments after initialization no longer rely on structural level labels, but directly look at:
 
 - Whether it is initialized
 - Whether it is `change-ready`
@@ -167,14 +158,9 @@ The current repository no longer retains:
 - Dashboard static frontend assets
 - Dashboard-related help text
 
-### 8.2 `basic / full` Structural Levels
+### 8.2 Structural Level Labels
 
-Structural judgment only retains `none`.
-
-When discussing the flow later, the following will no longer be used:
-
-- This repository is now `basic`
-- This repository is now `full`
+When discussing the flow later, structural level labels will no longer be used.
 
 Unified to discussing:
 

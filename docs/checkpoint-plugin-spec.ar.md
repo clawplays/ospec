@@ -140,7 +140,7 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 تشير الأسماء التالية إلى هذه الوثيقة ما لم يتم تغييرها صراحة:
 
 - `Checkpoint Plugin`
-- `checkpoint MVP`
+- `checkpoint specification`
 - `Playwright Auto-Review Plugin`
 
 ## 1. الخلفية
@@ -167,7 +167,7 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 1. `checkpoint` و `stitch` هما إضافتان متوازيتان؛ `checkpoint` ليست تحت `stitch`.
 2. المشغل الافتراضي لـ `checkpoint` هو `Playwright` ، لكن دلالات الإضافة ليست مرتبطة باسم المشغل.
 3. يجب توفير `base_url` عند تمكين `checkpoint` لأول مرة.
-4. تدعم المرحلة الأولى `base_url` واحداً فقط، دون التبديل بين بيئات متعددة.
+4. يدعم النظام حالياً `base_url` واحداً فقط، دون التبديل بين بيئات متعددة.
 5. `checkpoint` هي إضافة بوابة آلية؛ ولا تقدم أوامر موافقة / رفض يدوية.
 
 6. إذا كان المشروع مفعلاً لـ `stitch` وكان التغيير الحالي يفعل `stitch_design_review` ، فإن `checkpoint` تعطي الأولوية لإعادة استخدام تصميم الأساس المصدر من قبل Stitch.
@@ -188,7 +188,7 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 
 ### 3.2 Capability
 
-يتم تقسيم MVP الخاص بـ `checkpoint` إلى قدرتين:
+يتم تقسيم `checkpoint` إلى قدرتين:
 
 - `ui_review`
 - `flow_check`
@@ -216,9 +216,9 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 changes/active/<change>/artifacts/checkpoint/gate.json
 ```
 
-## 4. أهداف MVP
+## 4. الأهداف
 
-هدف MVP ليس بناء منصة اختبار كاملة دفعة واحدة، بل تفعيل بوابات آلية قبل الأرشفة:
+الهدف هنا ليس بناء منصة اختبار كاملة دفعة واحدة، بل تفعيل بوابات آلية قبل الأرشفة:
 
 1. يمكن للمشاريع تمكين إضافة `checkpoint` .
 2. يمكن للتغييرات الجديدة تفعيل `checkpoint_ui_review` و `checkpoint_flow_check` بناءً على الأعلام.
@@ -228,9 +228,9 @@ changes/active/<change>/artifacts/checkpoint/gate.json
 6. يمكن لـ `verify / archive / finalize` منع التدفق بناءً على `gate.json` .
 7. عند تمكين `stitch` أيضاً، يمكن لـ `checkpoint` مزامنة حالة موافقة Stitch تلقائياً عند الاجتياز.
 
-## 5. ما ليس من أهداف MVP
+## 5. ما ليس ضمن النطاق
 
-ما يلي ليس ضمن أهداف المرحلة الأولى:
+ما يلي لا يدخل ضمن النطاق الحالي:
 
 1. تنفيذ مصفوفة بيئات متعددة.
 2. برامج تشغيل قواعد بيانات عامة أو طبقات محول اتصال مباشر بقاعدة البيانات.
