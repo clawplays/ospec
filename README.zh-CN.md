@@ -1,4 +1,4 @@
-<h1><a href="https://ospec.ai/" target="_blank" rel="noopener noreferrer">OSpec</a></h1>
+<h1><a href="https://ospec.ai/" target="_blank" rel="noopener noreferrer">OSpec.ai</a></h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@clawplays/ospec-cli"><img src="https://img.shields.io/npm/v/%40clawplays%2Fospec-cli?style=for-the-badge&logo=npm&label=npm" alt="npm"></a>
