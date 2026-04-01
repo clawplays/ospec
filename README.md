@@ -1,555 +1,258 @@
-# OSpec
+# [OSpec](https://github.com/clawplays/ospec)
 
 [简体中文](README.zh-CN.md)
 
-Install with npm:
+<p align="center">
+  <a href="https://www.npmjs.com/package/@clawplays/ospec-cli"><img src="https://img.shields.io/npm/v/%40clawplays%2Fospec-cli?style=for-the-badge&logo=npm&label=npm" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/@clawplays/ospec-cli"><img src="https://img.shields.io/npm/dm/%40clawplays%2Fospec-cli?style=for-the-badge&logo=npm&label=downloads" alt="npm downloads"></a>
+  <a href="https://github.com/clawplays/ospec/stargazers"><img src="https://img.shields.io/github/stars/clawplays/ospec?style=for-the-badge&logo=github" alt="GitHub stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/clawplays/ospec?style=for-the-badge&color=green" alt="License"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js 18+">
+  <img src="https://img.shields.io/badge/npm-8%2B-CB3837?style=flat-square&logo=npm&logoColor=white" alt="npm 8+">
+  <img src="https://img.shields.io/badge/language-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/workflow-protocol--shell--first-111827?style=flat-square" alt="Protocol-shell-first workflow">
+</p>
+
+OSpec is an AI-first CLI workflow system for initializing collaboration rules, backfilling project knowledge, and delivering requirements through auditable change containers.
+
+<p align="center">
+  <a href="docs/README.md">Docs</a> |
+  <a href="docs/project-overview.md">Overview</a> |
+  <a href="docs/installation.md">Installation</a> |
+  <a href="docs/usage.md">Usage</a> |
+  <a href="docs/prompt-guide.md">Prompt Guide</a> |
+  <a href="https://github.com/clawplays/ospec/issues">Issues</a>
+</p>
+
+## What's New in v0.1.1
+
+### Protocol-Shell-First Workflow
+
+The main idea in OSpec is simple: do not start by guessing the app stack or generating a pile of business templates. Start by creating the collaboration protocol, then add project knowledge, then execute the requirement in a tracked change container.
+
+```text
++--------------------------------------------------------------------------------------+
+| OSpec v0.1.1 - RECOMMENDED DELIVERY FLOW                                             |
++--------------------------------------------------------------------------------------+
+| 1. INSPECT                                                                           |
+|    ospec status .                                                                    |
+|    - Check whether the repo is initialized                                           |
+|    - See docs coverage, skills status, and active changes                            |
+|                                                                                      |
+| 2. INITIALIZE                                                                        |
+|    ospec init .                                                                      |
+|    - Create the protocol shell only                                                  |
+|    - Do not generate a business scaffold by default                                  |
+|                                                                                      |
+| 3. BACKFILL KNOWLEDGE                                                                |
+|    ospec docs generate .                                                             |
+|    - Add project docs and AI-readable context explicitly                             |
+|                                                                                      |
+| 4. EXECUTE A REQUIREMENT                                                             |
+|    ospec new landing-refresh .                                                       |
+|    - Work inside changes/active/<change>/                                            |
+|    - Track proposal, tasks, state, verification, and review                          |
+|                                                                                      |
+| 5. CLOSE OUT                                                                         |
+|    ospec finalize changes/active/landing-refresh                                     |
+|    - Verify, rebuild indexes, archive                                                |
++--------------------------------------------------------------------------------------+
+```
+
+### How The OSpec Workflow Works
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│  1. USER REQUEST                                               │
+│     "Use OSpec to create and advance a change for this task."  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. PROJECT INSPECTION                                         │
+│     ospec status                                               │
+│     - repo state                                               │
+│     - docs coverage                                            │
+│     - skills / active changes                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. PROTOCOL SHELL                                             │
+│     ospec init                                                 │
+│     - .skillrc                                                 │
+│     - .ospec/                                                  │
+│     - changes/active + changes/archived                        │
+│     - root SKILL files and for-ai guidance                     │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. KNOWLEDGE + EXECUTION                                      │
+│     ospec docs generate                                        │
+│     ospec new <change-name>                                    │
+│     ospec progress / verify                                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  5. CLOSEOUT                                                   │
+│     ospec finalize                                             │
+│     verify + rebuild index + archive                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Core Concepts
+
+| Concept | What It Means |
+|---------|---------------|
+| **Protocol Shell** | The minimum collaboration skeleton: `.skillrc`, `.ospec/`, `changes/`, root `SKILL.md`, `SKILL.index.json`, and `for-ai/` guidance. |
+| **Project Knowledge Layer** | Explicit project context such as `docs/project/*`, layered skill files, and index state that AI can read consistently. |
+| **Active Change** | A dedicated execution container for one requirement, usually with `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. |
+
+## Features
+
+- **Protocol-shell-first initialization**: `ospec init` creates the collaboration runtime before business scaffolding.
+- **Explicit project backfill**: `ospec docs generate` adds project knowledge only when you want it.
+- **Tracked requirement execution**: each change can keep proposal, tasks, state, verification, and review files aligned.
+- **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.
+- **Plugin workflow gates**: built-in plugin commands support Stitch design review and Checkpoint automation.
+- **Skill management**: install and inspect OSpec skills for Codex and Claude Code.
+- **Standard closeout**: `finalize` verifies, rebuilds indexes, and archives the change before manual Git commit.
+
+## Installation
+
+### Using npm
 
 ```bash
 npm install -g @clawplays/ospec-cli
+ospec --version
+ospec --help
 ```
 
-OSpec is a CLI workflow system for AI-assisted delivery.
-
-It is not a scaffold that starts by generating a pile of business templates. It is a collaboration framework built around a protocol-shell-first approach: establish the minimum collaboration protocol first, explicitly fill in the project knowledge layer second, and then manage execution, verification, and closure through the change workflow.
-
-Current version:
-
-- CLI: `0.1.1`
-
-Documentation:
-
-- [Project Overview](docs/project-overview.zh-CN.md)
-- [Installation](docs/installation.zh-CN.md)
-- [Usage](docs/usage.zh-CN.md)
-- [Prompt Guide](docs/prompt-guide.zh-CN.md)
-- [Skills Installation](docs/skills-installation.zh-CN.md)
-- [GitLab Custom Fork Sync](docs/custom-fork-sync.zh-CN.md)
-- [Stitch Plugin Spec](docs/stitch-plugin-spec.zh-CN.md)
-- [Checkpoint Plugin Spec](docs/checkpoint-plugin-spec.zh-CN.md)
-
-## What OSpec Is
-
-The core goal of OSpec is not to generate a fixed project structure for a team in one shot. Its job is to lock in the basic rules of AI collaboration first.
-
-What it does can be summarized in three layers:
-
-- Initialize the minimum protocol shell so the project enters a unified collaboration state
-- Fill in the project knowledge layer so AI has stable context to read
-- Use the active change workflow to manage execution, verification, and closure for each request
-
-In simpler terms, OSpec is not mainly about deciding which business page to build first. It is about defining the rules by which your team and your AI should collaborate.
-
-## Problems It Tries to Solve
-
-Once AI joins software delivery, common problems usually look like this:
-
-- AI can write code, but does not know the execution rules of the project
-- After a request is completed, the intermediate process is hard to see and hard to trace back
-- Documentation, skill files, and implementation status drift out of sync
-- Different AI clients use inconsistent collaboration protocols
-- Some requests require design approval or extra gates, but there is no unified entry point
-
-OSpec does not respond to this by shipping a heavy business scaffold. It establishes the protocol and gates first, so the project becomes inspectable, traceable, and archivable.
-
-## Three Core Concepts
-
-### 1. Protocol Shell
-
-The protocol shell is the minimum collaborative skeleton of the project. Its main purpose is to bring the project into a unified collaboration state first.
-
-After initialization, key files and directories usually include:
-
-- `.skillrc`
-- `.ospec/`
-- `changes/active/`
-- `changes/archived/`
-- `SKILL.md`
-- `SKILL.index.json`
-- A set of AI collaboration rule documents under `for-ai/`
-
-You can think of it as the collaboration foundation of the project.
-
-### 2. Project Knowledge Layer
-
-After the protocol shell is in place, the project still needs long-lived and stable knowledge context. OSpec uses `docs/project/` and layered `SKILL.md` files to carry that context.
-
-Project docs generated by default include:
-
-- `docs/project/overview.md`
-- `docs/project/tech-stack.md`
-- `docs/project/architecture.md`
-- `docs/project/module-map.md`
-- `docs/project/api-overview.md`
-
-The goal of this step is to make sure AI is not writing blindly later. It should always have stable context to reference.
-
-### 3. Active Change
-
-OSpec does not leave a request scattered across chat history. It creates an independent execution container for every request.
-
-The most important files inside each active change are:
-
-- `proposal.md`
-- `tasks.md`
-- `state.json`
-- `verification.md`
-- `review.md`
-
-The real source of truth for execution state is:
-
-- `state.json`
-
-That means the project does not rely on someone saying a task is done. The actual stage of a change is jointly proven by the state file and the verification artifacts.
-
-## Main Flow
-
-The current OSpec main flow can be summarized in four stages:
-
-1. Initialize the protocol shell
-2. Fill in the project knowledge layer
-3. Execute the active change
-4. Close it out through `verify / archive / finalize`
-
-Core commands:
+### Using This Repository
 
 ```bash
-ospec status [path]
-ospec init [path]
-ospec docs generate [path]
-ospec new <change-name> [path]
-ospec progress [changes/active/<change>]
-ospec verify [changes/active/<change>]
-ospec archive [changes/active/<change>]
-ospec finalize [changes/active/<change>]
+npm install
+npm install -g .
+ospec --version
 ```
 
-## Common Usage
+### Requirements
 
-### 1. Inspect the Project State First
+- Node.js `>= 18`
+- npm `>= 8`
+
+## Quick Start
+
+### Standard Flow
 
 ```bash
+# 1. Inspect the repository
 ospec status .
-```
 
-This step is essentially a health check. It tells you:
-
-- Whether the project has already been initialized
-- Which protocol files are missing
-- How complete the project documentation is
-- Whether skills are complete
-- Whether active changes currently exist
-- What the most recommended next step is
-
-### 2. Initialize the Protocol Shell
-
-```bash
+# 2. Initialize the protocol shell
 ospec init .
-```
 
-This only performs the minimum initialization:
-
-- Create the OSpec protocol shell
-- Do not generate a web template or business scaffold by default
-- Do not automatically create the first change
-
-This reflects a core OSpec principle: establish the collaboration protocol first, do not take over business decisions, and do not guess the project type.
-
-### 3. Fill in the Project Knowledge Layer
-
-```bash
+# 3. Backfill project docs when needed
 ospec docs generate .
-```
 
-This step generates the project knowledge layer docs, layered skill entry points, indexes, and other foundational assets.
-
-Its boundaries are also explicit:
-
-- It fills in project knowledge
-- It does not automatically apply a business scaffold
-- It does not automatically start a request
-
-### 4. Create a Change
-
-```bash
+# 4. Create a change for one requirement
 ospec new landing-refresh .
-```
 
-This does not start writing code immediately. It creates the execution container for the request first.
-
-After creation, the project will contain:
-
-- `proposal.md`: background, goals, scope, and acceptance criteria
-- `tasks.md`: task list
-- `state.json`: execution status
-- `verification.md`: verification items
-- `review.md`: review perspective
-
-### 5. Keep Checking Progress and Risk
-
-Common commands:
-
-```bash
+# 5. Inspect progress and close it out
 ospec progress changes/active/landing-refresh
-ospec verify changes/active/landing-refresh
-ospec changes status .
-```
-
-They answer three different questions:
-
-- `progress`: where the current change stands
-- `verify`: whether the protocol files and verification items of the change are complete
-- `changes status`: the PASS / WARN / FAIL summary for all active changes in the project
-
-### 6. Standard Closure
-
-Recommended command:
-
-```bash
 ospec finalize changes/active/landing-refresh
 ```
 
-`finalize` is the default closure path. It runs the following in order:
-
-- verify
-- rebuild indexes
-- archive
-
-At the end, the change is moved from `changes/active/` to `changes/archived/`, and the repository is left in a state where you can make a manual Git commit.
-
-### 7. Explicit Queue Mode
-
-Queue mode is intentionally conservative:
-
-- `ospec new` still creates one normal active change
-- nothing enters queue mode implicitly
-- queue behavior starts only when you explicitly use `ospec queue ...` or `ospec run ...`
-
-Core queue commands:
+### Queue Flow
 
 ```bash
 ospec queue add landing-refresh .
 ospec queue add billing-cleanup .
 ospec queue status .
-ospec queue next .
 ospec run start . --profile manual-safe
 ospec run step .
 ```
 
-Runner profiles:
-
-- `manual-safe`: only tracks and activates the queue explicitly; existing change execution stays manual
-- `archive-chain`: on an explicit `ospec run step`, if the current active change is archive-ready, OSpec finalizes it and then advances to the next queued change
-
-Recommended AI phrasing:
-
-- single change: `Use OSpec to create and advance one change for this requirement.`
-- build a queue without running it: `Use OSpec to break this TODO into multiple changes, create a queue, and show the queue first. Do not run it yet.`
-- explicit queue execution: `Use OSpec to create a change queue and execute it explicitly with ospec run manual-safe.`
-
-## How a Request Flows
-
-The recommended order for a single request is:
-
-1. Clarify context and impact
-2. Create or update `proposal.md`
-3. Create or update `tasks.md`
-4. Advance implementation based on `state.json`
-5. Update related `SKILL.md`
-6. Rebuild `SKILL.index.json`
-7. Complete `verification.md`
-8. Archive after all gates pass
-
-In one line:
-
-Request enters
--> create change
--> write proposal
--> write tasks
--> advance implementation by state
--> sync docs and skills
--> complete verification
--> run verify
--> archive / finalize
-
-The value of this design is:
-
-- Every request has an independent container
-- Every stage has explicit document anchors
-- Completion is not based on vague judgment, but on something inspectable
-
-## Current Core Capabilities
-
-From the CLI perspective, current capabilities can be grouped into five areas.
-
-### 1. Project Initialization and Diagnosis
-
-- `status`
-- `init`
-- `docs status`
-- `docs generate`
-
-This group mainly answers whether the project has entered protocol-based collaboration.
-
-### 2. Request Execution Workflow
-
-- `new`
-- `progress`
-- `verify`
-- `archive`
-- `finalize`
-- `changes status`
-
-This group mainly answers how a request moves from creation to closure.
-
-### 3. Skills and Index Management
-
-- `skills status`
-- `skill status`
-- `skill install`
-- `index check`
-- `index build`
-
-This group mainly answers where AI should read the rules from, and whether those rules are synchronized.
-
-### 4. Plugin-Based Workflow
-
-- `plugins status`
-- `plugins enable stitch`
-- `plugins run stitch`
-- `plugins approve stitch`
-- `plugins reject stitch`
-- `plugins doctor stitch`
-
-This group mainly answers how to handle requests that need extra blocking steps beyond code.
-
-The first plugin today is `stitch`, mainly for page design review.
-
-### 5. Protocol Update and Distribution
-
-- `update`
-- `skill install`
-- `skill install-claude`
-
-This allows OSpec not only to manage a single project, but also to distribute the same collaboration protocol to different AI clients.
-
-The boundary of `ospec update [path]` is:
-
-- It refreshes protocol docs, project tooling, Git hooks, managed skills, and managed workdir assets for enabled plugins
-- It does not automatically `enable/disable` plugins
-- It does not automatically migrate existing active changes to a new plugin workflow
-- If you want to enable Stitch, you still need to run `ospec plugins enable stitch [path]` explicitly
-
-## One Easily Confused Detail
-
-In the current version, two concepts need to be understood separately:
-
-- structure level
-- workflow mode
-
-### Structure Level
-
-Structure is currently determined only as:
-
-- `none`
-
-It no longer uses `basic` / `full` to describe repository structure level.
-
-### Workflow Mode
-
-The default workflow mode in `.skillrc` created by initialization is still:
-
-- `full`
-
-It affects:
-
-- Which feature flags are supported
-- Which optional steps are activated
-- What the archive gate needs to check
-
-So the correct way to read it is:
-
-- Structure level indicates whether the project has completed protocol-based initialization
-- Workflow mode indicates how strict the request execution process is
-
-## Stitch Plugin
-
-Stitch demonstrates OSpec's plugin-based extensibility.
-
-The idea is not to hardcode design review into the main flow. Instead:
-
-- The project enables a plugin to gain a capability
-- The plugin contributes an optional step
-- A change activates that step only if its flags hit the condition
-- `verify / archive / finalize` are blocked or allowed based on approval artifacts
-
-For example, after a project enables Stitch, if a new change includes these flags:
-
-- `ui_change`
-- `page_design`
-- `landing_page`
-
-The system activates:
-
-- `stitch_design_review`
-
-And generates:
-
-- `artifacts/stitch/approval.json`
-
-If that approval file is not approved, the change cannot claim completion and cannot be archived.
-
-In page design review scenarios, this gate also requires:
-
-- The same route may only have one canonical layout
-- `light/dark` must be theme variants of one layout, not two different compositions
-- Delivery must include screen mapping
-- Old drafts and exploration drafts must be archived, not listed beside the canonical page
-
-This shows that OSpec plugins do not act as simple reminders. They actually participate in workflow gates.
-
-## Design Principles
-
-### 1. Protocol-Shell-First
-
-Build the protocol shell first, then discuss business specifics.
-
-Benefits:
-
-- Initialization stays lightweight
-- Project type is less likely to be guessed wrong
-- A repository that is still undefined is not forced into a rigid template
-
-### 2. Explicit Over Implicit
-
-OSpec rarely does things by guessing what you probably want.
-
-For example:
-
-- `init` does not automatically generate docs
-- `docs generate` does not automatically create a change
-- `new` does not automatically advance implementation
-
-Each step tries to stay clear, controllable, and explainable.
-
-### 3. Documentation Is Part of Execution
-
-In OSpec:
-
-- proposal is not an auxiliary report
-- tasks are not a temporary memo
-- verification is not a final add-on note
-
-These documents are part of the workflow itself and directly affect whether later `verify` and `archive` can pass.
-
-### 4. `state.json` Is the Source of Truth
-
-The project explicitly requires:
-
-- Use `state.json` as the basis of current execution state
-- `verification.md` cannot replace `state.json`
-
-This prevents workflow drift caused by inconsistent descriptions.
-
-### 5. Gate First, Archive Second
-
-Closure in OSpec is not "code is written, then commit". It is:
-
-- Check whether the workflow is complete
-- Only then allow archiving
-- Enter the Git commit stage after archiving
-
-That makes the delivery boundary much clearer.
-
-### 6. Pluginized Instead of Hardcoded
-
-Capabilities such as design review are not hardcoded into the main flow. They are injected through plugins.
-
-That means the system can keep expanding with things like:
-
-- design review
-- security checks
-- other approval capabilities
-
-without making the main workflow increasingly bloated.
-
-### 7. One Protocol Across Multiple AI Clients
-
-The current project does not only manage internal workflow. It can also distribute the skill pack to:
-
-- Codex
-- Claude Code
-
-That means teams can still share one collaboration protocol even when using different AI tools.
-
-## About This Repository
-
-This repository is first and foremost:
-
-- The implementation and release repository of OSpec
-
-It mainly contains:
-
-- `dist/`: compiled CLI, commands, workflow, services, and adapters
-- `assets/`: protocol docs, convention templates, global skills, and Git hooks
-- `docs/`: external documentation and design specification documents
-- `scripts/`: installation, release, and fork sync scripts
-- `skill.yaml`, `SKILL.md`, `agents/`: skill packaging and distribution entry points
-
-From the result of `ospec status .`, the current repository root is not fully initialized as a business project managed by OSpec. It still lacks:
-
-- `.skillrc`
-- `changes/active/`
-- `changes/archived/`
-
-That means this repository has two different identities:
-
-- It is the source repository of the OSpec tool itself
-- It is not an example business repository already running business requests through OSpec
-
-So the more accurate interpretation is:
-
-- This repository implements OSpec
-- The direct usage target of OSpec is downstream business projects or newly initialized directories
-
-## Current Behavioral Characteristics
-
-Through actual command verification, the following behaviors can be confirmed:
-
-- `ospec init` only initializes the protocol shell, and does not automatically generate project docs or create the first change
-- `ospec docs generate` fills in the knowledge layer and layered skill entries, but does not apply a business scaffold
-- When the Stitch plugin is not enabled, flags such as `ui_change` and `page_design` are recorded in `proposal.md`, but reported as unsupported flags
-- After the Stitch plugin is enabled, the same flags activate `stitch_design_review` for real and automatically generate `artifacts/stitch/approval.json`
-
-These behaviors reflect several core OSpec design choices:
-
-- minimal by default
-- explicit extension
-- inspectable workflow
-- plugins can block progression
-- queue mode only starts when explicitly requested
-
-## Recommended Quick Trial
-
-If you want to experience the main workflow quickly, the recommended order is:
+### Plugin Flow
 
 ```bash
-ospec status demo
-ospec init demo
-ospec docs generate demo
-ospec new landing-refresh demo
-ospec changes status demo
-ospec progress demo/changes/active/landing-refresh
+ospec plugins status .
+ospec plugins enable stitch .
+ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 ```
 
-If you also want to experience plugin extensibility, continue with:
+## Prompt Examples
+
+```text
+Use OSpec to initialize this project.
+
+Use OSpec to backfill the project knowledge layer.
+
+Use OSpec to create and advance a change for this requirement.
+
+Use OSpec to break this TODO into multiple changes, create a queue, and show the queue first.
+```
+
+If your AI client supports installed skills, prefer the installed OSpec skill name used in your environment, for example `$ospec` or `$ospec-change`:
+
+```text
+Use $ospec to initialize this project.
+Use $ospec-change to create and advance a change for this requirement.
+```
+
+## Skills
+
+If you install OSpec with `npm install -g @clawplays/ospec-cli` or `npm install -g .`, the managed default sync target is `ospec-change`.
 
 ```bash
-ospec plugins enable stitch demo
-ospec new home-hero-redesign demo --flags ui_change,page_design
+ospec skill status
+ospec skill install
+ospec skill status-claude
+ospec skill install-claude
 ```
 
-## Summary
+Install another skill explicitly when needed:
 
-In one sentence, OSpec is not a tool for helping teams "generate code faster". It is a tool for helping teams "deliver more reliably with AI".
+```bash
+ospec skill install ospec-init
+ospec skill install-claude ospec-init
+```
 
-Its core value is not templates, pages, or scaffolds. It is turning AI collaboration from something pushed by chat history into a manageable workflow with a protocol shell, a knowledge layer, change containers, gates, and archiving.
+## Documentation
+
+### Core Docs
+
+- [Docs Index](docs/README.md)
+- [Project Overview](docs/project-overview.md)
+- [Installation](docs/installation.md)
+- [Usage](docs/usage.md)
+- [Prompt Guide](docs/prompt-guide.md)
+- [Skills Installation](docs/skills-installation.md)
+- [GitLab Custom Fork Sync](docs/custom-fork-sync.md)
+- [Upstream Brand Protection](docs/upstream-brand-protection.md)
+
+### Chinese-Only Advanced Specs
+
+- [Stitch Plugin Spec](docs/stitch-plugin-spec.zh-CN.md)
+- [Stitch Plugin Roadmap](docs/stitch-plugin-roadmap.zh-CN.md)
+- [Checkpoint Plugin Spec](docs/checkpoint-plugin-spec.zh-CN.md)
+- [Current Vibe Coding Spec Flow](docs/current-vibe-coding-spec-flow.zh-CN.md)
+
+## Repository Structure
+
+```text
+dist/                       Compiled CLI runtime
+assets/                     Managed protocol assets, hooks, and skill payloads
+docs/                       Public documentation
+scripts/                    Release and installation helpers
+.ospec/templates/hooks/     Hook templates shipped with the package
+```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
