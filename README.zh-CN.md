@@ -270,8 +270,6 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 - [项目介绍](docs/project-overview.zh-CN.md)
 - [安装说明](docs/installation.zh-CN.md)
 - [Skills 安装说明](docs/skills-installation.zh-CN.md)
-- [GitLab 自定义 Fork 同步方案](docs/custom-fork-sync.zh-CN.md)
-- [上游品牌保护说明](docs/upstream-brand-protection.zh-CN.md)
 
 ### 插件高级说明
 

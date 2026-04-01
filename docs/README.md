@@ -18,11 +18,6 @@ This is the public documentation index for the OSpec release repository.
 
 `ospec init` is now the one-step path to a change-ready repository. Use `ospec docs generate` later only when you need a docs maintenance pass.
 
-## Additional Docs
-
-- [GitLab Custom Fork Sync](custom-fork-sync.md)
-- [Upstream Brand Protection](upstream-brand-protection.md)
-
 ## Plugin Specs
 
 The core docs above are available in English. The following plugin specs are currently maintained in Chinese:

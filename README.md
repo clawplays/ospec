@@ -270,8 +270,6 @@ Notes:
 - [Project Overview](docs/project-overview.md)
 - [Installation](docs/installation.md)
 - [Skills Installation](docs/skills-installation.md)
-- [GitLab Custom Fork Sync](docs/custom-fork-sync.md)
-- [Upstream Brand Protection](docs/upstream-brand-protection.md)
 
 ### Plugin Specs
 

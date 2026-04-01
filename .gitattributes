@@ -1,8 +1,0 @@
-README.md merge=ours
-README.zh-CN.md merge=ours
-SKILL.md merge=ours
-skill.yaml merge=ours
-agents/openai.yaml merge=ours
-docs/** merge=ours
-assets/** merge=ours
-.ospec/** merge=ours

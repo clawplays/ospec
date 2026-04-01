@@ -18,11 +18,6 @@
 
 现在 `ospec init` 已经是一条命令直达 `change-ready` 的入口；`ospec docs generate` 只保留为后续知识层维护命令。
 
-## 补充文档
-
-- [GitLab 自定义 Fork 同步方案](custom-fork-sync.zh-CN.md)
-- [上游品牌保护说明](upstream-brand-protection.zh-CN.md)
-
 ## 插件高级说明
 
 - [Stitch 插件规范](stitch-plugin-spec.zh-CN.md)

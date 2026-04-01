@@ -18,11 +18,6 @@
 
 `ospec init` は change-ready まで進める 1 ステップの入口です。`ospec docs generate` は後から知識レイヤを保守したい時だけ使います。
 
-## 補足ドキュメント
-
-- [GitLab Custom Fork Sync](custom-fork-sync.md)
-- [Upstream Brand Protection](upstream-brand-protection.md)
-
 ## プラグイン仕様
 
 以下のプラグイン仕様は現在中国語で管理されています。
