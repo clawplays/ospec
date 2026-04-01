@@ -3,7 +3,8 @@
 <p align="center">
   <a href="README.md">English</a> |
   <a href="README.zh-CN.md">中文</a> |
-  <strong>日本語</strong>
+  <strong>日本語</strong> |
+  <a href="README.ar.md">العربية</a>
 </p>
 
 これは OSpec 公開リポジトリのドキュメント案内ページです。
@@ -20,7 +21,11 @@
 
 ## プラグイン仕様
 
-以下のプラグイン仕様は現在中国語で管理されています。
+- [Stitch Plugin Spec](stitch-plugin-spec.ja.md)
+- [Checkpoint Plugin Spec](checkpoint-plugin-spec.ja.md)
+- [Stitch Plugin Roadmap](stitch-plugin-roadmap.ja.md)
 
-- [Stitch Plugin Spec](stitch-plugin-spec.zh-CN.md)
-- [Checkpoint Plugin Spec](checkpoint-plugin-spec.zh-CN.md)
+## アドバンスドガイド
+
+- [Current Vibe Coding Spec Flow](current-vibe-coding-spec-flow.ja.md)
+- [Version Bump Guide](version-bump.ja.md)

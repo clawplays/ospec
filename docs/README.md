@@ -3,7 +3,8 @@
 <p align="center">
   <strong>English</strong> |
   <a href="README.zh-CN.md">中文</a> |
-  <a href="README.ja.md">日本語</a>
+  <a href="README.ja.md">日本語</a> |
+  <a href="README.ar.md">العربية</a>
 </p>
 
 This is the public documentation index for the OSpec release repository.
@@ -20,7 +21,11 @@ This is the public documentation index for the OSpec release repository.
 
 ## Plugin Specs
 
-The core docs above are available in English. The following plugin specs are currently maintained in Chinese:
+- [Stitch Plugin Spec](stitch-plugin-spec.md)
+- [Checkpoint Plugin Spec](checkpoint-plugin-spec.md)
+- [Stitch Plugin Roadmap](stitch-plugin-roadmap.md)
 
-- [Stitch Plugin Spec (Chinese)](stitch-plugin-spec.zh-CN.md)
-- [Checkpoint Plugin Spec (Chinese)](checkpoint-plugin-spec.zh-CN.md)
+## Advanced Guides
+
+- [Current Vibe Coding Spec Flow](current-vibe-coding-spec-flow.md)
+- [Version Bump Guide](version-bump.md)

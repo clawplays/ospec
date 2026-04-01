@@ -3,7 +3,8 @@
 <p align="center">
   <a href="README.md">English</a> |
   <strong>中文</strong> |
-  <a href="README.ja.md">日本語</a>
+  <a href="README.ja.md">日本語</a> |
+  <a href="README.ar.md">العربية</a>
 </p>
 
 这里是 OSpec 发布仓库的对外文档索引。
@@ -22,3 +23,9 @@
 
 - [Stitch 插件规范](stitch-plugin-spec.zh-CN.md)
 - [Checkpoint 插件规范](checkpoint-plugin-spec.zh-CN.md)
+- [Stitch 插件路线图](stitch-plugin-roadmap.zh-CN.md)
+
+## 进阶指南
+
+- [当前 Vibe Coding 规范流程](current-vibe-coding-spec-flow.zh-CN.md)
+- [版本更新指南](version-bump.zh-CN.md)
