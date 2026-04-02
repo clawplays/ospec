@@ -1,8 +1,12 @@
 #!/bin/sh
 
-if [ ! -f "build-index-auto.js" ]; then
-  echo "[ospec] build-index-auto.js not found, skip hook check"
+if [ -f "build-index-auto.cjs" ]; then
+  OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.cjs"
+elif [ -f "build-index-auto.js" ]; then
+  OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.js"
+else
+  echo "[ospec] build-index-auto.cjs not found, skip hook check"
   exit 0
 fi
 
-node build-index-auto.js hook-check post-merge
+node "$OSPEC_BUILD_INDEX_SCRIPT" hook-check post-merge
