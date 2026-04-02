@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "CLI tool for enforcing ospec workflow",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

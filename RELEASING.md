@@ -82,4 +82,6 @@ The workflow rejects the release if the Git tag does not exactly match `package.
 
 ## Required Repository Setup
 
-Add `NPM_TOKEN` to the GitHub repository secrets before using the workflow.
+Configure npm Trusted Publishing for this package and repository before using the workflow.
+
+This workflow uses GitHub Actions OIDC and does not require `NPM_TOKEN`.

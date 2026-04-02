@@ -105,7 +105,7 @@ Queue mode stays explicit:
 For a project that is already initialized:
 
 ```bash
-npm install -g @clawplays/ospec-cli@0.3.0
+npm install -g @clawplays/ospec-cli@0.3.1
 ospec update [path]
 ```
 

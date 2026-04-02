@@ -5,11 +5,13 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,5 +43,3 @@ jobs:
 
       - name: Publish package to npm
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
