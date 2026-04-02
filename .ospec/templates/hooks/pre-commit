@@ -1,8 +1,23 @@
 #!/bin/sh
+# OSPEC-SYNC-HOOK
 
-if [ ! -f "build-index-auto.js" ]; then
-  echo "[ospec] build-index-auto.js not found, skip hook check"
+if command -v ospec >/dev/null 2>&1; then
+  ospec sync . --staged --stage-updated --if-active
+  status=$?
+  if [ $status -ne 0 ]; then
+    exit $status
+  fi
+else
+  echo "[ospec] ospec command not found, skip sync hook"
+fi
+
+if [ -f "build-index-auto.cjs" ]; then
+  OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.cjs"
+elif [ -f "build-index-auto.js" ]; then
+  OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.js"
+else
+  echo "[ospec] build-index-auto.cjs not found, skip hook check"
   exit 0
 fi
 
-node build-index-auto.js hook-check pre-commit
+node "$OSPEC_BUILD_INDEX_SCRIPT" hook-check pre-commit

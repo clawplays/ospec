@@ -7,6 +7,7 @@ ospec status [path]
 ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
+ospec sync [path]
 ospec changes status [path]
 ospec new <change-name> [path]
 ospec progress [changes/active/<change>]
@@ -94,7 +95,7 @@ ospec run step [path]
 لمشروع تم تهيئته بالفعل:
 
 ```bash
-npm install -g @clawplays/ospec-cli@0.3.0
+npm install -g @clawplays/ospec-cli@0.3.2
 ospec update [path]
 ```
 

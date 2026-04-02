@@ -170,6 +170,10 @@ const IndexCommand_1 = require("./commands/IndexCommand");
 
 
 
+const SyncCommand_1 = require("./commands/SyncCommand");
+
+
+
 const InitCommand_1 = require("./commands/InitCommand");
 
 
@@ -224,7 +228,7 @@ const services_1 = require("./services");
 
 
 
-const CLI_VERSION = '0.3.2';
+const CLI_VERSION = '0.3.2-git.1';
 
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language zh-CN|en-US]');
@@ -473,6 +477,97 @@ function parseNewCommandArgs(commandArgs) {
 
 }
 
+function showSyncUsage() {
+    console.log('Usage: ospec sync [path] [--dry-run] [--staged] [--files pattern1,pattern2] [--force] [--watch] [--install-hook] [--uninstall-hook] [--stage-updated] [--if-active] [--no-index] [--no-knowledge] [--no-skill]');
+}
+
+function parseSyncCommandArgs(commandArgs) {
+    let projectPath;
+    const options = {};
+    for (let index = 0; index < commandArgs.length; index += 1) {
+        const arg = commandArgs[index];
+        if (arg === '--help' || arg === '-h' || arg === 'help') {
+            showSyncUsage();
+            process.exit(0);
+        }
+        if (arg === '--dry-run') {
+            options.dryRun = true;
+            continue;
+        }
+        if (arg === '--staged') {
+            options.staged = true;
+            continue;
+        }
+        if (arg === '--force') {
+            options.force = true;
+            continue;
+        }
+        if (arg === '--watch') {
+            options.watch = true;
+            continue;
+        }
+        if (arg === '--install-hook') {
+            options.installHook = true;
+            continue;
+        }
+        if (arg === '--uninstall-hook') {
+            options.uninstallHook = true;
+            continue;
+        }
+        if (arg === '--stage-updated') {
+            options.stageUpdated = true;
+            continue;
+        }
+        if (arg === '--if-active') {
+            options.allowNoActiveChange = true;
+            continue;
+        }
+        if (arg === '--no-index') {
+            options.rebuildIndex = false;
+            continue;
+        }
+        if (arg === '--no-knowledge') {
+            options.updateProjectKnowledge = false;
+            continue;
+        }
+        if (arg === '--no-skill') {
+            options.updateSkillFiles = false;
+            continue;
+        }
+        if (arg === '--files') {
+            const value = commandArgs[index + 1];
+            if (!value || value.startsWith('--')) {
+                console.error('Error: --files requires a value');
+                showSyncUsage();
+                process.exit(1);
+            }
+            options.filePatterns = value.split(',').map(item => item.trim()).filter(Boolean);
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith('--files=')) {
+            options.filePatterns = arg.slice('--files='.length).split(',').map(item => item.trim()).filter(Boolean);
+            continue;
+        }
+        if (arg.startsWith('--')) {
+            console.error(`Unknown option for sync: ${arg}`);
+            showSyncUsage();
+            process.exit(1);
+        }
+        if (!projectPath) {
+            projectPath = arg;
+            continue;
+        }
+        console.error(`Unexpected argument for sync: ${arg}`);
+        showSyncUsage();
+        process.exit(1);
+    }
+    return {
+        projectPath,
+        options,
+    };
+}
+
 
 
 async function main() {
@@ -590,6 +685,30 @@ async function main() {
 
 
                 await verifyCmd.execute(commandArgs[0]);
+
+
+
+                break;
+
+
+
+            }
+
+
+
+            case 'sync': {
+
+
+
+                const syncCmd = new SyncCommand_1.SyncCommand();
+
+
+
+                const { projectPath, options } = parseSyncCommandArgs(commandArgs);
+
+
+
+                await syncCmd.execute(projectPath, options);
 
 
 
@@ -1023,6 +1142,7 @@ Commands:
   init [root-dir]           Initialize OSpec to a change-ready state
   new <change-name> [root]  Create a new change (supports --flags)
   verify [path]             Verify change completion
+  sync [path]               Run lightweight documentation sync, watch, or hook automation
   progress [path]           Show workflow progress
   archive [path] [--check]  Archive a ready change or only check readiness
   status [path]             Show project status
@@ -1047,6 +1167,7 @@ Examples:
   ospec new onboarding-flow
   ospec new landing-refresh . --flags ui_change,page_design
   ospec verify ./changes/active/onboarding-flow
+  ospec sync . --dry-run
   ospec progress ./changes/active/onboarding-flow
   ospec archive ./changes/active/onboarding-flow
   ospec archive ./changes/active/onboarding-flow --check

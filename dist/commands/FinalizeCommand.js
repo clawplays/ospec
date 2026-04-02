@@ -12,6 +12,21 @@ class FinalizeCommand extends BaseCommand_1.BaseCommand {
             this.info(`Finalizing change at ${targetPath}`);
             const verifyCmd = new VerifyCommand_1.VerifyCommand();
             await verifyCmd.execute(targetPath);
+            this.info('Syncing documentation before archive...');
+            const syncResult = await services_1.services.documentSyncOrchestrator.syncChangeDocuments(targetPath, {
+                force: true,
+                interactive: false,
+                dryRun: false,
+                updateProjectKnowledge: true,
+                updateSkillFiles: true,
+            });
+            if (!syncResult.success) {
+                this.error(syncResult.report);
+                throw new Error('Cannot finalize change because documentation sync failed');
+            }
+            if (syncResult.updatedFiles.length > 0 || syncResult.createdFiles.length > 0) {
+                this.info(syncResult.report);
+            }
             const result = await services_1.services.projectService.finalizeChange(path.resolve(targetPath));
             this.success(`Change finalized: ${result.archivePath}`);
         }

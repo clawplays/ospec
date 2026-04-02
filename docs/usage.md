@@ -7,6 +7,7 @@ ospec status [path]
 ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
+ospec sync [path]
 ospec changes status [path]
 ospec new <change-name> [path]
 ospec progress [changes/active/<change>]
@@ -82,6 +83,44 @@ Use cases:
 - does not create the first change automatically
 - does not create `docs/project/bootstrap-summary.md`
 
+## Documentation Sync And Hooks
+
+If you already changed protocol docs, project knowledge files, or the root skill file, use:
+
+```bash
+ospec sync [path]
+```
+
+Common examples:
+
+```bash
+ospec sync [path] --dry-run
+ospec sync [path] --watch
+ospec sync [path] --install-hook
+ospec sync [path] --uninstall-hook
+ospec sync [path] --staged --stage-updated --if-active
+```
+
+`ospec sync [path]` is intended to:
+
+- sync change summaries into `docs/project/*` for the current active change
+- sync the root `SKILL.md`
+- rebuild `SKILL.index.json`
+- optionally stage the updated files for Git
+
+Useful flags:
+
+- `--dry-run`: preview the files that would be updated without writing them
+- `--watch`: keep watching analyzable files and sync on change
+- `--install-hook`: install the managed `pre-commit` sync hook
+- `--uninstall-hook`: remove the managed `pre-commit` sync hook
+- `--staged`: detect changes only from the current Git index
+- `--stage-updated`: add synced files to the Git index automatically
+- `--if-active`: exit successfully when no active change exists
+- `--no-index`: skip `SKILL.index.json` regeneration for this run
+- `--no-knowledge`: skip `docs/project/*` updates for this run
+- `--no-skill`: skip root `SKILL.md` updates for this run
+
 ## Queue Flow
 
 If you explicitly want to manage multiple changes as a queue:
@@ -120,6 +159,7 @@ ospec update [path]
 
 - refresh protocol docs
 - refresh project tooling and Git hooks
+- refresh the managed sync hook templates and related assets
 - sync managed `ospec` and `ospec-change` skills
 - refresh managed workspace assets for already-enabled plugins
 

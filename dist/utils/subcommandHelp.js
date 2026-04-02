@@ -9,6 +9,7 @@ exports.getWorkflowHelpText = getWorkflowHelpText;
 exports.getPluginsHelpText = getPluginsHelpText;
 exports.getBatchHelpText = getBatchHelpText;
 exports.getChangesHelpText = getChangesHelpText;
+exports.getSyncHelpText = getSyncHelpText;
 exports.getQueueHelpText = getQueueHelpText;
 exports.getRunHelpText = getRunHelpText;
 const HELP_ACTIONS = new Set(['help', '--help', '-h']);
@@ -92,6 +93,18 @@ Changes Commands:
   ospec changes status [path]  - show PASS/WARN/FAIL protocol status for every active change
   ospec finalize [path]        - verify and archive a completed change before commit
   ospec changes help           - show changes command help
+`;
+}
+function getSyncHelpText() {
+    return `
+Sync Commands:
+  ospec sync [path] [--dry-run] [--staged] [--files pattern1,pattern2] - run lightweight documentation sync for the active change
+  ospec sync [path] [--force] [--no-index] [--no-knowledge] [--no-skill] - adjust sync scope
+  ospec sync [path] [--watch]                                          - watch analyzable files and re-run sync automatically
+  ospec sync [path] [--install-hook|--uninstall-hook]                  - manage the sync pre-commit hook
+  ospec sync [path] [--stage-updated]                                  - auto-stage synced files after execution
+  ospec sync [path] [--if-active]                                      - skip successfully when no active change exists
+  ospec sync help                                                      - show sync command help
 `;
 }
 function getQueueHelpText() {

@@ -8,3 +8,23 @@ coverage/
 .idea/
 .local/
 .claude/
+
+# OSpec - 忽略所有初始化生成的文件
+.ospec/
+.skillrc
+changes/
+SKILL.md
+SKILL.index.json
+build-index-auto.cjs
+build-index-auto.js
+for-ai/
+docs/SKILL.md
+docs/api/
+docs/design/
+docs/planning/
+docs/project/
+src/
+tests/
+
+# 项目文档
+project-docs/

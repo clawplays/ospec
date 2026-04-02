@@ -6,7 +6,7 @@ tags: [cli, workflow, automation, typescript, ospec, bootstrap]
 
 # OSpec CLI
 
-Document-driven OSpec workflow for AI-assisted development with change-ready initialization, execution, validation, archiving, and docs maintenance.
+Document-driven OSpec workflow for AI-assisted development with change-ready initialization, execution, validation, archiving, docs maintenance, and lightweight sync automation.
 
 ## Default Entry
 
@@ -150,6 +150,7 @@ This CLI now covers:
 
 - change-ready initialization
 - project knowledge maintenance
+- lightweight documentation sync, watch mode, and hook automation
 - layered skill files
 - execution-layer change workflow
 - planning defaults for proposal and task setup
@@ -186,6 +187,11 @@ ospec status [path]
 ospec init [path]
 ospec init [path] --summary "..." --tech-stack node,react
 ospec docs generate [path]
+ospec sync [path]
+ospec sync [path] --dry-run
+ospec sync [path] --watch
+ospec sync [path] --install-hook
+ospec sync [path] --staged --stage-updated --if-active
 ospec new <change-name> [path]
 ospec docs status [path]
 ospec skills status [path]
@@ -205,6 +211,7 @@ ospec index check [path]
 ospec index build [path]
 ospec workflow show
 ospec workflow list-flags
+ospec update [path]
 ospec progress [changes/active/<change>]
 ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>]
@@ -243,6 +250,10 @@ ospec finalize [changes/active/<change>]
 
 Use `ospec docs generate [path]` later when you need a docs-only maintenance pass.
 
+Use `ospec sync [path]` when you need lightweight project-doc, root-skill, or index synchronization for the current active change without entering archive flow.
+
+Use `ospec update [path]` when an initialized project needs managed protocol docs, hooks, tooling, and managed skills refreshed in place.
+
 Use `ospec status [path]` separately when you want an explicit troubleshooting snapshot.
 
 For completed changes, archive before commit. Use `ospec archive [changes/active/<change>]` to execute the archive and `--check` only when you want a readiness preview without moving files.
@@ -276,3 +287,76 @@ Before saying work is complete:
 2. confirm docs, skills, and index state if project knowledge changed
 3. keep `SKILL.index.json` current after meaningful skill updates
 4. treat `SKILL.index.json` section offsets as LF-normalized so Windows CRLF and Linux LF checkouts do not drift
+
+<!-- OSPEC-DOC-SYNC:document-sync:START -->
+<!-- OSPEC-DOC-SYNC:document-sync:FINGERPRINT:d9ac07321fa4 -->
+## 文档同步生成
+
+- 同步时间: 2026-04-02T17:44:49.616Z
+- 变更符号数: 60
+- 受影响章节: blockEnd, blockStart, ChangeAnalyzer, ChangeDetectionOptions, ChangeDetector, CLI_VERSION, createChangeAnalyzer, createChangeDetector, createDocumentSyncOrchestrator, createFingerprint, createImpactAnalyzer, createProjectKnowledgeUpdater, createSkillFileUpdater, DetectedFileChange, DocumentSyncOrchestrator, execFileAsync, extractManagedFingerprint, FinalizeCommand, findNearestSkillFile, fingerprintLine, getBatchHelpText, getChangesHelpText, getDocsHelpText, getIndexHelpText, getPluginsHelpText, getQueueHelpText, getRunHelpText, getSkillHelpText, getSkillsHelpText, getSyncHelpText, getWorkflowHelpText, HELP_ACTIONS, HOOK_BACKUP_SUFFIX, HOOK_MARKER, ImpactAnalyzer, isAnalyzablePath, isCodeLikePath, isHelpAction, listProjectKnowledgeDocs, main, MANAGED_PREFIX, parseInitCommandArgs, parseNewCommandArgs, parseSyncCommandArgs, PROJECT_DOCS, ProjectKnowledgeUpdater, readPackageManifest, relativePath, resolveChangeRoot, ServiceContainer, showHelp, showInitUsage, showSyncUsage, SkillFileUpdater, SyncCommand, SyncCommandOptions, upsertManagedSection, VerifyCommand
+- 对应 change: `fix-queue-add-directory`
+
+### 受影响符号
+
+- `const CLI_VERSION` (dist/cli.js, modified)
+- `function main()` (dist/cli.js, modified)
+- `function parseInitCommandArgs(commandArgs)` (dist/cli.js, modified)
+- `function parseNewCommandArgs(commandArgs)` (dist/cli.js, modified)
+- `function parseSyncCommandArgs(commandArgs)` (dist/cli.js, modified)
+- `function showHelp()` (dist/cli.js, modified)
+- `function showInitUsage()` (dist/cli.js, modified)
+- `function showSyncUsage()` (dist/cli.js, modified)
+- `class FinalizeCommand` (dist/commands/FinalizeCommand.js, modified)
+- `interface SyncCommandOptions` (dist/commands/SyncCommand.d.ts, added)
+- `const execFileAsync` (dist/commands/SyncCommand.js, added)
+- `const HOOK_BACKUP_SUFFIX` (dist/commands/SyncCommand.js, added)
+- `const HOOK_MARKER` (dist/commands/SyncCommand.js, added)
+- `class SyncCommand` (dist/commands/SyncCommand.js, added)
+- `class VerifyCommand` (dist/commands/VerifyCommand.js, modified)
+- `class ServiceContainer` (dist/services/index.js, modified)
+- `class ChangeAnalyzer` (dist/services/sync/ChangeAnalyzer.js, added)
+- `const createChangeAnalyzer` (dist/services/sync/ChangeAnalyzer.js, added)
+- `const execFileAsync` (dist/services/sync/ChangeAnalyzer.js, added)
+- `interface ChangeDetectionOptions` (dist/services/sync/ChangeDetector.d.ts, added)
+- `interface DetectedFileChange` (dist/services/sync/ChangeDetector.d.ts, added)
+- `class ChangeDetector` (dist/services/sync/ChangeDetector.js, added)
+- `const createChangeDetector` (dist/services/sync/ChangeDetector.js, added)
+- `const execFileAsync` (dist/services/sync/ChangeDetector.js, added)
+- `const createDocumentSyncOrchestrator` (dist/services/sync/DocumentSyncOrchestrator.js, added)
+- `class DocumentSyncOrchestrator` (dist/services/sync/DocumentSyncOrchestrator.js, added)
+- `const createImpactAnalyzer` (dist/services/sync/ImpactAnalyzer.js, added)
+- `class ImpactAnalyzer` (dist/services/sync/ImpactAnalyzer.js, added)
+- `const createProjectKnowledgeUpdater` (dist/services/sync/ProjectKnowledgeUpdater.js, added)
+- `class ProjectKnowledgeUpdater` (dist/services/sync/ProjectKnowledgeUpdater.js, added)
+- `const createSkillFileUpdater` (dist/services/sync/SkillFileUpdater.js, added)
+- `class SkillFileUpdater` (dist/services/sync/SkillFileUpdater.js, added)
+- `function blockEnd(id)` (dist/services/sync/syncUtils.js, added)
+- `function blockStart(id)` (dist/services/sync/syncUtils.js, added)
+- `function createFingerprint(analysis)` (dist/services/sync/syncUtils.js, added)
+- `function extractManagedFingerprint(content, id)` (dist/services/sync/syncUtils.js, added)
+- `function findNearestSkillFile(rootDir, filePath)` (dist/services/sync/syncUtils.js, added)
+- `function fingerprintLine(id, fingerprint)` (dist/services/sync/syncUtils.js, added)
+- `function isAnalyzablePath(filePath)` (dist/services/sync/syncUtils.js, added)
+- `function isCodeLikePath(filePath)` (dist/services/sync/syncUtils.js, added)
+- `function listProjectKnowledgeDocs()` (dist/services/sync/syncUtils.js, added)
+- `const MANAGED_PREFIX` (dist/services/sync/syncUtils.js, added)
+- `const PROJECT_DOCS` (dist/services/sync/syncUtils.js, added)
+- `function readPackageManifest(rootDir)` (dist/services/sync/syncUtils.js, added)
+- `function relativePath(rootDir, targetPath)` (dist/services/sync/syncUtils.js, added)
+- `function resolveChangeRoot(changePath)` (dist/services/sync/syncUtils.js, added)
+- `function upsertManagedSection(content, id, title, body, fingerprint)` (dist/services/sync/syncUtils.js, added)
+- `function getBatchHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getChangesHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getDocsHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getIndexHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getPluginsHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getQueueHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getRunHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getSkillHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getSkillsHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getSyncHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `function getWorkflowHelpText()` (dist/utils/subcommandHelp.js, modified)
+- `const HELP_ACTIONS` (dist/utils/subcommandHelp.js, modified)
+- `function isHelpAction(action)` (dist/utils/subcommandHelp.js, modified)
+<!-- OSPEC-DOC-SYNC:document-sync:END -->

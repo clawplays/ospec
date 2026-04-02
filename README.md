@@ -196,6 +196,7 @@ Archive notes:
 - **Change-ready initialization**: `ospec init` creates the protocol shell and baseline project knowledge docs in one pass.
 - **Guided initialization**: AI-assisted init can ask once for missing summary or tech stack; direct CLI init falls back to placeholder docs when context is missing.
 - **Docs maintenance**: `ospec docs generate` refreshes or repairs project knowledge docs when you need it later.
+- **Lightweight sync automation**: `ospec sync` updates project docs, root skills, index files, watch mode, and managed Git hook flows.
 - **Tracked requirement execution**: each change can keep proposal, tasks, state, verification, and review files aligned.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.
 - **Plugin workflow gates**: built-in plugin commands support Stitch design review and Checkpoint automation.
@@ -259,6 +260,24 @@ Notes:
 - `--base-url` points to the running app used by automated checks
 
 </details>
+
+## Sync Workflow
+
+Use `ospec sync` when you want lightweight documentation synchronization without entering a heavier archive step.
+
+```bash
+ospec sync . --dry-run
+ospec sync . --watch
+ospec sync . --install-hook
+ospec sync . --staged --stage-updated --if-active
+```
+
+Typical use cases:
+
+- keep `docs/project/*` aligned with the current active change
+- refresh the root `SKILL.md` and `SKILL.index.json`
+- auto-stage synced files before commit
+- install or remove the managed `pre-commit` sync hook
 
 ## Documentation
 

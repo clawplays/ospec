@@ -1,14 +1,35 @@
 {
   "version": "1.0",
-  "generatedAt": "2026-03-21T16:48:15.772Z",
+  "generatedAt": "2026-04-02T18:28:03.254Z",
+  "documentLanguage": "zh-CN",
   "assets": [
+    {
+      "id": "ai-guide",
+      "strategy": "direct_copy",
+      "category": "ai_guidance",
+      "description": "Project-adopted AI guide copied from the OSpec mother spec.",
+      "targetRelativePath": "for-ai/ai-guide.md",
+      "sourceRelativePath": "assets/for-ai/zh-CN/ai-guide.md",
+      "overwritePolicy": "if_missing",
+      "exists": true
+    },
+    {
+      "id": "execution-protocol",
+      "strategy": "direct_copy",
+      "category": "ai_guidance",
+      "description": "Project-adopted execution protocol copied from the OSpec mother spec.",
+      "targetRelativePath": "for-ai/execution-protocol.md",
+      "sourceRelativePath": "assets/for-ai/zh-CN/execution-protocol.md",
+      "overwritePolicy": "if_missing",
+      "exists": true
+    },
     {
       "id": "build-index-script",
       "strategy": "direct_copy",
       "category": "tooling",
       "description": "Rebuild script for SKILL.index.json.",
-      "targetRelativePath": "build-index-auto.js",
-      "sourceRelativePath": "src/tools/build-index.js",
+      "targetRelativePath": "build-index-auto.cjs",
+      "sourceRelativePath": "dist/tools/build-index.js",
       "overwritePolicy": "if_missing",
       "exists": true
     },
@@ -17,7 +38,7 @@
       "strategy": "direct_copy",
       "category": "conventions",
       "description": "Project-adopted naming conventions copied from the OSpec mother spec.",
-      "targetRelativePath": "docs/project/naming-conventions.md",
+      "targetRelativePath": "for-ai/naming-conventions.md",
       "sourceRelativePath": "assets/project-conventions/zh-CN/naming-conventions.md",
       "overwritePolicy": "if_missing",
       "exists": true
@@ -27,8 +48,18 @@
       "strategy": "direct_copy",
       "category": "conventions",
       "description": "Project-adopted layered SKILL conventions copied from the OSpec mother spec.",
-      "targetRelativePath": "docs/project/skill-conventions.md",
+      "targetRelativePath": "for-ai/skill-conventions.md",
       "sourceRelativePath": "assets/project-conventions/zh-CN/skill-conventions.md",
+      "overwritePolicy": "if_missing",
+      "exists": true
+    },
+    {
+      "id": "project-development-guide",
+      "strategy": "direct_copy",
+      "category": "conventions",
+      "description": "Project-adopted development guide copied from the OSpec mother spec.",
+      "targetRelativePath": "for-ai/development-guide.md",
+      "sourceRelativePath": "assets/project-conventions/zh-CN/development-guide.md",
       "overwritePolicy": "if_missing",
       "exists": true
     },
@@ -37,78 +68,28 @@
       "strategy": "direct_copy",
       "category": "conventions",
       "description": "Project-adopted workflow and change execution conventions copied from the OSpec mother spec.",
-      "targetRelativePath": "docs/project/workflow-conventions.md",
+      "targetRelativePath": "for-ai/workflow-conventions.md",
       "sourceRelativePath": "assets/project-conventions/zh-CN/workflow-conventions.md",
       "overwritePolicy": "if_missing",
       "exists": true
     },
     {
-      "id": "generated:docs/api/module-advanced.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-advanced.md",
-      "sourceRelativePath": null,
+      "id": "hook-template-pre-commit",
+      "strategy": "direct_copy",
+      "category": "hooks",
+      "description": "Template for the OSpec pre-commit hook.",
+      "targetRelativePath": ".ospec/templates/hooks/pre-commit",
+      "sourceRelativePath": "assets/git-hooks/pre-commit",
       "overwritePolicy": "if_missing",
       "exists": true
     },
     {
-      "id": "generated:docs/api/module-cli.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-cli.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:docs/api/module-commands.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-commands.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:docs/api/module-dashboard.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-dashboard.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:docs/api/module-services.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-services.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:docs/api/module-tools.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-tools.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:docs/api/module-workflow.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "docs/api/module-workflow.md",
-      "sourceRelativePath": null,
+      "id": "hook-template-post-merge",
+      "strategy": "direct_copy",
+      "category": "hooks",
+      "description": "Template for the OSpec post-merge hook.",
+      "targetRelativePath": ".ospec/templates/hooks/post-merge",
+      "sourceRelativePath": "assets/git-hooks/post-merge",
       "overwritePolicy": "if_missing",
       "exists": true
     },
@@ -203,26 +184,6 @@
       "exists": true
     },
     {
-      "id": "generated:for-ai/ai-guide.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "for-ai/ai-guide.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:for-ai/execution-protocol.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "for-ai/execution-protocol.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
       "id": "generated:README.md",
       "strategy": "template_generated",
       "category": "templates",
@@ -248,76 +209,6 @@
       "category": "templates",
       "description": "Generated from OSpec template builders during project initialization.",
       "targetRelativePath": "src/core/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/advanced/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/advanced/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/cli/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/cli/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/commands/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/commands/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/dashboard/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/dashboard/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/services/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/services/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/tools/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/tools/SKILL.md",
-      "sourceRelativePath": null,
-      "overwritePolicy": "if_missing",
-      "exists": true
-    },
-    {
-      "id": "generated:src/modules/workflow/SKILL.md",
-      "strategy": "template_generated",
-      "category": "templates",
-      "description": "Generated from OSpec template builders during project initialization.",
-      "targetRelativePath": "src/modules/workflow/SKILL.md",
       "sourceRelativePath": null,
       "overwritePolicy": "if_missing",
       "exists": true
@@ -363,6 +254,16 @@
       "exists": true
     },
     {
+      "id": "runtime:docs/project/bootstrap-summary.md",
+      "strategy": "runtime_generated",
+      "category": "runtime",
+      "description": "Generated by OSpec at runtime or during index/config initialization.",
+      "targetRelativePath": "docs/project/bootstrap-summary.md",
+      "sourceRelativePath": null,
+      "overwritePolicy": "rebuild",
+      "exists": false
+    },
+    {
       "id": "runtime:SKILL.index.json",
       "strategy": "runtime_generated",
       "category": "runtime",
@@ -374,8 +275,8 @@
     }
   ],
   "summary": {
-    "directCopy": 4,
-    "templateGenerated": 30,
-    "runtimeGenerated": 3
+    "directCopy": 9,
+    "templateGenerated": 14,
+    "runtimeGenerated": 4
   }
 }

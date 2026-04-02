@@ -34,6 +34,8 @@ export { PluginsCommand } from './PluginsCommand';
 
 export { IndexCommand } from './IndexCommand';
 
+export { SyncCommand } from './SyncCommand';
+
 export { QueueCommand } from './QueueCommand';
 
 export { RunCommand } from './RunCommand';

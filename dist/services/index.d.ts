@@ -15,6 +15,12 @@ export { ProjectScaffoldCommandService, createProjectScaffoldCommandService, } f
 export { ProjectService, createProjectService } from './ProjectService';
 export { QueueService, createQueueService } from './QueueService';
 export { RunService, createRunService } from './RunService';
+export { ChangeDetector, createChangeDetector } from './sync/ChangeDetector';
+export { ChangeAnalyzer, createChangeAnalyzer } from './sync/ChangeAnalyzer';
+export { ImpactAnalyzer, createImpactAnalyzer } from './sync/ImpactAnalyzer';
+export { ProjectKnowledgeUpdater, createProjectKnowledgeUpdater } from './sync/ProjectKnowledgeUpdater';
+export { SkillFileUpdater, createSkillFileUpdater } from './sync/SkillFileUpdater';
+export { DocumentSyncOrchestrator, createDocumentSyncOrchestrator } from './sync/DocumentSyncOrchestrator';
 import { FileService } from './FileService';
 import { ConfigManager } from './ConfigManager';
 import { StateManager } from './StateManager';
@@ -29,6 +35,12 @@ import { ProjectScaffoldCommandService } from './ProjectScaffoldCommandService';
 import { ProjectService } from './ProjectService';
 import { QueueService } from './QueueService';
 import { RunService } from './RunService';
+import { ChangeDetector } from './sync/ChangeDetector';
+import { ChangeAnalyzer } from './sync/ChangeAnalyzer';
+import { ImpactAnalyzer } from './sync/ImpactAnalyzer';
+import { ProjectKnowledgeUpdater } from './sync/ProjectKnowledgeUpdater';
+import { SkillFileUpdater } from './sync/SkillFileUpdater';
+import { DocumentSyncOrchestrator } from './sync/DocumentSyncOrchestrator';
 export declare class ServiceContainer {
     private static instance;
     readonly fileService: FileService;
@@ -45,6 +57,12 @@ export declare class ServiceContainer {
     readonly projectService: ProjectService;
     readonly queueService: QueueService;
     readonly runService: RunService;
+    readonly changeDetector: ChangeDetector;
+    readonly changeAnalyzer: ChangeAnalyzer;
+    readonly impactAnalyzer: ImpactAnalyzer;
+    readonly projectKnowledgeUpdater: ProjectKnowledgeUpdater;
+    readonly skillFileUpdater: SkillFileUpdater;
+    readonly documentSyncOrchestrator: DocumentSyncOrchestrator;
     private constructor();
     static getInstance(): ServiceContainer;
 }

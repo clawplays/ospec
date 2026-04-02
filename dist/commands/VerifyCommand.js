@@ -141,6 +141,14 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                         : 'verification.md checklist is complete',
                 });
             }
+            const syncStatus = await services_1.services.documentSyncOrchestrator.checkSyncStatus(targetPath);
+            checks.push({
+                name: 'documentation.sync',
+                status: syncStatus.isSynced ? 'pass' : 'warn',
+                message: syncStatus.isSynced
+                    ? 'All managed documentation is up to date'
+                    : `${syncStatus.outdatedFiles.length} file(s) need documentation sync: ${syncStatus.outdatedFiles.join(', ')}`,
+            });
             if (activatedSteps.includes('stitch_design_review')) {
                 const approvalPath = path.join(targetPath, 'artifacts', 'stitch', 'approval.json');
                 const approvalExists = await services_1.services.fileService.exists(approvalPath);

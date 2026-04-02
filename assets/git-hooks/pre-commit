@@ -1,4 +1,15 @@
 #!/bin/sh
+# OSPEC-SYNC-HOOK
+
+if command -v ospec >/dev/null 2>&1; then
+  ospec sync . --staged --stage-updated --if-active
+  status=$?
+  if [ $status -ne 0 ]; then
+    exit $status
+  fi
+else
+  echo "[ospec] ospec command not found, skip sync hook"
+fi
 
 if [ -f "build-index-auto.cjs" ]; then
   OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.cjs"

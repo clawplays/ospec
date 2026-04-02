@@ -3,7 +3,7 @@
  * 服务层导出
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.services = exports.ServiceContainer = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
+exports.services = exports.ServiceContainer = exports.createDocumentSyncOrchestrator = exports.DocumentSyncOrchestrator = exports.createSkillFileUpdater = exports.SkillFileUpdater = exports.createProjectKnowledgeUpdater = exports.ProjectKnowledgeUpdater = exports.createImpactAnalyzer = exports.ImpactAnalyzer = exports.createChangeAnalyzer = exports.ChangeAnalyzer = exports.createChangeDetector = exports.ChangeDetector = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
 var FileService_1 = require("./FileService");
 Object.defineProperty(exports, "FileService", { enumerable: true, get: function () { return FileService_1.FileService; } });
 Object.defineProperty(exports, "fileService", { enumerable: true, get: function () { return FileService_1.fileService; } });
@@ -47,6 +47,24 @@ Object.defineProperty(exports, "createQueueService", { enumerable: true, get: fu
 var RunService_1 = require("./RunService");
 Object.defineProperty(exports, "RunService", { enumerable: true, get: function () { return RunService_1.RunService; } });
 Object.defineProperty(exports, "createRunService", { enumerable: true, get: function () { return RunService_1.createRunService; } });
+var ChangeDetector_1 = require("./sync/ChangeDetector");
+Object.defineProperty(exports, "ChangeDetector", { enumerable: true, get: function () { return ChangeDetector_1.ChangeDetector; } });
+Object.defineProperty(exports, "createChangeDetector", { enumerable: true, get: function () { return ChangeDetector_1.createChangeDetector; } });
+var ChangeAnalyzer_1 = require("./sync/ChangeAnalyzer");
+Object.defineProperty(exports, "ChangeAnalyzer", { enumerable: true, get: function () { return ChangeAnalyzer_1.ChangeAnalyzer; } });
+Object.defineProperty(exports, "createChangeAnalyzer", { enumerable: true, get: function () { return ChangeAnalyzer_1.createChangeAnalyzer; } });
+var ImpactAnalyzer_1 = require("./sync/ImpactAnalyzer");
+Object.defineProperty(exports, "ImpactAnalyzer", { enumerable: true, get: function () { return ImpactAnalyzer_1.ImpactAnalyzer; } });
+Object.defineProperty(exports, "createImpactAnalyzer", { enumerable: true, get: function () { return ImpactAnalyzer_1.createImpactAnalyzer; } });
+var ProjectKnowledgeUpdater_1 = require("./sync/ProjectKnowledgeUpdater");
+Object.defineProperty(exports, "ProjectKnowledgeUpdater", { enumerable: true, get: function () { return ProjectKnowledgeUpdater_1.ProjectKnowledgeUpdater; } });
+Object.defineProperty(exports, "createProjectKnowledgeUpdater", { enumerable: true, get: function () { return ProjectKnowledgeUpdater_1.createProjectKnowledgeUpdater; } });
+var SkillFileUpdater_1 = require("./sync/SkillFileUpdater");
+Object.defineProperty(exports, "SkillFileUpdater", { enumerable: true, get: function () { return SkillFileUpdater_1.SkillFileUpdater; } });
+Object.defineProperty(exports, "createSkillFileUpdater", { enumerable: true, get: function () { return SkillFileUpdater_1.createSkillFileUpdater; } });
+var DocumentSyncOrchestrator_1 = require("./sync/DocumentSyncOrchestrator");
+Object.defineProperty(exports, "DocumentSyncOrchestrator", { enumerable: true, get: function () { return DocumentSyncOrchestrator_1.DocumentSyncOrchestrator; } });
+Object.defineProperty(exports, "createDocumentSyncOrchestrator", { enumerable: true, get: function () { return DocumentSyncOrchestrator_1.createDocumentSyncOrchestrator; } });
 // 服务容器
 const FileService_2 = require("./FileService");
 const ConfigManager_2 = require("./ConfigManager");
@@ -62,6 +80,12 @@ const ProjectScaffoldCommandService_2 = require("./ProjectScaffoldCommandService
 const ProjectService_2 = require("./ProjectService");
 const QueueService_2 = require("./QueueService");
 const RunService_2 = require("./RunService");
+const ChangeDetector_2 = require("./sync/ChangeDetector");
+const ChangeAnalyzer_2 = require("./sync/ChangeAnalyzer");
+const ImpactAnalyzer_2 = require("./sync/ImpactAnalyzer");
+const ProjectKnowledgeUpdater_2 = require("./sync/ProjectKnowledgeUpdater");
+const SkillFileUpdater_2 = require("./sync/SkillFileUpdater");
+const DocumentSyncOrchestrator_2 = require("./sync/DocumentSyncOrchestrator");
 class ServiceContainer {
     constructor() {
         this.fileService = FileService_2.fileService;
@@ -78,6 +102,18 @@ class ServiceContainer {
         this.projectService = (0, ProjectService_2.createProjectService)(FileService_2.fileService, this.configManager, TemplateEngine_2.templateEngine, this.indexBuilder, this.skillParser, this.projectAssetService, this.projectScaffoldService, this.projectScaffoldCommandService);
         this.queueService = (0, QueueService_2.createQueueService)(FileService_2.fileService, this.projectService);
         this.runService = (0, RunService_2.createRunService)(FileService_2.fileService, this.projectService, this.queueService);
+        this.changeDetector = (0, ChangeDetector_2.createChangeDetector)(FileService_2.fileService);
+        this.changeAnalyzer = (0, ChangeAnalyzer_2.createChangeAnalyzer)(FileService_2.fileService);
+        this.impactAnalyzer = (0, ImpactAnalyzer_2.createImpactAnalyzer)(FileService_2.fileService);
+        this.projectKnowledgeUpdater = (0, ProjectKnowledgeUpdater_2.createProjectKnowledgeUpdater)(FileService_2.fileService);
+        this.skillFileUpdater = (0, SkillFileUpdater_2.createSkillFileUpdater)(FileService_2.fileService);
+        this.documentSyncOrchestrator = (0, DocumentSyncOrchestrator_2.createDocumentSyncOrchestrator)({
+            fileService: FileService_2.fileService,
+            changeAnalyzer: this.changeAnalyzer,
+            impactAnalyzer: this.impactAnalyzer,
+            projectKnowledgeUpdater: this.projectKnowledgeUpdater,
+            skillFileUpdater: this.skillFileUpdater,
+        });
     }
     static getInstance() {
         if (!ServiceContainer.instance) {

@@ -1,7 +1,7 @@
 name: ospec
 title: OSpec
 description: Document-driven OSpec workflow skill for AI-assisted development with Codex, Claude Code, and similar AI tools.
-version: 5.1.0
+version: 5.1.1
 author: OSpec Team
 license: MIT
 
@@ -43,6 +43,9 @@ commands:
   - id: docs_generate
     command: "ospec docs generate [project-dir]"
     purpose: "Refresh, repair, or backfill the project knowledge layer for an already initialized repository."
+  - id: sync
+    command: "ospec sync [project-dir]"
+    purpose: "Run lightweight documentation sync, hook automation, watch mode, or staged-file sync for the current active change."
   - id: new
     command: "ospec new <feature-name> [root-dir]"
     purpose: "Create a new change under changes/active with proposal/tasks/state/verification/review."
@@ -91,6 +94,9 @@ commands:
   - id: skill_install_claude
     command: "ospec skill install-claude"
     purpose: "Install or sync one OSpec skill package into ~/.claude/skills/. Managed defaults are ospec and ospec-change."
+  - id: update
+    command: "ospec update [project-dir]"
+    purpose: "Refresh protocol docs, tooling, hooks, managed skills, and already-enabled plugin assets for an initialized project."
 
 workflow:
   read_order:
@@ -111,6 +117,8 @@ workflow:
     - "Run ospec verify [changes/active/<change>] before archiving."
     - "Use ospec status [path] when you want an explicit textual summary or troubleshooting snapshot."
     - "Run ospec docs generate [path] later when you only need a docs maintenance pass."
+    - "Use ospec sync [path] when you need lightweight docs, skill, or index sync without closing the change."
+    - "Use ospec update [path] when you need to refresh managed docs, hooks, tooling, and managed skills in an existing project."
     - "Create the first change explicitly instead of assuming initialization will do it."
 
 guardrails:

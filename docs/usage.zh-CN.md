@@ -7,6 +7,7 @@ ospec status [path]
 ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
+ospec sync [path]
 ospec changes status [path]
 ospec new <change-name> [path]
 ospec progress [changes/active/<change>]
@@ -82,6 +83,44 @@ ospec docs generate [path]
 - 不自动创建第一个 change
 - 不生成 `docs/project/bootstrap-summary.md`
 
+## 文档同步与 Hook
+
+如果你已经在项目里修改了协议文档、项目知识层或根技能文件，可以使用：
+
+```bash
+ospec sync [path]
+```
+
+常见用法：
+
+```bash
+ospec sync [path] --dry-run
+ospec sync [path] --watch
+ospec sync [path] --install-hook
+ospec sync [path] --uninstall-hook
+ospec sync [path] --staged --stage-updated --if-active
+```
+
+`ospec sync [path]` 适合做这些事：
+
+- 根据当前 active change 把变更摘要同步到 `docs/project/*`
+- 同步根目录 `SKILL.md`
+- 重建 `SKILL.index.json`
+- 在需要时把同步后的文件加入 Git 暂存区
+
+常用参数说明：
+
+- `--dry-run`：只预览会更新哪些文件，不真正写入
+- `--watch`：持续监听可分析文件变化并自动同步
+- `--install-hook`：安装受管的 `pre-commit` sync hook
+- `--uninstall-hook`：移除受管的 `pre-commit` sync hook
+- `--staged`：只按当前 Git 暂存区里的文件做变更检测
+- `--stage-updated`：把本次同步更新到的文件自动加入暂存区
+- `--if-active`：没有 active change 时直接跳过并成功退出
+- `--no-index`：本次不同步 `SKILL.index.json`
+- `--no-knowledge`：本次不同步 `docs/project/*`
+- `--no-skill`：本次不同步根目录 `SKILL.md`
+
 ## 队列流程
 
 如果你明确要按队列管理多个 change：
@@ -120,6 +159,7 @@ ospec update [path]
 
 - 刷新协议文档
 - 刷新项目 tooling 与 Git hooks
+- 刷新 `sync` 命令依赖的 hook 模板与托管资产
 - 同步托管安装的 `ospec` 与 `ospec-change` skills
 - 刷新已启用插件的托管工作目录资产
 

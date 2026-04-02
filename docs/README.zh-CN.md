@@ -197,6 +197,7 @@ ospec finalize changes/active/<change-name>
 - **一步到 change-ready 的初始化**：`ospec init` 一次性创建协议壳和基础项目知识文档。
 - **带追问能力的初始化**：在 AI 协作初始化中，如果缺少项目概况或技术栈，可以只追问一次；纯 CLI 初始化则直接落占位文档。
 - **知识层维护命令**：`ospec docs generate` 用于后续刷新、修复或补齐项目知识层。
+- **轻量同步能力**：`ospec sync` 支持项目知识文档、根技能、索引、watch 模式和 Git hook 自动化。
 - **需求执行可追踪**：一个 change 可以持续对齐 proposal、tasks、state、verification、review。
 - **显式队列能力**：`queue` 和 `run` 用于多 change 场景，不会默认偷偷进入队列模式。
 - **插件工作流门禁**：内置支持 Stitch 设计审核和 Checkpoint 自动化检查。
@@ -260,6 +261,24 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 - `--base-url` 用来指定运行中的应用地址，供自动化检查使用
 
 </details>
+
+## Sync 工作流
+
+如果你只是想做轻量的文档与索引同步，而不是直接进入归档流程，可以使用：
+
+```bash
+ospec sync . --dry-run
+ospec sync . --watch
+ospec sync . --install-hook
+ospec sync . --staged --stage-updated --if-active
+```
+
+典型场景：
+
+- 让 `docs/project/*` 跟当前 active change 保持同步
+- 刷新根目录 `SKILL.md` 和 `SKILL.index.json`
+- 在提交前自动把同步后的文件加入暂存区
+- 安装或卸载受管的 `pre-commit` sync hook
 
 ## 文档入口
 
