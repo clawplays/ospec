@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "CLI tool for enforcing ospec workflow",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -47,8 +47,11 @@
   "files": [
     "dist/**",
     "assets/**",
+    "agents/openai.yaml",
     "scripts/postinstall.js",
     ".ospec/templates/hooks/**",
+    "SKILL.md",
+    "skill.yaml",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"

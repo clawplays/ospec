@@ -28,7 +28,7 @@ function run(command, args, options = {}) {
 
     encoding: 'utf8',
 
-    shell: false,
+    shell: options.shell ?? false,
 
   });
 
@@ -47,6 +47,22 @@ function run(command, args, options = {}) {
 
 
   return output;
+
+}
+
+
+
+function runNpm(args, options = {}) {
+
+  if (process.platform === 'win32') {
+
+    return run('cmd.exe', ['/d', '/s', '/c', 'npm', ...args], options);
+
+  }
+
+
+
+  return run('npm', args, options);
 
 }
 
@@ -83,6 +99,16 @@ async function main() {
     let output = run('node', [cliPath, '--help']);
 
     assertContains(output, `OSpec CLI v${packageJson.version}`, 'root help');
+
+
+
+    output = runNpm(['pack', '--dry-run']);
+
+    assertContains(output, 'SKILL.md', 'npm pack contents');
+
+    assertContains(output, 'skill.yaml', 'npm pack contents');
+
+    assertContains(output, 'agents/openai.yaml', 'npm pack contents');
 
 
 
