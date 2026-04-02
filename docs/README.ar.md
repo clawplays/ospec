@@ -245,7 +245,6 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 
 ### الوثائق الأساسية
 
-- [فهرس الوثائق](README.md)
 - [دليل البرومبت](prompt-guide.ar.md)
 - [الاستخدام](usage.ar.md)
 - [نظرة عامة على المشروع](project-overview.ar.md)

@@ -24,7 +24,6 @@
 OSpec is a document-driven workflow for AI-assisted development, helping you define requirements and changes in docs first, then drive implementation, validation, and archive through AI collaboration.
 
 <p align="center">
-  <a href="docs/README.md">Docs</a> |
   <a href="docs/prompt-guide.md">Prompt Guide</a> |
   <a href="docs/usage.md">Usage</a> |
   <a href="docs/project-overview.md">Overview</a> |
@@ -265,7 +264,6 @@ Notes:
 
 ### Core Docs
 
-- [Docs Index](docs/README.md)
 - [Prompt Guide](docs/prompt-guide.md)
 - [Usage](docs/usage.md)
 - [Project Overview](docs/project-overview.md)

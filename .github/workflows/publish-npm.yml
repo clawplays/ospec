@@ -1,0 +1,45 @@
+name: Publish npm Package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "v${PACKAGE_VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v${PACKAGE_VERSION}"
+            exit 1
+          fi
+
+      - name: Smoke test release package
+        run: npm run release:smoke
+
+      - name: Verify package contents
+        run: npm run release:check
+
+      - name: Publish package to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

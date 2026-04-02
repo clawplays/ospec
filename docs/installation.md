@@ -5,13 +5,10 @@
 - Node.js `>= 18`
 - npm `>= 8`
 
-## Install From This Repository
-
-Run inside the OSpec release repository:
+## Install From npm
 
 ```bash
-npm install
-npm install -g .
+npm install -g @clawplays/ospec-cli
 ```
 
 ## Verify
@@ -21,19 +18,14 @@ ospec --version
 ospec --help
 ```
 
-## Optional Validation
+## Managed Skills
 
-If you want to verify the packaged release behavior before using it:
+- `ospec init [path]` and `ospec update [path]` sync the managed `ospec` and `ospec-change` skills for Codex
+- Claude Code sync also runs when `CLAUDE_HOME` or an existing `~/.claude` home is present
+- If a matching managed skill is already installed locally, the packaged version overwrites it
+
+If you want another OSpec skill, install it explicitly, for example:
 
 ```bash
-npm run release:smoke
+ospec skill install ospec-init
 ```
-
-## Notes
-
-- `npm install` installs the local runtime dependencies
-- `npm install -g .` makes the current release available as the global `ospec` command and automatically syncs the managed `ospec` and `ospec-change` skills for Codex and Claude Code
-- `ospec init [path]` and `ospec update [path]` also sync the same managed skill pair for Codex, and for Claude Code when `CLAUDE_HOME` or an existing `~/.claude` home is present
-- If a matching managed skill is already installed locally, the automatic sync overwrites it with the latest packaged version
-- If you want another OSpec skill, install it explicitly, for example `ospec skill install ospec-init`
-- this repository ships the release assets and public docs, not the development source workflow

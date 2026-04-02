@@ -265,7 +265,6 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 
 ### 核心文档
 
-- [文档总览](README.md)
 - [提示词文档](prompt-guide.zh-CN.md)
 - [使用说明](usage.zh-CN.md)
 - [项目介绍](project-overview.zh-CN.md)

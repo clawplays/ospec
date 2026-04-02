@@ -5,13 +5,10 @@
 - Node.js `>= 18`
 - npm `>= 8`
 
-## التثبيت من هذا المستودع
-
-قم بالتشغيل داخل مستودع إصدار OSpec:
+## التثبيت من npm
 
 ```bash
-npm install
-npm install -g .
+npm install -g @clawplays/ospec-cli
 ```
 
 ## التحقق
@@ -21,17 +18,14 @@ ospec --version
 ospec --help
 ```
 
-## التحقق الاختياري
+## المهارات المُدارة
 
-إذا كنت ترغب في التحقق من سلوك الإصدار المعبأ قبل استخدامه:
+- يقوم `ospec init [path]` و `ospec update [path]` بمزامنة المهارتين المُدارتين `ospec` و `ospec-change` لـ Codex
+- تتم مزامنة Claude Code أيضًا عند وجود `CLAUDE_HOME` أو مجلد `~/.claude` مسبقًا
+- إذا كانت المهارة المُدارة نفسها مثبتة محليًا بالفعل، فسيتم استبدالها بالنسخة المعبأة
+
+إذا كنت تحتاج إلى مهارة OSpec أخرى، فثبّتها صراحةً، مثل:
 
 ```bash
-npm run release:smoke
+ospec skill install ospec-init
 ```
-
-## ملاحظات
-
-- `npm install` يقوم بتثبيت تبعيات وقت التشغيل المحلية
-- `npm install -g .` يجعل الإصدار الحالي متاحاً كأمر `ospec` عالمي ويقوم تلقائياً بمزامنة مهارات `ospec` و `ospec-change` المدارة لـ Codex و Claude Code
-- `ospec init [path]` و `ospec update [path]` يقومان أيضاً بمزامنة نفس زوج المهارات المدارة لـ Codex، ولـ Claude Code عند توفر `CLAUDE_HOME` أو منزل `~/.claude` موجود
-- إذا كانت مهارة مدارة مطابقة مثبتة محلياً بالفعل، فإن المزامنة التلقائية تحل محلها بالإصدار المعبأ الأحدث
