@@ -224,7 +224,7 @@ const services_1 = require("./services");
 
 
 
-const CLI_VERSION = '0.3.1';
+const CLI_VERSION = '0.3.2';
 
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language zh-CN|en-US]');
