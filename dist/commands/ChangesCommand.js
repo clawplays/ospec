@@ -21,6 +21,9 @@ class ChangesCommand extends BaseCommand_1.BaseCommand {
                     console.log(`Total: ${report.totalActiveChanges}`);
                     console.log(`Queued: ${queuedChanges.length}`);
                     console.log(`PASS ${report.totals.pass} | WARN ${report.totals.warn} | FAIL ${report.totals.fail}`);
+                    if (report.totalActiveChanges > 1) {
+                        console.log('WORKFLOW WARN multiple active changes detected. The default workflow expects one active change, and queue runner commands will fail until the repository is back to single-active mode.');
+                    }
                     console.log('');
                     if (report.changes.length === 0) {
                         console.log('No active changes.');

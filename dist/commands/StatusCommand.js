@@ -85,6 +85,9 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
                 console.log(`  ${status}: ${count}`);
             }
             console.log(`Protocol summary: PASS ${changes.totals.pass} | WARN ${changes.totals.warn} | FAIL ${changes.totals.fail}`);
+            if (execution.totalActiveChanges > 1) {
+                console.log('Workflow warning: multiple active changes detected. The default workflow expects one active change unless you are explicitly managing extra work as queued changes.');
+            }
             if (execution.activeChanges.length > 0) {
                 console.log('\nCurrent changes:');
                 for (const change of execution.activeChanges) {
@@ -142,6 +145,13 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
                 `There is no active change right now, but ${queuedChanges.length} queued change(s) are waiting.`,
                 `Run "ospec queue next ${projectPath}" if you want to activate the next queued change manually.`,
                 `Or run "ospec run start ${projectPath}" to begin explicit queue tracking.`,
+            ];
+        }
+        if (execution.totalActiveChanges > 1) {
+            return [
+                `Multiple active changes are present. The default workflow expects one active change, but ${execution.totalActiveChanges} were found.`,
+                `Resolve the repository back to a single active change before using "ospec run start ${projectPath}".`,
+                `For additional work, create queued changes explicitly with "ospec queue add <change-name> ${projectPath}".`,
             ];
         }
         const currentChange = execution.activeChanges[0];

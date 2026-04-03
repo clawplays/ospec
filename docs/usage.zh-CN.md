@@ -104,6 +104,7 @@ ospec run step [path]
 这里仍然是显式模式：
 
 - 默认流程仍然是单个 active change
+- 如果已经存在一个 active change，就继续用 `ospec progress` 推进它；额外工作请改用 `ospec queue add`，不要再创建第二个 active change
 - 只有显式使用 `queue` / `run` 时，才进入队列流程
 - `manual-safe` 不改变现有手动执行方式，只负责显式跟踪和推进队列
 - `archive-chain` 只会在一次显式 `run step` 中尝试 finalize 并推进下一个 queued change

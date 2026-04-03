@@ -110,6 +110,7 @@ ospec run step [path]
 Queue mode stays explicit:
 
 - the default workflow is still one active change
+- if one active change already exists, use `ospec progress` to continue it and use `ospec queue add` for additional work instead of creating another active change
 - queue mode starts only when you explicitly use `queue` or `run`
 - `manual-safe` keeps execution manual and only tracks or advances the queue explicitly
 - `archive-chain` only finalizes and advances on an explicit `run step`

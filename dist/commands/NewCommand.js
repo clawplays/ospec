@@ -50,6 +50,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             const featureDir = PathUtils_1.PathUtils.getChangeDir(targetDir, placement, featureName);
             this.logger.info(`Creating ${placement === constants_1.DIR_NAMES.QUEUED ? 'queued change' : 'change'}: ${featureName}`);
             await this.ensureChangeNameAvailable(targetDir, featureName);
+            await this.ensureSingleActiveMode(targetDir, placement, featureName);
             await services_1.services.fileService.ensureDir(path.join(targetDir, constants_1.DIR_NAMES.CHANGES, placement));
             await services_1.services.fileService.ensureDir(featureDir);
             const config = await services_1.services.configManager.loadConfig(targetDir);
@@ -228,6 +229,20 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             return;
         }
         throw new Error(`Change ${featureName} already exists in ${conflicts.join(' and ')}. Continue the existing change instead of creating a duplicate.`);
+    }
+    async ensureSingleActiveMode(targetDir, placement, featureName) {
+        if (placement !== constants_1.DIR_NAMES.ACTIVE) {
+            return;
+        }
+        const activeNames = await services_1.services.projectService.listActiveChangeNames(targetDir);
+        if (activeNames.length === 0) {
+            return;
+        }
+        if (activeNames.length === 1) {
+            const activeName = activeNames[0];
+            throw new Error(`A single active change is the default workflow, but "${activeName}" is already active. Continue it with "ospec progress ${targetDir}/changes/active/${activeName}" or create queued work explicitly with "ospec queue add ${featureName} ${targetDir}".`);
+        }
+        throw new Error(`A single active change is the default workflow, but ${activeNames.length} active changes already exist: ${activeNames.join(', ')}. Resolve the repository back to one active change before creating another, or add new work with "ospec queue add ${featureName} ${targetDir}".`);
     }
     async writePluginArtifacts(featureDir, activatedSteps) {
         const checkpointSteps = activatedSteps.filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
