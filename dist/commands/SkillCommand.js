@@ -16,6 +16,8 @@ const path_1 = __importDefault(require("path"));
 
 const services_1 = require("../services");
 
+const helpers_1 = require("../utils/helpers");
+
 const subcommandHelp_1 = require("../utils/subcommandHelp");
 
 const BaseCommand_1 = require("./BaseCommand");
@@ -554,7 +556,7 @@ class SkillCommand extends BaseCommand_1.BaseCommand {
 
                     if (!result.inSync) {
 
-                        console.log(`\nRecommendation: run "ospec skill ${this.getInstallAction(provider)} ${result.skillName}${selection.targetDir ? ` ${selection.targetDir}` : ''}" to sync this skill.`);
+                        console.log(`\nRecommendation: run "${(0, helpers_1.formatCliCommand)('ospec', 'skill', this.getInstallAction(provider), result.skillName, selection.targetDir)}" to sync this skill.`);
 
                     }
 

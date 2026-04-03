@@ -37,6 +37,7 @@ exports.NewCommand = void 0;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const helpers_1 = require("../utils/helpers");
 const PathUtils_1 = require("../utils/PathUtils");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
@@ -240,9 +241,13 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         }
         if (activeNames.length === 1) {
             const activeName = activeNames[0];
-            throw new Error(`A single active change is the default workflow, but "${activeName}" is already active. Continue it with "ospec progress ${targetDir}/changes/active/${activeName}" or create queued work explicitly with "ospec queue add ${featureName} ${targetDir}".`);
+            const activeChangePath = path.join(targetDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ACTIVE, activeName);
+            const progressCommand = (0, helpers_1.formatCliCommand)('ospec', 'progress', activeChangePath);
+            const queueCommand = (0, helpers_1.formatCliCommand)('ospec', 'queue', 'add', featureName, targetDir);
+            throw new Error(`A single active change is the default workflow, but "${activeName}" is already active. Continue it with "${progressCommand}" or create queued work explicitly with "${queueCommand}".`);
         }
-        throw new Error(`A single active change is the default workflow, but ${activeNames.length} active changes already exist: ${activeNames.join(', ')}. Resolve the repository back to one active change before creating another, or add new work with "ospec queue add ${featureName} ${targetDir}".`);
+        const queueCommand = (0, helpers_1.formatCliCommand)('ospec', 'queue', 'add', featureName, targetDir);
+        throw new Error(`A single active change is the default workflow, but ${activeNames.length} active changes already exist: ${activeNames.join(', ')}. Resolve the repository back to one active change before creating another, or add new work with "${queueCommand}".`);
     }
     async writePluginArtifacts(featureDir, activatedSteps) {
         const checkpointSteps = activatedSteps.filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');

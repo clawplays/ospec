@@ -37,6 +37,7 @@ exports.InitCommand = void 0;
 const os_1 = require("os");
 const path = __importStar(require("path"));
 const services_1 = require("../services");
+const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
 const SkillCommand_1 = require("./SkillCommand");
 class InitCommand extends BaseCommand_1.BaseCommand {
@@ -73,7 +74,7 @@ class InitCommand extends BaseCommand_1.BaseCommand {
             if (result.firstChangeSuggestion) {
                 this.info(`  Suggested first change: ${result.firstChangeSuggestion.name}`);
             }
-            this.info(`  Next: ospec new <change-name> ${targetDir}`);
+            this.info(`  Next: ${(0, helpers_1.formatCliCommand)('ospec', 'new', '<change-name>', targetDir)}`);
         }
         catch (error) {
             this.error(`Failed to initialize project: ${error}`);

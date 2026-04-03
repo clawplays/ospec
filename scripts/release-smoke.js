@@ -52,6 +52,38 @@ function run(command, args, options = {}) {
 
 
 
+function runExpectFailure(command, args, options = {}) {
+
+  const result = spawnSync(command, args, {
+
+    cwd: options.cwd || rootDir,
+
+    encoding: 'utf8',
+
+    shell: options.shell ?? false,
+
+  });
+
+
+
+  const output = `${result.stdout || ''}${result.stderr || ''}`.trim();
+
+
+
+  if (result.status === 0) {
+
+    throw new Error(`Expected command to fail: ${command} ${args.join(' ')}\n${output}`);
+
+  }
+
+
+
+  return output;
+
+}
+
+
+
 function runNpm(args, options = {}) {
 
   if (process.platform === 'win32') {
@@ -83,6 +115,7 @@ function assertContains(output, expected, label) {
 async function main() {
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-release-smoke-'));
+  const projectDir = path.join(tempDir, 'project with spaces');
 
   const tempSkillDir = path.join(tempDir, 'codex-skill');
 
@@ -242,56 +275,60 @@ async function main() {
 
 
 
-    output = run('node', [cliPath, 'init', tempDir]);
+    output = run('node', [cliPath, 'init', projectDir]);
 
     assertContains(output, 'Project initialized to change-ready state', 'init output');
     assertContains(output, 'Protocol shell: created', 'init protocol shell output');
+    assertContains(output, `Next: ospec new <change-name> "${projectDir}"`, 'init next command output');
 
 
 
-    output = run('node', [cliPath, 'queue', 'add', 'queued-smoke', tempDir]);
+    output = run('node', [cliPath, 'queue', 'add', 'queued-smoke', projectDir]);
 
     assertContains(output, 'Queued change queued-smoke created', 'queue add output');
 
 
 
-    output = run('node', [cliPath, 'queue', 'status', tempDir]);
+    output = run('node', [cliPath, 'queue', 'status', projectDir]);
 
     assertContains(output, 'queued-smoke', 'queue status output');
 
 
 
-    output = run('node', [cliPath, 'status', tempDir]);
+    output = run('node', [cliPath, 'status', projectDir]);
 
     assertContains(output, 'Project Status', 'status output');
 
 
 
-    output = run('node', [cliPath, 'docs', 'status', tempDir]);
+    output = run('node', [cliPath, 'docs', 'status', projectDir]);
 
     assertContains(output, 'Docs Status', 'docs status output');
 
 
 
-    output = run('node', [cliPath, 'skills', 'status', tempDir]);
+    output = run('node', [cliPath, 'skills', 'status', projectDir]);
 
     assertContains(output, 'Skills Status', 'skills status output');
 
 
 
-    output = run('node', [cliPath, 'index', 'check', tempDir]);
+    output = run('node', [cliPath, 'index', 'check', projectDir]);
 
     assertContains(output, 'Index Status', 'index status output');
 
 
 
-    output = run('node', [cliPath, 'new', 'release-smoke', tempDir]);
+    output = run('node', [cliPath, 'new', 'release-smoke', projectDir]);
 
     assertContains(output, 'Change release-smoke created', 'new change output');
+    output = runExpectFailure('node', [cliPath, 'new', 'second-active', projectDir]);
+    assertContains(output, `ospec progress "${path.join(projectDir, 'changes', 'active', 'release-smoke')}"`, 'quoted progress suggestion');
+    assertContains(output, `ospec queue add second-active "${projectDir}"`, 'quoted queue suggestion');
 
 
 
-    const featureDir = path.join(tempDir, 'changes', 'active', 'release-smoke');
+    const featureDir = path.join(projectDir, 'changes', 'active', 'release-smoke');
 
     const statePath = path.join(featureDir, 'state.json');
 

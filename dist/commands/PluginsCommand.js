@@ -5,6 +5,7 @@ const child_process_1 = require("child_process");
 const path = require("path");
 const gray_matter_1 = require("gray-matter");
 const constants_1 = require("../core/constants");
+const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
 const services_1 = require("../services");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
@@ -162,7 +163,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 if (plugin.runner.extraEnvCount > 0) {
                     console.log(`    Extra env entries: ${plugin.runner.extraEnvCount}`);
                 }
-                console.log(`    Doctor: ospec plugins doctor ${plugin.name} ${projectPath}`);
+                console.log(`    Doctor: ${(0, helpers_1.formatCliCommand)('ospec', 'plugins', 'doctor', plugin.name, projectPath)}`);
             }
             console.log();
         });
@@ -231,7 +232,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 this.info(`  codex model: ${this.getStitchCodexConfig(nextConfig.plugins.stitch).model || '(cli default)'}`);
                 if (enabled) {
                     this.info(`  token env: ${nextConfig.plugins.stitch.runner.token_env || '(not required)'}`);
-                    this.info(`  doctor: ospec plugins doctor stitch ${projectPath}`);
+                    this.info(`  doctor: ${(0, helpers_1.formatCliCommand)('ospec', 'plugins', 'doctor', 'stitch', projectPath)}`);
                 }
                 this.info('  Affects new changes by default; update existing changes manually if needed');
                 return;
@@ -311,7 +312,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 this.info(`  runner.command: ${nextConfig.plugins.checkpoint.runner.command || '(built-in adapter)'}`);
                 this.info(`  stitch integration: ${nextConfig.plugins.checkpoint.stitch_integration.enabled ? 'enabled' : 'disabled'}`);
                 if (enabled) {
-                    this.info(`  doctor: ospec plugins doctor checkpoint ${projectPath}`);
+                    this.info(`  doctor: ${(0, helpers_1.formatCliCommand)('ospec', 'plugins', 'doctor', 'checkpoint', projectPath)}`);
                 }
                 this.info('  Affects new changes by default; update existing changes manually if needed');
                 return;

@@ -1,7 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StatusCommand = void 0;
+const path = require("path");
 const services_1 = require("../services");
+const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
 class StatusCommand extends BaseCommand_1.BaseCommand {
     async execute(projectPath) {
@@ -123,44 +125,46 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
         }
     }
     getRecommendedNextSteps(projectPath, structure, docs, execution, queuedChanges, runReport) {
+        const formatCommand = (...args) => (0, helpers_1.formatCliCommand)('ospec', ...args);
         if (!structure.initialized) {
             return [
-                `Run "ospec init ${projectPath}" to initialize the repository to a change-ready state.`,
+                `Run "${formatCommand('init', projectPath)}" to initialize the repository to a change-ready state.`,
             ];
         }
         if (docs.missingRequired.length > 0 || docs.coverage < 100) {
             return [
                 'The repository is initialized, but the project knowledge layer is still incomplete.',
-                `Run "ospec init ${projectPath}" to reconcile the repository back to change-ready state and regenerate missing project knowledge docs.`,
-                `If you only want to refresh or repair docs without rerunning full init messaging, use "ospec docs generate ${projectPath}".`,
+                `Run "${formatCommand('init', projectPath)}" to reconcile the repository back to change-ready state and regenerate missing project knowledge docs.`,
+                `If you only want to refresh or repair docs without rerunning full init messaging, use "${formatCommand('docs', 'generate', projectPath)}".`,
             ];
         }
         if (execution.totalActiveChanges === 0 && queuedChanges.length === 0) {
             return [
-                `Or run "ospec new <change-name> ${projectPath}" if you want to create the first change from CLI.`,
+                `Or run "${formatCommand('new', '<change-name>', projectPath)}" if you want to create the first change from CLI.`,
             ];
         }
         if (execution.totalActiveChanges === 0 && queuedChanges.length > 0) {
             return [
                 `There is no active change right now, but ${queuedChanges.length} queued change(s) are waiting.`,
-                `Run "ospec queue next ${projectPath}" if you want to activate the next queued change manually.`,
-                `Or run "ospec run start ${projectPath}" to begin explicit queue tracking.`,
+                `Run "${formatCommand('queue', 'next', projectPath)}" if you want to activate the next queued change manually.`,
+                `Or run "${formatCommand('run', 'start', projectPath)}" to begin explicit queue tracking.`,
             ];
         }
         if (execution.totalActiveChanges > 1) {
             return [
                 `Multiple active changes are present. The default workflow expects one active change, but ${execution.totalActiveChanges} were found.`,
-                `Resolve the repository back to a single active change before using "ospec run start ${projectPath}".`,
-                `For additional work, create queued changes explicitly with "ospec queue add <change-name> ${projectPath}".`,
+                `Resolve the repository back to a single active change before using "${formatCommand('run', 'start', projectPath)}".`,
+                `For additional work, create queued changes explicitly with "${formatCommand('queue', 'add', '<change-name>', projectPath)}".`,
             ];
         }
         const currentChange = execution.activeChanges[0];
+        const currentChangePath = path.join(projectPath, 'changes', 'active', currentChange.name);
         const nextSteps = [
-            `Continue the active change "${currentChange.name}" with "ospec progress ${projectPath}/changes/active/${currentChange.name}".`,
-            `Run "ospec verify ${projectPath}/changes/active/${currentChange.name}" before trying to archive it.`,
+            `Continue the active change "${currentChange.name}" with "${formatCommand('progress', currentChangePath)}".`,
+            `Run "${formatCommand('verify', currentChangePath)}" before trying to archive it.`,
         ];
         if (queuedChanges.length > 0) {
-            nextSteps.push(`There are ${queuedChanges.length} queued change(s) waiting behind the active one. Use "ospec run ${runReport.currentRun ? 'step' : 'start'} ${projectPath}" when you want explicit queue progression.`);
+            nextSteps.push(`There are ${queuedChanges.length} queued change(s) waiting behind the active one. Use "${formatCommand('run', runReport.currentRun ? 'step' : 'start', projectPath)}" when you want explicit queue progression.`);
         }
         return nextSteps;
     }
