@@ -22,6 +22,14 @@ OSpec هو سير عمل مدفوع بالوثائق للتطوير المدعو
 - المشاريع التي قد تصبح مستودعات ويب أو واجهة سطر أوامر أو Unity أو Godot أو خلفية أو بروتوكول فقط
 - البيئات التي تحتاج إلى نفس سير العمل عبر Codex و Claude Code
 
+## كيف يقارن OSpec
+
+مقارنة مع [Spec Kit](https://github.github.com/spec-kit/) — يركز Spec Kit على المواصفات القابلة للتنفيذ ومراحل التخطيط الأعمق والتنقيح متعدد الخطوات. أما OSpec فيحافظ على حاوية change أنحف ومسار افتراضي أقصر حتى التسليم والأرشفة.
+
+مقارنة مع [Kiro](https://kiro.dev/docs/specs/) — يجمع Kiro بين specs و steering و hooks و MCP و powers داخل منصة أوسع. يركز OSpec على طبقة workflow أصلية للمستودع وتبقى قابلة للنقل عبر المساعدات التي تستخدمها بالفعل.
+
+مقارنة مع [OpenSpec](https://github.com/Fission-AI/OpenSpec) — يستخدم OpenSpec artifact-guided workflow مع أوامر `/opsx` وملفات proposal/specs/design/tasks وتكاملات أدوات أوسع. يحافظ OSpec على التدفق الافتراضي أصغر ويركز على active change صريح واحد مع مسار إغلاق قياسي `verify -> finalize`.
+
 ## القدرات الحالية
 
 - تهيئة جاهزة للتغيير
