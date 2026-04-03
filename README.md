@@ -43,9 +43,9 @@ Update inside your project directory:
 ospec update
 ```
 
-## Recommended Prompts
+## Quick Start
 
-Most teams only need 3 steps to use OSpec:
+Using OSpec only takes 3 steps:
 
 1. initialize OSpec in your project directory
 2. create and advance one change for a requirement, document update, or bug fix

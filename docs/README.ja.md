@@ -44,9 +44,9 @@ npm install -g @clawplays/ospec-cli
 ospec update
 ```
 
-## 推奨プロンプト
+## クイックスタート
 
-OSpec の利用は、ほとんどの場合この 3 ステップで十分です。
+OSpec の利用は、この 3 ステップだけです：
 
 1. プロジェクトディレクトリで OSpec を初期化する
 2. 要件、ドキュメント更新、バグ修正のための change を作成して進める

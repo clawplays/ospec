@@ -44,9 +44,9 @@ npm install -g @clawplays/ospec-cli
 ospec update
 ```
 
-## 推荐提示词
+## 快速开始
 
-大多数团队使用 OSpec，只要 3 步：
+使用 OSpec，只要 3 步：
 
 1. 在你的项目目录初始化项目
 2. 为文档更新、需求开发或 Bug 修复创建并推进一个 change
