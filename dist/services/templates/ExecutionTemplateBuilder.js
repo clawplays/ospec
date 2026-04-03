@@ -83,13 +83,79 @@ ${this.formatList(context.outOfScope, 'TBD')}
 ## Acceptance Criteria
 
 ${this.formatChecklist(context.acceptanceCriteria, 'TBD')}`;
+        const ja = `## 背景
+
+${context.background}
+
+## プロジェクト文脈
+
+**プロジェクト文書:**
+${this.formatReferenceList(projectDocs, '未定')}
+
+**関連モジュール SKILL:**
+${this.formatReferenceList(moduleSkills, '未定')}
+
+**関連 API 文書:**
+${this.formatReferenceList(apiDocs, '未定')}
+
+**関連する設計 / 計画文書:**
+${this.formatReferenceList(designAndPlanningDocs, '未定')}
+
+## 目標
+
+${this.formatList(context.goals, '未定')}
+
+## 範囲
+
+**対象:**
+${this.formatList(context.inScope, '未定')}
+
+**対象外:**
+${this.formatList(context.outOfScope, '未定')}
+
+## 受け入れ条件
+
+${this.formatChecklist(context.acceptanceCriteria, '未定')}`;
+        const ar = `## الخلفية
+
+${context.background}
+
+## سياق المشروع
+
+**وثائق المشروع:**
+${this.formatReferenceList(projectDocs, 'قيد التحديد')}
+
+**ملفات SKILL للوحدات ذات الصلة:**
+${this.formatReferenceList(moduleSkills, 'قيد التحديد')}
+
+**وثائق API ذات الصلة:**
+${this.formatReferenceList(apiDocs, 'قيد التحديد')}
+
+**وثائق التصميم / التخطيط ذات الصلة:**
+${this.formatReferenceList(designAndPlanningDocs, 'قيد التحديد')}
+
+## الأهداف
+
+${this.formatList(context.goals, 'قيد التحديد')}
+
+## النطاق
+
+**ضمن النطاق:**
+${this.formatList(context.inScope, 'قيد التحديد')}
+
+**خارج النطاق:**
+${this.formatList(context.outOfScope, 'قيد التحديد')}
+
+## معايير القبول
+
+${this.formatChecklist(context.acceptanceCriteria, 'قيد التحديد')}`;
         return this.withFrontmatter({
             name: context.feature,
             status: context.placement === 'queued' ? 'queued' : 'active',
             created,
             affects: context.affects,
             flags: context.flags,
-        }, this.copy(context.documentLanguage, zh, en));
+        }, this.copy(context.documentLanguage, zh, en, ja, ar));
     }
     generateTasksTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
@@ -104,6 +170,16 @@ ${this.formatChecklist(context.acceptanceCriteria, 'TBD')}`;
         const optionalStepTasksEn = context.optionalSteps.length > 0
             ? context.optionalSteps
                 .map((step, index) => `- [ ] ${index + 7}. Finish docs and verification for optional step \`${step}\``)
+                .join('\n')
+            : '';
+        const optionalStepTasksJa = context.optionalSteps.length > 0
+            ? context.optionalSteps
+                .map((step, index) => `- [ ] ${index + 7}. オプション手順 \`${step}\` の文書と検証を完了する`)
+                .join('\n')
+            : '';
+        const optionalStepTasksAr = context.optionalSteps.length > 0
+            ? context.optionalSteps
+                .map((step, index) => `- [ ] ${index + 7}. أكمل التوثيق والتحقق للخطوة الاختيارية \`${step}\``)
                 .join('\n')
             : '';
         const zh = `## 上下文引用
@@ -140,11 +216,45 @@ ${this.formatReferenceList(moduleSkills, 'TBD')}
 - [ ] 5. Rebuild \`SKILL.index.json\`
 - [ ] 6. Run verification and update \`verification.md\`
 ${optionalStepTasksEn}`.trim();
+        const ja = `## 参照コンテキスト
+
+**プロジェクト文書:**
+${this.formatReferenceList(projectDocs, '未定')}
+
+**モジュール SKILL:**
+${this.formatReferenceList(moduleSkills, '未定')}
+
+## タスクチェックリスト
+
+- [ ] 1. change を実装する
+- [ ] 2. この change の境界に合わせてプロジェクト計画文書を揃える
+- [ ] 3. 影響を受ける \`SKILL.md\` を更新する
+- [ ] 4. 関連する API / 設計 / 計画文書を更新する
+- [ ] 5. \`SKILL.index.json\` を再生成する
+- [ ] 6. 検証を実行して \`verification.md\` を更新する
+${optionalStepTasksJa}`.trim();
+        const ar = `## مراجع السياق
+
+**وثائق المشروع:**
+${this.formatReferenceList(projectDocs, 'قيد التحديد')}
+
+**ملفات SKILL للوحدات:**
+${this.formatReferenceList(moduleSkills, 'قيد التحديد')}
+
+## قائمة المهام
+
+- [ ] 1. نفّذ التغيير
+- [ ] 2. وحّد وثائق تخطيط المشروع مع حدود هذا change
+- [ ] 3. حدّث ملفات \`SKILL.md\` المتأثرة
+- [ ] 4. حدّث وثائق API / التصميم / التخطيط ذات الصلة
+- [ ] 5. أعد بناء \`SKILL.index.json\`
+- [ ] 6. نفّذ التحقق وحدّث \`verification.md\`
+${optionalStepTasksAr}`.trim();
         return this.withFrontmatter({
             feature: context.feature,
             created,
             optional_steps: context.optionalSteps,
-        }, this.copy(context.documentLanguage, zh, en));
+        }, this.copy(context.documentLanguage, zh, en, ja, ar));
     }
     generateVerificationTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
@@ -202,13 +312,59 @@ ${this.formatChecklist(context.acceptanceCriteria, 'Acceptance item 1')}
 ## Decision
 
 - [ ] Ready to archive`;
+        const ja = `## 自動検証
+
+- [ ] build が通過した
+- [ ] lint が通過した
+- [ ] test が通過した
+- [ ] インデックスを再生成した
+- [ ] spec-check が通過した
+
+## プロジェクト同期レビュー
+
+${this.formatReferenceChecklist(projectDocs, 'プロジェクト文書を確認済み')}
+
+${this.formatReferenceChecklist(moduleSkills, '関連モジュール SKILL を確認済み')}
+
+${this.formatReferenceChecklist(linkedKnowledgeDocs, '関連する API / 設計 / 計画文書を確認済み')}
+
+## 受け入れ確認
+
+${this.formatChecklist(context.acceptanceCriteria, '受け入れ条件 1')}
+
+## 判定
+
+- [ ] archive 可能`;
+        const ar = `## التحقق الآلي
+
+- [ ] نجح build
+- [ ] نجح lint
+- [ ] نجح test
+- [ ] أُعيد بناء الفهرس
+- [ ] نجح spec-check
+
+## مراجعة مزامنة المشروع
+
+${this.formatReferenceChecklist(projectDocs, 'تمت مراجعة وثائق المشروع')}
+
+${this.formatReferenceChecklist(moduleSkills, 'تمت مراجعة ملفات SKILL ذات الصلة')}
+
+${this.formatReferenceChecklist(linkedKnowledgeDocs, 'تمت مراجعة وثائق API / التصميم / التخطيط ذات الصلة')}
+
+## مراجعة القبول
+
+${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
+
+## القرار
+
+- [ ] جاهز للأرشفة`;
         return this.withFrontmatter({
             feature: context.feature,
             created,
             status: context.placement === 'queued' ? 'queued' : 'verifying',
             optional_steps: context.optionalSteps,
             passed_optional_steps: [],
-        }, this.copy(context.documentLanguage, zh, en));
+        }, this.copy(context.documentLanguage, zh, en, ja, ar));
     }
     generateReviewTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
@@ -221,21 +377,23 @@ ${this.formatChecklist(context.acceptanceCriteria, 'Acceptance item 1')}
             ...(context.projectContext.planningDocs ?? []),
         ];
         const affects = context.affects.length > 0 ? context.affects.join(', ') : 'TBD';
-        const zh = `## Review Scope
+        const affectsJa = context.affects.length > 0 ? context.affects.join(', ') : '未定';
+        const affectsAr = context.affects.length > 0 ? context.affects.join(', ') : 'قيد التحديد';
+        const zh = `## 评审范围
 
 - Change: \`${context.feature}\`
 - Mode: \`${context.mode}\`
 - Affects: ${context.affects.length > 0 ? context.affects.join(', ') : '待补充'}
 
-## Context References
+## 上下文引用
 
-**Project docs:**
+**项目文档：**
 ${this.formatReferenceList(projectDocs, '待补充')}
 
-**Module skills:**
+**模块技能：**
 ${this.formatReferenceList(moduleSkills, '待补充')}
 
-**API / design / planning docs:**
+**API / 设计 / 计划文档：**
 ${this.formatReferenceList(linkedKnowledgeDocs, '待补充')}
 
 ## Review Checklist
@@ -289,11 +447,79 @@ ${this.formatReferenceList(linkedKnowledgeDocs, 'TBD')}
 - [ ] Continue implementation
 - [ ] Require follow-up changes
 - [ ] Ready for verification / archive`;
+        const ja = `## レビュー範囲
+
+- Change: \`${context.feature}\`
+- Mode: \`${context.mode}\`
+- Affects: ${affectsJa}
+
+## 参照コンテキスト
+
+**プロジェクト文書:**
+${this.formatReferenceList(projectDocs, '未定')}
+
+**モジュール SKILL:**
+${this.formatReferenceList(moduleSkills, '未定')}
+
+**API / 設計 / 計画文書:**
+${this.formatReferenceList(linkedKnowledgeDocs, '未定')}
+
+## レビューチェックリスト
+
+- [ ] 実装が proposal の背景、目標、範囲に一致している
+- [ ] 関連モジュールの SKILL が更新されている
+- [ ] API / 設計 / 計画文書が揃っている
+- [ ] 検証が主要リスクをカバーしている
+- [ ] リグレッション、境界漏れ、未解決事項が追跡されている
+
+## 指摘事項
+
+- [ ] 未定
+
+## 判定
+
+- [ ] 実装を継続できる
+- [ ] 追補修正が必要
+- [ ] 検証 / archive に進める`;
+        const ar = `## نطاق المراجعة
+
+- Change: \`${context.feature}\`
+- Mode: \`${context.mode}\`
+- Affects: ${affectsAr}
+
+## مراجع السياق
+
+**وثائق المشروع:**
+${this.formatReferenceList(projectDocs, 'قيد التحديد')}
+
+**ملفات SKILL للوحدات:**
+${this.formatReferenceList(moduleSkills, 'قيد التحديد')}
+
+**وثائق API / التصميم / التخطيط:**
+${this.formatReferenceList(linkedKnowledgeDocs, 'قيد التحديد')}
+
+## قائمة فحص المراجعة
+
+- [ ] التنفيذ يطابق الخلفية والأهداف والنطاق في proposal
+- [ ] تم تحديث ملفات SKILL ذات الصلة
+- [ ] وثائق API / التصميم / التخطيط متوافقة
+- [ ] يغطي التحقق المخاطر الرئيسية
+- [ ] تم تتبع الارتدادات والثغرات والأسئلة المفتوحة
+
+## الملاحظات
+
+- [ ] قيد التحديد
+
+## القرار
+
+- [ ] يمكن متابعة التنفيذ
+- [ ] يلزم إجراء تعديلات إضافية
+- [ ] جاهز للانتقال إلى التحقق / الأرشفة`;
         return this.withFrontmatter({
             feature: context.feature,
             created,
             status: 'pending_review',
-        }, this.copy(context.documentLanguage, zh, en));
+        }, this.copy(context.documentLanguage, zh, en, ja, ar));
     }
 }
 exports.ExecutionTemplateBuilder = ExecutionTemplateBuilder;

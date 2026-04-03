@@ -55,7 +55,21 @@ If you want to pass project context during init, you can do it directly:
 ```bash
 ospec init [path] --summary "Internal admin portal" --tech-stack node,react,postgres
 ospec init [path] --architecture "Single web app with API and shared auth" --document-language en-US
+ospec init [path] --architecture "Support workspace" --document-language ja-JP
+ospec init [path] --architecture "Customer operations portal" --document-language ar
 ```
+
+Language resolution priority during init:
+
+- in AI-assisted flows: explicit language request in the conversation -> current conversation language -> persisted project language in `.skillrc`
+- in CLI flows: explicit `--document-language` -> persisted project language in `.skillrc` -> inferred from existing project docs / `for-ai/*` / asset manifest
+- fallback `en-US`
+
+Project language persistence:
+
+- OSpec stores the selected project document language in `.skillrc`
+- later `for-ai` guidance refreshes, `ospec new`, and `ospec update` reuse that persisted project language by default
+- change the project language explicitly if you want future generated docs to switch languages
 
 Direct CLI init stays non-interactive. If the repository has no usable project description and you do not pass flags, OSpec should still generate placeholder docs and leave the repository ready for `ospec new`.
 
@@ -105,7 +119,7 @@ Queue mode stays explicit:
 For a project that is already initialized:
 
 ```bash
-npm install -g @clawplays/ospec-cli@0.3.3
+npm install -g @clawplays/ospec-cli@0.3.4
 ospec update [path]
 ```
 
@@ -122,6 +136,7 @@ ospec update [path]
 - refresh project tooling and Git hooks
 - sync managed `ospec` and `ospec-change` skills
 - refresh managed workspace assets for already-enabled plugins
+- backfill `.skillrc.documentLanguage` for older projects when the language can be recovered from existing project assets
 
 `ospec update [path]` will not:
 

@@ -11,6 +11,8 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         localizedSources: {
             'zh-CN': 'assets/for-ai/zh-CN/ai-guide.md',
             'en-US': 'assets/for-ai/en-US/ai-guide.md',
+            'ja-JP': 'assets/for-ai/ja-JP/ai-guide.md',
+            'ar': 'assets/for-ai/ar/ai-guide.md',
         },
     },
     {
@@ -22,6 +24,8 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         localizedSources: {
             'zh-CN': 'assets/for-ai/zh-CN/execution-protocol.md',
             'en-US': 'assets/for-ai/en-US/execution-protocol.md',
+            'ja-JP': 'assets/for-ai/ja-JP/execution-protocol.md',
+            'ar': 'assets/for-ai/ar/execution-protocol.md',
         },
     },
     {
@@ -41,6 +45,8 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         localizedSources: {
             'zh-CN': 'assets/project-conventions/zh-CN/naming-conventions.md',
             'en-US': 'assets/project-conventions/en-US/naming-conventions.md',
+            'ja-JP': 'assets/project-conventions/ja-JP/naming-conventions.md',
+            'ar': 'assets/project-conventions/ar/naming-conventions.md',
         },
     },
     {
@@ -52,6 +58,8 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         localizedSources: {
             'zh-CN': 'assets/project-conventions/zh-CN/skill-conventions.md',
             'en-US': 'assets/project-conventions/en-US/skill-conventions.md',
+            'ja-JP': 'assets/project-conventions/ja-JP/skill-conventions.md',
+            'ar': 'assets/project-conventions/ar/skill-conventions.md',
         },
     },
     {
@@ -63,6 +71,8 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         localizedSources: {
             'zh-CN': 'assets/project-conventions/zh-CN/development-guide.md',
             'en-US': 'assets/project-conventions/en-US/development-guide.md',
+            'ja-JP': 'assets/project-conventions/ja-JP/development-guide.md',
+            'ar': 'assets/project-conventions/ar/development-guide.md',
         },
     },
     {
@@ -74,6 +84,8 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         localizedSources: {
             'zh-CN': 'assets/project-conventions/zh-CN/workflow-conventions.md',
             'en-US': 'assets/project-conventions/en-US/workflow-conventions.md',
+            'ja-JP': 'assets/project-conventions/ja-JP/workflow-conventions.md',
+            'ar': 'assets/project-conventions/ar/workflow-conventions.md',
         },
     },
     {

@@ -224,10 +224,10 @@ const services_1 = require("./services");
 
 
 
-const CLI_VERSION = '0.3.3';
+const CLI_VERSION = '0.3.4';
 
 function showInitUsage() {
-    console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language zh-CN|en-US]');
+    console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
 
 function parseInitCommandArgs(commandArgs) {

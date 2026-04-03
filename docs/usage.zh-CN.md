@@ -55,7 +55,15 @@ ospec finalize [changes/active/<change>]
 ```bash
 ospec init [path] --summary "内部管理后台" --tech-stack node,react,postgres
 ospec init [path] --architecture "单体 Web 应用 + API + 统一鉴权" --document-language zh-CN
+ospec init [path] --architecture "支持团队工作台" --document-language ja-JP
+ospec init [path] --architecture "客户运营门户" --document-language ar
 ```
+
+初始化时的语言解析优先级：
+
+- 显式传入 `--document-language`
+- 从现有项目文档 / `for-ai/*` / asset manifest 推断
+- 最终回退到 `en-US`
 
 直接执行 CLI 的 `ospec init` 仍然保持非交互。如果仓库没有可复用的项目说明，且你也没有显式传参，OSpec 也会先生成待补充的占位文档，并把仓库带到可直接执行 `ospec new` 的状态。
 
@@ -105,7 +113,7 @@ ospec run step [path]
 如果是已经初始化过的项目：
 
 ```bash
-npm install -g @clawplays/ospec-cli@0.3.3
+npm install -g @clawplays/ospec-cli@0.3.4
 ospec update [path]
 ```
 

@@ -71,7 +71,8 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 - `--summary`: نص موجز للمشروع يُكتب داخل المستندات المُنشأة
 - `--tech-stack`: قائمة تقنيات مفصولة بفواصل مثل `node,react,postgres`
 - `--architecture`: وصف مختصر للمعمارية
-- `--document-language`: لغة المستندات المُنشأة، وعادةً تكون `en-US` أو `zh-CN`
+- `--document-language`: لغة المستندات المُنشأة، ويمكن أن تكون `en-US` أو `zh-CN` أو `ja-JP` أو `ar`
+- أولوية تحديد اللغة: `--document-language` الصريح -> وثائق المشروع الحالية / `for-ai/*` / asset manifest -> الرجوع إلى `en-US`
 - إذا مرّرت هذه القيم فسيستخدمها OSpec مباشرةً عند توليد مستندات المشروع
 - إذا لم تمرّرها فسيعيد OSpec استخدام المستندات الموجودة إن أمكن، وإلا فسينشئ مستندات أولية كعناصر نائبة
 

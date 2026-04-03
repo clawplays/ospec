@@ -1,6 +1,6 @@
 import { ProjectMode } from '../core/types';
 export type ProjectPresetId = 'official-site' | 'nextjs-web';
-export type ProjectPresetDocumentLanguage = 'zh-CN' | 'en-US';
+export type ProjectPresetDocumentLanguage = 'zh-CN' | 'en-US' | 'ja-JP' | 'ar';
 export interface ProjectPresetFirstChangeSuggestion {
     name: string;
     background: string;

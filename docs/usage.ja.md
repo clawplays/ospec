@@ -55,7 +55,15 @@ ospec finalize [changes/active/<change>]
 ```bash
 ospec init [path] --summary "内部管理ポータル" --tech-stack node,react,postgres
 ospec init [path] --architecture "APIと共有認証を備えたシングルウェブアプリ" --document-language ja-JP
+ospec init [path] --architecture "サポートチーム用ワークスペース" --document-language en-US
+ospec init [path] --architecture "運用ポータル" --document-language ar
 ```
+
+初期化時の言語解決優先順位:
+
+- 明示的な `--document-language`
+- 既存のプロジェクト文書 / `for-ai/*` / asset manifest からの推定
+- 最後は `en-US`
 
 直接的なCLI初期化は非対話型のままです。リポジトリに使用可能なプロジェクト説明がなく、フラグも渡さない場合でも、OSpecはプレースホルダードキュメントを生成し、`ospec new` の準備が整った状態にします。
 

@@ -55,7 +55,15 @@ ospec finalize [changes/active/<change>]
 ```bash
 ospec init [path] --summary "Internal admin portal" --tech-stack node,react,postgres
 ospec init [path] --architecture "Single web app with API and shared auth" --document-language en-US
+ospec init [path] --architecture "مساحة عمل لفريق الدعم" --document-language ja-JP
+ospec init [path] --architecture "بوابة تشغيل العملاء" --document-language ar
 ```
+
+أولوية تحديد اللغة أثناء التهيئة:
+
+- `--document-language` الصريح
+- الاستدلال من وثائق المشروع الحالية / `for-ai/*` / asset manifest
+- ثم الرجوع إلى `en-US`
 
 تبقى التهيئة المباشرة عبر واجهة سطر الأوامر غير تفاعلية. إذا كان المستودع لا يحتوي على وصف مشروع قابل للاستخدام ولم تقم بتمرير وسوم (flags)، فسيظل OSpec ينشئ وثائق مؤقتة ويترك المستودع جاهزاً لـ `ospec new`.
 

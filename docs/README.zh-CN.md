@@ -75,7 +75,8 @@ ospec init . --architecture "单体 Web 应用 + API + 统一鉴权" --document-
 - `--summary`：项目概况，会写入生成的项目文档
 - `--tech-stack`：技术栈，使用逗号分隔，例如 `node,react,postgres`
 - `--architecture`：简短的架构说明
-- `--document-language`：生成文档的语言，通常使用 `zh-CN` 或 `en-US`
+- `--document-language`：生成文档的语言，可选 `en-US`、`zh-CN`、`ja-JP`、`ar`
+- 语言解析优先级：显式 `--document-language` -> 现有项目文档 / `for-ai/*` / asset manifest -> 回退 `en-US`
 - 传了这些参数，就按你提供的内容生成项目说明
 - 不传时，OSpec 会优先复用现有文档；如果没有，就先生成待补充的默认文档
 

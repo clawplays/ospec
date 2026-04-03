@@ -225,6 +225,10 @@ class ProjectService {
 
         const normalized = await this.normalizeProjectBootstrap(rootDir, mode, input);
 
+        config.documentLanguage = normalized.documentLanguage;
+
+        await this.configManager.saveConfig(rootDir, config);
+
 
 
 
@@ -991,31 +995,9 @@ class ProjectService {
 
 
 
-        const normalized = await this.normalizeProjectBootstrap(rootDir, config.mode, {
+        const normalized = await this.normalizeProjectBootstrap(rootDir, config.mode, input);
 
-
-
-
-
-
-
-            ...(await this.getBootstrapUpgradePlan(rootDir)),
-
-
-
-
-
-
-
-            ...(input ?? {}),
-
-
-
-
-
-
-
-        });
+        await this.syncConfigDocumentLanguage(rootDir, config, normalized.documentLanguage);
 
 
 
@@ -1351,7 +1333,9 @@ class ProjectService {
 
 
 
-        const normalized = await this.normalizeProjectBootstrap(rootDir, config.mode, await this.getBootstrapUpgradePlan(rootDir));
+        const normalized = await this.normalizeProjectBootstrap(rootDir, config.mode);
+
+        const configLanguageUpdated = await this.syncConfigDocumentLanguage(rootDir, config, normalized.documentLanguage);
 
 
 
@@ -1464,6 +1448,10 @@ class ProjectService {
 
 
         const skippedFiles = [...directCopyResult.skipped];
+
+        if (configLanguageUpdated) {
+            refreshedFiles.push(constants_1.FILE_NAMES.SKILLRC);
+        }
 
 
 
@@ -1823,15 +1811,11 @@ class ProjectService {
 
 
 
-        const fallbackName = path_1.default.basename(path_1.default.resolve(rootDir));
+        const normalized = await this.normalizeProjectBootstrap(rootDir, mode, input);
 
+        config.documentLanguage = normalized.documentLanguage;
 
-
-
-
-
-
-        const normalized = this.templateEngine.normalizeProjectBootstrapInput(input, fallbackName, mode);
+        await this.configManager.saveConfig(rootDir, config);
 
 
 
@@ -5155,18 +5139,26 @@ class ProjectService {
             .find(block => block && !block.startsWith('#') && !block.startsWith('- '))
             ?.replace(/\r?\n/g, ' ')
             .trim() || '';
-        const [overviewContent, techStackContent, architectureContent, readmeContent, localizedReadmeContent, inferredSummary, inferredTechStack] = await Promise.all([
+        const persistedDocumentLanguage = await this.getConfiguredDocumentLanguage(rootDir);
+        const [overviewContent, techStackContent, architectureContent, readmeContent, zhReadmeContent, jaReadmeContent, arReadmeContent, aiGuideContent, executionProtocolContent, inferredSummary, inferredTechStack] = await Promise.all([
             readMarkdown(path_1.default.join(docsRoot, 'overview.md')),
             readMarkdown(path_1.default.join(docsRoot, 'tech-stack.md')),
             readMarkdown(path_1.default.join(docsRoot, 'architecture.md')),
             readMarkdown(path_1.default.join(rootDir, constants_1.FILE_NAMES.README)),
             readMarkdown(path_1.default.join(rootDir, 'README.zh-CN.md')),
+            readMarkdown(path_1.default.join(rootDir, 'README.ja.md')),
+            readMarkdown(path_1.default.join(rootDir, 'README.ar.md')),
+            readMarkdown(path_1.default.join(rootDir, constants_1.DIR_NAMES.FOR_AI, 'ai-guide.md')),
+            readMarkdown(path_1.default.join(rootDir, constants_1.DIR_NAMES.FOR_AI, 'execution-protocol.md')),
             this.inferBootstrapSummary(rootDir),
             this.inferBootstrapTechStack(rootDir),
         ]);
+        const localizedReadmeContents = [zhReadmeContent, jaReadmeContent, arReadmeContent];
         const summary = extractParagraph(overviewContent) ||
             extractParagraph(readmeContent) ||
-            extractParagraph(localizedReadmeContent) ||
+            localizedReadmeContents
+                .map(content => extractParagraph(content))
+                .find(Boolean) ||
             inferredSummary;
         const explicitTechStack = extractBulletList(techStackContent);
         const documentLanguage = this.detectDocumentLanguageFromTexts([
@@ -5174,7 +5166,9 @@ class ProjectService {
             techStackContent,
             architectureContent,
             readmeContent,
-            localizedReadmeContent,
+            ...localizedReadmeContents,
+            aiGuideContent,
+            executionProtocolContent,
         ]);
         const modules = await this.inferBootstrapModules(rootDir);
         const apiDocs = await this.scanApiDocs(rootDir);
@@ -5195,7 +5189,7 @@ class ProjectService {
             planningDocs: planningDocs
                 .filter(item => item.name.toLowerCase() !== 'readme.md')
                 .map(item => item.name.replace(/\.md$/i, '').replace(/-/g, ' ')),
-            documentLanguage,
+            documentLanguage: persistedDocumentLanguage || documentLanguage,
         };
     }
 
@@ -5321,20 +5315,68 @@ class ProjectService {
         }
         return Array.from(stack);
     }
+    normalizeDocumentLanguage(input) {
+        return input === 'en-US' || input === 'zh-CN' || input === 'ja-JP' || input === 'ar'
+            ? input
+            : undefined;
+    }
+    async getConfiguredDocumentLanguage(rootDir) {
+        try {
+            const config = await this.configManager.loadConfig(rootDir);
+            return this.normalizeDocumentLanguage(config?.documentLanguage);
+        }
+        catch {
+            return undefined;
+        }
+    }
+    async syncConfigDocumentLanguage(rootDir, config, documentLanguage) {
+        const normalized = this.normalizeDocumentLanguage(documentLanguage);
+        if (!normalized || config?.documentLanguage === normalized) {
+            return false;
+        }
+        config.documentLanguage = normalized;
+        await this.configManager.saveConfig(rootDir, config);
+        return true;
+    }
 
     detectDocumentLanguageFromTexts(contents) {
         for (const content of contents) {
-            if (typeof content !== 'string' || content.trim().length === 0) {
-                continue;
-            }
-            if (/[一-龥]/.test(content)) {
-                return 'zh-CN';
-            }
-            if (/[A-Za-z]/.test(content)) {
-                return 'en-US';
+            const detected = this.detectDocumentLanguageFromText(content);
+            if (detected) {
+                return detected;
             }
         }
         return undefined;
+    }
+    detectDocumentLanguageFromText(content) {
+        if (typeof content !== 'string' || content.trim().length === 0) {
+            return undefined;
+        }
+        if (/[\u0600-\u06FF]/.test(content)) {
+            return 'ar';
+        }
+        if (/[ぁ-ゟ゠-ヿ]/.test(content)) {
+            return 'ja-JP';
+        }
+        if (this.isLikelyJapaneseKanjiContent(content)) {
+            return 'ja-JP';
+        }
+        if (/[一-龥]/.test(content)) {
+            return 'zh-CN';
+        }
+        if (/[A-Za-z]/.test(content)) {
+            return 'en-US';
+        }
+        return undefined;
+    }
+    isLikelyJapaneseKanjiContent(content) {
+        if (!/[一-龥]/.test(content)) {
+            return false;
+        }
+        if (/[々〆ヵヶ「」『』]/.test(content)) {
+            return true;
+        }
+        return /(一覧|詳細|設定|権限|検索|構成|変更|確認|対応|連携|承認|申請|手順|履歴|機能|実装|設計|運用|画面|帳票|組織|拠点|区分|種別|完了|開始|終了|表示|取得|追加|削除|更新|登録)/.test(content);
     }
 
 
@@ -5847,14 +5889,6 @@ class ProjectService {
 
 
 
-        const fallbackName = path_1.default.basename(path_1.default.resolve(rootDir));
-
-
-
-
-
-
-
         const inferredModules = await this.inferBootstrapModules(rootDir);
 
 
@@ -5863,31 +5897,7 @@ class ProjectService {
 
 
 
-        const presetDefaults = this.getPresetDefaults(input);
-
-
-
-
-
-
-
-        const normalized = this.templateEngine.normalizeProjectBootstrapInput(input, fallbackName, mode, {
-
-
-
-
-
-
-
-            modules: inferredModules,
-
-
-
-
-
-
-
-        }, presetDefaults);
+        const normalized = await this.normalizeProjectBootstrap(rootDir, mode, input);
 
 
 
@@ -6359,7 +6369,15 @@ class ProjectService {
 
 
 
-        await this.projectAssetService.installDirectCopyAssets(rootDir);
+        const documentLanguage = (await this.getBootstrapUpgradePlan(rootDir)).documentLanguage || 'en-US';
+
+
+
+
+
+
+
+        await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage);
 
 
 
@@ -7878,6 +7896,38 @@ class ProjectService {
 
 
 
+        const mergedInput = {
+
+
+
+
+
+
+
+            ...(await this.getBootstrapUpgradePlan(rootDir)),
+
+
+
+
+
+
+
+            ...(input ?? {}),
+
+
+
+
+
+
+
+        };
+
+
+
+
+
+
+
         const inferredDefaults = {
 
 
@@ -7902,7 +7952,7 @@ class ProjectService {
 
 
 
-        const presetDefaults = this.getPresetDefaults(input);
+        const presetDefaults = this.getPresetDefaults(mergedInput);
 
 
 
@@ -7910,7 +7960,7 @@ class ProjectService {
 
 
 
-        return this.templateEngine.normalizeProjectBootstrapInput(input, projectName, mode, inferredDefaults, presetDefaults);
+        return this.templateEngine.normalizeProjectBootstrapInput(mergedInput, projectName, mode, inferredDefaults, presetDefaults);
 
 
 
@@ -8438,23 +8488,22 @@ class ProjectService {
 
 
 
-        return (content.includes('Layer: protocol shell') ||
-
-
-
-
-
-
-
-            content.includes('协议壳') ||
-
-
-
-
-
-
-
-            content.includes('project knowledge: not generated yet'));
+        try {
+            const parsed = (0, gray_matter_1.default)(content);
+            const tags = Array.isArray(parsed.data?.tags)
+                ? parsed.data.tags.filter((tag) => typeof tag === 'string')
+                : [];
+            if (!tags.includes('protocol-shell')) {
+                return false;
+            }
+            return (parsed.content.includes('Project knowledge: not generated yet') ||
+                parsed.content.includes('项目知识：尚未生成') ||
+                parsed.content.includes('プロジェクト知識: まだ生成されていません') ||
+                parsed.content.includes('معرفة المشروع: لم يتم توليدها بعد'));
+        }
+        catch {
+            return false;
+        }
 
 
 
@@ -8911,512 +8960,129 @@ class ProjectService {
 
 
     renderProtocolShellRootSkill(projectName, documentLanguage, mode) {
-
-
-
-
-
-
-
-        const isEnglish = documentLanguage === 'en-US';
-
-
-
-
-
-
-
-        const title = isEnglish ? `${projectName} Protocol Shell` : `${projectName} 协议壳`;
-
-
-
-
-
-
-
-        const body = isEnglish
-
-
-
-
-
-
-
+        const title = documentLanguage === 'zh-CN'
+            ? `${projectName} 协议壳`
+            : documentLanguage === 'ja-JP'
+                ? `${projectName} プロトコルシェル`
+                : documentLanguage === 'ar'
+                    ? `${projectName} غلاف البروتوكول`
+                    : `${projectName} Protocol Shell`;
+        const body = documentLanguage === 'zh-CN'
             ? `# ${projectName}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-> Layer: protocol shell
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Current State
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-- Project: ${projectName}
-
-
-
-
-
-
-
-- Mode: ${mode}
-
-
-
-
-
-
-
-- Status: OSpec protocol shell initialized
-
-
-
-
-
-
-
-- Project knowledge: not generated yet
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Read First
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-- [AI guide](for-ai/ai-guide.md)
-
-
-
-
-
-
-
-- [Execution protocol](for-ai/execution-protocol.md)
-
-
-
-
-
-
-
-- [Naming conventions](for-ai/naming-conventions.md)
-
-
-
-
-
-
-
-- [Skill conventions](for-ai/skill-conventions.md)
-
-
-
-
-
-
-
-- [Workflow conventions](for-ai/workflow-conventions.md)
-
-
-
-
-
-
-
-- [Development guide](for-ai/development-guide.md)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Notes
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-- This repository currently contains only the OSpec protocol shell.
-
-
-
-
-
-
-
-- Project docs, source structure, tests, and business scaffold should be generated later through explicit skills or commands.
-
-- If Stitch is enabled and an active change triggers \`stitch_design_review\`, inspect \`changes/active/<change>/artifacts/stitch/approval.json\` before continuing execution or archive claims.
-
-
-
-
-
-
-
-- Active changes live under \`changes/active/<change>\`.`
-
-
-
-
-
-
-
-            : `# ${projectName}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 > 层级：协议壳
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## 当前状态
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 - 项目：${projectName}
-
-
-
-
-
-
-
 - 模式：${mode}
-
-
-
-
-
-
-
 - 状态：已完成 OSpec 协议壳初始化
-
-
-
-
-
-
-
 - 项目知识：尚未生成
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## 优先阅读
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## 首先阅读
 
 - [AI 指南](for-ai/ai-guide.md)
-
-
-
-
-
-
-
 - [执行协议](for-ai/execution-protocol.md)
-
-
-
-
-
-
-
 - [命名规范](for-ai/naming-conventions.md)
-
-
-
-
-
-
-
-- [SKILL 规范](for-ai/skill-conventions.md)
-
-
-
-
-
-
-
-- [workflow 规范](for-ai/workflow-conventions.md)
-
-
-
-
-
-
-
+- [技能规范](for-ai/skill-conventions.md)
+- [工作流规范](for-ai/workflow-conventions.md)
 - [开发指南](for-ai/development-guide.md)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## 说明
 
+- 当前仓库仅包含 OSpec 协议壳。
+- 项目文档、源码结构、测试入口与业务 scaffold 需后续通过明确命令或技能生成。
+- 如果项目启用了 Stitch 且某个 active change 激活了 \`stitch_design_review\`，继续执行或声称可归档前，先检查 \`changes/active/<change>/artifacts/stitch/approval.json\`。
+- Active change 位于 \`changes/active/<change>\`。`
+            : documentLanguage === 'ja-JP'
+                ? `# ${projectName}
 
+> レイヤー: プロトコルシェル
 
+## 現在の状態
 
+- プロジェクト: ${projectName}
+- モード: ${mode}
+- 状態: OSpec のプロトコルシェルは初期化済み
+- プロジェクト知識: まだ生成されていません
 
+## 最初に読むもの
 
+- [AI ガイド](for-ai/ai-guide.md)
+- [実行プロトコル](for-ai/execution-protocol.md)
+- [命名規約](for-ai/naming-conventions.md)
+- [SKILL 規約](for-ai/skill-conventions.md)
+- [ワークフロー規約](for-ai/workflow-conventions.md)
+- [開発ガイド](for-ai/development-guide.md)
 
+## メモ
 
+- このリポジトリには現在 OSpec のプロトコルシェルのみがあります。
+- プロジェクト文書、ソース構造、テスト導線、業務用 scaffold は後で明示的なコマンドまたはスキルで生成してください。
+- Stitch が有効で、active change が \`stitch_design_review\` を有効化している場合は、作業継続や archive 可否を主張する前に \`changes/active/<change>/artifacts/stitch/approval.json\` を確認してください。
+- active change は \`changes/active/<change>\` にあります。`
+                : documentLanguage === 'ar'
+                    ? `# ${projectName}
 
+> الطبقة: غلاف البروتوكول
 
+## الحالة الحالية
 
+- المشروع: ${projectName}
+- النمط: ${mode}
+- الحالة: تم تهيئة غلاف بروتوكول OSpec
+- معرفة المشروع: لم يتم توليدها بعد
 
+## اقرأ أولاً
 
+- [دليل الذكاء الاصطناعي](for-ai/ai-guide.md)
+- [بروتوكول التنفيذ](for-ai/execution-protocol.md)
+- [اتفاقيات التسمية](for-ai/naming-conventions.md)
+- [اتفاقيات SKILL](for-ai/skill-conventions.md)
+- [اتفاقيات سير العمل](for-ai/workflow-conventions.md)
+- [دليل التطوير](for-ai/development-guide.md)
 
+## ملاحظات
 
-- 当前仓库只完成了 OSpec 协议壳初始化。
+- يحتوي هذا المستودع حالياً على غلاف بروتوكول OSpec فقط.
+- يجب إنشاء وثائق المشروع وبنية المصدر ومسار الاختبارات والـ scaffold الخاص بالأعمال لاحقاً عبر أوامر أو مهارات صريحة.
+- إذا كان Stitch مفعلاً وكان التغيير النشط يفعّل \`stitch_design_review\`، فافحص \`changes/active/<change>/artifacts/stitch/approval.json\` قبل متابعة التنفيذ أو الادعاء بأن الأرشفة جاهزة.
+- توجد التغييرات النشطة تحت \`changes/active/<change>\` .`
+                    : `# ${projectName}
 
+> Layer: protocol shell
 
+## Current State
 
+- Project: ${projectName}
+- Mode: ${mode}
+- Status: OSpec protocol shell initialized
+- Project knowledge: not generated yet
 
+## Read First
 
+- [AI guide](for-ai/ai-guide.md)
+- [Execution protocol](for-ai/execution-protocol.md)
+- [Naming conventions](for-ai/naming-conventions.md)
+- [Skill conventions](for-ai/skill-conventions.md)
+- [Workflow conventions](for-ai/workflow-conventions.md)
+- [Development guide](for-ai/development-guide.md)
 
+## Notes
 
-- 项目 docs、源码结构、测试结构和业务 scaffold 应由后续显式技能或命令逐步生成。
-
-- 如果项目启用了 Stitch，且某个 active change 激活了 \`stitch_design_review\`，继续执行或宣称可归档前必须先检查 \`changes/active/<change>/artifacts/stitch/approval.json\`。
-
-
-
-
-
-
-
-- 活跃变更位于 \`changes/active/<change>\`。`;
-
-
-
-
-
-
-
+- This repository currently contains only the OSpec protocol shell.
+- Project docs, source structure, tests, and business scaffold should be generated later through explicit skills or commands.
+- If Stitch is enabled and an active change triggers \`stitch_design_review\`, inspect \`changes/active/<change>/artifacts/stitch/approval.json\` before continuing execution or archive claims.
+- Active changes live under \`changes/active/<change>\`.`;
         return `---
-
-
-
-
-
-
-
 name: ${projectName}
-
-
-
-
-
-
-
 title: ${title}
-
-
-
-
-
-
-
-tags: [ospec, protocol-shell, ${mode}]
-
-
-
-
-
-
-
+tags: [ospec, bootstrap, protocol-shell]
 ---
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ${body}
-
-
-
-
-
-
-
 `;
-
-
-
-
-
-
-
     }
-
-
-
-
-
-
 
     async writeBootstrapSummary(rootDir, input) {
 
@@ -10250,7 +9916,12 @@ ${formatSuggestion()}
 
 
 
-        const language = input?.documentLanguage ?? 'zh-CN';
+        const language = input?.documentLanguage === 'zh-CN' ||
+            input?.documentLanguage === 'en-US' ||
+            input?.documentLanguage === 'ja-JP' ||
+            input?.documentLanguage === 'ar'
+            ? input.documentLanguage
+            : 'en-US';
 
 
 

@@ -8,8 +8,17 @@ class TemplateBuilderBase {
     isEnglish(language) {
         return language === 'en-US';
     }
-    copy(language, zh, en) {
-        return this.isEnglish(language) ? en : zh;
+    copy(language, zh, en, ja = en, ar = en) {
+        if (language === 'zh-CN') {
+            return zh;
+        }
+        if (language === 'ja-JP') {
+            return ja;
+        }
+        if (language === 'ar') {
+            return ar;
+        }
+        return en;
     }
     formatList(items, emptyFallback) {
         const normalized = items.map(item => item.trim()).filter(Boolean);

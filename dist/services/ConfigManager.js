@@ -91,6 +91,11 @@ class ConfigManager {
             checkpoint: PluginWorkflowComposer_1.DEFAULT_CHECKPOINT_PLUGIN_CONFIG,
         }));
     }
+    normalizeDocumentLanguage(input) {
+        return input === 'en-US' || input === 'zh-CN' || input === 'ja-JP' || input === 'ar'
+            ? input
+            : undefined;
+    }
     normalizePluginsConfig(plugins) {
         const defaults = this.createDefaultPluginsConfig();
         const stitch = plugins?.stitch && typeof plugins.stitch === 'object' ? plugins.stitch : {};
@@ -364,6 +369,7 @@ class ConfigManager {
             ...config,
             version: config.version === '3.0' ? '4.0' : config.version,
             mode,
+            documentLanguage: this.normalizeDocumentLanguage(config.documentLanguage),
             hooks: {
                 ...normalizedHooks,
                 ...(legacyWarnDefaults

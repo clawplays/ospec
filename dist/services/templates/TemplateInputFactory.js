@@ -4,14 +4,8 @@ exports.TemplateInputFactory = void 0;
 const constants_1 = require("../../core/constants");
 class TemplateInputFactory {
     normalizeFeatureTemplateInput(input) {
-        const englishDefaults = {
-            background: 'Why is this change needed? What problem exists today?',
-            goals: ['What problem is solved after this change? What do users or developers gain?'],
-            inScope: ['TBD'],
-            outOfScope: ['TBD'],
-            acceptanceCriteria: ['Acceptance item 1', 'Acceptance item 2'],
-        };
         if (typeof input === 'string') {
+            const englishDefaults = this.getFeatureDefaults('en-US');
             return {
                 feature: input,
                 mode: 'standard',
@@ -19,16 +13,17 @@ class TemplateInputFactory {
                 affects: [],
                 flags: [],
                 optionalSteps: [],
-                background: '为什么要做这个 change？当前存在哪些问题？',
-                goals: ['做完之后能解决什么问题？用户或开发者能得到什么？'],
-                inScope: ['待补充'],
-                outOfScope: ['待补充'],
-                acceptanceCriteria: ['条件一', '条件二'],
+                background: englishDefaults.background,
+                goals: [...englishDefaults.goals],
+                inScope: [...englishDefaults.inScope],
+                outOfScope: [...englishDefaults.outOfScope],
+                acceptanceCriteria: [...englishDefaults.acceptanceCriteria],
                 projectContext: this.normalizeFeatureProjectContext(),
-                documentLanguage: 'zh-CN',
+                documentLanguage: 'en-US',
             };
         }
         const documentLanguage = this.normalizeDocumentLanguage(input.documentLanguage);
+        const localizedDefaults = this.getFeatureDefaults(documentLanguage);
         const normalized = {
             feature: input.feature,
             mode: input.mode ?? 'standard',
@@ -36,35 +31,28 @@ class TemplateInputFactory {
             affects: input.affects ?? [],
             flags: input.flags ?? [],
             optionalSteps: input.optionalSteps ?? [],
-            background: input.background?.trim() || '为什么要做这个 change？当前存在哪些问题？',
-            goals: input.goals?.map(item => item.trim()).filter(Boolean) ?? [
-                '做完之后能解决什么问题？用户或开发者能得到什么？',
-            ],
-            inScope: input.inScope?.map(item => item.trim()).filter(Boolean) ?? ['待补充'],
-            outOfScope: input.outOfScope?.map(item => item.trim()).filter(Boolean) ?? ['待补充'],
-            acceptanceCriteria: input.acceptanceCriteria?.map(item => item.trim()).filter(Boolean) ?? [
-                '条件一',
-                '条件二',
-            ],
+            background: input.background?.trim() || localizedDefaults.background,
+            goals: input.goals?.map(item => item.trim()).filter(Boolean) ?? [...localizedDefaults.goals],
+            inScope: input.inScope?.map(item => item.trim()).filter(Boolean) ?? [...localizedDefaults.inScope],
+            outOfScope: input.outOfScope?.map(item => item.trim()).filter(Boolean) ?? [...localizedDefaults.outOfScope],
+            acceptanceCriteria: input.acceptanceCriteria?.map(item => item.trim()).filter(Boolean) ?? [...localizedDefaults.acceptanceCriteria],
             projectContext: this.normalizeFeatureProjectContext(input.projectContext),
             documentLanguage,
         };
-        if (documentLanguage === 'en-US') {
-            if (!input.background?.trim()) {
-                normalized.background = englishDefaults.background;
-            }
-            if (!input.goals?.some(item => item.trim().length > 0)) {
-                normalized.goals = [...englishDefaults.goals];
-            }
-            if (!input.inScope?.some(item => item.trim().length > 0)) {
-                normalized.inScope = [...englishDefaults.inScope];
-            }
-            if (!input.outOfScope?.some(item => item.trim().length > 0)) {
-                normalized.outOfScope = [...englishDefaults.outOfScope];
-            }
-            if (!input.acceptanceCriteria?.some(item => item.trim().length > 0)) {
-                normalized.acceptanceCriteria = [...englishDefaults.acceptanceCriteria];
-            }
+        if (!input.background?.trim()) {
+            normalized.background = localizedDefaults.background;
+        }
+        if (!input.goals?.some(item => item.trim().length > 0)) {
+            normalized.goals = [...localizedDefaults.goals];
+        }
+        if (!input.inScope?.some(item => item.trim().length > 0)) {
+            normalized.inScope = [...localizedDefaults.inScope];
+        }
+        if (!input.outOfScope?.some(item => item.trim().length > 0)) {
+            normalized.outOfScope = [...localizedDefaults.outOfScope];
+        }
+        if (!input.acceptanceCriteria?.some(item => item.trim().length > 0)) {
+            normalized.acceptanceCriteria = [...localizedDefaults.acceptanceCriteria];
         }
         return normalized;
     }
@@ -90,13 +78,10 @@ class TemplateInputFactory {
         const presetSummary = presetDefaults?.summary?.trim();
         const presetArchitecture = presetDefaults?.architecture?.trim();
         const documentLanguage = this.normalizeDocumentLanguage(input?.documentLanguage);
-        const placeholderText = documentLanguage === 'en-US' ? 'TBD' : '待补充';
-        const defaultSummary = documentLanguage === 'en-US'
-            ? `${fallbackName} has been initialized with OSpec and is ready for change-based delivery. Fill in the missing project context as the repository becomes clearer.`
-            : `${fallbackName} 已通过 OSpec 初始化，当前已具备按 change 推进交付的基础条件。请继续补充缺失的项目上下文。`;
-        const defaultArchitecture = documentLanguage === 'en-US'
-            ? 'OSpec initialized the protocol shell and baseline project knowledge docs. Refine the architecture details as the repository direction becomes clearer.'
-            : 'OSpec 已初始化协议壳和基础项目知识文档，后续可结合仓库实际方向继续细化架构。';
+        const localizedBootstrapDefaults = this.getBootstrapDefaults(documentLanguage, fallbackName);
+        const placeholderText = localizedBootstrapDefaults.placeholder;
+        const defaultSummary = localizedBootstrapDefaults.summary;
+        const defaultArchitecture = localizedBootstrapDefaults.architecture;
         const projectName = normalizedInputProjectName || fallbackName;
         const summary = normalizedInputSummary ||
             presetSummary ||
@@ -228,7 +213,10 @@ class TemplateInputFactory {
         };
     }
     normalizeDocumentLanguage(input) {
-        return input === 'en-US' ? 'en-US' : 'zh-CN';
+        if (input === 'zh-CN' || input === 'en-US' || input === 'ja-JP' || input === 'ar') {
+            return input;
+        }
+        return 'en-US';
     }
     pickFieldKeys(fieldSources, source) {
         return Object.entries(fieldSources)
@@ -239,10 +227,77 @@ class TemplateInputFactory {
         const normalized = value.trim().toLowerCase();
         return (normalized.length === 0 ||
             normalized === '待补充' ||
+            normalized === '未定' ||
+            normalized === 'قيد التحديد' ||
+            normalized === 'سيتم تحديده' ||
             normalized === 'todo' ||
             normalized === 'tbd' ||
             normalized.includes('<') ||
             normalized.includes('>'));
+    }
+    getFeatureDefaults(documentLanguage) {
+        switch (documentLanguage) {
+            case 'zh-CN':
+                return {
+                    background: '为什么要做这个 change？当前存在哪些问题？',
+                    goals: ['做完之后能解决什么问题？用户或开发者能得到什么？'],
+                    inScope: ['待补充'],
+                    outOfScope: ['待补充'],
+                    acceptanceCriteria: ['条件一', '条件二'],
+                };
+            case 'ja-JP':
+                return {
+                    background: 'なぜこの change が必要ですか。現在どのような問題がありますか。',
+                    goals: ['この change の完了後に何が解決され、ユーザーや開発者は何を得られますか。'],
+                    inScope: ['未定'],
+                    outOfScope: ['未定'],
+                    acceptanceCriteria: ['受け入れ条件 1', '受け入れ条件 2'],
+                };
+            case 'ar':
+                return {
+                    background: 'لماذا نحتاج إلى هذا التغيير؟ ما المشكلة الموجودة حالياً؟',
+                    goals: ['ما المشكلة التي ستُحل بعد هذا التغيير؟ وما الفائدة للمستخدمين أو للمطورين؟'],
+                    inScope: ['قيد التحديد'],
+                    outOfScope: ['قيد التحديد'],
+                    acceptanceCriteria: ['معيار قبول 1', 'معيار قبول 2'],
+                };
+            default:
+                return {
+                    background: 'Why is this change needed? What problem exists today?',
+                    goals: ['What problem is solved after this change? What do users or developers gain?'],
+                    inScope: ['TBD'],
+                    outOfScope: ['TBD'],
+                    acceptanceCriteria: ['Acceptance item 1', 'Acceptance item 2'],
+                };
+        }
+    }
+    getBootstrapDefaults(documentLanguage, fallbackName) {
+        switch (documentLanguage) {
+            case 'zh-CN':
+                return {
+                    placeholder: '待补充',
+                    summary: `${fallbackName} 已通过 OSpec 初始化，当前已具备按 change 推进交付的基础条件。请继续补充缺失的项目上下文。`,
+                    architecture: 'OSpec 已初始化协议壳和基础项目知识文档，后续可结合仓库实际方向继续细化架构。',
+                };
+            case 'ja-JP':
+                return {
+                    placeholder: '未定',
+                    summary: `${fallbackName} は OSpec によって初期化され、change ベースで進めるための基本状態が整いました。リポジトリの方向性が明確になるにつれて不足しているプロジェクト文脈を補ってください。`,
+                    architecture: 'OSpec はプロトコルシェルと基本的なプロジェクト知識ドキュメントを初期化しました。リポジトリの方向性が明確になるにつれて、アーキテクチャ詳細を調整してください。',
+                };
+            case 'ar':
+                return {
+                    placeholder: 'قيد التحديد',
+                    summary: `تمت تهيئة ${fallbackName} بواسطة OSpec وأصبح جاهزاً مبدئياً للتسليم المعتمد على changes. أكمل سياق المشروع الناقص كلما أصبحت صورة المستودع أوضح.`,
+                    architecture: 'قام OSpec بتهيئة غلاف البروتوكول ووثائق معرفة المشروع الأساسية. حسّن تفاصيل المعمارية مع اتضاح اتجاه المستودع.',
+                };
+            default:
+                return {
+                    placeholder: 'TBD',
+                    summary: `${fallbackName} has been initialized with OSpec and is ready for change-based delivery. Fill in the missing project context as the repository becomes clearer.`,
+                    architecture: 'OSpec initialized the protocol shell and baseline project knowledge docs. Refine the architecture details as the repository direction becomes clearer.',
+                };
+        }
     }
     slugify(value) {
         return value

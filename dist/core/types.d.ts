@@ -92,6 +92,7 @@ export interface CheckpointPluginConfig {
 export interface SkillrcConfig {
     version: string;
     mode: ProjectMode;
+    documentLanguage?: 'en-US' | 'zh-CN' | 'ja-JP' | 'ar';
     hooks: {
         'pre-commit': boolean;
         'post-merge': boolean;

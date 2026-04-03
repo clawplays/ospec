@@ -75,7 +75,8 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 - `--summary`: 生成ドキュメントに書き込むプロジェクト概要
 - `--tech-stack`: `node,react,postgres` のようなカンマ区切りの技術スタック
 - `--architecture`: 短いアーキテクチャ説明
-- `--document-language`: 生成ドキュメントの言語。通常は `en-US`、`zh-CN`、`ja-JP`
+- `--document-language`: 生成ドキュメントの言語。`en-US`、`zh-CN`、`ja-JP`、`ar` から選択
+- 言語解決優先順位: 明示的な `--document-language` -> 既存のプロジェクト文書 / `for-ai/*` / asset manifest -> `en-US`
 - 値を渡した場合はその内容を使ってドキュメントを生成します
 - 値を渡さない場合は既存ドキュメントを優先利用し、無ければ補完用のプレースホルダを生成します
 

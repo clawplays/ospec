@@ -74,7 +74,10 @@ CLI notes:
 - `--summary`: project overview text written into the generated docs
 - `--tech-stack`: comma-separated stack list such as `node,react,postgres`
 - `--architecture`: short architecture description
-- `--document-language`: generated doc language, usually `en-US` or `zh-CN`
+- `--document-language`: generated doc language, choose from `en-US`, `zh-CN`, `ja-JP`, or `ar`
+- AI-first language resolution order: explicit language request in the conversation -> current conversation language -> persisted project language in `.skillrc`
+- CLI language resolution order: explicit `--document-language` -> persisted project language in `.skillrc` -> existing project docs / `for-ai/*` / asset manifest -> fallback `en-US`
+- OSpec persists the chosen project document language in `.skillrc` and reuses it for `for-ai` guidance, `ospec new`, and `ospec update`
 - if you pass these values, OSpec uses them directly when generating project docs
 - if you do not pass them, OSpec reuses existing docs when possible and otherwise creates placeholder docs first
 
@@ -195,6 +198,7 @@ Archive notes:
 
 - **Change-ready initialization**: `ospec init` creates the protocol shell and baseline project knowledge docs in one pass.
 - **Guided initialization**: AI-assisted init can ask once for missing summary or tech stack; direct CLI init falls back to placeholder docs when context is missing.
+- **Stable project language**: the chosen document language is stored in `.skillrc` so later guidance and generated change docs stay consistent unless you explicitly change it.
 - **Docs maintenance**: `ospec docs generate` refreshes or repairs project knowledge docs when you need it later.
 - **Tracked requirement execution**: each change can keep proposal, tasks, state, verification, and review files aligned.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.

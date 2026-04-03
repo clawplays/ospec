@@ -131,10 +131,10 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         if (guideLanguage) {
             return guideLanguage;
         }
-        return 'zh-CN';
+        return 'en-US';
     }
     normalizeDocumentLanguage(input) {
-        return input === 'en-US' || input === 'zh-CN' ? input : null;
+        return input === 'en-US' || input === 'zh-CN' || input === 'ja-JP' || input === 'ar' ? input : null;
     }
     async readDocumentLanguageFromAssetManifest(targetDir) {
         const manifestPath = path.join(targetDir, '.ospec', 'asset-sources.json');
@@ -151,6 +151,12 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             for (const targetRelativePath of ['for-ai/ai-guide.md', 'for-ai/execution-protocol.md']) {
                 const asset = assets.find(item => item?.targetRelativePath === targetRelativePath);
                 const sourceRelativePath = typeof asset?.sourceRelativePath === 'string' ? asset.sourceRelativePath : '';
+                if (sourceRelativePath.includes('/ar/')) {
+                    return 'ar';
+                }
+                if (sourceRelativePath.includes('/ja-JP/')) {
+                    return 'ja-JP';
+                }
                 if (sourceRelativePath.includes('/en-US/')) {
                     return 'en-US';
                 }
@@ -171,17 +177,42 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         }
         try {
             const content = await services_1.services.fileService.readFile(aiGuidePath);
-            if (/[一-龥]/.test(content)) {
-                return 'zh-CN';
-            }
-            if (/[A-Za-z]/.test(content)) {
-                return 'en-US';
-            }
+            return this.detectDocumentLanguageFromText(content) || null;
         }
         catch {
             return null;
         }
         return null;
+    }
+    detectDocumentLanguageFromText(content) {
+        if (typeof content !== 'string' || content.trim().length === 0) {
+            return null;
+        }
+        if (/[\u0600-\u06FF]/.test(content)) {
+            return 'ar';
+        }
+        if (/[ぁ-ゟ゠-ヿ]/.test(content)) {
+            return 'ja-JP';
+        }
+        if (this.isLikelyJapaneseKanjiContent(content)) {
+            return 'ja-JP';
+        }
+        if (/[一-龥]/.test(content)) {
+            return 'zh-CN';
+        }
+        if (/[A-Za-z]/.test(content)) {
+            return 'en-US';
+        }
+        return null;
+    }
+    isLikelyJapaneseKanjiContent(content) {
+        if (!/[一-龥]/.test(content)) {
+            return false;
+        }
+        if (/[々〆ヵヶ「」『』]/.test(content)) {
+            return true;
+        }
+        return /(一覧|詳細|設定|権限|検索|構成|変更|確認|対応|連携|承認|申請|手順|履歴|機能|実装|設計|運用|画面|帳票|組織|拠点|区分|種別|完了|開始|終了|表示|取得|追加|削除|更新|登録)/.test(content);
     }
     async ensureChangeNameAvailable(targetDir, featureName) {
         const activeDir = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.ACTIVE, featureName);

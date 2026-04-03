@@ -3,7 +3,7 @@ type FrontmatterValue = string | number | boolean | string[];
 export declare abstract class TemplateBuilderBase {
     protected getCurrentDate(): string;
     protected isEnglish(language: TemplateDocumentLanguage): boolean;
-    protected copy(language: TemplateDocumentLanguage, zh: string, en: string): string;
+    protected copy(language: TemplateDocumentLanguage, zh: string, en: string, ja?: string, ar?: string): string;
     protected formatList(items: string[], emptyFallback: string): string;
     protected formatChecklist(items: string[], emptyFallback: string): string;
     protected formatLinkedList(items: Array<{

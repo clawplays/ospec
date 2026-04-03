@@ -234,7 +234,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="${normalized.documentLanguage === 'zh-CN' ? 'zh-CN' : 'en'}">
+    <html lang="${this.getHtmlLang(normalized.documentLanguage)}">
       <body>
         <SiteShell>${'\n'}          {children}${'\n'}        </SiteShell>
       </body>
@@ -245,25 +245,75 @@ export default function RootLayout({
             case 'app/page.tsx':
                 return this.renderHomePage(normalized);
             case 'app/docs/page.tsx':
-                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN' ? '文档中心' : 'Docs Center', normalized.documentLanguage === 'zh-CN'
+                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN'
+                    ? '文档中心'
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ドキュメントセンター'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'مركز الوثائق'
+                            : 'Docs Center', normalized.documentLanguage === 'zh-CN'
                     ? '在这里沉淀架构说明、API 边界和团队执行流程。'
-                    : 'Document architecture, API boundaries, and team workflows in one place.');
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ここでアーキテクチャ、API 境界、チームの実行フローをまとめます。'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'دوّن هنا المعمارية وحدود API ومسارات تنفيذ الفريق في مكان واحد.'
+                            : 'Document architecture, API boundaries, and team workflows in one place.');
             case 'app/blog/page.tsx':
-                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN' ? '博客与更新日志' : 'Blog & Changelog', normalized.documentLanguage === 'zh-CN'
+                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN'
+                    ? '博客与更新日志'
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ブログと変更履歴'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'المدونة وسجل التغييرات'
+                            : 'Blog & Changelog', normalized.documentLanguage === 'zh-CN'
                     ? '在这里发布产品更新、版本发布说明和技术长文。'
-                    : 'Publish product updates, release notes, and long-form technical posts.');
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ここで製品アップデート、リリースノート、技術記事を公開します。'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'انشر هنا تحديثات المنتج وملاحظات الإصدار والمقالات التقنية الطويلة.'
+                            : 'Publish product updates, release notes, and long-form technical posts.');
             case 'app/admin/page.tsx':
-                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN' ? '后台控制台' : 'Admin Console', normalized.documentLanguage === 'zh-CN'
+                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN'
+                    ? '后台控制台'
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? '管理コンソール'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'وحدة التحكم الإدارية'
+                            : 'Admin Console', normalized.documentLanguage === 'zh-CN'
                     ? '在这里承接内容工作流、发布条目和审核队列。'
-                    : 'Operate content workflows, release entries, and editorial review queues.');
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ここでコンテンツワークフロー、公開項目、レビュー待ちキューを扱います。'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'أدر هنا سير عمل المحتوى وعناصر النشر وطوابير المراجعة التحريرية.'
+                            : 'Operate content workflows, release entries, and editorial review queues.');
             case 'app/login/page.tsx':
-                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN' ? '鉴权入口' : 'Authentication', normalized.documentLanguage === 'zh-CN'
+                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN'
+                    ? '鉴权入口'
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? '認証入口'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'بوابة المصادقة'
+                            : 'Authentication', normalized.documentLanguage === 'zh-CN'
                     ? '后续可在这里接入身份提供方、角色策略和团队登录流程。'
-                    : 'Connect your future identity provider, role policies, and staff sign-in flows here.');
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ここで将来の ID プロバイダー、権限ポリシー、チーム向けサインインフローを接続できます。'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'اربط هنا لاحقاً مزود الهوية وسياسات الأدوار ومسارات تسجيل دخول الفريق.'
+                            : 'Connect your future identity provider, role policies, and staff sign-in flows here.');
             case 'app/account/page.tsx':
-                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN' ? '账户中心' : 'Account', normalized.documentLanguage === 'zh-CN'
+                return this.renderSectionPage(normalized, normalized.documentLanguage === 'zh-CN'
+                    ? '账户中心'
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'アカウント'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'الحساب'
+                            : 'Account', normalized.documentLanguage === 'zh-CN'
                     ? '在这里管理登录用户的工作区、个人资料和团队级设置。'
-                    : 'Manage the signed-in user workspace, profile, and team-level settings.');
+                    : normalized.documentLanguage === 'ja-JP'
+                        ? 'ここでログイン済みユーザーのワークスペース、プロフィール、チーム設定を管理します。'
+                        : normalized.documentLanguage === 'ar'
+                            ? 'أدِر هنا مساحة عمل المستخدم المسجّل وملفه الشخصي وإعدادات الفريق.'
+                            : 'Manage the signed-in user workspace, profile, and team-level settings.');
             case 'app/api/health/route.ts':
                 return `export async function GET() {
   return Response.json({
@@ -460,6 +510,8 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
         const normalized = value.trim().toLowerCase();
         return (!normalized ||
             normalized === '待补充' ||
+            normalized === '未定' ||
+            normalized === 'قيد التحديد' ||
             normalized === 'todo' ||
             normalized === 'tbd' ||
             normalized.includes('<') ||
@@ -467,6 +519,18 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
     }
     escapeTemplateString(value) {
         return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+    getHtmlLang(documentLanguage) {
+        if (documentLanguage === 'zh-CN') {
+            return 'zh-CN';
+        }
+        if (documentLanguage === 'ja-JP') {
+            return 'ja';
+        }
+        if (documentLanguage === 'ar') {
+            return 'ar';
+        }
+        return 'en';
     }
     getCopy(normalized) {
         if (normalized.documentLanguage === 'zh-CN') {
@@ -483,6 +547,38 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
                 navAdmin: '后台',
                 navLogin: '登录',
                 navAccount: '账户',
+            };
+        }
+        if (normalized.documentLanguage === 'ja-JP') {
+            return {
+                heroBadge: 'OSpec スキャフォールド',
+                scaffoldBadge: 'OSpec により業務 scaffold を生成済み',
+                projectSummary: 'プロジェクト概要',
+                initialModules: '初期モジュール',
+                fillModulesHint: 'OSpec のプロジェクト文書でモジュール計画をさらに補ってください。',
+                projectLabel: 'プロジェクトページ',
+                navHome: 'ホーム',
+                navDocs: 'Docs',
+                navBlog: 'ブログ',
+                navAdmin: 'Admin',
+                navLogin: 'ログイン',
+                navAccount: 'アカウント',
+            };
+        }
+        if (normalized.documentLanguage === 'ar') {
+            return {
+                heroBadge: 'هيكل OSpec',
+                scaffoldBadge: 'تم توليد scaffold الأعمال بواسطة OSpec',
+                projectSummary: 'ملخص المشروع',
+                initialModules: 'الوحدات الأولية',
+                fillModulesHint: 'واصل تحسين تخطيط الوحدات في وثائق مشروع OSpec.',
+                projectLabel: 'صفحة المشروع',
+                navHome: 'الرئيسية',
+                navDocs: 'الوثائق',
+                navBlog: 'المدونة',
+                navAdmin: 'الإدارة',
+                navLogin: 'تسجيل الدخول',
+                navAccount: 'الحساب',
             };
         }
         return {

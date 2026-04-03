@@ -164,7 +164,7 @@ class ProjectAssetService {
         const manifest = {
             version: '1.0',
             generatedAt: new Date().toISOString(),
-            documentLanguage: options.documentLanguage || 'zh-CN',
+            documentLanguage: options.documentLanguage || 'en-US',
             assets,
             summary: {
                 directCopy: copyEntries.length,
@@ -178,6 +178,9 @@ class ProjectAssetService {
         const candidates = [];
         if (documentLanguage && asset.localizedSources?.[documentLanguage]) {
             candidates.push(asset.localizedSources[documentLanguage]);
+        }
+        if (asset.localizedSources?.['en-US']) {
+            candidates.push(asset.localizedSources['en-US']);
         }
         if (asset.localizedSources?.['zh-CN']) {
             candidates.push(asset.localizedSources['zh-CN']);
@@ -196,6 +199,9 @@ class ProjectAssetService {
     resolveStaticSourceHint(asset, documentLanguage) {
         if (documentLanguage && asset.localizedSources?.[documentLanguage]) {
             return asset.localizedSources[documentLanguage];
+        }
+        if (asset.localizedSources?.['en-US']) {
+            return asset.localizedSources['en-US'];
         }
         if (asset.localizedSources?.['zh-CN']) {
             return asset.localizedSources['zh-CN'];

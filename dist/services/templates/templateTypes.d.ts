@@ -1,6 +1,6 @@
 import { ProjectMode } from '../../core/types';
 import { ProjectPresetId } from '../../presets/ProjectPresets';
-export type TemplateDocumentLanguage = 'zh-CN' | 'en-US';
+export type TemplateDocumentLanguage = 'zh-CN' | 'en-US' | 'ja-JP' | 'ar';
 export interface FeatureTemplateInput {
     feature: string;
     mode?: ProjectMode;
