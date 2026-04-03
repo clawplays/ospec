@@ -31,16 +31,19 @@ OSpec is a document-driven workflow for AI-assisted development, helping you def
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
+## Why OSpec?
+
+AI coding assistants are powerful, but requirements that live only in chat history are hard to inspect, review, and close out cleanly. OSpec adds a lightweight workflow layer so the repository can hold the change context before code is written and after the work ships.
+
+- Align before code — keep proposal, tasks, state, verification, and review visible in the repo
+- Keep each requirement explicit — the default path moves one requirement through one active change
+- Stay lightweight — keep the normal flow short with `init -> change -> verify/finalize`
+- Use the assistants you already have — OSpec is built for Codex, Claude Code, and direct CLI workflows
+
 ## Install With npm
 
 ```bash
 npm install -g @clawplays/ospec-cli
-```
-
-Update inside your project directory:
-
-```bash
-ospec update
 ```
 
 ## Quick Start
@@ -150,6 +153,14 @@ Archive notes:
 - new projects archive under `changes/archived/YYYY-MM/YYYY-MM-DD/<change-name>`; existing flat archives are reorganized by `ospec update`
 
 </details>
+
+## Update With npm
+
+For an existing OSpec project, after upgrading the CLI with npm, run this in the project directory to refresh the project's OSpec files:
+
+```bash
+ospec update
+```
 
 ## How The OSpec Workflow Works
 
