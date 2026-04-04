@@ -9,6 +9,8 @@ class ExecutionTemplateBuilder extends TemplateBuilderBase_1.TemplateBuilderBase
     }
     generateProposalTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
+        this.setReferenceDocumentContext(context.projectRoot, context.documentPath);
+        try {
         const created = this.getCurrentDate();
         const projectDocs = context.projectContext.projectDocs ?? [];
         const moduleSkills = context.projectContext.moduleSkills ?? [];
@@ -156,30 +158,36 @@ ${this.formatChecklist(context.acceptanceCriteria, 'قيد التحديد')}`;
             affects: context.affects,
             flags: context.flags,
         }, this.copy(context.documentLanguage, zh, en, ja, ar));
+        }
+        finally {
+            this.clearReferenceDocumentContext();
+        }
     }
     generateTasksTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
+        this.setReferenceDocumentContext(context.projectRoot, context.documentPath);
+        try {
         const created = this.getCurrentDate();
         const projectDocs = context.projectContext.projectDocs ?? [];
         const moduleSkills = context.projectContext.moduleSkills ?? [];
         const optionalStepTasksZh = context.optionalSteps.length > 0
             ? context.optionalSteps
-                .map((step, index) => `- [ ] ${index + 7}. 完成可选步骤 \`${step}\` 的文档和验证`)
+                .map((step) => `- [ ] 完成可选步骤 \`${step}\` 的文档和验证`)
                 .join('\n')
             : '';
         const optionalStepTasksEn = context.optionalSteps.length > 0
             ? context.optionalSteps
-                .map((step, index) => `- [ ] ${index + 7}. Finish docs and verification for optional step \`${step}\``)
+                .map((step) => `- [ ] Finish docs and verification for optional step \`${step}\``)
                 .join('\n')
             : '';
         const optionalStepTasksJa = context.optionalSteps.length > 0
             ? context.optionalSteps
-                .map((step, index) => `- [ ] ${index + 7}. オプション手順 \`${step}\` の文書と検証を完了する`)
+                .map((step) => `- [ ] オプション手順 \`${step}\` の文書と検証を完了する`)
                 .join('\n')
             : '';
         const optionalStepTasksAr = context.optionalSteps.length > 0
             ? context.optionalSteps
-                .map((step, index) => `- [ ] ${index + 7}. أكمل التوثيق والتحقق للخطوة الاختيارية \`${step}\``)
+                .map((step) => `- [ ] أكمل التوثيق والتحقق للخطوة الاختيارية \`${step}\``)
                 .join('\n')
             : '';
         const zh = `## 上下文引用
@@ -192,12 +200,12 @@ ${this.formatReferenceList(moduleSkills, '待补充')}
 
 ## 任务清单
 
-- [ ] 1. 完成实现
-- [ ] 2. 对齐项目规划文档与本次 change 的边界
-- [ ] 3. 更新涉及模块的 \`SKILL.md\`
-- [ ] 4. 更新相关 API / 设计 / 计划文档
-- [ ] 5. 重新生成 \`SKILL.index.json\`
-- [ ] 6. 执行验证并更新 \`verification.md\`
+- [ ] 完成实现
+- [ ] 对齐项目规划文档与本次 change 的边界
+- [ ] 更新涉及模块的 \`SKILL.md\`
+- [ ] 更新相关 API / 设计 / 计划文档
+- [ ] 重新生成 \`SKILL.index.json\`
+- [ ] 执行验证并更新 \`verification.md\`
 ${optionalStepTasksZh}`.trim();
         const en = `## Context References
 
@@ -209,12 +217,12 @@ ${this.formatReferenceList(moduleSkills, 'TBD')}
 
 ## Task Checklist
 
-- [ ] 1. Implement the change
-- [ ] 2. Align project planning docs with this change boundary
-- [ ] 3. Update affected \`SKILL.md\` files
-- [ ] 4. Update related API / design / planning docs
-- [ ] 5. Rebuild \`SKILL.index.json\`
-- [ ] 6. Run verification and update \`verification.md\`
+- [ ] Implement the change
+- [ ] Align project planning docs with this change boundary
+- [ ] Update affected \`SKILL.md\` files
+- [ ] Update related API / design / planning docs
+- [ ] Rebuild \`SKILL.index.json\`
+- [ ] Run verification and update \`verification.md\`
 ${optionalStepTasksEn}`.trim();
         const ja = `## 参照コンテキスト
 
@@ -226,12 +234,12 @@ ${this.formatReferenceList(moduleSkills, '未定')}
 
 ## タスクチェックリスト
 
-- [ ] 1. change を実装する
-- [ ] 2. この change の境界に合わせてプロジェクト計画文書を揃える
-- [ ] 3. 影響を受ける \`SKILL.md\` を更新する
-- [ ] 4. 関連する API / 設計 / 計画文書を更新する
-- [ ] 5. \`SKILL.index.json\` を再生成する
-- [ ] 6. 検証を実行して \`verification.md\` を更新する
+- [ ] change を実装する
+- [ ] この change の境界に合わせてプロジェクト計画文書を揃える
+- [ ] 影響を受ける \`SKILL.md\` を更新する
+- [ ] 関連する API / 設計 / 計画文書を更新する
+- [ ] \`SKILL.index.json\` を再生成する
+- [ ] 検証を実行して \`verification.md\` を更新する
 ${optionalStepTasksJa}`.trim();
         const ar = `## مراجع السياق
 
@@ -243,21 +251,27 @@ ${this.formatReferenceList(moduleSkills, 'قيد التحديد')}
 
 ## قائمة المهام
 
-- [ ] 1. نفّذ التغيير
-- [ ] 2. وحّد وثائق تخطيط المشروع مع حدود هذا change
-- [ ] 3. حدّث ملفات \`SKILL.md\` المتأثرة
-- [ ] 4. حدّث وثائق API / التصميم / التخطيط ذات الصلة
-- [ ] 5. أعد بناء \`SKILL.index.json\`
-- [ ] 6. نفّذ التحقق وحدّث \`verification.md\`
+- [ ] نفّذ التغيير
+- [ ] وحّد وثائق تخطيط المشروع مع حدود هذا change
+- [ ] حدّث ملفات \`SKILL.md\` المتأثرة
+- [ ] حدّث وثائق API / التصميم / التخطيط ذات الصلة
+- [ ] أعد بناء \`SKILL.index.json\`
+- [ ] نفّذ التحقق وحدّث \`verification.md\`
 ${optionalStepTasksAr}`.trim();
         return this.withFrontmatter({
             feature: context.feature,
             created,
             optional_steps: context.optionalSteps,
         }, this.copy(context.documentLanguage, zh, en, ja, ar));
+        }
+        finally {
+            this.clearReferenceDocumentContext();
+        }
     }
     generateVerificationTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
+        this.setReferenceDocumentContext(context.projectRoot, context.documentPath);
+        try {
         const created = this.getCurrentDate();
         const projectDocs = context.projectContext.projectDocs ?? [];
         const moduleSkills = context.projectContext.moduleSkills ?? [];
@@ -365,9 +379,15 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
             optional_steps: context.optionalSteps,
             passed_optional_steps: [],
         }, this.copy(context.documentLanguage, zh, en, ja, ar));
+        }
+        finally {
+            this.clearReferenceDocumentContext();
+        }
     }
     generateReviewTemplate(input) {
         const context = this.inputs.normalizeFeatureTemplateInput(input);
+        this.setReferenceDocumentContext(context.projectRoot, context.documentPath);
+        try {
         const created = this.getCurrentDate();
         const projectDocs = context.projectContext.projectDocs ?? [];
         const moduleSkills = context.projectContext.moduleSkills ?? [];
@@ -520,6 +540,10 @@ ${this.formatReferenceList(linkedKnowledgeDocs, 'قيد التحديد')}
             created,
             status: 'pending_review',
         }, this.copy(context.documentLanguage, zh, en, ja, ar));
+        }
+        finally {
+            this.clearReferenceDocumentContext();
+        }
     }
 }
 exports.ExecutionTemplateBuilder = ExecutionTemplateBuilder;

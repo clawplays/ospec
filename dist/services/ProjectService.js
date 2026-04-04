@@ -4545,6 +4545,7 @@ class ProjectService {
 
 
 
+        await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
         await this.rebuildIndex(projectRoot);
 
 
@@ -4593,6 +4594,51 @@ class ProjectService {
 
 
 
+    async rebaseMovedChangeMarkdownLinks(previousChangePath, nextChangePath) {
+        const previousRoot = path_1.default.resolve(previousChangePath);
+        const nextRoot = path_1.default.resolve(nextChangePath);
+        const markdownFiles = [
+            constants_1.FILE_NAMES.PROPOSAL,
+            constants_1.FILE_NAMES.TASKS,
+            constants_1.FILE_NAMES.VERIFICATION,
+            constants_1.FILE_NAMES.REVIEW,
+        ];
+        for (const fileName of markdownFiles) {
+            const nextFilePath = path_1.default.join(nextRoot, fileName);
+            if (!(await this.fileService.exists(nextFilePath))) {
+                continue;
+            }
+            const previousFilePath = path_1.default.join(previousRoot, fileName);
+            const originalContent = await this.fileService.readFile(nextFilePath);
+            const previousDir = path_1.default.dirname(previousFilePath);
+            const nextDir = path_1.default.dirname(nextFilePath);
+            const rewrittenContent = originalContent.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, rawHref) => {
+                const href = String(rawHref || '').trim();
+                if (!this.isRelativeMarkdownHref(href)) {
+                    return match;
+                }
+                const previousTargetPath = path_1.default.resolve(previousDir, href);
+                if (this.isPathWithin(previousTargetPath, previousRoot)) {
+                    return match;
+                }
+                const rebasedHref = path_1.default.relative(nextDir, previousTargetPath).replace(/\\/g, '/');
+                return `[${label}](${rebasedHref || '.'})`;
+            });
+            if (rewrittenContent !== originalContent) {
+                await this.fileService.writeFile(nextFilePath, rewrittenContent);
+            }
+        }
+    }
+    isRelativeMarkdownHref(href) {
+        return Boolean(href) &&
+            !href.startsWith('#') &&
+            !href.startsWith('//') &&
+            !/^[a-z][a-z0-9+.-]*:/i.test(href);
+    }
+    isPathWithin(targetPath, parentPath) {
+        const relativePath = path_1.default.relative(parentPath, targetPath);
+        return relativePath === '' || (!relativePath.startsWith('..') && !path_1.default.isAbsolute(relativePath));
+    }
     async getFeatureProjectContext(rootDir, affects = []) {
 
 

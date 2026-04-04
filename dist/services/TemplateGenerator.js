@@ -63,20 +63,20 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
         // 添加核心任务
         if (coreRequiredSteps.length > 0) {
             coreRequiredSteps.forEach((step, index) => {
-                content += `- [ ] ${index + 1}. ${step}\n`;
+                content += `- [ ] ${step}\n`;
             });
         }
         else {
-            content += `- [ ] 1. 实现功能\n`;
-            content += `- [ ] 2. 更新文档\n`;
-            content += `- [ ] 3. 更新索引\n`;
-            content += `- [ ] 4. 运行测试\n`;
+            content += `- [ ] 实现功能\n`;
+            content += `- [ ] 更新文档\n`;
+            content += `- [ ] 更新索引\n`;
+            content += `- [ ] 运行测试\n`;
         }
         // 添加可选任务
         if (optionalSteps.length > 0) {
             content += `\n### 可选任务\n\n`;
             optionalSteps.forEach((step, index) => {
-                content += `- [ ] ${index + 1}. ${step}\n`;
+                content += `- [ ] ${step}\n`;
             });
         }
         return content;

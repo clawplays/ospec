@@ -126,6 +126,7 @@ export declare class ProjectService {
         archivePath: string;
         change: ActiveChangeStatusItem;
     }>;
+    rebaseMovedChangeMarkdownLinks(previousChangePath: string, nextChangePath: string): Promise<void>;
     getFeatureProjectContext(rootDir: string, affects?: string[]): Promise<FeatureProjectContext>;
     getDocsStatus(rootDir: string): Promise<DocsStatus>;
     getSkillsStatus(rootDir: string): Promise<SkillsStatus>;

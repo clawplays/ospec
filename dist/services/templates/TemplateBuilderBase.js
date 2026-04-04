@@ -1,7 +1,19 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TemplateBuilderBase = void 0;
+const path_1 = __importDefault(require("path"));
 class TemplateBuilderBase {
+    setReferenceDocumentContext(projectRoot, documentPath) {
+        this.referenceProjectRoot = typeof projectRoot === 'string' && projectRoot.trim().length > 0 ? projectRoot : undefined;
+        this.referenceDocumentPath = typeof documentPath === 'string' && documentPath.trim().length > 0 ? documentPath : undefined;
+    }
+    clearReferenceDocumentContext() {
+        this.referenceProjectRoot = undefined;
+        this.referenceDocumentPath = undefined;
+    }
     getCurrentDate() {
         return new Date().toISOString().slice(0, 10);
     }
@@ -40,13 +52,17 @@ class TemplateBuilderBase {
         if (items.length === 0) {
             return `- ${emptyFallback}`;
         }
-        return items.map(item => `- ${item.title}: \`${item.path}\``).join('\n');
+        return items
+            .map(item => `- ${item.title}: [${item.path}](${this.resolveReferenceHref(item.path)})`)
+            .join('\n');
     }
     formatReferenceChecklist(items, emptyFallback) {
         if (items.length === 0) {
             return `- [ ] ${emptyFallback}`;
         }
-        return items.map(item => `- [ ] ${item.path}`).join('\n');
+        return items
+            .map(item => `- [ ] ${item.title}: [${item.path}](${this.resolveReferenceHref(item.path)})`)
+            .join('\n');
     }
     withFrontmatter(fields, body) {
         const frontmatter = Object.entries(fields)
@@ -54,6 +70,19 @@ class TemplateBuilderBase {
             .map(([key, value]) => `${key}: ${this.toYamlValue(value)}`)
             .join('\n');
         return `---\n${frontmatter}\n---\n\n${body.trim()}\n`;
+    }
+    resolveReferenceHref(referencePath) {
+        const normalizedReferencePath = String(referencePath || '').replace(/\\/g, '/');
+        if (!normalizedReferencePath) {
+            return normalizedReferencePath;
+        }
+        if (!this.referenceProjectRoot || !this.referenceDocumentPath) {
+            return normalizedReferencePath;
+        }
+        const targetPath = path_1.default.resolve(this.referenceProjectRoot, normalizedReferencePath);
+        const documentDir = path_1.default.dirname(this.referenceDocumentPath);
+        const relativePath = path_1.default.relative(documentDir, targetPath).replace(/\\/g, '/');
+        return relativePath || '.';
     }
     toYamlValue(value) {
         if (Array.isArray(value)) {

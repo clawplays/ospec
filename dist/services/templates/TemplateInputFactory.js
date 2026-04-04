@@ -20,6 +20,8 @@ class TemplateInputFactory {
                 acceptanceCriteria: [...englishDefaults.acceptanceCriteria],
                 projectContext: this.normalizeFeatureProjectContext(),
                 documentLanguage: 'en-US',
+                projectRoot: undefined,
+                documentPath: undefined,
             };
         }
         const documentLanguage = this.normalizeDocumentLanguage(input.documentLanguage);
@@ -38,6 +40,8 @@ class TemplateInputFactory {
             acceptanceCriteria: input.acceptanceCriteria?.map(item => item.trim()).filter(Boolean) ?? [...localizedDefaults.acceptanceCriteria],
             projectContext: this.normalizeFeatureProjectContext(input.projectContext),
             documentLanguage,
+            projectRoot: typeof input.projectRoot === 'string' && input.projectRoot.trim().length > 0 ? input.projectRoot.trim() : undefined,
+            documentPath: typeof input.documentPath === 'string' && input.documentPath.trim().length > 0 ? input.documentPath.trim() : undefined,
         };
         if (!input.background?.trim()) {
             normalized.background = localizedDefaults.background;

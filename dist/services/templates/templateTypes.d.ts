@@ -15,6 +15,8 @@ export interface FeatureTemplateInput {
     acceptanceCriteria?: string[];
     projectContext?: FeatureProjectContext;
     documentLanguage?: TemplateDocumentLanguage;
+    projectRoot?: string;
+    documentPath?: string;
 }
 export interface NormalizedFeatureTemplateInput {
     feature: string;
@@ -30,6 +32,8 @@ export interface NormalizedFeatureTemplateInput {
     acceptanceCriteria: string[];
     projectContext: FeatureProjectContext;
     documentLanguage: TemplateDocumentLanguage;
+    projectRoot?: string;
+    documentPath?: string;
 }
 export interface FeatureProjectReference {
     title: string;

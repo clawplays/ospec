@@ -209,6 +209,7 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
         await services_1.services.fileService.move(targetPath, archivePath);
         await services_1.services.stateManager.writeState(archivePath, nextState);
         await this.updateProposalStatus(archivePath, 'archived');
+        await services_1.services.projectService.rebaseMovedChangeMarkdownLinks(targetPath, archivePath);
         await services_1.services.projectService.rebuildIndex(projectRoot);
         return this.toRelativePath(projectRoot, archivePath);
     }

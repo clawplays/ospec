@@ -78,6 +78,8 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 flags,
                 optionalSteps: activatedSteps,
                 documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(featureDir, constants_1.FILE_NAMES.PROPOSAL),
             }));
             await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.TASKS), services_1.services.templateEngine.generateTasksTemplate({
                 feature: featureName,
@@ -87,6 +89,8 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 flags,
                 optionalSteps: activatedSteps,
                 documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(featureDir, constants_1.FILE_NAMES.TASKS),
             }));
             await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.VERIFICATION), services_1.services.templateEngine.generateVerificationTemplate({
                 feature: featureName,
@@ -96,6 +100,8 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 flags,
                 optionalSteps: activatedSteps,
                 documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(featureDir, constants_1.FILE_NAMES.VERIFICATION),
             }));
             await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.REVIEW), services_1.services.templateEngine.generateReviewTemplate({
                 feature: featureName,
@@ -105,6 +111,8 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 flags,
                 optionalSteps: activatedSteps,
                 documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(featureDir, constants_1.FILE_NAMES.REVIEW),
             }));
             await this.writePluginArtifacts(featureDir, activatedSteps);
             this.success(`${placement === constants_1.DIR_NAMES.QUEUED ? 'Queued change' : 'Change'} ${featureName} created at ${featureDir}`);

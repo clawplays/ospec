@@ -77,6 +77,7 @@ class QueueService {
         await this.fileService.writeJSON(statePath, state);
         await this.updateFrontmatterStatus(path_1.default.join(activePath, constants_1.FILE_NAMES.PROPOSAL), 'active');
         await this.updateFrontmatterStatus(path_1.default.join(activePath, constants_1.FILE_NAMES.VERIFICATION), 'verifying');
+        await this.projectService.rebaseMovedChangeMarkdownLinks(queuedPath, activePath);
         const item = await this.buildQueuedChangeStatusItem(rootDir, activePath);
         if (!item) {
             throw new Error(`Activated change state could not be read: ${changeName}`);

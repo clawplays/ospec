@@ -112,6 +112,84 @@ function assertContains(output, expected, label) {
 
 
 
+function assertNotContains(output, unexpected, label) {
+
+  if (output.includes(unexpected)) {
+
+    throw new Error(`Expected ${label} to exclude "${unexpected}"\nActual output:\n${output}`);
+
+  }
+
+}
+
+
+
+function toPosixRelative(from, to) {
+
+  return path.relative(from, to).replace(/\\/g, '/');
+
+}
+
+
+
+async function findArchivedChangeDir(archivedRoot, changeName) {
+
+  if (!(await fs.pathExists(archivedRoot))) {
+
+    return null;
+
+  }
+
+
+
+  const entries = await fs.readdir(archivedRoot, { withFileTypes: true });
+
+  for (const entry of entries) {
+
+    if (!entry.isDirectory()) {
+
+      continue;
+
+    }
+
+
+
+    const entryPath = path.join(archivedRoot, entry.name);
+
+    const statePath = path.join(entryPath, 'state.json');
+
+    if (await fs.pathExists(statePath)) {
+
+      const state = await fs.readJson(statePath);
+
+      if (state.feature === changeName && state.status === 'archived') {
+
+        return entryPath;
+
+      }
+
+    }
+
+
+
+    const nestedMatch = await findArchivedChangeDir(entryPath, changeName);
+
+    if (nestedMatch) {
+
+      return nestedMatch;
+
+    }
+
+  }
+
+
+
+  return null;
+
+}
+
+
+
 async function main() {
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-release-smoke-'));
@@ -332,9 +410,31 @@ async function main() {
 
     const statePath = path.join(featureDir, 'state.json');
 
+    const proposalPath = path.join(featureDir, 'proposal.md');
+
     const tasksPath = path.join(featureDir, 'tasks.md');
 
     const verificationPath = path.join(featureDir, 'verification.md');
+
+    const reviewPath = path.join(featureDir, 'review.md');
+
+    const projectOverviewPath = path.join(projectDir, 'docs', 'project', 'overview.md');
+
+    const activeOverviewLink = `[docs/project/overview.md](${toPosixRelative(featureDir, projectOverviewPath)})`;
+
+    assertContains(await fs.readFile(proposalPath, 'utf8'), activeOverviewLink, 'proposal link');
+
+    const tasksContent = await fs.readFile(tasksPath, 'utf8');
+
+    assertContains(tasksContent, activeOverviewLink, 'tasks link');
+
+    assertContains(tasksContent, '- [ ] Implement the change', 'tasks checklist format');
+
+    assertNotContains(tasksContent, '- [ ] 1.', 'tasks hybrid checklist numbering');
+
+    assertContains(await fs.readFile(verificationPath, 'utf8'), activeOverviewLink, 'verification link');
+
+    assertContains(await fs.readFile(reviewPath, 'utf8'), activeOverviewLink, 'review link');
 
     const state = await fs.readJson(statePath);
 
@@ -357,31 +457,45 @@ async function main() {
 
     await fs.writeJson(statePath, state, { spaces: 2 });
 
-    await fs.writeFile(
+    await fs.writeFile(tasksPath, (await fs.readFile(tasksPath, 'utf8')).replace(/- \[ \]/g, '- [x]'), 'utf8');
 
-      tasksPath,
-
-      ['---', 'feature: release-smoke', 'created: 2026-03-25', 'optional_steps: []', '---', '', '## Tasks', '', '- [x] Done', ''].join('\n'),
-
-      'utf8'
-
-    );
-
-    await fs.writeFile(
-
-      verificationPath,
-
-      ['---', 'feature: release-smoke', 'created: 2026-03-25', 'status: verifying', 'optional_steps: []', 'passed_optional_steps: []', '---', '', '## Verification', '', '- [x] build passed', '- [x] test passed', ''].join('\n'),
-
-      'utf8'
-
-    );
+    await fs.writeFile(verificationPath, (await fs.readFile(verificationPath, 'utf8')).replace(/- \[ \]/g, '- [x]'), 'utf8');
 
 
 
     output = run('node', [cliPath, 'finalize', featureDir]);
 
     assertContains(output, 'Change finalized:', 'finalize output');
+
+    const archivedFeatureDir = await findArchivedChangeDir(path.join(projectDir, 'changes', 'archived'), 'release-smoke');
+
+    if (!archivedFeatureDir) {
+
+      throw new Error('Expected release-smoke to be archived');
+
+    }
+
+
+
+    const archivedOverviewLink = `[docs/project/overview.md](${toPosixRelative(archivedFeatureDir, projectOverviewPath)})`;
+
+    assertContains(await fs.readFile(path.join(archivedFeatureDir, 'proposal.md'), 'utf8'), archivedOverviewLink, 'archived proposal link');
+
+    assertContains(await fs.readFile(path.join(archivedFeatureDir, 'tasks.md'), 'utf8'), archivedOverviewLink, 'archived tasks link');
+
+    assertContains(await fs.readFile(path.join(archivedFeatureDir, 'verification.md'), 'utf8'), archivedOverviewLink, 'archived verification link');
+
+    assertContains(await fs.readFile(path.join(archivedFeatureDir, 'review.md'), 'utf8'), archivedOverviewLink, 'archived review link');
+
+    output = run('node', [cliPath, 'queue', 'next', projectDir]);
+
+    assertContains(output, 'Activated next queued change: queued-smoke', 'queue next output');
+
+    const activatedQueuedDir = path.join(projectDir, 'changes', 'active', 'queued-smoke');
+
+    const queuedOverviewLink = `[docs/project/overview.md](${toPosixRelative(activatedQueuedDir, projectOverviewPath)})`;
+
+    assertContains(await fs.readFile(path.join(activatedQueuedDir, 'tasks.md'), 'utf8'), queuedOverviewLink, 'activated queued change link');
 
 
 
