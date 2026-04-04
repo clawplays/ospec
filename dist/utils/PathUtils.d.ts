@@ -6,4 +6,3 @@ export declare class PathUtils {
     static isAbsolute(filePath: string): boolean;
     static getRelative(from: string, to: string): string;
 }
-//# sourceMappingURL=PathUtils.d.ts.map

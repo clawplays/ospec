@@ -239,4 +239,3 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.VerifyCommand = VerifyCommand;
-//# sourceMappingURL=VerifyCommand.js.map

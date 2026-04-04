@@ -82,4 +82,3 @@ var UpdateCommand_1 = require("./UpdateCommand");
 
 Object.defineProperty(exports, "UpdateCommand", { enumerable: true, get: function () { return UpdateCommand_1.UpdateCommand; } });
 
-//# sourceMappingURL=index.js.map

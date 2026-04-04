@@ -40,4 +40,3 @@ export declare class TemplateEngine {
     generateBuildIndexScriptTemplate(): string;
 }
 export declare const templateEngine: TemplateEngine;
-//# sourceMappingURL=TemplateEngine.d.ts.map

@@ -1,11 +1,13 @@
 #!/bin/sh
 
-if [ -f "build-index-auto.cjs" ]; then
+if [ -f ".ospec/tools/build-index-auto.cjs" ]; then
+  OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"
+elif [ -f "build-index-auto.cjs" ]; then
   OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.cjs"
 elif [ -f "build-index-auto.js" ]; then
   OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.js"
 else
-  echo "[ospec] build-index-auto.cjs not found, skip hook check"
+  echo "[ospec] .ospec/tools/build-index-auto.cjs not found, skip hook check"
   exit 0
 fi
 

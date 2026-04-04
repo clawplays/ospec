@@ -16,4 +16,3 @@ export declare class ValidationService {
     validateRequiredFields(data: Record<string, any>, fields: string[]): boolean;
 }
 export declare const validationService: ValidationService;
-//# sourceMappingURL=ValidationService.d.ts.map

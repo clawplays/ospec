@@ -54,4 +54,3 @@ class IndexCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.IndexCommand = IndexCommand;
-//# sourceMappingURL=IndexCommand.js.map

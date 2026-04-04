@@ -127,4 +127,3 @@ class IndexBuilder {
 exports.IndexBuilder = IndexBuilder;
 const createIndexBuilder = (skillParser) => new IndexBuilder(skillParser);
 exports.createIndexBuilder = createIndexBuilder;
-//# sourceMappingURL=IndexBuilder.js.map

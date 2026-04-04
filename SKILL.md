@@ -53,7 +53,7 @@ Required checks after `ospec init`:
 - `changes/archived/`
 - `SKILL.md`
 - `SKILL.index.json`
-- `build-index-auto.cjs`
+- `.ospec/tools/build-index-auto.cjs`
 - `for-ai/ai-guide.md`
 - `for-ai/execution-protocol.md`
 - `for-ai/naming-conventions.md`

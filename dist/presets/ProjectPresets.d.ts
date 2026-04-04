@@ -38,4 +38,3 @@ export declare const getLocalizedProjectPresetContent: (presetId: ProjectPresetI
 export declare const inferProjectPresetFromDescription: (description: string) => ProjectPresetDefinition | undefined;
 export declare const getProjectPresetFirstChangeSuggestion: (presetId: ProjectPresetId | null | undefined, language: ProjectPresetDocumentLanguage, projectName: string) => ProjectPresetFirstChangeSuggestion | null;
 export {};
-//# sourceMappingURL=ProjectPresets.d.ts.map

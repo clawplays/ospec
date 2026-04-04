@@ -19,4 +19,3 @@ function formatCliCommand(...args) {
         .join(' ');
 }
 exports.formatCliCommand = formatCliCommand;
-//# sourceMappingURL=helpers.js.map

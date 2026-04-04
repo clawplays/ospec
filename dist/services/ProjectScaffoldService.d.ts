@@ -41,4 +41,3 @@ export declare class ProjectScaffoldService {
     private getCopy;
 }
 export declare const createProjectScaffoldService: (fileService: FileService) => ProjectScaffoldService;
-//# sourceMappingURL=ProjectScaffoldService.d.ts.map

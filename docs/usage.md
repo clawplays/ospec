@@ -120,7 +120,7 @@ Queue mode stays explicit:
 For a project that is already initialized:
 
 ```bash
-npm install -g @clawplays/ospec-cli@0.3.8
+npm install -g @clawplays/ospec-cli@0.3.9
 ospec update [path]
 ```
 
@@ -135,6 +135,7 @@ ospec update [path]
 
 - refresh protocol docs
 - refresh project tooling and Git hooks
+- migrate legacy root-level `build-index-auto.cjs` / `build-index-auto.js` into `.ospec/tools/build-index-auto.cjs`
 - sync managed `ospec` and `ospec-change` skills
 - refresh managed workspace assets for already-enabled plugins
 - backfill `.skillrc.documentLanguage` for older projects when the language can be recovered from existing project assets

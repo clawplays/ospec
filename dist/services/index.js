@@ -88,4 +88,3 @@ class ServiceContainer {
 }
 exports.ServiceContainer = ServiceContainer;
 exports.services = ServiceContainer.getInstance();
-//# sourceMappingURL=index.js.map

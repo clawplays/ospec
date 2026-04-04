@@ -30,4 +30,3 @@ export declare abstract class BaseCommand {
      */
     protected warn(message: string): void;
 }
-//# sourceMappingURL=BaseCommand.d.ts.map

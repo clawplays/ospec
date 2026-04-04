@@ -49,4 +49,3 @@ export declare class PerformanceMonitor {
     generateReport(): string;
 }
 export declare const performanceMonitor: PerformanceMonitor;
-//# sourceMappingURL=PerformanceMonitor.d.ts.map

@@ -63,4 +63,3 @@ export declare class CachingLayer<T = any> {
     destroy(): void;
 }
 export declare const cachingLayer: CachingLayer<any>;
-//# sourceMappingURL=CachingLayer.d.ts.map

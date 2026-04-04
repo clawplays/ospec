@@ -318,4 +318,3 @@ class NewCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.NewCommand = NewCommand;
-//# sourceMappingURL=NewCommand.js.map

@@ -23,4 +23,3 @@ export declare class SkillUpdateEngine {
     exportSkillPackage(featureDir: string): Promise<Buffer>;
 }
 export declare const skillUpdateEngine: SkillUpdateEngine;
-//# sourceMappingURL=SkillUpdateEngine.d.ts.map

@@ -268,4 +268,3 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.ArchiveCommand = ArchiveCommand;
-//# sourceMappingURL=ArchiveCommand.js.map

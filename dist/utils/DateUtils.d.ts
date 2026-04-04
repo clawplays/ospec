@@ -15,4 +15,3 @@ export declare class DateUtils {
      */
     static parseISO(dateString: string): Date;
 }
-//# sourceMappingURL=DateUtils.d.ts.map

@@ -124,4 +124,3 @@ exports.StateManager = StateManager;
 function createStateManager(fileService) {
     return new StateManager(fileService);
 }
-//# sourceMappingURL=StateManager.js.map

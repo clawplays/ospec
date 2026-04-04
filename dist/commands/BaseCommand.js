@@ -43,4 +43,3 @@ class BaseCommand {
     }
 }
 exports.BaseCommand = BaseCommand;
-//# sourceMappingURL=BaseCommand.js.map

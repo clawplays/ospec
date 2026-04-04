@@ -70,4 +70,3 @@ export declare class ProjectScaffoldCommandService {
 }
 export declare const createProjectScaffoldCommandService: (fileService: FileService, logger: Logger) => ProjectScaffoldCommandService;
 export {};
-//# sourceMappingURL=ProjectScaffoldCommandService.d.ts.map

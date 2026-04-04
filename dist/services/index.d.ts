@@ -49,4 +49,3 @@ export declare class ServiceContainer {
     static getInstance(): ServiceContainer;
 }
 export declare const services: ServiceContainer;
-//# sourceMappingURL=index.d.ts.map

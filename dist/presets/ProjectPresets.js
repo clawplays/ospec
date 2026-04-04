@@ -313,4 +313,3 @@ const getProjectPresetFirstChangeSuggestion = (presetId, language, projectName) 
     return preset.buildFirstChangeSuggestion(language, projectName);
 };
 exports.getProjectPresetFirstChangeSuggestion = getProjectPresetFirstChangeSuggestion;
-//# sourceMappingURL=ProjectPresets.js.map

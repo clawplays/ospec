@@ -371,4 +371,3 @@ export interface QueueRunStatusReport {
     nextInstruction: string | null;
 }
 export type WorkflowStep = 'proposal_complete' | 'tasks_complete' | 'implementation_complete' | 'skill_updated' | 'index_regenerated' | 'tests_passed' | 'verification_passed' | 'archived';
-//# sourceMappingURL=types.d.ts.map

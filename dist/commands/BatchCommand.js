@@ -39,4 +39,3 @@ class BatchCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.BatchCommand = BatchCommand;
-//# sourceMappingURL=BatchCommand.js.map

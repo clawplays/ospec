@@ -113,4 +113,3 @@ class VerificationSystem {
 }
 exports.VerificationSystem = VerificationSystem;
 exports.verificationSystem = new VerificationSystem();
-//# sourceMappingURL=VerificationSystem.js.map

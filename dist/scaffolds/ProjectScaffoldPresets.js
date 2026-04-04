@@ -148,4 +148,3 @@ const getLocalizedProjectScaffoldPurpose = (filePath, language) => {
     return zhPurposes[filePath] || '';
 };
 exports.getLocalizedProjectScaffoldPurpose = getLocalizedProjectScaffoldPurpose;
-//# sourceMappingURL=ProjectScaffoldPresets.js.map

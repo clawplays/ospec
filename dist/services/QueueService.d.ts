@@ -14,4 +14,3 @@ export declare class QueueService {
     private toRelativePath;
 }
 export declare function createQueueService(fileService: FileService, projectService: ProjectService): QueueService;
-//# sourceMappingURL=QueueService.d.ts.map

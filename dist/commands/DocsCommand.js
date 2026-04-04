@@ -116,4 +116,3 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.DocsCommand = DocsCommand;
-//# sourceMappingURL=DocsCommand.js.map

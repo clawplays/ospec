@@ -19,7 +19,7 @@ protocol:
     - ".skillrc"
     - "SKILL.md"
     - "SKILL.index.json"
-    - "build-index-auto.cjs"
+    - ".ospec/tools/build-index-auto.cjs"
     - "for-ai/ai-guide.md"
     - "for-ai/execution-protocol.md"
     - "for-ai/naming-conventions.md"
@@ -139,7 +139,7 @@ usage:
     - "Create the first active change explicitly."
     - "Run your project deployment and validation flow, then use ospec verify [changes/active/<change>]."
     - "Archive the validated change with ospec finalize [changes/active/<change>]."
-    - "Verify .skillrc, changes/, .ospec/, build-index-auto.cjs, for-ai docs, and docs/project/* before claiming init is complete."
+    - "Verify .skillrc, changes/, .ospec/, .ospec/tools/build-index-auto.cjs, for-ai docs, and docs/project/* before claiming init is complete."
     - "Use presets only as planning defaults; scaffold still requires explicit intent."
   prompt_shortcuts:
     - "initialize this project"

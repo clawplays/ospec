@@ -133,4 +133,3 @@ class CachingLayer {
 }
 exports.CachingLayer = CachingLayer;
 exports.cachingLayer = new CachingLayer();
-//# sourceMappingURL=CachingLayer.js.map

@@ -236,4 +236,3 @@ class PluginWorkflowComposer {
     }
 }
 exports.PluginWorkflowComposer = PluginWorkflowComposer;
-//# sourceMappingURL=PluginWorkflowComposer.js.map

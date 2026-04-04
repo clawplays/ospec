@@ -7,4 +7,3 @@ export declare class QueueCommand extends BaseCommand {
     private activateNext;
     private parseAddArgs;
 }
-//# sourceMappingURL=QueueCommand.d.ts.map

@@ -21,4 +21,3 @@ export declare abstract class TemplateBuilderBase {
     private toYamlValue;
 }
 export {};
-//# sourceMappingURL=TemplateBuilderBase.d.ts.map

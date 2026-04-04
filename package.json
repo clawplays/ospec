@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "CLI tool for enforcing ospec workflow",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,9 +11,10 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "tsc && node scripts/strip-sourcemap-refs.js",
+    "dev": "node scripts/dev-watch.js",
     "postinstall": "node scripts/postinstall.js",
+    "prepack": "node scripts/strip-sourcemap-refs.js",
     "test": "vitest",
     "test:run": "vitest --run",
     "lint": "eslint src tests --ext .ts",

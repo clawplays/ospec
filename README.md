@@ -160,6 +160,8 @@ For an existing OSpec project, after upgrading the CLI with npm, run this in the
 ospec update
 ```
 
+`ospec update` also migrates legacy root-level `build-index-auto.cjs` / `build-index-auto.js` tooling into `.ospec/tools/build-index-auto.cjs` and refreshes OSpec-managed hook entrypoints to use the new location.
+
 ## How The OSpec Workflow Works
 
 ```text

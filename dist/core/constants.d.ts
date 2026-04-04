@@ -38,4 +38,3 @@ export declare const NAMING_RULES: {
 export declare const DATE_FORMAT = "YYYY-MM-DD";
 export declare const DATETIME_FORMAT = "YYYY-MM-DDTHH:mm:ssZ";
 export declare const WORKFLOW_STEPS: readonly ["proposal_complete", "tasks_complete", "implementation_complete", "skill_updated", "index_regenerated", "tests_passed", "verification_passed", "archived"];
-//# sourceMappingURL=constants.d.ts.map

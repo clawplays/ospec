@@ -69,4 +69,3 @@ class VerificationError extends OSpecError {
     }
 }
 exports.VerificationError = VerificationError;
-//# sourceMappingURL=errors.js.map

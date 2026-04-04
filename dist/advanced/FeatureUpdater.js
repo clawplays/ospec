@@ -148,4 +148,3 @@ class FeatureUpdater {
 }
 exports.FeatureUpdater = FeatureUpdater;
 exports.featureUpdater = new FeatureUpdater();
-//# sourceMappingURL=FeatureUpdater.js.map

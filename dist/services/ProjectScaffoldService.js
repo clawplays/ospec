@@ -600,4 +600,3 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
 exports.ProjectScaffoldService = ProjectScaffoldService;
 const createProjectScaffoldService = (fileService) => new ProjectScaffoldService(fileService);
 exports.createProjectScaffoldService = createProjectScaffoldService;
-//# sourceMappingURL=ProjectScaffoldService.js.map

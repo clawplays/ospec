@@ -16,4 +16,3 @@ export { ConfigurableWorkflow, WORKFLOW_PRESETS } from './ConfigurableWorkflow';
 export type { CoreStep, OptionalStep, OptionalStepConfig, WorkflowConfigType } from './ConfigurableWorkflow';
 export { PluginWorkflowComposer, DEFAULT_STITCH_PLUGIN_CONFIG, DEFAULT_CHECKPOINT_PLUGIN_CONFIG } from './PluginWorkflowComposer';
 export type { EnabledPluginSummary, PluginCapabilitySummary } from './PluginWorkflowComposer';
-//# sourceMappingURL=index.d.ts.map

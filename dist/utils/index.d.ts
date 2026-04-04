@@ -4,4 +4,3 @@
 export * from './PathUtils';
 export * from './StringUtils';
 export * from './DateUtils';
-//# sourceMappingURL=index.d.ts.map

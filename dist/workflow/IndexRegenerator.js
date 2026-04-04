@@ -144,4 +144,3 @@ class IndexRegenerator {
 }
 exports.IndexRegenerator = IndexRegenerator;
 exports.indexRegenerator = new IndexRegenerator();
-//# sourceMappingURL=IndexRegenerator.js.map

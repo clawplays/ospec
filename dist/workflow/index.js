@@ -29,4 +29,3 @@ var PluginWorkflowComposer_1 = require("./PluginWorkflowComposer");
 Object.defineProperty(exports, "DEFAULT_STITCH_PLUGIN_CONFIG", { enumerable: true, get: function () { return PluginWorkflowComposer_1.DEFAULT_STITCH_PLUGIN_CONFIG; } });
 Object.defineProperty(exports, "DEFAULT_CHECKPOINT_PLUGIN_CONFIG", { enumerable: true, get: function () { return PluginWorkflowComposer_1.DEFAULT_CHECKPOINT_PLUGIN_CONFIG; } });
 Object.defineProperty(exports, "PluginWorkflowComposer", { enumerable: true, get: function () { return PluginWorkflowComposer_1.PluginWorkflowComposer; } });
-//# sourceMappingURL=index.js.map

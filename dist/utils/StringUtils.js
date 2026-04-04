@@ -44,4 +44,3 @@ class StringUtils {
     }
 }
 exports.StringUtils = StringUtils;
-//# sourceMappingURL=StringUtils.js.map

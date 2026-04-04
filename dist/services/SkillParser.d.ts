@@ -27,4 +27,3 @@ export declare class SkillParser {
 }
 export declare const skillParser: SkillParser;
 export {};
-//# sourceMappingURL=SkillParser.d.ts.map

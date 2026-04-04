@@ -11,4 +11,3 @@ export declare class ConfigManager {
     private normalizeConfig;
 }
 export declare function createConfigManager(fileService: FileService): ConfigManager;
-//# sourceMappingURL=ConfigManager.d.ts.map

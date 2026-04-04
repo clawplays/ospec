@@ -170,4 +170,3 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.StatusCommand = StatusCommand;
-//# sourceMappingURL=StatusCommand.js.map

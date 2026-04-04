@@ -33,4 +33,3 @@ export declare class WorkflowError extends OSpecError {
 export declare class VerificationError extends OSpecError {
     constructor(message: string, details?: any);
 }
-//# sourceMappingURL=errors.d.ts.map

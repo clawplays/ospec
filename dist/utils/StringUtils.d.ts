@@ -23,4 +23,3 @@ export declare class StringUtils {
      */
     static trim(str: string): string;
 }
-//# sourceMappingURL=StringUtils.d.ts.map

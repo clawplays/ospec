@@ -9,4 +9,3 @@ export declare class IndexBuilder {
     private stripVolatileFields;
 }
 export declare const createIndexBuilder: (skillParser: SkillParser) => IndexBuilder;
-//# sourceMappingURL=IndexBuilder.d.ts.map

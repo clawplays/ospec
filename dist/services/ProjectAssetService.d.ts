@@ -46,4 +46,3 @@ export declare class ProjectAssetService {
 }
 export declare const createProjectAssetService: (fileService: FileService) => ProjectAssetService;
 export {};
-//# sourceMappingURL=ProjectAssetService.d.ts.map

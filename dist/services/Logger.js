@@ -45,4 +45,3 @@ class Logger {
 }
 exports.Logger = Logger;
 exports.logger = new Logger();
-//# sourceMappingURL=Logger.js.map

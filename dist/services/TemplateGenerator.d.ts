@@ -37,4 +37,3 @@ export declare class TemplateGenerator {
      */
     private static generateExecutionProtocol;
 }
-//# sourceMappingURL=TemplateGenerator.d.ts.map

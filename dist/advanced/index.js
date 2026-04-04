@@ -19,4 +19,3 @@ Object.defineProperty(exports, "performanceMonitor", { enumerable: true, get: fu
 var CachingLayer_1 = require("./CachingLayer");
 Object.defineProperty(exports, "CachingLayer", { enumerable: true, get: function () { return CachingLayer_1.CachingLayer; } });
 Object.defineProperty(exports, "cachingLayer", { enumerable: true, get: function () { return CachingLayer_1.cachingLayer; } });
-//# sourceMappingURL=index.js.map

@@ -50,7 +50,7 @@ Use this action when the user intent is initialization.
 
 - use \`ospec init [path]\` so the repository ends in change-ready state
 
-- verify \`.skillrc\`, \`.ospec/\`, \`changes/\`, \`SKILL.md\`, \`SKILL.index.json\`, \`build-index-auto.cjs\`, \`for-ai/\`, and \`docs/project/\` files on disk
+- verify \`.skillrc\`, \`.ospec/\`, \`changes/\`, \`SKILL.md\`, \`SKILL.index.json\`, \`.ospec/tools/build-index-auto.cjs\`, \`for-ai/\`, and \`docs/project/\` files on disk
 
 - if project overview context is missing and AI can ask follow-up questions, ask for a brief summary or tech stack before initialization; if the user declines, fall back to placeholder docs
 
@@ -1237,4 +1237,3 @@ interface:
 
 exports.SkillCommand = SkillCommand;
 
-//# sourceMappingURL=SkillCommand.js.map

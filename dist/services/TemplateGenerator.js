@@ -270,4 +270,3 @@ ospec feature archive my-feature
     }
 }
 exports.TemplateGenerator = TemplateGenerator;
-//# sourceMappingURL=TemplateGenerator.js.map

@@ -91,4 +91,3 @@ export interface NormalizedProjectBootstrapInput {
     inferredFields: BootstrapFieldKey[];
     placeholderFields: BootstrapFieldKey[];
 }
-//# sourceMappingURL=templateTypes.d.ts.map

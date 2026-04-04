@@ -116,4 +116,3 @@ class TemplateEngine {
 }
 exports.TemplateEngine = TemplateEngine;
 exports.templateEngine = new TemplateEngine();
-//# sourceMappingURL=TemplateEngine.js.map

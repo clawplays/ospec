@@ -32,7 +32,7 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         id: 'build-index-script',
         category: 'tooling',
         description: 'Rebuild script for SKILL.index.json.',
-        targetRelativePath: 'build-index-auto.cjs',
+        targetRelativePath: '.ospec/tools/build-index-auto.cjs',
         overwritePolicy: 'if_missing',
         sourceRelativePaths: ['src/tools/build-index.js', 'dist/tools/build-index.js'],
     },
@@ -105,4 +105,3 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         sourceRelativePaths: ['assets/git-hooks/post-merge'],
     },
 ];
-//# sourceMappingURL=ProjectAssetRegistry.js.map

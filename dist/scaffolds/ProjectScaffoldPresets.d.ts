@@ -17,4 +17,3 @@ export declare const PROJECT_SCAFFOLD_PRESETS: ProjectScaffoldDefinition[];
 export declare const getProjectScaffoldPreset: (presetId?: ProjectPresetId | null) => ProjectScaffoldDefinition | undefined;
 export declare const getLocalizedProjectScaffoldMeta: (presetId: ProjectPresetId, language: ProjectPresetDocumentLanguage) => Pick<ProjectScaffoldDefinition, "title" | "description" | "framework" | "installCommand">;
 export declare const getLocalizedProjectScaffoldPurpose: (filePath: string, language: ProjectPresetDocumentLanguage) => string;
-//# sourceMappingURL=ProjectScaffoldPresets.d.ts.map

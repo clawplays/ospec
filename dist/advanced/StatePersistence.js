@@ -165,4 +165,3 @@ class StatePersistence {
 }
 exports.StatePersistence = StatePersistence;
 exports.statePersistence = new StatePersistence();
-//# sourceMappingURL=StatePersistence.js.map

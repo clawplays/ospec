@@ -58,4 +58,3 @@ export declare class StatePersistence {
     };
 }
 export declare const statePersistence: StatePersistence;
-//# sourceMappingURL=StatePersistence.d.ts.map

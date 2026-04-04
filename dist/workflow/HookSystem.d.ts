@@ -35,4 +35,3 @@ export declare class HookSystem {
     }[];
 }
 export declare const hookSystem: HookSystem;
-//# sourceMappingURL=HookSystem.d.ts.map

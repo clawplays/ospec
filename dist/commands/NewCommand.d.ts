@@ -8,4 +8,3 @@ export declare class NewCommand extends BaseCommand {
     execute(featureName: string, rootDir?: string, options?: NewCommandOptions): Promise<void>;
     private normalizeFlags;
 }
-//# sourceMappingURL=NewCommand.d.ts.map

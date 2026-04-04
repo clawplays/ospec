@@ -156,4 +156,3 @@ class BatchOperations {
 }
 exports.BatchOperations = BatchOperations;
 exports.batchOperations = new BatchOperations();
-//# sourceMappingURL=BatchOperations.js.map

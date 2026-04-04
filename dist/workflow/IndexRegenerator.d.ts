@@ -46,4 +46,3 @@ export declare class IndexRegenerator {
     }>;
 }
 export declare const indexRegenerator: IndexRegenerator;
-//# sourceMappingURL=IndexRegenerator.d.ts.map

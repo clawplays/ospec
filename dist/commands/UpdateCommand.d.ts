@@ -5,4 +5,3 @@ export declare class UpdateCommand extends BaseCommand {
     private syncInstalledSkills;
     private shouldSyncClaudeSkills;
 }
-//# sourceMappingURL=UpdateCommand.d.ts.map

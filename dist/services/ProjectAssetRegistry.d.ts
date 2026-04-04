@@ -9,4 +9,3 @@ export interface DirectCopyProjectAssetDefinition {
     sourceRelativePaths?: string[];
 }
 export declare const DIRECT_COPY_PROJECT_ASSETS: DirectCopyProjectAssetDefinition[];
-//# sourceMappingURL=ProjectAssetRegistry.d.ts.map

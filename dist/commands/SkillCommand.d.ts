@@ -28,4 +28,3 @@ export declare class SkillCommand extends BaseCommand {
     private resolveTargetDir;
     private resolveProviderHome;
 }
-//# sourceMappingURL=SkillCommand.d.ts.map

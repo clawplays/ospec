@@ -190,4 +190,3 @@ class ProjectScaffoldCommandService {
 exports.ProjectScaffoldCommandService = ProjectScaffoldCommandService;
 const createProjectScaffoldCommandService = (fileService, logger) => new ProjectScaffoldCommandService(fileService, logger);
 exports.createProjectScaffoldCommandService = createProjectScaffoldCommandService;
-//# sourceMappingURL=ProjectScaffoldCommandService.js.map

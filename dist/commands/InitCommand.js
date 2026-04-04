@@ -121,4 +121,3 @@ class InitCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.InitCommand = InitCommand;
-//# sourceMappingURL=InitCommand.js.map

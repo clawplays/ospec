@@ -65,7 +65,7 @@ async function runHookCheck(rootDir, event) {
     const indexStatus = await computeIndexStatus(rootDir);
     if (indexStatus.stale) {
       console.log('[ospec] SKILL.index.json is stale');
-      console.log('[ospec] run "ospec index build" or "node build-index-auto.cjs" to refresh it');
+      console.log('[ospec] run "ospec index build" or "node .ospec/tools/build-index-auto.cjs" to refresh it');
       if (event === 'pre-commit' && config.indexCheck === 'error') {
         shouldBlock = true;
       }

@@ -21,4 +21,3 @@ export declare class VerificationSystem {
     }>;
 }
 export declare const verificationSystem: VerificationSystem;
-//# sourceMappingURL=VerificationSystem.d.ts.map

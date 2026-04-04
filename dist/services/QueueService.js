@@ -140,4 +140,3 @@ exports.QueueService = QueueService;
 function createQueueService(fileService, projectService) {
     return new QueueService(fileService, projectService);
 }
-//# sourceMappingURL=QueueService.js.map

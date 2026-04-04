@@ -18,4 +18,3 @@ export declare class FileService {
     stat(filePath: string): Promise<fs.Stats>;
 }
 export declare const fileService: FileService;
-//# sourceMappingURL=FileService.d.ts.map

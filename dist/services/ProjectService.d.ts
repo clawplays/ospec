@@ -207,4 +207,3 @@ export declare class ProjectService {
 }
 export declare const createProjectService: (fileService: FileService, configManager: ConfigManager, templateEngine: TemplateEngine, indexBuilder: IndexBuilder, skillParser: SkillParser, projectAssetService: ProjectAssetService, projectScaffoldService: ProjectScaffoldService, projectScaffoldCommandService: ProjectScaffoldCommandService) => ProjectService;
 export {};
-//# sourceMappingURL=ProjectService.d.ts.map

@@ -100,4 +100,3 @@ class ProgressCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.ProgressCommand = ProgressCommand;
-//# sourceMappingURL=ProgressCommand.js.map

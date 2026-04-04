@@ -35,4 +35,3 @@ export declare class ProjectTemplateBuilder extends TemplateBuilderBase {
     private getPresetPlanningDocBody;
     private slugify;
 }
-//# sourceMappingURL=ProjectTemplateBuilder.d.ts.map

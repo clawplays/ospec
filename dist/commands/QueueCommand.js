@@ -144,4 +144,3 @@ class QueueCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.QueueCommand = QueueCommand;
-//# sourceMappingURL=QueueCommand.js.map

@@ -220,10 +220,12 @@ class ProjectAssetService {
         return path_1.default.resolve(__dirname, '../..');
     }
     isOSpecManagedHook(content) {
-        return content.includes('build-index-auto.cjs') || content.includes('build-index-auto.js') || content.includes('[ospec]');
+        return (content.includes('.ospec/tools/build-index-auto.cjs') ||
+            content.includes('build-index-auto.cjs') ||
+            content.includes('build-index-auto.js') ||
+            content.includes('[ospec]'));
     }
 }
 exports.ProjectAssetService = ProjectAssetService;
 const createProjectAssetService = (fileService) => new ProjectAssetService(fileService);
 exports.createProjectAssetService = createProjectAssetService;
-//# sourceMappingURL=ProjectAssetService.js.map

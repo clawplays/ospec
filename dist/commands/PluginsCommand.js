@@ -2489,4 +2489,3 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.PluginsCommand = PluginsCommand;
-//# sourceMappingURL=PluginsCommand.js.map

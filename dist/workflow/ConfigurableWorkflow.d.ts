@@ -86,4 +86,3 @@ export declare class ConfigurableWorkflow {
      */
     getMode(): string;
 }
-//# sourceMappingURL=ConfigurableWorkflow.d.ts.map

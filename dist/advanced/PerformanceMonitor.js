@@ -126,4 +126,3 @@ class PerformanceMonitor {
 }
 exports.PerformanceMonitor = PerformanceMonitor;
 exports.performanceMonitor = new PerformanceMonitor();
-//# sourceMappingURL=PerformanceMonitor.js.map

@@ -36,6 +36,15 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         if (toolingResult.hookInstalledFiles.length > 0) {
             this.info(`  git hooks refreshed: ${toolingResult.hookInstalledFiles.join(', ')}`);
         }
+        if (toolingResult.migratedFiles.length > 0) {
+            this.info(`  tooling migrated: ${toolingResult.migratedFiles.join(', ')}`);
+        }
+        if (toolingResult.removedLegacyFiles.length > 0) {
+            this.info(`  legacy tooling removed: ${toolingResult.removedLegacyFiles.join(', ')}`);
+        }
+        if (toolingResult.migratedFiles.length > 0 || toolingResult.removedLegacyFiles.length > 0) {
+            this.info('  note: update any custom repo references from root build-index-auto.* to "ospec index build" or "node .ospec/tools/build-index-auto.cjs"');
+        }
         this.info(`  codex skills: ${this.formatManagedSkills(skillResult.codex)}`);
         if (skillResult.claude.length > 0) {
             this.info(`  claude skills: ${this.formatManagedSkills(skillResult.claude)}`);
@@ -56,8 +65,9 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         this.info('  note: it does not enable, disable, or migrate active or queued changes automatically');
     }
     async syncProjectTooling(rootDir, documentLanguage) {
+        const migrationResult = await this.migrateLegacyBuildIndexScript(rootDir);
         const toolingPaths = [
-            'build-index-auto.cjs',
+            '.ospec/tools/build-index-auto.cjs',
             '.ospec/templates/hooks/pre-commit',
             '.ospec/templates/hooks/post-merge',
         ];
@@ -71,6 +81,32 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             refreshedFiles: [...directCopyResult.refreshed],
             skippedFiles: [...directCopyResult.skipped],
             hookInstalledFiles: [...hookInstallResult.installed],
+            migratedFiles: migrationResult.migratedFiles,
+            removedLegacyFiles: migrationResult.removedLegacyFiles,
+        };
+    }
+    async migrateLegacyBuildIndexScript(rootDir) {
+        const targetRelativePath = '.ospec/tools/build-index-auto.cjs';
+        const targetPath = (0, path_1.join)(rootDir, ...targetRelativePath.split('/'));
+        const legacyRelativePaths = ['build-index-auto.cjs', 'build-index-auto.js'];
+        const migratedFiles = [];
+        const removedLegacyFiles = [];
+        for (const legacyRelativePath of legacyRelativePaths) {
+            const legacyPath = (0, path_1.join)(rootDir, legacyRelativePath);
+            if (!(await services_1.services.fileService.exists(legacyPath))) {
+                continue;
+            }
+            if (!(await services_1.services.fileService.exists(targetPath))) {
+                await services_1.services.fileService.move(legacyPath, targetPath);
+                migratedFiles.push(`${legacyRelativePath} -> ${targetRelativePath}`);
+                continue;
+            }
+            await services_1.services.fileService.remove(legacyPath);
+            removedLegacyFiles.push(legacyRelativePath);
+        }
+        return {
+            migratedFiles,
+            removedLegacyFiles,
         };
     }
     async syncEnabledPluginAssets(rootDir) {
@@ -368,4 +404,3 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.UpdateCommand = UpdateCommand;
-//# sourceMappingURL=UpdateCommand.js.map

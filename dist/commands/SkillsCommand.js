@@ -65,4 +65,3 @@ class SkillsCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.SkillsCommand = SkillsCommand;
-//# sourceMappingURL=SkillsCommand.js.map

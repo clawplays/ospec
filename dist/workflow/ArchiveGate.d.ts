@@ -27,4 +27,3 @@ export declare class ArchiveGate {
     checkArchiveReadiness(featureState: FeatureState, config: ArchiveGateConfig, protocolState?: ArchiveProtocolState): Promise<ArchiveCheckResult>;
 }
 export declare const archiveGate: ArchiveGate;
-//# sourceMappingURL=ArchiveGate.d.ts.map

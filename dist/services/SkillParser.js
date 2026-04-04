@@ -85,4 +85,3 @@ class SkillParser {
 }
 exports.SkillParser = SkillParser;
 exports.skillParser = new SkillParser();
-//# sourceMappingURL=SkillParser.js.map

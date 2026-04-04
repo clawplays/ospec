@@ -24,7 +24,7 @@ exports.FILE_NAMES = {
     SKILL_MD: 'SKILL.md',
     SKILL_INDEX: 'SKILL.index.json',
     README: 'README.md',
-    BUILD_INDEX_SCRIPT: 'build-index-auto.cjs',
+    BUILD_INDEX_SCRIPT: '.ospec/tools/build-index-auto.cjs',
     AI_GUIDE: 'ai-guide.md',
     EXECUTION_PROTOCOL: 'execution-protocol.md',
     PROPOSAL: 'proposal.md',
@@ -70,4 +70,3 @@ exports.WORKFLOW_STEPS = [
     'verification_passed',
     'archived',
 ];
-//# sourceMappingURL=constants.js.map

@@ -71,4 +71,3 @@ class ChangesCommand extends BaseCommand_1.BaseCommand {
     }
 }
 exports.ChangesCommand = ChangesCommand;
-//# sourceMappingURL=ChangesCommand.js.map

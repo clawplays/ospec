@@ -13,4 +13,3 @@ export declare class StateManager {
     }): FeatureState;
 }
 export declare function createStateManager(fileService: FileService): StateManager;
-//# sourceMappingURL=StateManager.d.ts.map

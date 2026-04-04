@@ -20,4 +20,3 @@ Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./PathUtils"), exports);
 __exportStar(require("./StringUtils"), exports);
 __exportStar(require("./DateUtils"), exports);
-//# sourceMappingURL=index.js.map

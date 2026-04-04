@@ -63,4 +63,3 @@ class HookSystem {
 }
 exports.HookSystem = HookSystem;
 exports.hookSystem = new HookSystem();
-//# sourceMappingURL=HookSystem.js.map

@@ -7457,10 +7457,16 @@ class ProjectService {
 
         let exists = await this.fileService.exists(filePath);
         if (!exists && definition.key === constants_1.FILE_NAMES.BUILD_INDEX_SCRIPT) {
-            const legacyBuildIndexScriptPath = path_1.default.join(rootDir, 'build-index-auto.js');
-            if (await this.fileService.exists(legacyBuildIndexScriptPath)) {
-                filePath = legacyBuildIndexScriptPath;
-                exists = true;
+            const legacyBuildIndexScriptPaths = [
+                path_1.default.join(rootDir, 'build-index-auto.cjs'),
+                path_1.default.join(rootDir, 'build-index-auto.js'),
+            ];
+            for (const legacyBuildIndexScriptPath of legacyBuildIndexScriptPaths) {
+                if (await this.fileService.exists(legacyBuildIndexScriptPath)) {
+                    filePath = legacyBuildIndexScriptPath;
+                    exists = true;
+                    break;
+                }
             }
         }
 
@@ -12762,4 +12768,3 @@ exports.createProjectService = createProjectService;
 
 
 
-//# sourceMappingURL=ProjectService.js.map

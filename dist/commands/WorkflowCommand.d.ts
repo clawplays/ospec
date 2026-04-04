@@ -9,4 +9,3 @@ export declare class WorkflowCommand extends BaseCommand {
     private listSupportedFlags;
     private setMode;
 }
-//# sourceMappingURL=WorkflowCommand.d.ts.map

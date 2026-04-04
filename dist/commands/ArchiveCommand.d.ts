@@ -11,4 +11,3 @@ export declare class ArchiveCommand extends BaseCommand {
     private toRelativePath;
 }
 export {};
-//# sourceMappingURL=ArchiveCommand.d.ts.map

@@ -33,4 +33,3 @@ export declare class BatchOperations {
     private matchesQuery;
 }
 export declare const batchOperations: BatchOperations;
-//# sourceMappingURL=BatchOperations.d.ts.map

@@ -11,4 +11,3 @@ export { PerformanceMonitor, performanceMonitor } from './PerformanceMonitor';
 export type { PerformanceMetric, PerformanceSummary } from './PerformanceMonitor';
 export { CachingLayer, cachingLayer } from './CachingLayer';
 export type { CacheEntry } from './CachingLayer';
-//# sourceMappingURL=index.d.ts.map
