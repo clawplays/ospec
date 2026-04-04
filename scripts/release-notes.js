@@ -83,6 +83,10 @@ function resolvePreviousTag(tag, explicitPreviousTag) {
   return tryGit(['describe', '--tags', '--abbrev=0', 'HEAD']);
 }
 
+function isReleaseCommit(subject) {
+  return /^Release \d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(subject);
+}
+
 function getCommitLines(previousTag) {
   const range = previousTag ? `${previousTag}..HEAD` : 'HEAD';
   const raw = git(['log', '--no-merges', '--pretty=format:%h%x09%s', range]);
@@ -98,8 +102,10 @@ function getCommitLines(previousTag) {
     .map(line => {
       const [hash, ...subjectParts] = line.split('\t');
       const subject = subjectParts.join('\t').trim();
-      return `- \`${hash}\` ${subject}`;
-    });
+      return { hash, subject };
+    })
+    .filter(entry => !isReleaseCommit(entry.subject))
+    .map(entry => `- \`${entry.hash}\` ${entry.subject}`);
 }
 
 function buildReleaseNotes(tag, previousTag, commitLines) {
@@ -116,7 +122,7 @@ function buildReleaseNotes(tag, previousTag, commitLines) {
     '## Notes',
     '',
     '- Existing OSpec projects should run `ospec update` after upgrading the CLI.',
-    '- Release tags use bare semantic versions such as `0.3.7`, without a `v` prefix.',
+    '- Release tags use bare semantic versions such as `1.2.3`, without a `v` prefix.',
     '',
     '## Git History',
     ''

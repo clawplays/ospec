@@ -22,6 +22,40 @@ GitHub Releases are created from the same bare version tag. Do not use a `v` pre
 6. Let GitHub Actions publish to npm.
 7. Let GitHub Actions create or update the matching GitHub Release page.
 
+## One-Command Release Cut
+
+Cut a local patch release:
+
+```bash
+npm run release:cut:patch
+```
+
+Cut and push a patch release:
+
+```bash
+npm run release:cut:patch -- --push
+```
+
+Generic form:
+
+```bash
+npm run release:cut -- patch
+npm run release:cut -- minor --push
+npm run release:cut -- major --push
+```
+
+What `release:cut` does:
+
+- requires a clean working tree
+- bumps the version and syncs release-facing files
+- runs `node dist/cli.js --version`
+- runs `npm run release:check`
+- runs `npm run release:smoke`
+- runs `npm run release:notes`
+- commits the release as `Release X.Y.Z`
+- creates the matching bare Git tag `X.Y.Z`
+- optionally pushes `main` and the tag when you pass `--push`
+
 ## Bump Version
 
 Patch release:
@@ -68,7 +102,7 @@ npm run release:notes
 
 ## Publish
 
-After the version bump is committed on `main`, create and push the matching tag:
+If you did not use `release:cut -- --push`, after the version bump is committed on `main`, create and push the matching tag:
 
 ```bash
 git tag X.Y.Z
