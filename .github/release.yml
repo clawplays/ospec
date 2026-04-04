@@ -1,0 +1,46 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - duplicate
+      - invalid
+      - question
+      - wontfix
+    authors:
+      - github-actions[bot]
+  categories:
+    - title: Breaking Changes
+      labels:
+        - breaking
+        - breaking-change
+        - semver-major
+    - title: New
+      labels:
+        - feat
+        - feature
+        - enhancement
+    - title: Improved
+      labels:
+        - improvement
+        - perf
+        - performance
+        - refactor
+    - title: Fixed
+      labels:
+        - fix
+        - bug
+        - bugfix
+        - regression
+    - title: Docs
+      labels:
+        - docs
+        - documentation
+    - title: Dependencies
+      labels:
+        - dependencies
+        - dependency
+        - deps
+        - build
+        - ci
+        - chore
+        - test

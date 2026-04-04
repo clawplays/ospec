@@ -10,6 +10,8 @@ Normal pushes to `main` do not publish.
 
 Only a pushed version tag such as `0.3.1` triggers a release.
 
+GitHub Releases are created from the same bare version tag. Do not use a `v` prefix.
+
 ## Standard Release Flow
 
 1. Bump the package version.
@@ -18,6 +20,7 @@ Only a pushed version tag such as `0.3.1` triggers a release.
 4. Push the commit to `main`.
 5. Create and push the matching version tag.
 6. Let GitHub Actions publish to npm.
+7. Let GitHub Actions create or update the matching GitHub Release page.
 
 ## Bump Version
 
@@ -60,6 +63,7 @@ Recommended verification:
 
 ```bash
 npm run release:smoke
+npm run release:notes
 ```
 
 ## Publish
@@ -79,6 +83,10 @@ git push origin 0.3.1
 ```
 
 The workflow rejects the release if the Git tag does not exactly match `package.json`.
+
+The workflow also creates the GitHub Release page for that tag, prepends upgrade instructions, and appends generated release notes using [`.github/release.yml`](.github/release.yml).
+
+`npm run release:notes` previews the release intro and Git history locally before you commit or push.
 
 ## Required Repository Setup
 

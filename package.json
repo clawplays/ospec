@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "CLI tool for enforcing ospec workflow",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,6 +21,7 @@
     "index:rebuild": "node dist/tools/build-index.js",
     "validate": "node dist/cli/commands/validate.js",
     "release:smoke": "node scripts/release-smoke.js",
+    "release:notes": "node scripts/release-notes.js",
     "release:sync-version": "node scripts/sync-version.js",
     "release:bump:patch": "npm version patch --no-git-tag-version",
     "release:bump:minor": "npm version minor --no-git-tag-version",
