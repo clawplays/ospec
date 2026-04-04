@@ -5321,7 +5321,8 @@ class ProjectService {
     }
     async syncConfigDocumentLanguage(rootDir, config, documentLanguage) {
         const normalized = this.normalizeDocumentLanguage(documentLanguage);
-        if (!normalized || config?.documentLanguage === normalized) {
+        const configured = this.normalizeDocumentLanguage(config?.documentLanguage);
+        if (!normalized || configured) {
             return false;
         }
         config.documentLanguage = normalized;
@@ -5330,13 +5331,28 @@ class ProjectService {
     }
 
     detectDocumentLanguageFromTexts(contents) {
-        for (const content of contents) {
+        const detectionCounts = new Map();
+        const firstSeenOrder = new Map();
+        for (const [index, content] of contents.entries()) {
             const detected = this.detectDocumentLanguageFromText(content);
             if (detected) {
-                return detected;
+                detectionCounts.set(detected, (detectionCounts.get(detected) || 0) + 1);
+                if (!firstSeenOrder.has(detected)) {
+                    firstSeenOrder.set(detected, index);
+                }
             }
         }
-        return undefined;
+        if (detectionCounts.size === 0) {
+            return undefined;
+        }
+        return Array.from(detectionCounts.entries())
+            .sort((left, right) => {
+            if (right[1] !== left[1]) {
+                return right[1] - left[1];
+            }
+            return (firstSeenOrder.get(left[0]) ?? Number.MAX_SAFE_INTEGER) -
+                (firstSeenOrder.get(right[0]) ?? Number.MAX_SAFE_INTEGER);
+        })[0][0];
     }
     detectDocumentLanguageFromText(content) {
         if (typeof content !== 'string' || content.trim().length === 0) {
@@ -5345,28 +5361,28 @@ class ProjectService {
         if (/[\u0600-\u06FF]/.test(content)) {
             return 'ar';
         }
-        if (/[ぁ-ゟ゠-ヿ]/.test(content)) {
+        if (this.hasJapaneseKana(content)) {
             return 'ja-JP';
         }
-        if (this.isLikelyJapaneseKanjiContent(content)) {
-            return 'ja-JP';
-        }
-        if (/[一-龥]/.test(content)) {
-            return 'zh-CN';
+        if (this.hasCjkIdeographs(content)) {
+            return this.isLikelyJapaneseKanjiContent(content) ? 'ja-JP' : 'zh-CN';
         }
         if (/[A-Za-z]/.test(content)) {
             return 'en-US';
         }
         return undefined;
     }
+    hasJapaneseKana(content) {
+        return /[\u3040-\u30FF]/.test(content);
+    }
+    hasCjkIdeographs(content) {
+        return /[\u3400-\u9FFF]/.test(content);
+    }
     isLikelyJapaneseKanjiContent(content) {
-        if (!/[一-龥]/.test(content)) {
+        if (!this.hasCjkIdeographs(content)) {
             return false;
         }
-        if (/[々〆ヵヶ「」『』]/.test(content)) {
-            return true;
-        }
-        return /(一覧|詳細|設定|権限|検索|構成|変更|確認|対応|連携|承認|申請|手順|履歴|機能|実装|設計|運用|画面|帳票|組織|拠点|区分|種別|完了|開始|終了|表示|取得|追加|削除|更新|登録)/.test(content);
+        return /[\u3005\u3006\u300C-\u300F\u30F5\u30F6]/.test(content);
     }
 
 

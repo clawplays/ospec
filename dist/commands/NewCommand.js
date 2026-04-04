@@ -201,28 +201,28 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         if (/[\u0600-\u06FF]/.test(content)) {
             return 'ar';
         }
-        if (/[ぁ-ゟ゠-ヿ]/.test(content)) {
+        if (this.hasJapaneseKana(content)) {
             return 'ja-JP';
         }
-        if (this.isLikelyJapaneseKanjiContent(content)) {
-            return 'ja-JP';
-        }
-        if (/[一-龥]/.test(content)) {
-            return 'zh-CN';
+        if (this.hasCjkIdeographs(content)) {
+            return this.isLikelyJapaneseKanjiContent(content) ? 'ja-JP' : 'zh-CN';
         }
         if (/[A-Za-z]/.test(content)) {
             return 'en-US';
         }
         return null;
     }
+    hasJapaneseKana(content) {
+        return /[\u3040-\u30FF]/.test(content);
+    }
+    hasCjkIdeographs(content) {
+        return /[\u3400-\u9FFF]/.test(content);
+    }
     isLikelyJapaneseKanjiContent(content) {
-        if (!/[一-龥]/.test(content)) {
+        if (!this.hasCjkIdeographs(content)) {
             return false;
         }
-        if (/[々〆ヵヶ「」『』]/.test(content)) {
-            return true;
-        }
-        return /(一覧|詳細|設定|権限|検索|構成|変更|確認|対応|連携|承認|申請|手順|履歴|機能|実装|設計|運用|画面|帳票|組織|拠点|区分|種別|完了|開始|終了|表示|取得|追加|削除|更新|登録)/.test(content);
+        return /[\u3005\u3006\u300C-\u300F\u30F5\u30F6]/.test(content);
     }
     async ensureChangeNameAvailable(targetDir, featureName) {
         const activeDir = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.ACTIVE, featureName);
