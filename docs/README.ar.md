@@ -59,11 +59,11 @@ npm install -g @clawplays/ospec-cli
 
 البرومبت الموصى به:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لتهيئة هذا المشروع.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">OSpec</span>، هيّئ هذا المشروع.</code></pre>
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لتهيئة هذا المشروع.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec</span>، هيّئ هذا المشروع.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>
@@ -93,13 +93,11 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 
 البرومبت الموصى به:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لإنشاء تغيير لهذا المتطلب ودفعه إلى الأمام.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">OSpec</span>، أنشئ تغييرًا لهذا المتطلب وادفعه إلى الأمام.</code></pre>
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec-change</span> لإنشاء تغيير لهذا المتطلب ودفعه إلى الأمام.</code></pre>
-
-![مثال على أمر OSpec Change](assets/ospecchange-slash-command.ar.svg)
+<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec-change</span>، أنشئ تغييرًا لهذا المتطلب وادفعه إلى الأمام.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>
@@ -118,11 +116,11 @@ ospec new update-billing-copy .
 
 البرومبت الموصى به:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لأرشفة هذا التغيير المقبول.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">OSpec</span>، أرشف هذا التغيير المقبول.</code></pre>
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لأرشفة هذا التغيير المقبول.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec</span>، أرشف هذا التغيير المقبول.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>
@@ -153,7 +151,7 @@ ospec update
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. USER REQUEST                                               │
-│     "Use OSpec to create and advance a change for this task."  │
+│     "OSpec, create and advance a change for this task."       │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -219,11 +217,11 @@ ospec update
 
 محادثة مع الذكاء الاصطناعي:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لتفعيل إضافة <span dir="ltr">Stitch</span>.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">OSpec</span>، فعّل إضافة <span dir="ltr">Stitch</span> واتصل باستخدام <span dir="ltr">Codex/Gemini</span>.</code></pre>
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لتفعيل إضافة <span dir="ltr">Stitch</span>.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec</span>، فعّل إضافة <span dir="ltr">Stitch</span> واتصل باستخدام <span dir="ltr">Codex/Gemini</span>.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>
@@ -240,11 +238,11 @@ ospec plugins enable stitch .
 
 محادثة مع الذكاء الاصطناعي:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">OSpec</span> لتفعيل إضافة <span dir="ltr">Checkpoint</span>.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">OSpec</span>، فعّل إضافة <span dir="ltr">Checkpoint</span>.</code></pre>
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لتفعيل إضافة <span dir="ltr">Checkpoint</span>.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec</span>، فعّل إضافة <span dir="ltr">Checkpoint</span>.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>

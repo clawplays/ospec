@@ -1,8 +1,0 @@
-<svg width="304" height="41" viewBox="0 0 304 41" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="304" height="41" rx="6" fill="#3C3C3C"/>
-  <rect x="7" y="8" width="110" height="24" rx="12" fill="#4A4458"/>
-  <circle cx="18.5" cy="20" r="6.5" fill="#8B5CF6"/>
-  <path d="M16.2 17.2H20.8V22.8H16.2V17.2Z" fill="#E9D5FF"/>
-  <text x="28" y="24" fill="#D8B4FE" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="600">OSpec Change</text>
-  <text x="123" y="24" fill="#F3F4F6" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" font-weight="500">Implement this requirement</text>
-</svg>

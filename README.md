@@ -48,7 +48,7 @@ npm install -g @clawplays/ospec-cli
 
 ## Quick Start
 
-Using OSpec only takes 3 steps:
+OSpec only takes 3 steps:
 
 1. initialize OSpec in your project directory
 2. create and advance one change for a requirement, document update, or bug fix
@@ -59,13 +59,13 @@ Using OSpec only takes 3 steps:
 Recommended prompt:
 
 ```text
-Use OSpec to initialize this project.
+OSpec, initialize this project.
 ```
 
 Claude / Codex skill mode:
 
 ```text
-Use $ospec to initialize this project.
+$ospec initialize this project.
 ```
 
 <details>
@@ -99,16 +99,14 @@ Use this for requirement delivery, documentation updates, refactors, and bug fix
 Recommended prompt:
 
 ```text
-Use OSpec to create and advance a change for this requirement.
+OSpec, create and advance a change for this requirement.
 ```
 
 Claude / Codex skill mode:
 
 ```text
-Use $ospec-change to create and advance a change for this requirement.
+$ospec-change create and advance a change for this requirement.
 ```
-
-![OSpec Change slash command example](docs/assets/ospecchange-slash-command.en.svg)
 
 <details>
 <summary>Command line</summary>
@@ -128,13 +126,13 @@ After the requirement has passed deployment, testing, QA, or other acceptance ch
 Recommended prompt:
 
 ```text
-Use OSpec to archive this accepted change.
+OSpec, archive this accepted change.
 ```
 
 Claude / Codex skill mode:
 
 ```text
-Use $ospec to archive this accepted change.
+$ospec archive this accepted change.
 ```
 
 <details>
@@ -167,7 +165,7 @@ ospec update
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. USER REQUEST                                               │
-│     "Use OSpec to create and advance a change for this task."  │
+│     "OSpec, create and advance a change for this task."       │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -235,13 +233,13 @@ Use Stitch for page design review and preview collaboration, especially for land
 AI conversation:
 
 ```text
-Use OSpec to enable the Stitch plugin.
+OSpec, enable the Stitch plugin and connect using Codex/Gemini.
 ```
 
 Claude / Codex skill mode:
 
 ```text
-Use $ospec to enable the Stitch plugin.
+$ospec enable the Stitch plugin and connect using Codex/Gemini.
 ```
 
 <details>
@@ -260,13 +258,13 @@ Use Checkpoint for app flow validation and automated checks, especially for subm
 AI conversation:
 
 ```text
-Use OSpec to enable the Checkpoint plugin.
+OSpec, enable the Checkpoint plugin.
 ```
 
 Claude / Codex skill mode:
 
 ```text
-Use $ospec to enable the Checkpoint plugin.
+$ospec enable the Checkpoint plugin.
 ```
 
 <details>
