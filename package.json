@@ -26,6 +26,7 @@
     "release:cut:major": "node scripts/release-cut.js major",
     "release:smoke": "node scripts/release-smoke.js",
     "release:notes": "node scripts/release-notes.js",
+    "release:upload-notes": "node scripts/release-upload-notes.js",
     "release:sync-version": "node scripts/sync-version.js",
     "release:bump:patch": "npm version patch --no-git-tag-version",
     "release:bump:minor": "npm version minor --no-git-tag-version",

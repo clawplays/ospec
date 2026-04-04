@@ -6,7 +6,7 @@ on:
       - "*.*.*"
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 jobs:
@@ -59,81 +59,3 @@ jobs:
       - name: Publish package to npm
         if: steps.npm_version.outputs.published != 'true'
         run: npm publish --access public
-
-      - name: Generate release body
-        id: release_notes
-        uses: actions/github-script@v8
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        with:
-          script: |
-            const tag = process.env.RELEASE_TAG;
-            const { execFileSync } = require('child_process');
-            const releaseIntro = execFileSync(
-              'node',
-              ['scripts/release-notes.js', '--tag', tag],
-              {
-                cwd: process.env.GITHUB_WORKSPACE,
-                encoding: 'utf8'
-              }
-            ).trim();
-
-            const generated = await github.rest.repos.generateReleaseNotes({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag
-            });
-
-            core.setOutput('name', tag);
-            core.setOutput('body', `${releaseIntro}\n\n${generated.data.body}`);
-
-      - name: Create or update GitHub Release
-        uses: actions/github-script@v8
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-          RELEASE_NAME: ${{ steps.release_notes.outputs.name }}
-          RELEASE_BODY: ${{ steps.release_notes.outputs.body }}
-        with:
-          script: |
-            const tag = process.env.RELEASE_TAG;
-            const name = process.env.RELEASE_NAME;
-            const body = process.env.RELEASE_BODY;
-            const prerelease = tag.includes('-');
-            const releaseParams = {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name,
-              body,
-              draft: false,
-              prerelease
-            };
-
-            if (!prerelease) {
-              releaseParams.make_latest = 'legacy';
-            }
-
-            try {
-              const existing = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag
-              });
-
-              await github.rest.repos.updateRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: existing.data.id,
-                name,
-                body,
-                draft: false,
-                prerelease,
-                ...(prerelease ? {} : { make_latest: 'legacy' })
-              });
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-
-              await github.rest.repos.createRelease(releaseParams);
-            }
