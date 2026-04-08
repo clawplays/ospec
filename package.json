@@ -11,16 +11,16 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc && node scripts/strip-sourcemap-refs.js",
+    "build": "node scripts/validate-repo.js && node scripts/strip-sourcemap-refs.js",
     "dev": "node scripts/dev-watch.js",
     "postinstall": "node scripts/postinstall.js",
     "prepack": "node scripts/strip-sourcemap-refs.js",
     "test": "vitest",
     "test:run": "vitest --run",
-    "lint": "eslint src tests --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "lint": "eslint .eslintrc.cjs scripts tests --ext .js,.mjs",
+    "format": "prettier --write \".eslintrc.cjs\" \"scripts/**/*.js\" \"tests/**/*.mjs\"",
     "index:rebuild": "node dist/tools/build-index.js",
-    "validate": "node dist/cli/commands/validate.js",
+    "validate": "node scripts/validate-repo.js",
     "release:cut": "node scripts/release-cut.js",
     "release:cut:patch": "node scripts/release-cut.js patch",
     "release:cut:minor": "node scripts/release-cut.js minor",
@@ -63,7 +63,6 @@
     "SKILL.md",
     "skill.yaml",
     "README.md",
-    "README.zh-CN.md",
     "LICENSE"
   ],
   "license": "MIT",

@@ -1,63 +1,135 @@
 #!/usr/bin/env node
 
-const { spawn } = require('child_process');
-const { stripDistSourceMapReferences } = require('./strip-sourcemap-refs.js');
+const fs = require("fs");
+const path = require("path");
+const { spawn } = require("child_process");
 
-const WATCH_READY_PATTERN = /Watching for file changes\./;
-const WATCH_ARGS = ['--watch', ...process.argv.slice(2)];
-const TSC_BIN = require.resolve('typescript/bin/tsc');
+const rootDir = path.resolve(__dirname, "..");
+const validateScriptPath = path.join(__dirname, "validate-repo.js");
+const stripSourceMapScriptPath = path.join(
+  __dirname,
+  "strip-sourcemap-refs.js",
+);
+const watchTargets = [
+  ".eslintrc.cjs",
+  "README.md",
+  "SKILL.md",
+  "package.json",
+  "skill.yaml",
+  "scripts",
+  "tests",
+];
 
-let outputBuffer = '';
-let stripTimer = null;
+let runTimer = null;
+let runInProgress = false;
+let rerunRequested = false;
+const watchers = [];
 
-function scheduleStrip() {
-  if (stripTimer) {
-    clearTimeout(stripTimer);
-  }
+function runNodeScript(scriptPath) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [scriptPath], {
+      cwd: rootDir,
+      stdio: "inherit",
+    });
 
-  stripTimer = setTimeout(() => {
-    stripTimer = null;
-    try {
-      stripDistSourceMapReferences();
-    } catch (error) {
-      console.error(`[ospec] failed to strip sourceMappingURL during watch: ${error.message}`);
-    }
-  }, 50);
+    child.on("error", (error) => {
+      console.error(
+        `[ospec] failed to run ${path.basename(scriptPath)}: ${error.message}`,
+      );
+      resolve(1);
+    });
+
+    child.on("exit", (code) => {
+      resolve(code ?? 1);
+    });
+  });
 }
 
-function handleCompilerOutput(targetStream, chunk) {
-  const text = chunk.toString();
-  targetStream.write(text);
-  outputBuffer = `${outputBuffer}${text}`.slice(-512);
-  if (WATCH_READY_PATTERN.test(outputBuffer)) {
-    outputBuffer = '';
-    scheduleStrip();
-  }
-}
-
-const child = spawn(process.execPath, [TSC_BIN, ...WATCH_ARGS], {
-  cwd: process.cwd(),
-  stdio: ['inherit', 'pipe', 'pipe'],
-});
-
-child.stdout.on('data', chunk => handleCompilerOutput(process.stdout, chunk));
-child.stderr.on('data', chunk => handleCompilerOutput(process.stderr, chunk));
-
-child.on('exit', (code, signal) => {
-  if (stripTimer) {
-    clearTimeout(stripTimer);
-  }
-  if (signal) {
-    process.kill(process.pid, signal);
+async function runMaintenance() {
+  if (runInProgress) {
+    rerunRequested = true;
     return;
   }
-  process.exit(code ?? 0);
-});
 
-for (const event of ['SIGINT', 'SIGTERM']) {
-  process.on(event, () => {
-    if (!child.killed) {
-      child.kill(event);
+  runInProgress = true;
+  console.log("[ospec] running repository maintenance checks");
+
+  const validateCode = await runNodeScript(validateScriptPath);
+  if (validateCode === 0) {
+    await runNodeScript(stripSourceMapScriptPath);
+  }
+
+  runInProgress = false;
+  if (rerunRequested) {
+    rerunRequested = false;
+    scheduleRun("queued change");
+  }
+}
+
+function scheduleRun(reason) {
+  if (runTimer) {
+    clearTimeout(runTimer);
+  }
+
+  console.log(`[ospec] change detected: ${reason}`);
+  runTimer = setTimeout(() => {
+    runTimer = null;
+    void runMaintenance();
+  }, 100);
+}
+
+function shouldIgnore(relativePath) {
+  return (
+    relativePath.startsWith(".git/") || relativePath.startsWith("node_modules/")
+  );
+}
+
+function watchPath(relativePath) {
+  const absolutePath = path.join(rootDir, relativePath);
+  if (!fs.existsSync(absolutePath)) {
+    return;
+  }
+  const watcher = fs.watch(absolutePath, (_eventType, filename) => {
+    const nextPath = filename
+      ? path.join(relativePath, filename.toString()).replace(/\\/g, "/")
+      : relativePath;
+    if (shouldIgnore(nextPath)) {
+      return;
     }
+    scheduleRun(nextPath);
+  });
+
+  watcher.on("error", (error) => {
+    console.warn(
+      `[ospec] watch disabled for ${relativePath}: ${error.message}`,
+    );
+    try {
+      watcher.close();
+    } catch (_closeError) {
+      // Ignore watcher close failures during teardown.
+    }
+  });
+
+  watchers.push(watcher);
+}
+
+function initializeWatchers() {
+  for (const relativePath of watchTargets) {
+    watchPath(relativePath);
+  }
+}
+
+initializeWatchers();
+void runMaintenance();
+
+for (const event of ["SIGINT", "SIGTERM"]) {
+  process.on(event, () => {
+    if (runTimer) {
+      clearTimeout(runTimer);
+    }
+    for (const watcher of watchers) {
+      watcher.close();
+    }
+    process.exit(0);
   });
 }
