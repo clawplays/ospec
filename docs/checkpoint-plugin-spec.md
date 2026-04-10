@@ -38,15 +38,23 @@ Command Line:
 ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 ```
 
+Enablement contract:
+
+- When the default built-in Checkpoint / Playwright runner is enabled, OSpec must automatically install `playwright`, `pixelmatch`, and `pngjs` into the target project
+- If a user asks through AI chat or an AI assistant to "enable the Checkpoint plugin", that auto-install step is part of the required enable flow and must finish successfully
+- If the dependency install fails, `enable checkpoint` must fail instead of leaving the project in a half-enabled state
+- Disabling the plugin only turns off `.skillrc.plugins.checkpoint`; it does not uninstall those project dependencies
+
 ## Configuration After Enabling
 
 After enabling `checkpoint`, at least the following content must be completed:
 
 1. `base_url`
-2. `routes.yaml`
-3. `flows.yaml`
-4. Login state or login script
-5. Startup command and readiness check (if the project is not directly accessible)
+2. Confirm the auto-installed dependencies are present in the target project
+3. `routes.yaml`
+4. `flows.yaml`
+5. Login state or login script
+6. Startup command and readiness check (if the project is not directly accessible)
 
 ### 1. `base_url`
 
@@ -57,7 +65,24 @@ This address is the actual application URL visited by automated checks, for exam
 - `http://127.0.0.1:3000`
 - `http://localhost:4173`
 
-### 2. `routes.yaml`
+### 2. Auto-installed dependencies
+
+The default built-in runner depends on these target-project packages:
+
+- `playwright`
+- `pixelmatch`
+- `pngjs`
+
+These dependencies are no longer carried by the OSpec main package. They are installed into the target project when Checkpoint is enabled.
+
+This means:
+
+- the main package stays leaner
+- only projects that actually enable Checkpoint pay this dependency cost
+- AI chat flows that "enable Checkpoint" must include the install step, not just the config write
+- disabling Checkpoint later should not remove these dependencies automatically
+
+### 3. `routes.yaml`
 
 Specify the following in `.ospec/plugins/checkpoint/routes.yaml`:
 
@@ -67,7 +92,7 @@ Specify the following in `.ospec/plugins/checkpoint/routes.yaml`:
 - Areas to ignore
 - Key text or UI requirements on the page
 
-### 3. `flows.yaml`
+### 4. `flows.yaml`
 
 Specify the following in `.ospec/plugins/checkpoint/flows.yaml`:
 
@@ -76,7 +101,7 @@ Specify the following in `.ospec/plugins/checkpoint/flows.yaml`:
 - Assertions for interface results
 - Assertions for final business states
 
-### 4. Login State or Login Script
+### 5. Login State or Login Script
 
 If the flow depends on login, prepare at least one of these:
 
@@ -85,7 +110,7 @@ If the flow depends on login, prepare at least one of these:
 
 Without login state, many real flows will fail during automated checks.
 
-### 5. Startup Command and Readiness Check
+### 6. Startup Command and Readiness Check
 
 If your project is not "already running naturally," add these to `.skillrc.plugins.checkpoint.runtime`:
 
@@ -118,11 +143,12 @@ Execution results tied to a specific change are placed in:
 
 1. Initialize project: `ospec init .`
 2. Open Checkpoint: `ospec plugins enable checkpoint . --base-url <url>`
-3. Configure `routes.yaml`, `flows.yaml`, login state, and environment
-4. Run a doctor check: `ospec plugins doctor checkpoint .`
-5. Create a change requiring automated verification
-6. Execute check: `ospec plugins run checkpoint <change-path>`
-7. After check passes, execute `ospec verify` and `ospec finalize`
+3. Confirm the target project now has `playwright`, `pixelmatch`, and `pngjs`
+4. Configure `routes.yaml`, `flows.yaml`, login state, and environment
+5. Run a doctor check: `ospec plugins doctor checkpoint .`
+6. Create a change requiring automated verification
+7. Execute check: `ospec plugins run checkpoint <change-path>`
+8. After check passes, execute `ospec verify` and `ospec finalize`
 
 ## When to Use This Plugin
 
@@ -173,16 +199,18 @@ Confirmed decisions for implementation:
 1. `checkpoint` and `stitch` are peer plugins; `checkpoint` is not under `stitch`.
 2. The default executor for `checkpoint` is `Playwright`, but plugin semantics are not tied to the executor name.
 3. A `base_url` must be provided when enabling `checkpoint` for the first time.
-4. Currently only one `base_url` is supported, with no multi-environment switching.
-5. `checkpoint` is an automated gate plugin; it does not introduce `approve / reject` manual commands.
-
-6. If the project has `stitch` enabled and the current change activates `stitch_design_review`, `checkpoint` prioritizes reusing the design baseline exported by Stitch.
-7. If the project does not have `stitch` enabled, `checkpoint` uses baseline screenshots and text requirements within the repository as the design inspection baseline.
-8. Since projects may not have local startup capabilities, `checkpoint` must support custom startup commands; if the project can use `docker compose`, it should be recommended to start the test environment through it.
-9. Login state is a supported standard capability, defaulting to `storageState` or a custom login script.
-10. Data correctness checks consist of two parts: Playwright page/interface assertions and custom back-end final state assertion commands.
-11. `checkpoint` allows activating only specific capabilities based on change flags, rather than running full checks for every change.
-12. The recommended implementation order is `ui_review` first, then `flow_check`.
+4. Enabling `checkpoint` with the default built-in runner must auto-install `playwright`, `pixelmatch`, and `pngjs` into the target project.
+5. In AI chat or AI-assisted flows, "enable the Checkpoint plugin" includes that dependency install step by default; if it does not complete, the plugin is not considered successfully enabled.
+6. Disabling `checkpoint` only disables the plugin; it does not uninstall those previously installed project dependencies.
+7. Currently only one `base_url` is supported, with no multi-environment switching.
+8. `checkpoint` is an automated gate plugin; it does not introduce `approve / reject` manual commands.
+9. If the project has `stitch` enabled and the current change activates `stitch_design_review`, `checkpoint` prioritizes reusing the design baseline exported by Stitch.
+10. If the project does not have `stitch` enabled, `checkpoint` uses baseline screenshots and text requirements within the repository as the design inspection baseline.
+11. Since projects may not have local startup capabilities, `checkpoint` must support custom startup commands; if the project can use `docker compose`, it should be recommended to start the test environment through it.
+12. Login state is a supported standard capability, defaulting to `storageState` or a custom login script.
+13. Data correctness checks consist of two parts: Playwright page/interface assertions and custom back-end final state assertion commands.
+14. `checkpoint` allows activating only specific capabilities based on change flags, rather than running full checks for every change.
+15. The recommended implementation order is `ui_review` first, then `flow_check`.
 
 ## 3. Terminology Definitions
 
@@ -354,7 +382,13 @@ This means `stitch` handles design artifact and structure gates, while `checkpoi
 - `ospec plugins doctor checkpoint [path]`
 - `ospec plugins run checkpoint <change-path>`
 
-Note: `checkpoint` does not provide `approve` or `reject` commands as it is an automated gate.
+Notes:
+
+- `enable checkpoint` must require `base_url`
+- `enable checkpoint` with the built-in runner must auto-install `playwright`, `pixelmatch`, and `pngjs` into the target project
+- In AI chat flows, enabling Checkpoint is not complete until that auto-install step has finished
+- `disable checkpoint` does not uninstall project dependencies
+- `checkpoint` does not provide `approve` or `reject` commands because it is an automated gate
 
 ## 16. Verify / Archive / Finalize Behavior
 

@@ -15,7 +15,7 @@ tags: [ai, protocol, ospec]
 5. `docs/project/workflow-conventions.md`
 6. ملفات change الحالية: `proposal.md / tasks.md / state.json / verification.md`
 7. إذا وُجد `stitch_design_review` فاقرأ `artifacts/stitch/approval.json`
-8. إذا كان يجب تعديل Stitch provider أو MCP أو إعدادات المصادقة، فاقرأ مواصفة Stitch المحلية أولاً. وعندما يوجد `docs/stitch-plugin-spec.zh-CN.md` فاعتبر مقاطع الإعداد فيه مرجعية
+8. إذا كنت تحتاج إلى تعديل إعدادات Stitch أو Checkpoint المتعلقة بـ provider أو MCP أو المصادقة أو التثبيت أو التفعيل، فاقرأ أولاً مواصفة الإضافة المحلية المطابقة للغة الوثائق المعتمدة للمشروع، ولا تنتقل إلى لغة أخرى إلا إذا كان الملف المطابق غير موجود
 
 ## القواعد الإلزامية
 

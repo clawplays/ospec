@@ -1,1 +1,1 @@
-{"version":3,"file":"ProgressCommand.d.ts","sourceRoot":"","sources":["../../src/commands/ProgressCommand.ts"],"names":[],"mappings":"AAGA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAE5C,qBAAa,eAAgB,SAAQ,WAAW;IACxC,OAAO,CAAC,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CA8DnD"}
+{"version":3,"file":"ProgressCommand.d.ts","sourceRoot":"","sources":["G:/Projects/ospec/src/commands/ProgressCommand.ts"],"names":[],"mappings":"AAIA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAI5C,qBAAa,eAAgB,SAAQ,WAAW;IACtC,OAAO,CAAC,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CA8DrD"}

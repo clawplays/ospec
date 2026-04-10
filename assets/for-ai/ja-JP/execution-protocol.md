@@ -15,7 +15,7 @@ tags: [ai, protocol, ospec]
 5. `docs/project/workflow-conventions.md`
 6. 現在の change ファイル: `proposal.md / tasks.md / state.json / verification.md`
 7. `stitch_design_review` がある場合は `artifacts/stitch/approval.json`
-8. Stitch provider、MCP、認証設定を変更する必要がある場合は、先にリポジトリ内の Stitch 仕様を読む。`docs/stitch-plugin-spec.zh-CN.md` が存在する場合、その設定断片を正とみなす
+8. Stitch / Checkpoint の provider、MCP、認証、インストール、または有効化設定を変更する必要がある場合は、先にプロジェクト文書言語に一致するリポジトリ内のローカライズ済みプラグイン仕様を読む。一致する言語ファイルがない場合のみ他言語版へフォールバックする
 
 ## 必須ルール
 
@@ -36,7 +36,7 @@ tags: [ai, protocol, ospec]
 - Stitch 実行前は、既定では設定済み provider が使われるとみなす。`.skillrc.plugins.stitch.runner` が明示的に上書きされている場合のみ custom runner を使う
 - custom runner で `token_env` を使う場合は、対応する環境変数が設定済みか確認する
 - ローカル Stitch bridge、Gemini CLI、Codex CLI、stitch MCP、認証準備が不明なら、まず `ospec plugins doctor stitch <project-path>` を実行する
-- `plugins doctor stitch` が provider、MCP、認証の問題を示した場合は、まずリポジトリ内 Stitch 仕様に戻る。`docs/stitch-plugin-spec.zh-CN.md` がある場合、その仕様外の代替設定を作らない
+- `plugins doctor stitch` が provider、MCP、認証の問題を示した場合は、まずプロジェクト文書言語に一致するリポジトリ内のローカライズ済み Stitch 仕様に戻る。その仕様外の代替設定を作らない
 - 内蔵 `codex` provider が read-only 呼び出しは完了できるのに `create_project`、`generate_screen`、`edit_screens` が止まる場合は、`codex exec --dangerously-bypass-approvals-and-sandbox` が使われているか確認する
 - プロジェクトが `.skillrc.plugins.stitch.runner` を明示的に上書きしつつ Codex で Stitch 書き込みを行う場合は、custom runner / wrapper でも `--dangerously-bypass-approvals-and-sandbox` を渡す
 - `stitch_design_review` が有効で `approval.json.status != approved` の間は、その change を継続実装、完了、archive 可能と扱わない

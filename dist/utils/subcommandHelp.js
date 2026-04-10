@@ -66,11 +66,11 @@ Plugins Commands:
   ospec plugins list [path]            - list plugins available in the project config
   ospec plugins status [path]          - show plugin and capability status
   ospec plugins doctor stitch [path]   - validate the configured Stitch provider adapter or custom Stitch runner config
-  ospec plugins doctor checkpoint [path] - validate checkpoint base_url, workspace scaffold, and runner config
+  ospec plugins doctor checkpoint [path] - validate checkpoint base_url, workspace scaffold, target-project deps, and runner config
   ospec plugins enable stitch [path]   - enable Stitch for new changes by default
-  ospec plugins enable checkpoint [path] --base-url <url> - enable checkpoint and save the runtime base URL
+  ospec plugins enable checkpoint [path] --base-url <url> - enable checkpoint, save the runtime base URL, and auto-install checkpoint deps into the target project
   ospec plugins disable stitch [path]  - disable Stitch for new changes by default
-  ospec plugins disable checkpoint [path] - disable checkpoint for new changes by default
+  ospec plugins disable checkpoint [path] - disable checkpoint for new changes by default; does not uninstall project deps
   ospec plugins run stitch <path>      - run the configured Stitch provider adapter or custom runner and submit a preview
   ospec plugins run checkpoint <path>  - run checkpoint automation, write gate/result artifacts, and sync passed optional steps
   ospec plugins approve stitch <path>  - mark Stitch design review approved and sync verification.md

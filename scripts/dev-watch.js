@@ -1,63 +1,93 @@
 #!/usr/bin/env node
 
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
-const { stripDistSourceMapReferences } = require('./strip-sourcemap-refs.js');
 
-const WATCH_READY_PATTERN = /Watching for file changes\./;
-const WATCH_ARGS = ['--watch', ...process.argv.slice(2)];
-const TSC_BIN = require.resolve('typescript/bin/tsc');
+const ROOT_DIR = path.resolve(__dirname, '..');
+const BUILD_SCRIPT = path.join(__dirname, 'build-dist.js');
+const RELEVANT_PREFIXES = [
+  'src/',
+  'scripts/',
+  'tsconfig.json',
+];
 
-let outputBuffer = '';
-let stripTimer = null;
+let child = null;
+let buildRunning = false;
+let rebuildPending = false;
+let debounceTimer = null;
 
-function scheduleStrip() {
-  if (stripTimer) {
-    clearTimeout(stripTimer);
+function isRelevantPath(filePath) {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  if (!normalized) {
+    return false;
   }
-
-  stripTimer = setTimeout(() => {
-    stripTimer = null;
-    try {
-      stripDistSourceMapReferences();
-    } catch (error) {
-      console.error(`[ospec] failed to strip sourceMappingURL during watch: ${error.message}`);
-    }
-  }, 50);
+  if (
+    normalized.startsWith('dist/') ||
+    normalized.startsWith('node_modules/') ||
+    normalized.startsWith('.git/')
+  ) {
+    return false;
+  }
+  return RELEVANT_PREFIXES.some(
+    (prefix) => normalized === prefix || normalized.startsWith(prefix),
+  );
 }
 
-function handleCompilerOutput(targetStream, chunk) {
-  const text = chunk.toString();
-  targetStream.write(text);
-  outputBuffer = `${outputBuffer}${text}`.slice(-512);
-  if (WATCH_READY_PATTERN.test(outputBuffer)) {
-    outputBuffer = '';
-    scheduleStrip();
-  }
-}
-
-const child = spawn(process.execPath, [TSC_BIN, ...WATCH_ARGS], {
-  cwd: process.cwd(),
-  stdio: ['inherit', 'pipe', 'pipe'],
-});
-
-child.stdout.on('data', chunk => handleCompilerOutput(process.stdout, chunk));
-child.stderr.on('data', chunk => handleCompilerOutput(process.stderr, chunk));
-
-child.on('exit', (code, signal) => {
-  if (stripTimer) {
-    clearTimeout(stripTimer);
-  }
-  if (signal) {
-    process.kill(process.pid, signal);
+function runBuild() {
+  if (buildRunning) {
+    rebuildPending = true;
     return;
   }
-  process.exit(code ?? 0);
+
+  buildRunning = true;
+  console.log('[ospec] running dist rebuild watcher');
+
+  child = spawn(process.execPath, [BUILD_SCRIPT], {
+    cwd: ROOT_DIR,
+    stdio: 'inherit',
+  });
+
+  child.on('exit', (code) => {
+    buildRunning = false;
+    child = null;
+    if (code !== 0) {
+      console.error(`[ospec] build failed with exit code ${code ?? 1}`);
+    }
+    if (rebuildPending) {
+      rebuildPending = false;
+      runBuild();
+    }
+  });
+}
+
+function scheduleBuild(filePath) {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    console.log(`[ospec] change detected: ${filePath}`);
+    runBuild();
+  }, 100);
+}
+
+fs.watch(ROOT_DIR, { recursive: true }, (_eventType, filePath) => {
+  if (!isRelevantPath(filePath)) {
+    return;
+  }
+  scheduleBuild(filePath);
 });
 
 for (const event of ['SIGINT', 'SIGTERM']) {
   process.on(event, () => {
-    if (!child.killed) {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    if (child && !child.killed) {
       child.kill(event);
     }
   });
 }
+
+runBuild();

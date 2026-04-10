@@ -27,7 +27,7 @@ This skill is the single entry for the full change lifecycle inside an initializ
 2. `SKILL.index.json`
 3. `for-ai/ai-guide.md`
 4. `for-ai/execution-protocol.md`
-5. If Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup is involved, read the repo-local Stitch plugin spec first. When `docs/stitch-plugin-spec.zh-CN.md` exists, treat it as the source of truth for the config shape.
+5. If Stitch or Checkpoint installation, provider switching, doctor remediation, MCP setup, auth setup, or plugin enablement is involved, read the repo-local localized plugin spec that matches the project document language first. Only fall back to another localized spec when the matching file is missing.
 6. If the user explicitly asks for queue behavior, inspect `changes/queued/` before creating new queue items.
 7. `changes/active/<change>/proposal.md`
 8. `changes/active/<change>/tasks.md`
@@ -58,7 +58,7 @@ When `.skillrc.plugins.stitch.enabled = true` and `.skillrc.plugins.stitch.capab
 - treat the built-in `stitch` plugin with the configured provider adapter as the default path unless `.skillrc.plugins.stitch.runner` is explicitly overridden
 - if a custom runner is configured and `token_env` is set but missing, stop and request configuration first
 - if runner readiness, provider CLI, stitch MCP, or auth readiness is unclear, use `ospec plugins doctor stitch <project-path>` before `ospec plugins run stitch <change-path>`
-- if Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup is involved, read the repo-local Stitch plugin spec first; when `docs/stitch-plugin-spec.zh-CN.md` exists, use its documented Gemini / Codex config snippets instead of inventing `command` / `args` / `env` or stdio-proxy settings
+- if Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup is involved, read the repo-local localized Stitch plugin spec first; use its documented Gemini / Codex config snippets instead of inventing `command` / `args` / `env` or stdio-proxy settings
 - if the repo-local Stitch spec is missing, use these built-in baselines instead of guessing:
   - `gemini`: `%USERPROFILE%/.gemini/settings.json` -> `mcpServers.stitch.httpUrl = "https://stitch.googleapis.com/mcp"` and `headers.X-Goog-Api-Key`
   - `codex`: `%USERPROFILE%/.codex/config.toml` -> `[mcp_servers.stitch]`, `type = "http"`, `url = "https://stitch.googleapis.com/mcp"`, and `X-Goog-Api-Key` in `headers` or `[mcp_servers.stitch.http_headers]`

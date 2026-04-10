@@ -1,1 +1,1 @@
-{"version":3,"file":"SkillsCommand.d.ts","sourceRoot":"","sources":["../../src/commands/SkillsCommand.ts"],"names":[],"mappings":"AAEA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAE5C,qBAAa,aAAc,SAAQ,WAAW;IACtC,OAAO,CAAC,MAAM,SAAW,EAAE,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CAkEtE"}
+{"version":3,"file":"SkillsCommand.d.ts","sourceRoot":"","sources":["G:/Projects/ospec/src/commands/SkillsCommand.ts"],"names":[],"mappings":"AAEA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAC5C,qBAAa,aAAc,SAAQ,WAAW;IACpC,OAAO,CAAC,MAAM,SAAW,EAAE,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CA0DxE"}

@@ -4,10 +4,22 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexBuilder = exports.IndexBuilder = void 0;
-const fs_extra_1 = __importDefault(require("fs-extra"));
+const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes', 'for-ai']);
+async function pathExists(targetPath) {
+    try {
+        await fs_1.promises.access(targetPath, fs_1.constants.F_OK);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+async function readJson(filePath) {
+    return JSON.parse((await fs_1.promises.readFile(filePath, 'utf8')).replace(/^\uFEFF/, ''));
+}
 class IndexBuilder {
     constructor(skillParser) {
         this.skillParser = skillParser;
@@ -18,7 +30,7 @@ class IndexBuilder {
         let totalFiles = 0;
         let totalSections = 0;
         const visit = async (currentDir) => {
-            const entries = (await fs_extra_1.default.readdir(currentDir, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+            const entries = (await fs_1.promises.readdir(currentDir, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
             for (const entry of entries) {
                 const fullPath = path_1.default.join(currentDir, entry.name);
                 if (entry.isDirectory()) {
@@ -32,7 +44,7 @@ class IndexBuilder {
                 }
                 totalFiles++;
                 const relativePath = path_1.default.relative(rootDir, fullPath).replace(/\\/g, '/');
-                const content = await fs_extra_1.default.readFile(fullPath, 'utf-8');
+                const content = await fs_1.promises.readFile(fullPath, 'utf-8');
                 const parsed = this.skillParser.parseSkillFile(content);
                 const moduleName = parsed.frontmatter.name || relativePath;
                 const title = parsed.frontmatter.title || parsed.frontmatter.name || relativePath;
@@ -53,12 +65,12 @@ class IndexBuilder {
                 }
             }
         };
-        if (await fs_extra_1.default.pathExists(rootDir)) {
+        if (await pathExists(rootDir)) {
             await visit(rootDir);
         }
         const activeChangesDir = path_1.default.join(rootDir, 'changes', 'active');
-        const activeChanges = (await fs_extra_1.default.pathExists(activeChangesDir))
-            ? (await fs_extra_1.default.readdir(activeChangesDir)).sort((left, right) => left.localeCompare(right))
+        const activeChanges = (await pathExists(activeChangesDir))
+            ? (await fs_1.promises.readdir(activeChangesDir)).sort((left, right) => left.localeCompare(right))
             : [];
         for (const tag of Object.keys(tagIndex)) {
             tagIndex[tag] = tagIndex[tag].sort((left, right) => left.localeCompare(right));
@@ -79,8 +91,8 @@ class IndexBuilder {
     }
     async write(rootDir) {
         const indexPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILL_INDEX);
-        const previous = (await fs_extra_1.default.pathExists(indexPath))
-            ? (await fs_extra_1.default.readJson(indexPath))
+        const previous = (await pathExists(indexPath))
+            ? (await readJson(indexPath))
             : null;
         const index = await this.build(rootDir);
         const previousComparable = previous ? this.stripVolatileFields(previous) : null;
@@ -92,13 +104,13 @@ class IndexBuilder {
             ...index,
             generated: new Date().toISOString(),
         };
-        await fs_extra_1.default.writeFile(indexPath, JSON.stringify(output, null, 2), 'utf-8');
+        await fs_1.promises.writeFile(indexPath, JSON.stringify(output, null, 2), 'utf-8');
         return output;
     }
     async createEmpty(rootDir) {
         const indexPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILL_INDEX);
-        const previous = (await fs_extra_1.default.pathExists(indexPath))
-            ? (await fs_extra_1.default.readJson(indexPath))
+        const previous = (await pathExists(indexPath))
+            ? (await readJson(indexPath))
             : null;
         const index = {
             version: '1.0',
@@ -116,7 +128,7 @@ class IndexBuilder {
         if (previous && JSON.stringify(this.stripVolatileFields(previous)) === JSON.stringify(this.stripVolatileFields(index))) {
             return previous;
         }
-        await fs_extra_1.default.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+        await fs_1.promises.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
         return index;
     }
     stripVolatileFields(index) {

@@ -1501,7 +1501,7 @@ Use active changes for current implementation work.
     generateBuildIndexScriptTemplate() {
         return `#!/usr/bin/env node
 
-const fs = require('fs-extra');
+const fsp = require('fs/promises');
 const path = require('path');
 const yaml = require('js-yaml');
 
@@ -1511,7 +1511,7 @@ const modules = {};
 const tagIndex = {};
 
 async function scan(dir) {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -1526,7 +1526,7 @@ async function scan(dir) {
       continue;
     }
 
-    const content = await fs.readFile(fullPath, 'utf8');
+    const content = await fsp.readFile(fullPath, 'utf8');
     const relativePath = path.relative(rootDir, fullPath).replace(/\\\\/g, '/');
     const frontmatterMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);
     if (!frontmatterMatch) {
@@ -1581,7 +1581,7 @@ scan(rootDir)
       tagIndex,
     };
 
-    await fs.writeFile(indexPath, JSON.stringify(index, null, 2));
+    await fsp.writeFile(indexPath, JSON.stringify(index, null, 2));
     console.log('Index rebuilt:', indexPath);
   })
   .catch(error => {

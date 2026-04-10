@@ -47,7 +47,7 @@ tags: [conventions, workflow, change, ospec]
 - `ospec plugins run stitch <change-path>` 默认走已配置的 Stitch provider 适配器；如果项目显式覆写 `.skillrc.plugins.stitch.runner`，则走自定义 Stitch bridge / wrapper
 - 使用自定义 runner 时，可通过 `token_env` 约束额外 token；使用内建 Gemini 适配器时，通常应在 `%USERPROFILE%/.gemini/settings.json` 的 `mcpServers.stitch` 中配置认证信息
 - 可通过 `ospec plugins doctor stitch <project-path>` 检查 runner、provider CLI、stitch MCP 与认证提示状态
-- 涉及 Stitch 安装、provider 切换、doctor 修复、MCP 或认证配置时，先读取仓库内 Stitch 规范；若存在 `docs/stitch-plugin-spec.zh-CN.md`，必须以该文档中的配置片段为准，不得为通过检查而临时拼出另一套配置
+- 涉及 Stitch / Checkpoint 安装、provider 切换、doctor 修复、MCP、认证配置或插件启用时，先读取与项目文档语言一致的仓库内本地化插件规范；只有该语言文件缺失时，才回退到其他语言版本，不得为通过检查而临时拼出另一套配置
 - 如果仓库里没有 Stitch 规范文档，则使用内建基线：`gemini` 改 `%USERPROFILE%/.gemini/settings.json` 的 `mcpServers.stitch.httpUrl` 与 `headers.X-Goog-Api-Key`；`codex` 改 `%USERPROFILE%/.codex/config.toml` 的 `[mcp_servers.stitch]`，并设置 `type = "http"`、`url = "https://stitch.googleapis.com/mcp"`、`X-Goog-Api-Key`
 - 如果内建 `codex` provider 下只读调用正常，但写操作卡在本地未真正进入 `mcp_tool_call`，优先检查是否真正走了 `codex exec --dangerously-bypass-approvals-and-sandbox`
 - 如果项目覆写了自定义 Codex runner / wrapper，自定义运行链也必须显式带上 `--dangerously-bypass-approvals-and-sandbox`

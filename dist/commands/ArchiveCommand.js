@@ -32,15 +32,12 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ArchiveCommand = void 0;
 const path = __importStar(require("path"));
-const gray_matter_1 = __importDefault(require("gray-matter"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const helpers_1 = require("../utils/helpers");
 const ArchiveGate_1 = require("../workflow/ArchiveGate");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
@@ -68,14 +65,12 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             const featureState = await services_1.services.fileService.readJSON(statePath);
             const config = await services_1.services.configManager.loadConfig(projectRoot);
             const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
-            const proposal = (0, gray_matter_1.default)(await services_1.services.fileService.readFile(proposalPath));
-            const tasks = (0, gray_matter_1.default)(await services_1.services.fileService.readFile(tasksPath));
-            const verification = (0, gray_matter_1.default)(await services_1.services.fileService.readFile(verificationPath));
+            const proposal = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(proposalPath));
+            const tasks = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(tasksPath));
+            const verification = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(verificationPath));
             const flags = Array.isArray(proposal.data.flags) ? proposal.data.flags : [];
             const activatedSteps = workflow.getActivatedSteps(flags);
-            const tasksOptionalSteps = Array.isArray(tasks.data.optional_steps)
-                ? tasks.data.optional_steps
-                : [];
+            const tasksOptionalSteps = Array.isArray(tasks.data.optional_steps) ? tasks.data.optional_steps : [];
             const verificationOptionalSteps = Array.isArray(verification.data.optional_steps)
                 ? verification.data.optional_steps
                 : [];
@@ -218,9 +213,9 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
         if (!(await services_1.services.fileService.exists(proposalPath))) {
             return;
         }
-        const proposal = (0, gray_matter_1.default)(await services_1.services.fileService.readFile(proposalPath));
+        const proposal = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(proposalPath));
         proposal.data.status = status;
-        await services_1.services.fileService.writeFile(proposalPath, gray_matter_1.default.stringify(proposal.content, proposal.data));
+        await services_1.services.fileService.writeFile(proposalPath, (0, helpers_1.stringifyFrontmatter)(proposal.content, proposal.data));
     }
     async resolveArchivePath(archivedRoot, featureName, config) {
         const archiveLayout = config?.archive?.layout === 'month-day' ? 'month-day' : 'flat';

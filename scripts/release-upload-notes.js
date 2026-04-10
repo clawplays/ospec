@@ -6,7 +6,12 @@ const { spawnSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const packageJson = require(path.join(rootDir, 'package.json'));
-const RELEASE_OVERRIDE_DIR = path.join(rootDir, '.skills', 'ospec-release-notes', 'releases');
+const RELEASE_OVERRIDE_DIR = path.join(
+  rootDir,
+  '.skills',
+  'ospec-release-notes',
+  'releases',
+);
 
 function parseArgs(argv) {
   const args = {};
@@ -70,7 +75,10 @@ function normalizeRepoUrl(url) {
     return '';
   }
 
-  const trimmed = url.trim().replace(/^git\+/, '').replace(/\.git$/, '');
+  const trimmed = url
+    .trim()
+    .replace(/^git\+/, '')
+    .replace(/\.git$/, '');
   if (trimmed.startsWith('git@github.com:')) {
     return `https://github.com/${trimmed.slice('git@github.com:'.length)}`;
   }
@@ -80,7 +88,9 @@ function normalizeRepoUrl(url) {
 
 function resolveRepositoryUrl() {
   const candidates = [
-    typeof packageJson.repository === 'string' ? packageJson.repository : packageJson.repository?.url,
+    typeof packageJson.repository === 'string'
+      ? packageJson.repository
+      : packageJson.repository?.url,
     packageJson.bugs?.url,
     packageJson.homepage,
   ];
@@ -96,7 +106,9 @@ function resolveRepositoryUrl() {
 }
 
 function parseGitHubRepository(repositoryUrl) {
-  const match = repositoryUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)$/i);
+  const match = repositoryUrl.match(
+    /^https:\/\/github\.com\/([^/]+)\/([^/]+)$/i,
+  );
   if (!match) {
     throw new Error(`Unsupported GitHub repository URL: ${repositoryUrl}`);
   }
@@ -122,7 +134,9 @@ function readReleaseMetadata(tag) {
   const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
 
   if (!name || !body) {
-    throw new Error(`Local release metadata must include non-empty "name" and "body": ${metadataPath}`);
+    throw new Error(
+      `Local release metadata must include non-empty "name" and "body": ${metadataPath}`,
+    );
   }
 
   return {
@@ -133,14 +147,20 @@ function readReleaseMetadata(tag) {
 }
 
 function ensureRemoteTagExists(tag) {
-  const output = tryRun('git', ['ls-remote', '--tags', 'origin', tag], { cwd: rootDir });
+  const output = tryRun('git', ['ls-remote', '--tags', 'origin', tag], {
+    cwd: rootDir,
+  });
   if (!output) {
-    throw new Error(`Remote tag ${tag} was not found on origin. Push the tag before uploading release notes.`);
+    throw new Error(
+      `Remote tag ${tag} was not found on origin. Push the tag before uploading release notes.`,
+    );
   }
 }
 
 function getGitCredentialAuth(repositoryUrl) {
-  const token = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim();
+  const token = String(
+    process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '',
+  ).trim();
   if (token) {
     return { mode: 'bearer', token };
   }
@@ -148,7 +168,10 @@ function getGitCredentialAuth(repositoryUrl) {
   const host = new URL(repositoryUrl).host;
   const pathName = new URL(repositoryUrl).pathname.replace(/^\/+/, '');
   const request = `protocol=https\nhost=${host}\npath=${pathName}\n\n`;
-  const output = run('git', ['credential', 'fill'], { cwd: rootDir, input: request });
+  const output = run('git', ['credential', 'fill'], {
+    cwd: rootDir,
+    input: request,
+  });
   const credentialMap = {};
 
   for (const line of output.split(/\r?\n/)) {
@@ -298,14 +321,16 @@ async function main() {
     return;
   }
 
-  console.log(`[release:upload-notes] ${result.mode} GitHub Release ${result.tag}`);
+  console.log(
+    `[release:upload-notes] ${result.mode} GitHub Release ${result.tag}`,
+  );
   console.log(`[release:upload-notes] title: ${result.name}`);
   console.log(`[release:upload-notes] source: ${result.metadataPath}`);
   console.log(`[release:upload-notes] url: ${result.htmlUrl}`);
 }
 
 if (require.main === module) {
-  main().catch(error => {
+  main().catch((error) => {
     console.error(`[release:upload-notes] ${error.message}`);
     process.exit(1);
   });

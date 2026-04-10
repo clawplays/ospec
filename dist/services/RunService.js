@@ -5,7 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RunService = void 0;
 exports.createRunService = createRunService;
-const fs_extra_1 = __importDefault(require("fs-extra"));
+const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
 const RUN_PROFILES = {
@@ -321,7 +321,7 @@ class RunService {
         const logPath = this.resolveRunFilePath(rootDir, run.logPath);
         await this.fileService.ensureDir(path_1.default.dirname(logPath));
         const lines = events.map(event => `[${new Date().toISOString()}] ${event}`).join('\n');
-        await fs_extra_1.default.appendFile(logPath, `${lines}\n`, 'utf8');
+        await fs_1.promises.appendFile(logPath, `${lines}\n`, 'utf8');
     }
     async readLogTail(rootDir, logPath, lineCount) {
         const resolvedLogPath = this.resolveRunFilePath(rootDir, logPath);
@@ -370,7 +370,7 @@ class RunService {
         return matches.sort().at(-1) || null;
     }
     async listArchivedChangeDirectories(archivedDir) {
-        const entries = await fs_extra_1.default.readdir(archivedDir, { withFileTypes: true });
+        const entries = await fs_1.promises.readdir(archivedDir, { withFileTypes: true });
         const candidates = [];
         for (const entry of entries) {
             if (!entry.isDirectory()) {
@@ -384,13 +384,13 @@ class RunService {
             if (!/^\d{4}-\d{2}$/.test(entry.name)) {
                 continue;
             }
-            const dayEntries = await fs_extra_1.default.readdir(entryPath, { withFileTypes: true });
+            const dayEntries = await fs_1.promises.readdir(entryPath, { withFileTypes: true });
             for (const dayEntry of dayEntries) {
                 if (!dayEntry.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(dayEntry.name)) {
                     continue;
                 }
                 const dayPath = path_1.default.join(entryPath, dayEntry.name);
-                const changeEntries = await fs_extra_1.default.readdir(dayPath, { withFileTypes: true });
+                const changeEntries = await fs_1.promises.readdir(dayPath, { withFileTypes: true });
                 for (const changeEntry of changeEntries) {
                     if (changeEntry.isDirectory()) {
                         candidates.push(path_1.default.join(dayPath, changeEntry.name));

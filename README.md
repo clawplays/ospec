@@ -285,6 +285,9 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 Notes:
 
 - `--base-url` points to the running app used by automated checks
+- Enabling the built-in Checkpoint runner automatically installs `playwright`, `pixelmatch`, and `pngjs` into the target project
+- If a user asks an AI assistant to enable Checkpoint, that install step must complete before the plugin should be considered successfully enabled
+- Disabling Checkpoint only turns off the plugin configuration; it does not uninstall those project dependencies
 
 </details>
 
@@ -300,8 +303,8 @@ Notes:
 
 ### Plugin Specs
 
-- [Stitch Plugin Spec](docs/stitch-plugin-spec.zh-CN.md)
-- [Checkpoint Plugin Spec](docs/checkpoint-plugin-spec.zh-CN.md)
+- [Stitch Plugin Spec](docs/stitch-plugin-spec.md)
+- [Checkpoint Plugin Spec](docs/checkpoint-plugin-spec.md)
 
 ## Repository Structure
 

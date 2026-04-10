@@ -1,1 +1,1 @@
-{"version":3,"file":"VerifyCommand.d.ts","sourceRoot":"","sources":["../../src/commands/VerifyCommand.ts"],"names":[],"mappings":"AAKA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAQ5C,qBAAa,aAAc,SAAQ,WAAW;IACtC,OAAO,CAAC,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CAoJnD"}
+{"version":3,"file":"VerifyCommand.d.ts","sourceRoot":"","sources":["G:/Projects/ospec/src/commands/VerifyCommand.ts"],"names":[],"mappings":"AAKA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAC5C,qBAAa,aAAc,SAAQ,WAAW;IACpC,OAAO,CAAC,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CAiMrD"}

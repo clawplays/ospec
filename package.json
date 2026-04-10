@@ -11,14 +11,8 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc && node scripts/strip-sourcemap-refs.js",
-    "dev": "node scripts/dev-watch.js",
     "postinstall": "node scripts/postinstall.js",
     "prepack": "node scripts/strip-sourcemap-refs.js",
-    "test": "vitest",
-    "test:run": "vitest --run",
-    "lint": "eslint src tests --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "index:rebuild": "node dist/tools/build-index.js",
     "validate": "node dist/cli/commands/validate.js",
     "release:cut": "node scripts/release-cut.js",
@@ -63,36 +57,17 @@
     "SKILL.md",
     "skill.yaml",
     "README.md",
-    "README.zh-CN.md",
     "LICENSE"
   ],
   "license": "MIT",
   "dependencies": {
-    "body-parser": "^2.2.2",
-    "chalk": "^5.3.0",
-    "commander": "^11.1.0",
-    "cors": "^2.8.6",
-    "express": "^4.22.1",
-    "fs-extra": "^11.2.0",
-    "gray-matter": "^4.0.3",
-    "js-yaml": "^4.1.0",
-    "open": "^9.1.0",
-    "pixelmatch": "^7.1.0",
-    "playwright": "^1.58.2",
-    "pngjs": "^7.0.0"
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
-    "@types/body-parser": "^1.19.6",
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/fs-extra": "^11.0.4",
+    "@biomejs/biome": "^2.4.10",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.19.37",
-    "@typescript-eslint/eslint-plugin": "^8.57.2",
-    "@typescript-eslint/parser": "^8.57.2",
-    "eslint": "^8.56.0",
-    "prettier": "^3.1.1",
-    "typescript": "^5.3.3",
+    "typescript": "5.9.3",
     "vitest": "^4.1.2"
   }
 }

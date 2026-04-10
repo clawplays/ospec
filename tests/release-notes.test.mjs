@@ -5,7 +5,13 @@ import path from 'path';
 
 const require = createRequire(import.meta.url);
 const releaseNotes = require('../scripts/release-notes.js');
-const overridePath = path.resolve(process.cwd(), '.skills', 'ospec-release-notes', 'releases', '9.9.9.json');
+const overridePath = path.resolve(
+  process.cwd(),
+  '.skills',
+  'ospec-release-notes',
+  'releases',
+  '9.9.9.json',
+);
 
 describe('release notes generation', () => {
   it('groups commits into user-facing sections and drops raw git history output', () => {
@@ -13,7 +19,10 @@ describe('release notes generation', () => {
       {
         hash: 'f7dc793',
         subject: 'fix document language detection for chinese projects',
-        files: ['dist/services/ProjectService.js', 'tests/document-language-detection.test.mjs'],
+        files: [
+          'dist/services/ProjectService.js',
+          'tests/document-language-detection.test.mjs',
+        ],
       },
       {
         hash: '83ffbc4',
@@ -36,17 +45,21 @@ describe('release notes generation', () => {
       '0.3.8',
       '0.3.7',
       commits,
-      'https://github.com/clawplays/ospec'
+      'https://github.com/clawplays/ospec',
     );
 
-    expect(metadata.name).toBe('0.3.8 - Fix document language detection for chinese projects');
+    expect(metadata.name).toBe(
+      '0.3.8 - Fix document language detection for chinese projects',
+    );
     expect(metadata.body).toContain('## New');
     expect(metadata.body).toContain('## Improved');
     expect(metadata.body).toContain('## Fixed');
     expect(metadata.body).toContain('## Docs');
     expect(metadata.body).not.toContain('## Git History');
     expect(metadata.body).not.toContain('Range:');
-    expect(metadata.body).toContain('**Full Changelog**: https://github.com/clawplays/ospec/compare/0.3.7...0.3.8');
+    expect(metadata.body).toContain(
+      '**Full Changelog**: https://github.com/clawplays/ospec/compare/0.3.7...0.3.8',
+    );
   });
 
   it('classifies docs-only changes from changed files even without docs prefix', () => {
@@ -59,7 +72,9 @@ describe('release notes generation', () => {
   });
 
   it('prefers the GitHub repository URL over homepage metadata for compare links', () => {
-    expect(releaseNotes.resolveRepositoryUrl()).toBe('https://github.com/clawplays/ospec');
+    expect(releaseNotes.resolveRepositoryUrl()).toBe(
+      'https://github.com/clawplays/ospec',
+    );
   });
 
   it('creates fallback metadata when no local override is present', async () => {
@@ -71,7 +86,10 @@ describe('release notes generation', () => {
         {
           hash: 'abc1234',
           subject: 'feat: implement structured release titles',
-          files: ['scripts/release-notes.js', '.github/workflows/publish-npm.yml'],
+          files: [
+            'scripts/release-notes.js',
+            '.github/workflows/publish-npm.yml',
+          ],
         },
         {
           hash: 'def5678',
@@ -111,9 +129,9 @@ describe('release notes generation', () => {
           ].join('\n'),
         },
         null,
-        2
+        2,
       ),
-      'utf8'
+      'utf8',
     );
 
     const metadata = await releaseNotes.createReleaseMetadata({

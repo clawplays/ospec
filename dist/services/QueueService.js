@@ -5,10 +5,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.QueueService = void 0;
 exports.createQueueService = createQueueService;
-const fs_extra_1 = __importDefault(require("fs-extra"));
-const gray_matter_1 = __importDefault(require("gray-matter"));
+const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
+const helpers_1 = require("../utils/helpers");
 class QueueService {
     constructor(fileService, projectService) {
         this.fileService = fileService;
@@ -23,7 +23,7 @@ class QueueService {
         if (!(await this.fileService.exists(queuedDir))) {
             return [];
         }
-        const entries = await fs_extra_1.default.readdir(queuedDir, { withFileTypes: true });
+        const entries = await fs_1.promises.readdir(queuedDir, { withFileTypes: true });
         const queuedChanges = [];
         for (const entry of entries) {
             if (!entry.isDirectory()) {
@@ -101,7 +101,7 @@ class QueueService {
         let flags = [];
         let description = 'No description yet';
         if (await this.fileService.exists(proposalPath)) {
-            const proposal = (0, gray_matter_1.default)(await this.fileService.readFile(proposalPath));
+            const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath));
             flags = Array.isArray(proposal.data.flags) ? proposal.data.flags : [];
             description = this.extractDescription(proposal.content);
         }
@@ -128,9 +128,9 @@ class QueueService {
         if (!(await this.fileService.exists(filePath))) {
             return;
         }
-        const document = (0, gray_matter_1.default)(await this.fileService.readFile(filePath));
+        const document = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(filePath));
         document.data.status = status;
-        await this.fileService.writeFile(filePath, gray_matter_1.default.stringify(document.content, document.data));
+        await this.fileService.writeFile(filePath, (0, helpers_1.stringifyFrontmatter)(document.content, document.data));
     }
     toRelativePath(rootDir, targetPath) {
         return path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/');

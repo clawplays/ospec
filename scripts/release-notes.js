@@ -6,7 +6,12 @@ const { spawnSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const packageJson = require(path.join(rootDir, 'package.json'));
-const RELEASE_OVERRIDE_DIR = path.join(rootDir, '.skills', 'ospec-release-notes', 'releases');
+const RELEASE_OVERRIDE_DIR = path.join(
+  rootDir,
+  '.skills',
+  'ospec-release-notes',
+  'releases',
+);
 
 const SECTION_ORDER = ['new', 'improved', 'fixed', 'docs'];
 const SECTION_TITLES = {
@@ -98,16 +103,22 @@ function isReleaseCommit(subject) {
 }
 
 function getCommitFiles(hash) {
-  const output = tryGit(['diff-tree', '--no-commit-id', '--name-only', '-r', hash]) || '';
+  const output =
+    tryGit(['diff-tree', '--no-commit-id', '--name-only', '-r', hash]) || '';
   return output
     .split('\n')
-    .map(line => line.trim())
+    .map((line) => line.trim())
     .filter(Boolean);
 }
 
 function getCommitEntries(previousTag) {
   const range = previousTag ? `${previousTag}..HEAD` : 'HEAD';
-  const raw = git(['log', '--no-merges', '--pretty=format:%H%x09%h%x09%s', range]);
+  const raw = git([
+    'log',
+    '--no-merges',
+    '--pretty=format:%H%x09%h%x09%s',
+    range,
+  ]);
 
   if (!raw) {
     return [];
@@ -115,9 +126,9 @@ function getCommitEntries(previousTag) {
 
   return raw
     .split('\n')
-    .map(line => line.trim())
+    .map((line) => line.trim())
     .filter(Boolean)
-    .map(line => {
+    .map((line) => {
       const [fullHash, shortHash, ...subjectParts] = line.split('\t');
       const subject = subjectParts.join('\t').trim();
       return {
@@ -127,7 +138,7 @@ function getCommitEntries(previousTag) {
         files: getCommitFiles(fullHash),
       };
     })
-    .filter(entry => !isReleaseCommit(entry.subject));
+    .filter((entry) => !isReleaseCommit(entry.subject));
 }
 
 function normalizeRepoUrl(url) {
@@ -135,7 +146,10 @@ function normalizeRepoUrl(url) {
     return '';
   }
 
-  const trimmed = url.trim().replace(/^git\+/, '').replace(/\.git$/, '');
+  const trimmed = url
+    .trim()
+    .replace(/^git\+/, '')
+    .replace(/\.git$/, '');
   if (trimmed.startsWith('git@github.com:')) {
     return `https://github.com/${trimmed.slice('git@github.com:'.length)}`;
   }
@@ -145,7 +159,9 @@ function normalizeRepoUrl(url) {
 
 function resolveRepositoryUrl() {
   const candidates = [
-    typeof packageJson.repository === 'string' ? packageJson.repository : packageJson.repository?.url,
+    typeof packageJson.repository === 'string'
+      ? packageJson.repository
+      : packageJson.repository?.url,
     packageJson.bugs?.url,
     packageJson.homepage,
   ];
@@ -166,13 +182,18 @@ function normalizeCommitText(subject) {
     return '';
   }
 
-  const withoutPrefix = trimmed.replace(/^(feat|feature|fix|docs?|refactor|perf|test|chore|ci|build|style)(\([^)]+\))?!?:\s*/i, '');
+  const withoutPrefix = trimmed.replace(
+    /^(feat|feature|fix|docs?|refactor|perf|test|chore|ci|build|style)(\([^)]+\))?!?:\s*/i,
+    '',
+  );
   const normalized = withoutPrefix
     .replace(/\bai\b/g, 'AI')
     .replace(/\bospec\b/gi, 'OSpec')
     .replace(/\.md\b/g, '.md');
 
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1).replace(/\.$/, '');
+  return (
+    normalized.charAt(0).toUpperCase() + normalized.slice(1).replace(/\.$/, '')
+  );
 }
 
 function isDocsCommit(entry) {
@@ -181,12 +202,15 @@ function isDocsCommit(entry) {
     return true;
   }
 
-  return entry.files.length > 0 &&
-    entry.files.every(file =>
-      file.startsWith('docs/') ||
-      /^README(\.|$)/i.test(path.basename(file)) ||
-      file === 'RELEASING.md'
-    );
+  return (
+    entry.files.length > 0 &&
+    entry.files.every(
+      (file) =>
+        file.startsWith('docs/') ||
+        /^README(\.|$)/i.test(path.basename(file)) ||
+        file === 'RELEASING.md',
+    )
+  );
 }
 
 function classifyCommit(entry) {
@@ -196,20 +220,35 @@ function classifyCommit(entry) {
     return 'docs';
   }
 
-  if (/^test(\(|:|\b)|\bcoverage\b|\bhook-check\b/.test(subject) ||
-    (entry.files.length > 0 && entry.files.every(file => file.startsWith('tests/')))) {
+  if (
+    /^test(\(|:|\b)|\bcoverage\b|\bhook-check\b/.test(subject) ||
+    (entry.files.length > 0 &&
+      entry.files.every((file) => file.startsWith('tests/')))
+  ) {
     return 'improved';
   }
 
-  if (/^fix(\(|:|\b)|\bbug\b|\bbugfix\b|\bregression\b|\bstabiliz(e|ing)\b|\bprevent\b|\bpreserve\b|\bstrict\b|\bcorrect\b/.test(subject)) {
+  if (
+    /^fix(\(|:|\b)|\bbug\b|\bbugfix\b|\bregression\b|\bstabiliz(e|ing)\b|\bprevent\b|\bpreserve\b|\bstrict\b|\bcorrect\b/.test(
+      subject,
+    )
+  ) {
     return 'fixed';
   }
 
-  if (/^feat(\(|:|\b)|\bfeature\b|\badd\b|\bimplement\b|\bintroduc(e|ing)\b|\blaunch\b|\bqueue service\b/.test(subject)) {
+  if (
+    /^feat(\(|:|\b)|\bfeature\b|\badd\b|\bimplement\b|\bintroduc(e|ing)\b|\blaunch\b|\bqueue service\b/.test(
+      subject,
+    )
+  ) {
     return 'new';
   }
 
-  if (/^refactor(\(|:|\b)|^perf(\(|:|\b)|^test(\(|:|\b)|^chore(\(|:|\b)|^ci(\(|:|\b)|^build(\(|:|\b)|\bimprov(e|ed|ing)\b|\boptimi[sz]e\b|\bexpand\b|\benhance\b|\bautomate\b|\bcoverage\b|\bworkflow\b|\brelease\b/.test(subject)) {
+  if (
+    /^refactor(\(|:|\b)|^perf(\(|:|\b)|^test(\(|:|\b)|^chore(\(|:|\b)|^ci(\(|:|\b)|^build(\(|:|\b)|\bimprov(e|ed|ing)\b|\boptimi[sz]e\b|\bexpand\b|\benhance\b|\bautomate\b|\bcoverage\b|\bworkflow\b|\brelease\b/.test(
+      subject,
+    )
+  ) {
     return 'improved';
   }
 
@@ -309,9 +348,9 @@ function joinNaturalLanguage(parts) {
 function buildFallbackSummary(sections) {
   const primarySection = firstNonEmptySection(sections);
   const primaryBullet = primarySection ? sections[primarySection][0] : '';
-  const counts = SECTION_ORDER
-    .filter(key => sections[key] && sections[key].length > 0)
-    .map(key => formatCountLabel(key, sections[key].length));
+  const counts = SECTION_ORDER.filter(
+    (key) => sections[key] && sections[key].length > 0,
+  ).map((key) => formatCountLabel(key, sections[key].length));
 
   if (!primaryBullet && counts.length === 0) {
     return 'This release includes internal maintenance and packaging updates.';
@@ -357,21 +396,28 @@ function normalizeStructuredDraft(input, fallbackDraft) {
   }
 
   const normalized = {
-    titleSuffix: typeof input.title_suffix === 'string' && input.title_suffix.trim().length > 0
-      ? input.title_suffix.trim()
-      : fallbackDraft.titleSuffix,
-    summary: typeof input.summary === 'string' && input.summary.trim().length > 0
-      ? input.summary.trim()
-      : fallbackDraft.summary,
+    titleSuffix:
+      typeof input.title_suffix === 'string' &&
+      input.title_suffix.trim().length > 0
+        ? input.title_suffix.trim()
+        : fallbackDraft.titleSuffix,
+    summary:
+      typeof input.summary === 'string' && input.summary.trim().length > 0
+        ? input.summary.trim()
+        : fallbackDraft.summary,
     sections: {},
   };
 
   for (const key of SECTION_ORDER) {
     const items = Array.isArray(input[key]) ? input[key] : [];
-    normalized.sections[key] = dedupe(items.map(item => String(item || '').trim()).filter(Boolean));
+    normalized.sections[key] = dedupe(
+      items.map((item) => String(item || '').trim()).filter(Boolean),
+    );
   }
 
-  const hasAnySection = SECTION_ORDER.some(key => normalized.sections[key].length > 0);
+  const hasAnySection = SECTION_ORDER.some(
+    (key) => normalized.sections[key].length > 0,
+  );
   if (!hasAnySection) {
     normalized.sections = fallbackDraft.sections;
   }
@@ -380,10 +426,7 @@ function normalizeStructuredDraft(input, fallbackDraft) {
 }
 
 function buildReleaseBody(tag, draft, packageName) {
-  const lines = [
-    draft.summary,
-    '',
-  ];
+  const lines = [draft.summary, ''];
 
   for (const key of SECTION_ORDER) {
     const items = draft.sections[key] || [];
@@ -416,7 +459,8 @@ function buildReleaseBody(tag, draft, packageName) {
 }
 
 function buildReleasePayload(tag, previousTag, commits, repositoryUrl, draft) {
-  const releaseDraft = draft || buildFallbackDraft(tag, previousTag, commits, repositoryUrl);
+  const releaseDraft =
+    draft || buildFallbackDraft(tag, previousTag, commits, repositoryUrl);
   return {
     name: `${tag} - ${releaseDraft.titleSuffix}`.trim(),
     body: buildReleaseBody(tag, releaseDraft, packageJson.name),
@@ -439,15 +483,21 @@ function loadReleaseOverride(tag, previousTag, repositoryUrl, fallbackDraft) {
   const raw = fs.readFileSync(overridePath, 'utf8');
   const parsed = JSON.parse(raw);
 
-  if (typeof parsed.name === 'string' && parsed.name.trim().length > 0 &&
-    typeof parsed.body === 'string' && parsed.body.trim().length > 0) {
+  if (
+    typeof parsed.name === 'string' &&
+    parsed.name.trim().length > 0 &&
+    typeof parsed.body === 'string' &&
+    parsed.body.trim().length > 0
+  ) {
     return {
       source: 'override',
       name: parsed.name.trim(),
       body: `${parsed.body.trim()}\n`,
-      compareUrl: typeof parsed.compareUrl === 'string' && parsed.compareUrl.trim().length > 0
-        ? parsed.compareUrl.trim()
-        : buildCompareUrl(previousTag, tag, repositoryUrl),
+      compareUrl:
+        typeof parsed.compareUrl === 'string' &&
+        parsed.compareUrl.trim().length > 0
+          ? parsed.compareUrl.trim()
+          : buildCompareUrl(previousTag, tag, repositoryUrl),
       summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
       sections: {},
     };
@@ -463,9 +513,11 @@ function loadReleaseOverride(tag, previousTag, repositoryUrl, fallbackDraft) {
     ...buildReleasePayload(tag, previousTag, [], repositoryUrl, {
       ...fallbackDraft,
       ...normalized,
-      compareUrl: typeof parsed.compareUrl === 'string' && parsed.compareUrl.trim().length > 0
-        ? parsed.compareUrl.trim()
-        : fallbackDraft.compareUrl,
+      compareUrl:
+        typeof parsed.compareUrl === 'string' &&
+        parsed.compareUrl.trim().length > 0
+          ? parsed.compareUrl.trim()
+          : fallbackDraft.compareUrl,
     }),
   };
 }
@@ -476,15 +528,31 @@ async function createReleaseMetadata(options = {}) {
   const commits = Array.isArray(options.commits) ? options.commits : [];
   const repositoryUrl = options.repositoryUrl || '';
 
-  const fallbackDraft = buildFallbackDraft(tag, previousTag, commits, repositoryUrl);
-  const override = loadReleaseOverride(tag, previousTag, repositoryUrl, fallbackDraft);
+  const fallbackDraft = buildFallbackDraft(
+    tag,
+    previousTag,
+    commits,
+    repositoryUrl,
+  );
+  const override = loadReleaseOverride(
+    tag,
+    previousTag,
+    repositoryUrl,
+    fallbackDraft,
+  );
   if (override) {
     return override;
   }
 
   return {
     source: 'fallback',
-    ...buildReleasePayload(tag, previousTag, commits, repositoryUrl, fallbackDraft),
+    ...buildReleasePayload(
+      tag,
+      previousTag,
+      commits,
+      repositoryUrl,
+      fallbackDraft,
+    ),
   };
 }
 
@@ -525,7 +593,7 @@ async function main() {
 }
 
 if (require.main === module) {
-  main().catch(error => {
+  main().catch((error) => {
     console.error(`[release:notes] ${error.message}`);
     process.exit(1);
   });

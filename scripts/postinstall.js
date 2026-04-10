@@ -27,7 +27,9 @@ function getManagedSkillNames() {
 async function installManagedSkill(provider, skillName) {
   const skillCommand = new SkillCommand();
   const result = await skillCommand.installSkill(provider, skillName);
-  console.log(`[ospec] installed ${provider} skill ${skillName}: ${result.targetDir}`);
+  console.log(
+    `[ospec] installed ${provider} skill ${skillName}: ${result.targetDir}`,
+  );
 }
 
 async function main() {
@@ -42,7 +44,9 @@ async function main() {
     }
   } catch (error) {
     console.log(`[ospec] managed skill sync skipped: ${error.message}`);
-    console.log('Tip: rerun `npm install -g .` to retry the automatic ospec / ospec-change skill sync.');
+    console.log(
+      'Tip: rerun `npm install -g .` to retry the automatic ospec / ospec-change skill sync.',
+    );
   }
 }
 

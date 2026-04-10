@@ -280,6 +280,9 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 说明：
 
 - `--base-url` 用来指定运行中的应用地址，供自动化检查使用
+- 启用内建 Checkpoint 时，OSpec 会自动在目标项目里安装 `playwright`、`pixelmatch`、`pngjs`
+- 如果你是通过 AI 对话让助手“打开 Checkpoint 插件”，这一步必须执行完成，才算真正打开成功
+- 关闭 Checkpoint 只会关闭插件配置，不会自动删除已经安装到项目里的这些依赖
 
 </details>
 

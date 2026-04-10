@@ -18,7 +18,7 @@ tags: [ai, guide, ospec]
 4. 関連する `SKILL.md` を読む
 5. 現在の change 実行ファイルを読む
 6. Stitch が有効で、現在の change が `stitch_design_review` を有効化している場合は、先に `artifacts/stitch/approval.json` を確認する
-7. Stitch のインストール、provider 切り替え、doctor 修復、MCP 設定、認証設定が必要な場合は、先にリポジトリ内の Stitch 仕様を読む。`docs/stitch-plugin-spec.zh-CN.md` が存在する場合、その設定断片を正とみなす
+7. Stitch / Checkpoint のインストール、provider 切り替え、doctor 修復、MCP 設定、認証設定、またはプラグイン有効化が必要な場合は、先にプロジェクト文書言語に一致するリポジトリ内のローカライズ済みプラグイン仕様を読む。一致する言語ファイルがない場合のみ他言語版へフォールバックする
 
 ## 必須動作
 
@@ -41,7 +41,7 @@ tags: [ai, guide, ospec]
 - custom runner で `token_env` を使う場合は、対応する環境変数が設定済みかを確認する
 - runner、Gemini CLI、Codex CLI、stitch MCP、認証準備が不明な場合は、まず `ospec plugins doctor stitch <project-path>` を実行する
 - `plugins doctor stitch` が選択 provider のチェックで PASS 以外を返したら、必要な CLI の導入と stitch MCP / API token 設定をユーザーに依頼する
-- Stitch のインストール、provider 切り替え、doctor 修復、MCP 設定、認証設定では、まずリポジトリ内の Stitch 仕様を読む。`docs/stitch-plugin-spec.zh-CN.md` が存在する場合は、Gemini / Codex の設定形をそのまま使い、回避目的の別設定を即興で作らない
+- Stitch のインストール、provider 切り替え、doctor 修復、MCP 設定、認証設定では、まずプロジェクト文書言語に一致するリポジトリ内のローカライズ済み Stitch 仕様を読む。Gemini / Codex の設定形をそのまま使い、回避目的の別設定を即興で作らない
 - 内蔵 `codex` provider が read-only 呼び出しでは成功するのに `create_project`、`generate_screen`、`edit_screens` が止まる場合は、`codex exec --dangerously-bypass-approvals-and-sandbox` が実際に使われているか確認する
 - プロジェクトが `.skillrc.plugins.stitch.runner` を明示的に上書きし、それでも Codex が Stitch 書き込みを担当する場合は、その custom runner / wrapper でも `--dangerously-bypass-approvals-and-sandbox` を渡す
 - 重要なコード変更後は `SKILL.md` を同期する

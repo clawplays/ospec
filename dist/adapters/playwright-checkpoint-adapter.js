@@ -1,11 +1,23 @@
 "use strict";
-const fs = require("fs-extra");
+const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
 const yaml = require("js-yaml");
-const matter = require("gray-matter");
+const helpers_1 = require("../utils/helpers");
 const { spawn, spawnSync } = require("child_process");
 const { createRequire } = require("module");
-
+async function pathExists(targetPath) {
+    try {
+        await fsp.access(targetPath, fs.constants.F_OK);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+async function ensureDir(targetPath) {
+    await fsp.mkdir(targetPath, { recursive: true });
+}
 function parseArgs(argv) {
     const args = argv.slice(2);
     const parsed = {
@@ -30,11 +42,9 @@ function parseArgs(argv) {
     }
     return parsed;
 }
-
 function firstString(...values) {
     return values.find(value => typeof value === "string" && value.trim().length > 0)?.trim() || "";
 }
-
 const ISSUE_METADATA_BY_CODE = {
     auth_failed: { category: "runtime", severity: "error" },
     auth_storage_state_missing: { category: "runtime", severity: "error" },
@@ -77,7 +87,6 @@ const ISSUE_METADATA_BY_CODE = {
     visual_diff_unavailable: { category: "config", severity: "error" },
     checkpoint_steps_missing: { category: "config", severity: "error" },
 };
-
 const ISSUE_EVIDENCE_KEYS = new Set([
     "actual",
     "background",
@@ -100,7 +109,6 @@ const ISSUE_EVIDENCE_KEYS = new Set([
     "tolerance",
     "url",
 ]);
-
 function inferIssueCategory(code, extra = {}) {
     const normalizedCode = String(code || "").trim();
     if (normalizedCode && ISSUE_METADATA_BY_CODE[normalizedCode]?.category) {
@@ -114,7 +122,6 @@ function inferIssueCategory(code, extra = {}) {
     }
     return "runtime";
 }
-
 function inferIssueSeverity(code, category) {
     const normalizedCode = String(code || "").trim();
     if (normalizedCode && ISSUE_METADATA_BY_CODE[normalizedCode]?.severity) {
@@ -122,7 +129,6 @@ function inferIssueSeverity(code, category) {
     }
     return category === "config" ? "error" : "error";
 }
-
 function normalizeIssueEvidence(extra) {
     const evidence = isObject(extra?.evidence) ? { ...extra.evidence } : {};
     for (const [key, value] of Object.entries(extra || {})) {
@@ -136,7 +142,6 @@ function normalizeIssueEvidence(extra) {
     }
     return Object.keys(evidence).length > 0 ? evidence : undefined;
 }
-
 function createIssue(message, extra = {}) {
     const normalizedExtra = isObject(extra) ? extra : {};
     const code = firstString(normalizedExtra.code, "checkpoint_issue");
@@ -159,14 +164,12 @@ function createIssue(message, extra = {}) {
         ...passthrough,
     };
 }
-
 function createUiIssue(message, extra = {}) {
     return createIssue(message, {
         step: "checkpoint_ui_review",
         ...extra,
     });
 }
-
 function createRouteIssue(routeName, viewportName, message, extra = {}) {
     return createUiIssue(message, {
         route: routeName,
@@ -174,7 +177,6 @@ function createRouteIssue(routeName, viewportName, message, extra = {}) {
         ...extra,
     });
 }
-
 function createFlowIssue(flowName, message, extra = {}) {
     return createIssue(message, {
         step: "checkpoint_flow_check",
@@ -182,21 +184,18 @@ function createFlowIssue(flowName, message, extra = {}) {
         ...extra,
     });
 }
-
 function createRuntimeIssue(message, extra = {}) {
     return createIssue(message, {
         step: firstString(extra?.step, "checkpoint_runtime"),
         ...extra,
     });
 }
-
 function debugLog(...parts) {
     if (process.env.OSPEC_CHECKPOINT_DEBUG !== "1") {
         return;
     }
     process.stderr.write(`[checkpoint-debug] ${parts.map(part => String(part)).join(" ")}\n`);
 }
-
 function normalizeStatus(value, fallback = "pending") {
     const normalized = String(value || "").trim().toLowerCase();
     if (normalized === "pass") {
@@ -210,16 +209,13 @@ function normalizeStatus(value, fallback = "pending") {
     }
     return fallback;
 }
-
 function sanitizeName(value, fallback) {
     const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
     return normalized || fallback;
 }
-
 function isObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
-
 function readStringList(value) {
     const rawValues = Array.isArray(value)
         ? value
@@ -230,7 +226,6 @@ function readStringList(value) {
         .map(item => String(item || "").trim())
         .filter(Boolean)));
 }
-
 function toOptionalNumber(value) {
     if (value === undefined || value === null || value === "") {
         return null;
@@ -238,14 +233,12 @@ function toOptionalNumber(value) {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric : null;
 }
-
 function clampByte(value) {
     if (!Number.isFinite(value)) {
         return 0;
     }
     return Math.max(0, Math.min(255, Math.round(value)));
 }
-
 function normalizeCssPropertyName(value) {
     const raw = firstString(value, "color");
     return raw
@@ -253,7 +246,6 @@ function normalizeCssPropertyName(value) {
         .replace(/[A-Z]/g, character => `-${character.toLowerCase()}`)
         .toLowerCase();
 }
-
 function parseColor(value) {
     const normalized = String(value || "").trim().toLowerCase();
     if (!normalized) {
@@ -295,14 +287,12 @@ function parseColor(value) {
         a: Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1,
     };
 }
-
 function formatColor(color) {
     if (!color) {
         return "(unresolved)";
     }
     return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a.toFixed(2)})`;
 }
-
 function blendColor(foreground, background) {
     const alpha = Number.isFinite(foreground?.a) ? Math.max(0, Math.min(1, foreground.a)) : 1;
     return {
@@ -312,12 +302,10 @@ function blendColor(foreground, background) {
         a: 1,
     };
 }
-
 function relativeLuminance(channel) {
     const normalized = channel / 255;
     return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
 }
-
 function getContrastRatio(foreground, background) {
     const effectiveBackground = background?.a !== undefined && background.a < 1
         ? blendColor(background, { r: 255, g: 255, b: 255, a: 1 })
@@ -335,7 +323,6 @@ function getContrastRatio(foreground, background) {
     const darker = Math.min(foregroundLuminance, backgroundLuminance);
     return (lighter + 0.05) / (darker + 0.05);
 }
-
 function getColorDistance(left, right) {
     const alphaLeft = Number.isFinite(left?.a) ? left.a * 255 : 255;
     const alphaRight = Number.isFinite(right?.a) ? right.a * 255 : 255;
@@ -344,7 +331,6 @@ function getColorDistance(left, right) {
         Math.pow((left?.b || 0) - (right?.b || 0), 2) +
         Math.pow(alphaLeft - alphaRight, 2));
 }
-
 function getRouteViewports(routeConfig, defaultsConfig) {
     const rawViewports = Array.isArray(routeConfig?.viewports) && routeConfig.viewports.length > 0
         ? routeConfig.viewports
@@ -367,7 +353,6 @@ function getRouteViewports(routeConfig, defaultsConfig) {
     }
     return resolved;
 }
-
 function resolveViewportBaselinePath(routeConfig, defaultsConfig, viewportName, workspaceRoot, projectPath) {
     const pickBaseline = (value) => {
         if (typeof value === "string") {
@@ -381,21 +366,18 @@ function resolveViewportBaselinePath(routeConfig, defaultsConfig, viewportName, 
     const baselineRef = firstString(pickBaseline(routeConfig?.baseline), pickBaseline(defaultsConfig?.baseline));
     return baselineRef ? resolveMaybePath(baselineRef, workspaceRoot, projectPath) : "";
 }
-
 function getRouteRequirements(routeConfig, defaultsConfig) {
     return [
         ...readStringList(defaultsConfig?.requirements),
         ...readStringList(routeConfig?.requirements),
     ];
 }
-
 function getRouteIgnoreSelectors(routeConfig, defaultsConfig) {
     return Array.from(new Set([
         ...readStringList(defaultsConfig?.ignore_selectors),
         ...readStringList(routeConfig?.ignore_selectors),
     ]));
 }
-
 function getRequiredVisibleSelectors(routeConfig, defaultsConfig) {
     return Array.from(new Set([
         ...readStringList(defaultsConfig?.required_visible),
@@ -404,7 +386,6 @@ function getRequiredVisibleSelectors(routeConfig, defaultsConfig) {
         ...readStringList(routeConfig?.selectors?.required_visible),
     ]));
 }
-
 function normalizeNoOverlapRule(value, fallbackName) {
     if (Array.isArray(value) && value.length >= 2) {
         const first = firstString(value[0]);
@@ -432,7 +413,6 @@ function normalizeNoOverlapRule(value, fallbackName) {
         second,
     };
 }
-
 function getNoOverlapRules(routeConfig, defaultsConfig) {
     const rawRules = [
         ...((Array.isArray(defaultsConfig?.no_overlap) ? defaultsConfig.no_overlap : [])),
@@ -444,7 +424,6 @@ function getNoOverlapRules(routeConfig, defaultsConfig) {
         .map((rule, index) => normalizeNoOverlapRule(rule, `no-overlap-${index + 1}`))
         .filter(Boolean);
 }
-
 function normalizeTypographyRule(value, fallbackName) {
     if (!isObject(value)) {
         return null;
@@ -468,7 +447,6 @@ function normalizeTypographyRule(value, fallbackName) {
         max_lines: Number.isFinite(maxLines) && maxLines > 0 ? Math.floor(maxLines) : null,
     };
 }
-
 function getTypographyRules(routeConfig, defaultsConfig) {
     const rawRules = [
         ...((Array.isArray(defaultsConfig?.typography) ? defaultsConfig.typography : [])),
@@ -478,7 +456,6 @@ function getTypographyRules(routeConfig, defaultsConfig) {
         .map((rule, index) => normalizeTypographyRule(rule, `typography-${index + 1}`))
         .filter(Boolean);
 }
-
 function normalizeColorRule(value, fallbackName) {
     if (!isObject(value)) {
         return null;
@@ -497,7 +474,6 @@ function normalizeColorRule(value, fallbackName) {
         tolerance: Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0,
     };
 }
-
 function getColorRules(routeConfig, defaultsConfig) {
     const rawRules = [
         ...((Array.isArray(defaultsConfig?.colors) ? defaultsConfig.colors : [])),
@@ -507,7 +483,6 @@ function getColorRules(routeConfig, defaultsConfig) {
         .map((rule, index) => normalizeColorRule(rule, `color-${index + 1}`))
         .filter(Boolean);
 }
-
 function normalizeContrastRule(value, fallbackName) {
     if (typeof value === "string") {
         return {
@@ -538,7 +513,6 @@ function normalizeContrastRule(value, fallbackName) {
         max_issues: Number.isFinite(maxIssues) && maxIssues > 0 ? Math.floor(maxIssues) : 8,
     };
 }
-
 function getContrastRules(routeConfig, defaultsConfig) {
     if (routeConfig?.contrast === false) {
         return [];
@@ -562,7 +536,6 @@ function getContrastRules(routeConfig, defaultsConfig) {
         .map((rule, index) => normalizeContrastRule(rule, `contrast-${index + 1}`))
         .filter(Boolean);
 }
-
 function resolveTemplateValue(value, context) {
     return String(value || "")
         .replace(/\{change_path\}|\$\{change_path\}/g, context.change_path)
@@ -571,7 +544,6 @@ function resolveTemplateValue(value, context) {
         .replace(/\{base_url\}|\$\{base_url\}/g, String(context.base_url || ""))
         .replace(/\{storage_state_path\}|\$\{storage_state_path\}/g, String(context.storage_state_path || ""));
 }
-
 function resolveMaybePath(filePath, cwd, projectPath) {
     const normalized = String(filePath || "").trim();
     if (!normalized) {
@@ -585,7 +557,6 @@ function resolveMaybePath(filePath, cwd, projectPath) {
     }
     return path.resolve(projectPath, normalized);
 }
-
 function joinUrl(baseUrl, nextPath) {
     const normalizedBase = String(baseUrl || "").trim();
     const normalizedPath = String(nextPath || "").trim();
@@ -594,7 +565,6 @@ function joinUrl(baseUrl, nextPath) {
     }
     return new URL(normalizedPath || "/", normalizedBase.endsWith("/") ? normalizedBase : `${normalizedBase}/`).toString();
 }
-
 function getViewportConfig(viewport) {
     const raw = typeof viewport === "string" ? viewport.trim().toLowerCase() : "";
     if (viewport && typeof viewport === "object" && !Array.isArray(viewport)) {
@@ -614,7 +584,6 @@ function getViewportConfig(viewport) {
     }
     return { name: raw || "desktop", width: 1440, height: 960 };
 }
-
 function resolveModule(projectPath, moduleName) {
     const candidates = [
         path.join(projectPath, "package.json"),
@@ -632,18 +601,15 @@ function resolveModule(projectPath, moduleName) {
     }
     return null;
 }
-
 async function loadJson(filePath) {
-    return JSON.parse((await fs.readFile(filePath, "utf8")).replace(/^\uFEFF/, ""));
+    return JSON.parse((await fsp.readFile(filePath, "utf8")).replace(/^\uFEFF/, ""));
 }
-
 async function readYamlIfExists(filePath) {
-    if (!(await fs.pathExists(filePath))) {
+    if (!(await pathExists(filePath))) {
         return null;
     }
-    return yaml.load(await fs.readFile(filePath, "utf8"));
+    return yaml.load(await fsp.readFile(filePath, "utf8"));
 }
-
 async function startRuntime(startupConfig, context, traceLogPath) {
     const command = firstString(startupConfig?.command);
     if (!command) {
@@ -656,7 +622,7 @@ async function startRuntime(startupConfig, context, traceLogPath) {
     const args = Array.isArray(startupConfig?.args) ? startupConfig.args.map(value => resolveTemplateValue(String(value), context)) : [];
     const cwdValue = firstString(startupConfig?.cwd, "${project_path}");
     const cwd = resolveMaybePath(resolveTemplateValue(cwdValue, context), context.project_path, context.project_path);
-    await fs.ensureDir(path.dirname(traceLogPath));
+    await ensureDir(path.dirname(traceLogPath));
     const logStream = fs.createWriteStream(traceLogPath, { flags: "a" });
     const child = spawn(command, args, {
         cwd,
@@ -690,7 +656,6 @@ async function startRuntime(startupConfig, context, traceLogPath) {
         logStream,
     };
 }
-
 async function stopRuntime(shutdownConfig, startupState, context) {
     const command = firstString(shutdownConfig?.command);
     if (command) {
@@ -732,7 +697,6 @@ async function stopRuntime(shutdownConfig, startupState, context) {
     }
     startupState.logStream?.end();
 }
-
 async function waitForReadiness(readinessConfig, baseUrl, startupState) {
     const type = firstString(readinessConfig?.type, "url").toLowerCase();
     if (type !== "url") {
@@ -783,7 +747,6 @@ async function waitForReadiness(readinessConfig, baseUrl, startupState) {
         message: `Readiness probe timed out after ${timeoutMs}ms (${lastError || "no successful response"})`,
     };
 }
-
 async function runAuthCommand(authConfig, context, storageStatePath, traceLogPath) {
     const command = firstString(authConfig?.command);
     if (!command) {
@@ -794,7 +757,7 @@ async function runAuthCommand(authConfig, context, storageStatePath, traceLogPat
         };
     }
     const when = firstString(authConfig?.when, "missing_storage_state").toLowerCase();
-    const storageStateExists = storageStatePath ? await fs.pathExists(storageStatePath) : false;
+    const storageStateExists = storageStatePath ? await pathExists(storageStatePath) : false;
     if (when !== "always" && storageStateExists) {
         return {
             ran: false,
@@ -806,7 +769,7 @@ async function runAuthCommand(authConfig, context, storageStatePath, traceLogPat
     const cwdValue = firstString(authConfig?.cwd, "${project_path}");
     const cwd = resolveMaybePath(resolveTemplateValue(cwdValue, context), context.project_path, context.project_path);
     const timeoutMs = Number.isFinite(authConfig?.timeout_ms) && authConfig.timeout_ms > 0 ? Math.floor(authConfig.timeout_ms) : 300000;
-    await fs.ensureDir(path.dirname(traceLogPath));
+    await ensureDir(path.dirname(traceLogPath));
     const result = spawnSync(command, args, {
         cwd,
         env: {
@@ -826,10 +789,10 @@ async function runAuthCommand(authConfig, context, storageStatePath, traceLogPat
         .filter(Boolean)
         .join("\n");
     if (combinedOutput) {
-        await fs.writeFile(traceLogPath, `${combinedOutput}\n`);
+        await fsp.writeFile(traceLogPath, `${combinedOutput}\n`);
     }
     else {
-        await fs.writeFile(traceLogPath, "");
+        await fsp.writeFile(traceLogPath, "");
     }
     if (result.error) {
         throw result.error;
@@ -843,7 +806,6 @@ async function runAuthCommand(authConfig, context, storageStatePath, traceLogPat
         message: "Auth command completed successfully.",
     };
 }
-
 async function collectLayoutSignals(page) {
     return page.evaluate(() => {
         const describe = (element) => {
@@ -908,7 +870,6 @@ async function collectLayoutSignals(page) {
         };
     });
 }
-
 async function applyIgnoredSelectors(page, selectors) {
     if (!Array.isArray(selectors) || selectors.length === 0) {
         return;
@@ -928,7 +889,6 @@ async function applyIgnoredSelectors(page, selectors) {
         }
     }, selectors);
 }
-
 async function runVisibilityChecks(page, selectors, routeName, viewportName) {
     const issues = [];
     for (const selector of selectors) {
@@ -987,7 +947,6 @@ async function runVisibilityChecks(page, selectors, routeName, viewportName) {
     }
     return issues;
 }
-
 async function runOverlapChecks(page, rules, routeName, viewportName) {
     const issues = [];
     for (const rule of rules) {
@@ -1057,7 +1016,6 @@ async function runOverlapChecks(page, rules, routeName, viewportName) {
     }
     return issues;
 }
-
 async function runTypographyChecks(page, rules, routeName, viewportName) {
     const issues = [];
     for (const rule of rules) {
@@ -1215,7 +1173,6 @@ async function runTypographyChecks(page, rules, routeName, viewportName) {
     }
     return issues;
 }
-
 async function runColorChecks(page, rules, routeName, viewportName) {
     const issues = [];
     for (const rule of rules) {
@@ -1301,7 +1258,6 @@ async function runColorChecks(page, rules, routeName, viewportName) {
     }
     return issues;
 }
-
 async function runContrastChecks(page, rules, routeName, viewportName) {
     const issues = [];
     for (const rule of rules) {
@@ -1453,7 +1409,6 @@ async function runContrastChecks(page, rules, routeName, viewportName) {
     }
     return issues;
 }
-
 async function compareAgainstBaseline(modules, screenshotPath, baselinePath, diffPath, routeConfig, issueContext = {}) {
     if (!baselinePath) {
         return {
@@ -1465,7 +1420,7 @@ async function compareAgainstBaseline(modules, screenshotPath, baselinePath, dif
             artifacts: [],
         };
     }
-    if (!(await fs.pathExists(baselinePath))) {
+    if (!(await pathExists(baselinePath))) {
         return {
             ok: false,
             issues: [createUiIssue(`Baseline screenshot is missing: ${baselinePath}`, {
@@ -1489,8 +1444,8 @@ async function compareAgainstBaseline(modules, screenshotPath, baselinePath, dif
     const threshold = Number.isFinite(routeConfig?.diff_threshold) && routeConfig.diff_threshold >= 0
         ? Number(routeConfig.diff_threshold)
         : 0.01;
-    const baselinePng = modules.PNG.sync.read(await fs.readFile(baselinePath));
-    const actualPng = modules.PNG.sync.read(await fs.readFile(screenshotPath));
+    const baselinePng = modules.PNG.sync.read(await fsp.readFile(baselinePath));
+    const actualPng = modules.PNG.sync.read(await fsp.readFile(screenshotPath));
     if (baselinePng.width !== actualPng.width || baselinePng.height !== actualPng.height) {
         return {
             ok: false,
@@ -1509,7 +1464,7 @@ async function compareAgainstBaseline(modules, screenshotPath, baselinePath, dif
     });
     const diffRatio = diffPixels / Math.max(1, actualPng.width * actualPng.height);
     if (diffPixels > 0) {
-        await fs.writeFile(diffPath, modules.PNG.sync.write(diffPng));
+        await fsp.writeFile(diffPath, modules.PNG.sync.write(diffPng));
     }
     return {
         ok: diffRatio <= threshold,
@@ -1526,7 +1481,6 @@ async function compareAgainstBaseline(modules, screenshotPath, baselinePath, dif
         diffRatio,
     };
 }
-
 async function runUiReview(playwright, modules, projectPath, checkpointConfig, artifactPaths, storageStatePath) {
     debugLog("ui_review:start", projectPath);
     const workspaceRoot = path.join(projectPath, ".ospec", "plugins", "checkpoint");
@@ -1546,7 +1500,7 @@ async function runUiReview(playwright, modules, projectPath, checkpointConfig, a
         ignoreHTTPSErrors: true,
         baseURL: firstString(checkpointConfig?.runtime?.base_url),
     };
-    if (storageStatePath && await fs.pathExists(storageStatePath)) {
+    if (storageStatePath && await pathExists(storageStatePath)) {
         contextOptions.storageState = storageStatePath;
     }
     const browserContext = await browser.newContext(contextOptions);
@@ -1692,7 +1646,7 @@ async function runUiReview(playwright, modules, projectPath, checkpointConfig, a
     finally {
         debugLog("ui_review:trace_stop");
         await browserContext.tracing.stop({ path: tracePath }).catch(() => undefined);
-        if (await fs.pathExists(tracePath)) {
+        if (await pathExists(tracePath)) {
             artifacts.push({
                 path: tracePath,
                 label: "ui review trace",
@@ -1710,7 +1664,6 @@ async function runUiReview(playwright, modules, projectPath, checkpointConfig, a
         artifacts,
     };
 }
-
 async function executeFlowStep(page, step, baseUrl, artifactPaths, flowName) {
     const action = String(step?.action || "").trim().toLowerCase();
     const timeoutMs = Number.isFinite(step?.timeout_ms) && step.timeout_ms > 0 ? Math.floor(step.timeout_ms) : 30000;
@@ -1781,7 +1734,6 @@ async function executeFlowStep(page, step, baseUrl, artifactPaths, flowName) {
     }
     throw new Error(`Unsupported flow action: ${action || "(empty)"}`);
 }
-
 function assertJsonSubset(actual, expected, trail = "", issueContext = {}) {
     if (expected === null || typeof expected !== "object" || Array.isArray(expected)) {
         const matches = JSON.stringify(actual) === JSON.stringify(expected);
@@ -1806,7 +1758,6 @@ function assertJsonSubset(actual, expected, trail = "", issueContext = {}) {
     }
     return issues;
 }
-
 async function runFlowCheck(playwright, projectPath, checkpointConfig, artifactPaths, storageStatePath) {
     const workspaceRoot = path.join(projectPath, ".ospec", "plugins", "checkpoint");
     const flowsPath = path.join(workspaceRoot, "flows.yaml");
@@ -1829,14 +1780,14 @@ async function runFlowCheck(playwright, projectPath, checkpointConfig, artifactP
         ignoreHTTPSErrors: true,
         baseURL: firstString(checkpointConfig?.runtime?.base_url),
     };
-    if (storageStatePath && await fs.pathExists(storageStatePath)) {
+    if (storageStatePath && await pathExists(storageStatePath)) {
         contextOptions.storageState = storageStatePath;
     }
     const browserContext = await browser.newContext(contextOptions);
     const requestContext = await playwright.request.newContext({
         baseURL: firstString(checkpointConfig?.runtime?.base_url),
         ignoreHTTPSErrors: true,
-        storageState: storageStatePath && await fs.pathExists(storageStatePath) ? storageStatePath : undefined,
+        storageState: storageStatePath && await pathExists(storageStatePath) ? storageStatePath : undefined,
     });
     const tracePath = path.join(artifactPaths.tracesDir, "flow-check-trace.zip");
     await browserContext.tracing.start({ screenshots: true, snapshots: true });
@@ -1948,7 +1899,7 @@ async function runFlowCheck(playwright, projectPath, checkpointConfig, artifactP
     }
     finally {
         await browserContext.tracing.stop({ path: tracePath }).catch(() => undefined);
-        if (await fs.pathExists(tracePath)) {
+        if (await pathExists(tracePath)) {
             artifacts.push({
                 path: tracePath,
                 label: "flow check trace",
@@ -1966,7 +1917,6 @@ async function runFlowCheck(playwright, projectPath, checkpointConfig, artifactP
         artifacts,
     };
 }
-
 function formatIssueScope(issue) {
     const parts = [];
     if (issue.route) {
@@ -1983,13 +1933,11 @@ function formatIssueScope(issue) {
     }
     return parts.join(", ");
 }
-
 function formatIssueLabel(issue) {
     const category = firstString(issue?.category, "runtime");
     const severity = firstString(issue?.severity, "error");
     return `[${category}/${severity}]`;
 }
-
 function summarizeIssues(issues) {
     const entries = Array.isArray(issues) ? issues : [];
     const byCategory = {};
@@ -2006,7 +1954,6 @@ function summarizeIssues(issues) {
         bySeverity,
     };
 }
-
 function buildSummary(result) {
     const overallIssueSummary = summarizeIssues(result.issues || []);
     const lines = [
@@ -2074,7 +2021,6 @@ function buildSummary(result) {
     }
     return lines.join("\n");
 }
-
 async function main() {
     const { changePath, projectPath } = parseArgs(process.argv);
     debugLog("main:start", changePath, projectPath);
@@ -2085,13 +2031,13 @@ async function main() {
         diffsDir: process.env.OSPEC_CHECKPOINT_DIFFS_DIR || path.join(changePath, "artifacts", "checkpoint", "diffs"),
         tracesDir: process.env.OSPEC_CHECKPOINT_TRACES_DIR || path.join(changePath, "artifacts", "checkpoint", "traces"),
     };
-    await fs.ensureDir(artifactPaths.checkpointDir);
-    await fs.ensureDir(artifactPaths.screenshotsDir);
-    await fs.ensureDir(artifactPaths.diffsDir);
-    await fs.ensureDir(artifactPaths.tracesDir);
+    await ensureDir(artifactPaths.checkpointDir);
+    await ensureDir(artifactPaths.screenshotsDir);
+    await ensureDir(artifactPaths.diffsDir);
+    await ensureDir(artifactPaths.tracesDir);
     const config = await loadJson(path.join(projectPath, ".skillrc"));
     const checkpointConfig = config?.plugins?.checkpoint || {};
-    const verification = matter(await fs.readFile(path.join(changePath, "verification.md"), "utf8"));
+    const verification = (0, helpers_1.parseFrontmatterDocument)(await fsp.readFile(path.join(changePath, "verification.md"), "utf8"));
     const optionalSteps = Array.isArray(verification.data.optional_steps) ? verification.data.optional_steps : [];
     const activeSteps = optionalSteps.filter(step => step === "checkpoint_ui_review" || step === "checkpoint_flow_check");
     const result = {
@@ -2189,7 +2135,7 @@ async function main() {
         else {
             debugLog("main:auth_done", "skipped");
         }
-        if (authState?.ran && storageStatePath && !(await fs.pathExists(storageStatePath))) {
+        if (authState?.ran && storageStatePath && !(await pathExists(storageStatePath))) {
             result.status = "failed";
             result.issues.push(createRuntimeIssue(`Auth command completed but did not create the configured storage state file: ${storageStatePath}`, {
                 code: "auth_storage_state_missing",
@@ -2202,7 +2148,7 @@ async function main() {
         const playwright = resolveModule(projectPath, "playwright");
         if (!playwright) {
             result.status = "failed";
-            result.issues.push(createRuntimeIssue("Playwright is not installed. Install the \"playwright\" package to use checkpoint.", { code: "playwright_missing" }));
+            result.issues.push(createRuntimeIssue("Playwright is not installed in the target project. Re-run \"ospec plugins enable checkpoint <project-path> --base-url <url>\" to auto-install checkpoint dependencies, or install \"playwright\", \"pixelmatch\", and \"pngjs\" in the project.", { code: "playwright_missing" }));
             result.summary_markdown = buildSummary(result);
             console.log(JSON.stringify(result));
             return;
@@ -2246,7 +2192,6 @@ async function main() {
         await stopRuntime(checkpointConfig?.runtime?.shutdown || {}, startupState || {}, runtimeContext).catch(() => undefined);
     }
 }
-
 main().catch(error => {
     const fallback = {
         ok: false,

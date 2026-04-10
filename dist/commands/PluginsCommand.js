@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PluginsCommand = void 0;
 const child_process_1 = require("child_process");
 const path = require("path");
-const gray_matter_1 = require("gray-matter");
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
@@ -298,8 +297,12 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 nextConfig.plugins.checkpoint.enabled = enabled;
                 nextConfig.plugins.checkpoint.capabilities.ui_review.enabled = enabled;
                 nextConfig.plugins.checkpoint.capabilities.flow_check.enabled = enabled;
+                let dependencyInstallResult = null;
                 if (enabled) {
                     await this.ensureCheckpointWorkspaceScaffold(projectPath, nextConfig.plugins.checkpoint);
+                    if (this.isBuiltInCheckpointRunner(nextConfig.plugins.checkpoint.runner)) {
+                        dependencyInstallResult = await this.installCheckpointProjectDependencies(projectPath);
+                    }
                 }
                 await services_1.services.configManager.saveConfig(projectPath, nextConfig);
                 this.success(`${enabled ? 'Enabled' : 'Disabled'} plugin checkpoint for ${projectPath}`);
@@ -312,7 +315,17 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 this.info(`  runner.command: ${nextConfig.plugins.checkpoint.runner.command || '(built-in adapter)'}`);
                 this.info(`  stitch integration: ${nextConfig.plugins.checkpoint.stitch_integration.enabled ? 'enabled' : 'disabled'}`);
                 if (enabled) {
+                    if (dependencyInstallResult) {
+                        this.info(`  checkpoint deps: ${dependencyInstallResult.installedNow.length > 0
+                            ? `installed into the target project with ${dependencyInstallResult.packageManager}: ${dependencyInstallResult.installedNow.join(', ')}`
+                            : `already available in the target project (${dependencyInstallResult.packageManager})`}`);
+                        this.info('  note: AI/chat-based checkpoint enable must include this dependency install step');
+                        this.info('  note: disabling checkpoint later will not uninstall these project dependencies');
+                    }
                     this.info(`  doctor: ${(0, helpers_1.formatCliCommand)('ospec', 'plugins', 'doctor', 'checkpoint', projectPath)}`);
+                }
+                else {
+                    this.info('  note: disabling checkpoint does not uninstall any previously installed checkpoint project dependencies');
                 }
                 this.info('  Affects new changes by default; update existing changes manually if needed');
                 return;
@@ -435,7 +448,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInGeminiRunner
                     ? geminiMcp.stitchMcpConfigured
                         ? `Gemini CLI Stitch MCP is configured${geminiMcp.stitchMcpType ? ` (${geminiMcp.stitchMcpType})` : ''}`
-                        : 'Gemini CLI Stitch MCP was not found in settings.json. Follow docs/stitch-plugin-spec.zh-CN.md and add mcpServers.stitch before using the built-in adapter.'
+                        : 'Gemini CLI Stitch MCP was not found in settings.json. Follow the repo-local localized Stitch plugin spec and add mcpServers.stitch before using the built-in adapter.'
                     : 'Gemini MCP config is not required because stitch.runner is customized.',
             });
             checks.push({
@@ -444,7 +457,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInGeminiRunner
                     ? geminiMcp.stitchHttpUrlConfigured
                         ? 'Gemini CLI Stitch MCP uses the documented httpUrl'
-                        : 'Gemini CLI Stitch MCP must set httpUrl = "https://stitch.googleapis.com/mcp" as documented in docs/stitch-plugin-spec.zh-CN.md.'
+                        : 'Gemini CLI Stitch MCP must set httpUrl = "https://stitch.googleapis.com/mcp" as documented in the repo-local localized Stitch plugin spec.'
                     : 'Gemini MCP URL is not required because stitch.runner is customized.',
             });
             checks.push({
@@ -453,7 +466,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInGeminiRunner
                     ? geminiMcp.stitchAuthConfigured
                         ? 'Gemini CLI Stitch MCP includes the documented X-Goog-Api-Key header'
-                        : 'Gemini CLI Stitch MCP must set headers.X-Goog-Api-Key as documented in docs/stitch-plugin-spec.zh-CN.md.'
+                        : 'Gemini CLI Stitch MCP must set headers.X-Goog-Api-Key as documented in the repo-local localized Stitch plugin spec.'
                     : 'Gemini MCP auth is not required because stitch.runner is customized.',
             });
         }
@@ -492,7 +505,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInCodexRunner
                     ? codexMcp.stitchMcpConfigured
                         ? 'Codex Stitch MCP is configured in config.toml'
-                        : 'Codex Stitch MCP was not found in config.toml. Follow docs/stitch-plugin-spec.zh-CN.md and add [mcp_servers.stitch] before using the built-in adapter.'
+                        : 'Codex Stitch MCP was not found in config.toml. Follow the repo-local localized Stitch plugin spec and add [mcp_servers.stitch] before using the built-in adapter.'
                     : 'Codex MCP config is not required because stitch.runner is customized.',
             });
             checks.push({
@@ -501,7 +514,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInCodexRunner
                     ? codexMcp.stitchTransportHttp
                         ? 'Codex Stitch MCP uses the documented HTTP transport'
-                        : 'Codex Stitch MCP must set type = "http" as documented in docs/stitch-plugin-spec.zh-CN.md.'
+                        : 'Codex Stitch MCP must set type = "http" as documented in the repo-local localized Stitch plugin spec.'
                     : 'Codex MCP transport is not required because stitch.runner is customized.',
             });
             checks.push({
@@ -510,7 +523,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInCodexRunner
                     ? codexMcp.stitchUrlConfigured
                         ? 'Codex Stitch MCP uses the documented Stitch MCP URL'
-                        : 'Codex Stitch MCP must set url = "https://stitch.googleapis.com/mcp" as documented in docs/stitch-plugin-spec.zh-CN.md.'
+                        : 'Codex Stitch MCP must set url = "https://stitch.googleapis.com/mcp" as documented in the repo-local localized Stitch plugin spec.'
                     : 'Codex MCP URL is not required because stitch.runner is customized.',
             });
             checks.push({
@@ -519,7 +532,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 message: usingBuiltInCodexRunner
                     ? codexMcp.stitchAuthConfigured
                         ? 'Codex Stitch MCP includes the documented X-Goog-Api-Key header'
-                        : 'Codex Stitch MCP must set X-Goog-Api-Key in headers or [mcp_servers.stitch.http_headers] as documented in docs/stitch-plugin-spec.zh-CN.md.'
+                        : 'Codex Stitch MCP must set X-Goog-Api-Key in headers or [mcp_servers.stitch.http_headers] as documented in the repo-local localized Stitch plugin spec.'
                     : 'Codex MCP auth is not required because stitch.runner is customized.',
             });
             checks.push({
@@ -545,7 +558,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         if (provider === 'gemini') {
             console.log('  1. The default runner uses the built-in Gemini CLI Stitch adapter when runner.command is not customized');
             console.log('  2. Install Gemini CLI with npm install -g @google/gemini-cli if gemini-cli.available is not PASS');
-            console.log('  3. Configure %USERPROFILE%/.gemini/settings.json using the Gemini snippet from docs/stitch-plugin-spec.zh-CN.md if gemini-cli.stitch-mcp, gemini-cli.stitch-url, or gemini-cli.stitch-auth is not PASS');
+            console.log('  3. Configure %USERPROFILE%/.gemini/settings.json using the Gemini snippet from the repo-local localized Stitch plugin spec if gemini-cli.stitch-mcp, gemini-cli.stitch-url, or gemini-cli.stitch-auth is not PASS');
             console.log('  4. Override .skillrc.plugins.stitch.runner only if you prefer a custom Stitch bridge / wrapper');
             console.log('  5. Create a new UI/page-design change with --flags ui_change,page_design');
             console.log('  6. Run ospec plugins run stitch <change-path> before asking for review');
@@ -554,7 +567,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         else {
             console.log('  1. The default runner uses the built-in Codex CLI Stitch adapter when runner.command is not customized');
             console.log('  2. Install Codex CLI if codex-cli.available is not PASS');
-            console.log('  3. Configure %USERPROFILE%/.codex/config.toml using the Codex snippet from docs/stitch-plugin-spec.zh-CN.md if codex-cli.stitch-mcp, codex-cli.stitch-transport, codex-cli.stitch-url, or codex-cli.stitch-auth is not PASS');
+            console.log('  3. Configure %USERPROFILE%/.codex/config.toml using the Codex snippet from the repo-local localized Stitch plugin spec if codex-cli.stitch-mcp, codex-cli.stitch-transport, codex-cli.stitch-url, or codex-cli.stitch-auth is not PASS');
             console.log('  4. If read-only Stitch calls succeed but create/update calls stall before mcp_tool_call, make sure the runner actually launches codex exec with --dangerously-bypass-approvals-and-sandbox');
             console.log('  5. Override .skillrc.plugins.stitch.runner only if you prefer a custom Stitch bridge / wrapper');
             console.log('  6. Create a new UI/page-design change with --flags ui_change,page_design');
@@ -669,6 +682,26 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                     ? `Built-in Playwright adapter is available: ${adapterPath}`
                     : `Built-in Playwright adapter is missing: ${adapterPath}`,
             });
+            const dependencyState = await this.inspectCheckpointProjectDependencies(projectPath);
+            const packageManager = await this.detectProjectPackageManager(projectPath);
+            const packageManagerAvailability = await this.checkCommandAvailability(packageManager, projectPath);
+            checks.push({
+                name: 'project.package_manager',
+                status: packageManagerAvailability.available ? 'pass' : dependencyState.missing.length > 0 ? 'fail' : 'warn',
+                message: packageManagerAvailability.available
+                    ? `Checkpoint dependency auto-install uses ${packageManager}${packageManagerAvailability.path ? ` (${packageManagerAvailability.path})` : ''}`
+                    : `Checkpoint dependency auto-install cannot run because ${packageManager} is not available on PATH`,
+            });
+            this.getCheckpointProjectDependencies().forEach(moduleName => {
+                const resolvedPath = dependencyState.available[moduleName] || '';
+                checks.push({
+                    name: `project.dep.${moduleName}`,
+                    status: resolvedPath ? 'pass' : 'fail',
+                    message: resolvedPath
+                        ? `${moduleName} is installed in the target project: ${resolvedPath}`
+                        : `${moduleName} is missing from the target project. Re-run "ospec plugins enable checkpoint <project-path> --base-url <url>" to auto-install checkpoint dependencies.`,
+                });
+            });
         }
         const tokenEnv = typeof runner?.token_env === 'string' ? runner.token_env.trim() : '';
         checks.push({
@@ -773,18 +806,130 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         });
         console.log('');
         console.log('Suggested next steps:');
-        console.log('  1. Keep .ospec/plugins/checkpoint/routes.yaml aligned with the routes and viewports you expect to review');
-        console.log('  2. Keep .ospec/plugins/checkpoint/flows.yaml aligned with critical user flows and project-specific backend assertions');
-        console.log('  3. Use docker compose or a stable startup command when the repo cannot boot the target app directly');
-        console.log('  4. Save a storage state under .ospec/plugins/checkpoint/auth/ or configure runtime.auth to generate one before review');
-        console.log('  5. Create new changes with matching flags such as --flags ui_change,page_design or --flags feature_flow,api_change');
-        console.log('  6. Once checkpoint steps are active, verify/archive will block on artifacts/checkpoint/gate.json');
+        console.log('  1. Re-run "ospec plugins enable checkpoint <project-path> --base-url <url>" if built-in checkpoint dependencies are missing');
+        console.log('  2. Keep .ospec/plugins/checkpoint/routes.yaml aligned with the routes and viewports you expect to review');
+        console.log('  3. Keep .ospec/plugins/checkpoint/flows.yaml aligned with critical user flows and project-specific backend assertions');
+        console.log('  4. Use docker compose or a stable startup command when the repo cannot boot the target app directly');
+        console.log('  5. Save a storage state under .ospec/plugins/checkpoint/auth/ or configure runtime.auth to generate one before review');
+        console.log('  6. Create new changes with matching flags such as --flags ui_change,page_design or --flags feature_flow,api_change');
+        console.log('  7. Once checkpoint steps are active, verify/archive will block on artifacts/checkpoint/gate.json');
         console.log('');
         if (failCount > 0) {
             this.error(`Plugin doctor found ${failCount} blocking issue(s)${warnCount > 0 ? ` and ${warnCount} warning(s)` : ''}`);
             process.exit(1);
         }
         this.success(`Plugin doctor passed${warnCount > 0 ? ` with ${warnCount} warning(s)` : ''}`);
+    }
+    getCheckpointProjectDependencies() {
+        return ['playwright', 'pixelmatch', 'pngjs'];
+    }
+    async inspectCheckpointProjectDependencies(projectPath) {
+        const available = {};
+        const missing = [];
+        for (const moduleName of this.getCheckpointProjectDependencies()) {
+            const resolvedPath = this.resolveProjectDependencyPath(projectPath, moduleName);
+            if (resolvedPath) {
+                available[moduleName] = resolvedPath;
+            }
+            else {
+                missing.push(moduleName);
+            }
+        }
+        return { available, missing };
+    }
+    resolveProjectDependencyPath(projectPath, moduleName) {
+        try {
+            return require.resolve(`${moduleName}/package.json`, { paths: [projectPath] });
+        }
+        catch {
+            return '';
+        }
+    }
+    normalizePackageManager(value) {
+        const normalized = String(value || '').trim().toLowerCase();
+        const match = normalized.match(/^(npm|pnpm|yarn|bun)(?:@|$)/);
+        return match ? match[1] : '';
+    }
+    async detectProjectPackageManager(projectPath) {
+        const packageJsonPath = path.join(projectPath, 'package.json');
+        if (await services_1.services.fileService.exists(packageJsonPath)) {
+            try {
+                const packageJson = await services_1.services.fileService.readJSON(packageJsonPath);
+                const declaredManager = this.normalizePackageManager(packageJson?.packageManager || '');
+                if (declaredManager) {
+                    return declaredManager;
+                }
+            }
+            catch {
+            }
+        }
+        const lockfiles = [
+            { fileName: 'pnpm-lock.yaml', packageManager: 'pnpm' },
+            { fileName: 'yarn.lock', packageManager: 'yarn' },
+            { fileName: 'bun.lockb', packageManager: 'bun' },
+            { fileName: 'bun.lock', packageManager: 'bun' },
+            { fileName: 'package-lock.json', packageManager: 'npm' },
+            { fileName: 'npm-shrinkwrap.json', packageManager: 'npm' },
+        ];
+        for (const candidate of lockfiles) {
+            if (await services_1.services.fileService.exists(path.join(projectPath, candidate.fileName))) {
+                return candidate.packageManager;
+            }
+        }
+        return 'npm';
+    }
+    resolvePackageManagerRunner(packageManager) {
+        return process.platform === 'win32' ? `${packageManager}.cmd` : packageManager;
+    }
+    getCheckpointDependencyInstallArgs(packageManager, packages) {
+        switch (packageManager) {
+            case 'pnpm':
+            case 'yarn':
+            case 'bun':
+                return ['add', '-D', ...packages];
+            case 'npm':
+            default:
+                return ['install', '--save-dev', ...packages];
+        }
+    }
+    async installCheckpointProjectDependencies(projectPath) {
+        const initialState = await this.inspectCheckpointProjectDependencies(projectPath);
+        const packageManager = await this.detectProjectPackageManager(projectPath);
+        if (initialState.missing.length === 0) {
+            return {
+                packageManager,
+                installedNow: [],
+                alreadyPresent: Object.keys(initialState.available),
+            };
+        }
+        const packageManagerAvailability = await this.checkCommandAvailability(packageManager, projectPath);
+        if (!packageManagerAvailability.available) {
+            throw new Error(`Checkpoint uses the built-in Playwright adapter, but ${packageManager} is not available on PATH. Install ${packageManager} or switch checkpoint to a custom runner before enabling it.`);
+        }
+        const runner = this.resolvePackageManagerRunner(packageManager);
+        const installArgs = this.getCheckpointDependencyInstallArgs(packageManager, initialState.missing);
+        const displayCommand = (0, helpers_1.formatCliCommand)(packageManager, ...installArgs);
+        const result = (0, child_process_1.spawnSync)(runner, installArgs, {
+            cwd: projectPath,
+            encoding: 'utf-8',
+            shell: false,
+        });
+        if (result.error) {
+            throw new Error(`Checkpoint dependency install failed while running "${displayCommand}": ${result.error.message}`);
+        }
+        if (result.status !== 0) {
+            const output = String(result.stderr || result.stdout || '').trim();
+            throw new Error(`Checkpoint dependency install failed while running "${displayCommand}" in ${projectPath}${output ? `: ${output}` : ''}`);
+        }
+        const finalState = await this.inspectCheckpointProjectDependencies(projectPath);
+        if (finalState.missing.length > 0) {
+            throw new Error(`Checkpoint dependency install finished, but these packages are still not resolvable from ${projectPath}: ${finalState.missing.join(', ')}`);
+        }
+        return {
+            packageManager,
+            installedNow: initialState.missing,
+            alreadyPresent: Object.keys(initialState.available),
+        };
     }
     async checkCommandAvailability(command, projectPath) {
         const resolvedCommand = this.resolveRunnerCommand(command, projectPath);
@@ -1321,7 +1466,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
     }
     async readVerification(verificationPath) {
         const verificationContent = await services_1.services.fileService.readFile(verificationPath);
-        return (0, gray_matter_1)(verificationContent);
+        return (0, helpers_1.parseFrontmatterDocument)(verificationContent);
     }
     async syncVerificationOptionalStep(verificationPath, stepName, passed) {
         const verification = await this.readVerification(verificationPath);
@@ -1336,7 +1481,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             passedOptionalSteps.push(stepName);
         }
         verification.data.passed_optional_steps = Array.from(new Set(passedOptionalSteps));
-        await services_1.services.fileService.writeFile(verificationPath, gray_matter_1.stringify(verification.content, verification.data));
+        await services_1.services.fileService.writeFile(verificationPath, (0, helpers_1.stringifyFrontmatter)(verification.content, verification.data));
     }
     async loadOrCreateStitchApproval(approvalPath, blocking) {
         if (await services_1.services.fileService.exists(approvalPath)) {
@@ -2443,7 +2588,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 ? this.getEffectiveStitchRunnerConfig(pluginConfig, pluginConfig?.runner)
                 : name === 'checkpoint'
                     ? this.getEffectiveCheckpointRunnerConfig(pluginConfig, pluginConfig?.runner)
-                : pluginConfig?.runner;
+                    : pluginConfig?.runner;
             const tokenEnv = typeof effectiveRunner?.token_env === 'string' ? effectiveRunner.token_env.trim() : '';
             const command = typeof effectiveRunner?.command === 'string' ? effectiveRunner.command.trim() : '';
             const extraEnvCount = effectiveRunner?.extra_env && typeof effectiveRunner.extra_env === 'object'
@@ -2460,7 +2605,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                             ? 'built-in Codex adapter'
                             : name === 'checkpoint' && this.isBuiltInCheckpointRunner(pluginConfig?.runner)
                                 ? 'built-in Playwright adapter'
-                            : 'custom',
+                                : 'custom',
                     cwd: typeof effectiveRunner.cwd === 'string' ? effectiveRunner.cwd : '',
                     timeoutMs: Number.isFinite(effectiveRunner.timeout_ms) && effectiveRunner.timeout_ms > 0
                         ? Math.floor(effectiveRunner.timeout_ms)

@@ -279,6 +279,9 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 メモ:
 
 - `--base-url` は自動チェック対象となる起動中アプリの URL を指定します
+- 内蔵 Checkpoint runner を有効にすると、OSpec は対象プロジェクトに `playwright`、`pixelmatch`、`pngjs` を自動インストールします
+- AI 対話で「Checkpoint プラグインを有効にする」と依頼した場合、この依存関係のインストール完了まで含めてはじめて有効化成功とみなします
+- Checkpoint を無効化しても、プロジェクトにインストール済みのこれらの依存関係は自動削除しません
 
 </details>
 

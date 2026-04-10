@@ -91,10 +91,16 @@ function readVersion() {
   return JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version;
 }
 
+function readPackageJson() {
+  return JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+}
+
 function incrementVersion(version, level) {
   const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
   if (!match) {
-    throw new Error(`Unsupported version format for automated release cut: ${version}`);
+    throw new Error(
+      `Unsupported version format for automated release cut: ${version}`,
+    );
   }
 
   const major = Number(match[1]);
@@ -129,10 +135,12 @@ function getStatusEntries() {
   return output
     .split('\n')
     .filter(Boolean)
-    .map(line => {
+    .map((line) => {
       const status = line.slice(0, 2);
       const rawPath = line.slice(3).trim();
-      const file = rawPath.includes(' -> ') ? rawPath.split(' -> ')[1] : rawPath;
+      const file = rawPath.includes(' -> ')
+        ? rawPath.split(' -> ')[1]
+        : rawPath;
       return { status, file };
     });
 }
@@ -140,7 +148,9 @@ function getStatusEntries() {
 function ensureCleanWorktree() {
   const entries = getStatusEntries();
   if (entries.length > 0) {
-    const files = entries.map(entry => `${entry.status} ${entry.file}`).join('\n');
+    const files = entries
+      .map((entry) => `${entry.status} ${entry.file}`)
+      .join('\n');
     throw new Error(`Release cut requires a clean working tree.\n${files}`);
   }
 }
@@ -160,23 +170,31 @@ function ensureTagAvailable(tag, remote, checkRemote) {
 
 function assertExpectedReleaseFiles() {
   const entries = getStatusEntries();
-  const files = entries.map(entry => entry.file);
-  const unexpected = files.filter(file => !allowedReleaseFiles.includes(file));
+  const files = entries.map((entry) => entry.file);
+  const unexpected = files.filter(
+    (file) => !allowedReleaseFiles.includes(file),
+  );
 
   if (unexpected.length > 0) {
-    throw new Error(`Unexpected files changed during release cut:\n${unexpected.join('\n')}`);
+    throw new Error(
+      `Unexpected files changed during release cut:\n${unexpected.join('\n')}`,
+    );
   }
 
-  const missing = allowedReleaseFiles.filter(file => !files.includes(file));
+  const missing = allowedReleaseFiles.filter((file) => !files.includes(file));
   if (missing.length > 0) {
-    throw new Error(`Expected release files were not updated:\n${missing.join('\n')}`);
+    throw new Error(
+      `Expected release files were not updated:\n${missing.join('\n')}`,
+    );
   }
 }
 
 function verifyBuiltVersion(version) {
   const output = run('node', ['dist/cli.js', '--version']);
   if (!output.includes(version)) {
-    throw new Error(`CLI version output does not include ${version}\n${output}`);
+    throw new Error(
+      `CLI version output does not include ${version}\n${output}`,
+    );
   }
 }
 
@@ -185,6 +203,19 @@ function runReleaseChecks(version) {
   runNpm(['run', 'release:check']);
   runNpm(['run', 'release:smoke']);
   runNpm(['run', 'release:notes', '--', '--tag', version]);
+}
+
+function runOptionalReleaseSyncs() {
+  const packageJson = readPackageJson();
+
+  if (!packageJson.scripts?.['release:sync-local']) {
+    console.log(
+      '[release:cut] release:sync-local not present in this repo profile, skipping local release repo sync',
+    );
+    return;
+  }
+
+  runNpm(['run', 'release:sync-local']);
 }
 
 function stageReleaseFiles() {
@@ -218,7 +249,9 @@ function printPlan(details) {
 }
 
 function usage() {
-  console.error('Usage: node scripts/release-cut.js <patch|minor|major> [--push] [--remote origin] [--commit-message "Release {version}"] [--dry-run]');
+  console.error(
+    'Usage: node scripts/release-cut.js <patch|minor|major> [--push] [--remote origin] [--commit-message "Release {version}"] [--dry-run]',
+  );
   process.exit(1);
 }
 
@@ -238,7 +271,9 @@ function main() {
   ensureCleanWorktree();
 
   if (push && branch !== 'main') {
-    throw new Error(`Release push is only allowed from main. Current branch: ${branch}`);
+    throw new Error(
+      `Release push is only allowed from main. Current branch: ${branch}`,
+    );
   }
 
   const currentVersion = readVersion();
@@ -264,11 +299,14 @@ function main() {
     const actualVersion = readVersion();
 
     if (actualVersion !== nextVersion) {
-      throw new Error(`Expected bumped version ${nextVersion}, got ${actualVersion}`);
+      throw new Error(
+        `Expected bumped version ${nextVersion}, got ${actualVersion}`,
+      );
     }
 
     assertExpectedReleaseFiles();
     runReleaseChecks(actualVersion);
+    runOptionalReleaseSyncs();
     stageReleaseFiles();
     const finalCommitMessage = commitRelease(actualVersion, commitMessage);
     createTag(actualVersion);
@@ -280,13 +318,19 @@ function main() {
     console.log(`[release:cut] committed ${finalCommitMessage}`);
     console.log(`[release:cut] created tag ${actualVersion}`);
     if (push) {
-      console.log(`[release:cut] pushed ${branch} and tag ${actualVersion} to ${remote}`);
+      console.log(
+        `[release:cut] pushed ${branch} and tag ${actualVersion} to ${remote}`,
+      );
     } else {
-      console.log(`[release:cut] push skipped; publish with: git push ${remote} ${branch} && git push ${remote} ${actualVersion}`);
+      console.log(
+        `[release:cut] push skipped; publish with: git push ${remote} ${branch} && git push ${remote} ${actualVersion}`,
+      );
     }
   } catch (error) {
     console.error(`[release:cut] ${error.message}`);
-    console.error('[release:cut] Working tree has been left in place for inspection.');
+    console.error(
+      '[release:cut] Working tree has been left in place for inspection.',
+    );
     process.exit(1);
   }
 }

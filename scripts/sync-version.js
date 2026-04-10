@@ -42,7 +42,9 @@ for (const update of updates) {
   let content = fs.readFileSync(filePath, 'utf8');
   for (const replacement of update.replacements) {
     if (!content.match(replacement.pattern)) {
-      throw new Error(`Pattern not found in ${update.file}: ${replacement.pattern}`);
+      throw new Error(
+        `Pattern not found in ${update.file}: ${replacement.pattern}`,
+      );
     }
     content = content.replace(replacement.pattern, replacement.value);
   }

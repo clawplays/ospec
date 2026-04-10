@@ -1,7 +1,7 @@
 /**
  * 文件操作服务
  */
-import * as fs from 'fs-extra';
+import { Stats } from 'fs';
 export declare class FileService {
     readFile(filePath: string): Promise<string>;
     writeFile(filePath: string, content: string): Promise<void>;
@@ -15,6 +15,6 @@ export declare class FileService {
     copy(src: string, dest: string): Promise<void>;
     move(src: string, dest: string): Promise<void>;
     readDir(dirPath: string): Promise<string[]>;
-    stat(filePath: string): Promise<fs.Stats>;
+    stat(filePath: string): Promise<Stats>;
 }
 export declare const fileService: FileService;

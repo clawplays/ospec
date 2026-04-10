@@ -7,6 +7,14 @@ export declare class PluginsCommand extends BaseCommand {
     private doctorPlugin;
     private doctorStitch;
     private doctorCheckpoint;
+    private getCheckpointProjectDependencies;
+    private inspectCheckpointProjectDependencies;
+    private resolveProjectDependencyPath;
+    private normalizePackageManager;
+    private detectProjectPackageManager;
+    private resolvePackageManagerRunner;
+    private getCheckpointDependencyInstallArgs;
+    private installCheckpointProjectDependencies;
     private checkCommandAvailability;
     private inspectGeminiCliStitch;
     private runPlugin;

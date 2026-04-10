@@ -38,3 +38,9 @@ tags: [conventions, workflow, change, ospec]
 - يتم التحكم في تفعيل optional steps عبر `.skillrc.workflow`
 - يجب أن تبقى proposal flags متوافقة مع إعدادات workflow
 - يجب أن تظهر optional steps المفعلة في `tasks.md` و`verification.md`
+
+## Plugin Gates
+
+- يتم التحكم في قدرات الإضافات عبر `.skillrc.plugins`
+- عند التعامل مع تثبيت Stitch أو Checkpoint أو تبديل provider أو إصلاح doctor أو إعداد MCP أو المصادقة أو تفعيل الإضافة، يجب قراءة مواصفة الإضافة المحلية المطابقة للغة الوثائق المعتمدة للمشروع أولاً
+- لا يتم الرجوع إلى ملف مواصفة بلغة أخرى إلا إذا كان الملف المحلي لتلك اللغة غير موجود

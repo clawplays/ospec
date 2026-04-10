@@ -105,8 +105,7 @@ class StatePersistence {
             else if (!(key in newState)) {
                 diff.removed.push(key);
             }
-            else if (JSON.stringify(oldState[key]) !==
-                JSON.stringify(newState[key])) {
+            else if (JSON.stringify(oldState[key]) !== JSON.stringify(newState[key])) {
                 diff.modified[key] = {
                     old: oldState[key],
                     new: newState[key],

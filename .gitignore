@@ -4,6 +4,7 @@ node_modules/
 .env
 .env.local
 coverage/
+.tmp/
 .vscode/
 .idea/
 .local/

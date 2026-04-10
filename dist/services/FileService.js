@@ -37,14 +37,23 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fileService = exports.FileService = void 0;
-const fs = __importStar(require("fs-extra"));
+const fs_1 = require("fs");
 const path = __importStar(require("path"));
 const yaml = __importStar(require("js-yaml"));
 const errors_1 = require("../core/errors");
+async function pathExists(targetPath) {
+    try {
+        await fs_1.promises.access(targetPath, fs_1.constants.F_OK);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 class FileService {
     async readFile(filePath) {
         try {
-            return await fs.readFile(filePath, 'utf-8');
+            return await fs_1.promises.readFile(filePath, 'utf-8');
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to read file: ${filePath}`, { error });
@@ -52,8 +61,8 @@ class FileService {
     }
     async writeFile(filePath, content) {
         try {
-            await fs.ensureDir(path.dirname(filePath));
-            await fs.writeFile(filePath, content, 'utf-8');
+            await fs_1.promises.mkdir(path.dirname(filePath), { recursive: true });
+            await fs_1.promises.writeFile(filePath, content, 'utf-8');
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to write file: ${filePath}`, { error });
@@ -97,18 +106,18 @@ class FileService {
     }
     async ensureDir(dirPath) {
         try {
-            await fs.ensureDir(dirPath);
+            await fs_1.promises.mkdir(dirPath, { recursive: true });
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to ensure directory: ${dirPath}`, { error });
         }
     }
     async exists(filePath) {
-        return fs.pathExists(filePath);
+        return pathExists(filePath);
     }
     async remove(filePath) {
         try {
-            await fs.remove(filePath);
+            await fs_1.promises.rm(filePath, { recursive: true, force: true });
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to remove: ${filePath}`, { error });
@@ -116,7 +125,8 @@ class FileService {
     }
     async copy(src, dest) {
         try {
-            await fs.copy(src, dest);
+            await fs_1.promises.mkdir(path.dirname(dest), { recursive: true });
+            await fs_1.promises.cp(src, dest, { recursive: true, force: true });
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to copy from ${src} to ${dest}`, { error });
@@ -124,15 +134,26 @@ class FileService {
     }
     async move(src, dest) {
         try {
-            await fs.move(src, dest);
+            await fs_1.promises.mkdir(path.dirname(dest), { recursive: true });
+            await fs_1.promises.rename(src, dest);
         }
         catch (error) {
+            if (error?.code === 'EXDEV') {
+                try {
+                    await this.copy(src, dest);
+                    await this.remove(src);
+                    return;
+                }
+                catch (fallbackError) {
+                    throw new errors_1.FileOperationError(`Failed to move from ${src} to ${dest}`, { error: fallbackError });
+                }
+            }
             throw new errors_1.FileOperationError(`Failed to move from ${src} to ${dest}`, { error });
         }
     }
     async readDir(dirPath) {
         try {
-            return await fs.readdir(dirPath);
+            return await fs_1.promises.readdir(dirPath);
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to read directory: ${dirPath}`, { error });
@@ -140,7 +161,7 @@ class FileService {
     }
     async stat(filePath) {
         try {
-            return await fs.stat(filePath);
+            return await fs_1.promises.stat(filePath);
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to stat: ${filePath}`, { error });

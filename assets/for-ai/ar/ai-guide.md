@@ -18,7 +18,7 @@ tags: [ai, guide, ospec]
 4. اقرأ ملفات `SKILL.md` ذات الصلة
 5. اقرأ ملفات التنفيذ الخاصة بالتغيير الحالي
 6. إذا كان Stitch مفعلاً وكان التغيير الحالي يفعّل `stitch_design_review`، فافحص `artifacts/stitch/approval.json` أولاً
-7. إذا احتجت إلى تثبيت Stitch أو تبديل provider أو إصلاح doctor أو إعداد MCP أو المصادقة، فاقرأ مواصفة Stitch المحلية في المستودع أولاً. وعندما يوجد `docs/stitch-plugin-spec.zh-CN.md` فاعتبر مقاطع الإعداد فيه هي المصدر المعتمد
+7. إذا احتجت إلى تثبيت Stitch أو Checkpoint أو تبديل provider أو إصلاح doctor أو إعداد MCP أو المصادقة أو تفعيل الإضافة، فاقرأ أولاً مواصفة الإضافة المحلية في المستودع المطابقة للغة وثائق المشروع، ولا تنتقل إلى لغة أخرى إلا إذا كان الملف المطابق غير موجود
 
 ## السلوك المطلوب
 
@@ -41,7 +41,7 @@ tags: [ai, guide, ospec]
 - إذا استخدم runner مخصص `token_env` فتأكد من ضبط متغير البيئة الموافق قبل التشغيل
 - إذا لم تتضح جاهزية runner أو Gemini CLI أو Codex CLI أو stitch MCP أو المصادقة، فشغّل أولاً `ospec plugins doctor stitch <project-path>`
 - إذا أظهر `plugins doctor stitch` نتيجة غير PASS لفحوص provider المحدد، فاطلب من المستخدم تثبيت CLI المطلوب وإكمال إعداد stitch MCP / API token
-- عند تثبيت Stitch أو تبديل provider أو إصلاح doctor أو إعداد MCP أو المصادقة، اقرأ مواصفة Stitch المحلية أولاً. وعندما يوجد `docs/stitch-plugin-spec.zh-CN.md` فانسخ شكل إعداد Gemini / Codex الموثق فيه بدلاً من ابتكار إعداد بديل
+- عند تثبيت Stitch أو تبديل provider أو إصلاح doctor أو إعداد MCP أو المصادقة، اقرأ أولاً مواصفة Stitch المحلية المطابقة للغة وثائق المشروع، ثم انسخ شكل إعداد Gemini / Codex الموثق فيها بدلاً من ابتكار إعداد بديل
 - إذا كان provider الداخلي `codex` ينجح في الاستدعاءات للقراءة فقط لكن `create_project` أو `generate_screen` أو `edit_screens` يتوقف محلياً، فتحقق أولاً من أن التشغيل يستخدم `codex exec --dangerously-bypass-approvals-and-sandbox`
 - إذا كان المشروع يبدّل `.skillrc.plugins.stitch.runner` صراحةً ومع ذلك يبقى Codex مسؤولاً عن كتابات Stitch، فيجب على runner / wrapper المخصص تمرير `--dangerously-bypass-approvals-and-sandbox` أيضاً
 - زامن `SKILL.md` بعد التغييرات البرمجية المهمة

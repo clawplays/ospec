@@ -15,7 +15,7 @@ tags: [ai, protocol, ospec]
 5. `docs/project/workflow-conventions.md`
 6. The current change files: `proposal.md / tasks.md / state.json / verification.md`
 7. If `stitch_design_review` exists, read `artifacts/stitch/approval.json`
-8. If Stitch provider, MCP, or auth config must be changed, read the repo-local Stitch spec first; when `docs/stitch-plugin-spec.zh-CN.md` exists, treat its config snippets as authoritative
+8. If Stitch or Checkpoint provider, MCP, auth, install, or enable config must be changed, read the repo-local localized plugin spec that matches the project document language first; only fall back to another localized spec when the matching file is missing
 
 ## Mandatory Rules
 
@@ -36,7 +36,7 @@ tags: [ai, protocol, ospec]
 - Before running Stitch, assume the built-in `stitch` plugin uses the configured provider by default; only treat `.skillrc.plugins.stitch.runner` as authoritative when the project explicitly overrides it
 - If the project uses a custom runner and `token_env` is configured, confirm the matching environment variable is set
 - If the local Stitch bridge, Gemini CLI, Codex CLI, stitch MCP, or auth readiness is unclear, run `ospec plugins doctor stitch <project-path>` first
-- If `plugins doctor stitch` reveals provider, MCP, or auth issues, return to the repo-local Stitch spec first; when `docs/stitch-plugin-spec.zh-CN.md` exists, do not invent an alternate `command` / `args` / `env` or stdio-proxy config outside that spec
+- If `plugins doctor stitch` reveals provider, MCP, or auth issues, return to the repo-local localized Stitch spec first; do not invent an alternate `command` / `args` / `env` or stdio-proxy config outside that spec
 - If the built-in `codex` provider can complete read-only calls but `create_project`, `generate_screen`, or `edit_screens` stalls locally, first verify the run actually uses `codex exec --dangerously-bypass-approvals-and-sandbox`
 - If the project explicitly overrides `.skillrc.plugins.stitch.runner` and still uses Codex for Stitch writes, the custom runner / wrapper must also pass `--dangerously-bypass-approvals-and-sandbox`
 - If `stitch_design_review` is active and `approval.json.status != approved`, do not treat the change as ready for continued implementation, completion, or archive
@@ -49,7 +49,7 @@ If the project rules differ from the mother spec, the project-adopted rules take
 
 ## Stitch Provider Baseline
 
-- If the project contains `docs/stitch-plugin-spec.zh-CN.md`, provider / MCP / auth config must follow that spec first.
+- If the project contains a localized Stitch plugin spec matching the project document language, provider / MCP / auth config must follow that spec first.
 - If the project does not contain that spec and the built-in `gemini` provider is used, the baseline config is `%USERPROFILE%/.gemini/settings.json` with `mcpServers.stitch.httpUrl = "https://stitch.googleapis.com/mcp"` and `headers.X-Goog-Api-Key`.
 - If the project does not contain that spec and the built-in `codex` provider is used, the baseline config is `%USERPROFILE%/.codex/config.toml` with `[mcp_servers.stitch]`, `type = "http"`, `url = "https://stitch.googleapis.com/mcp"`, and `X-Goog-Api-Key` in `headers` or `[mcp_servers.stitch.http_headers]`.
 - The built-in `codex` provider should launch Stitch write operations with `--dangerously-bypass-approvals-and-sandbox`; if a custom runner replaces it, that runner must carry the same write-bypass behavior explicitly.

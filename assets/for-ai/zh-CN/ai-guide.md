@@ -18,7 +18,7 @@ tags: [ai, guide, ospec]
 4. 读取相关 `SKILL.md`
 5. 读取当前 change 的执行文件
 6. 如果项目启用了 Stitch，且当前 change 激活了 `stitch_design_review`，优先检查 `artifacts/stitch/approval.json`
-7. 如果要处理 Stitch 的安装、provider 切换、doctor 修复、MCP 或认证配置，先读取仓库内 Stitch 规范；若存在 `docs/stitch-plugin-spec.zh-CN.md`，必须以该文档中的配置片段为准
+7. 如果要处理 Stitch / Checkpoint 的安装、provider 切换、doctor 修复、MCP、认证配置或插件启用，先读取与项目文档语言一致的仓库内本地化插件规范；只有该语言文件缺失时，才回退到其他语言版本
 
 ## 必须遵守
 
@@ -39,7 +39,7 @@ tags: [ai, guide, ospec]
 - 如果项目使用自定义 runner 且配置了 `token_env`，运行前必须确认对应环境变量已设置
 - runner、Gemini CLI、Codex CLI、stitch MCP 或认证状态不确定时，先执行 `ospec plugins doctor stitch <project-path>` 自检
 - 若 `plugins doctor stitch` 提示所选 provider 的关键检查不是 PASS，先提示用户安装对应 CLI 并补全相应用户配置中的 stitch MCP / API token 设置
-- 涉及 Stitch 安装、provider 切换、doctor 修复、MCP 或认证配置时，必须先读取仓库内 Stitch 规范；若存在 `docs/stitch-plugin-spec.zh-CN.md`，直接采用其中的 Gemini / Codex 配置片段，不得为了让 `doctor` 通过而自行拼接 `command` / `args` / `env` 或 stdio proxy 配置
+- 涉及 Stitch 安装、provider 切换、doctor 修复、MCP 或认证配置时，必须先读取与项目文档语言一致的仓库内本地化 Stitch 规范，直接采用其中的 Gemini / Codex 配置片段，不得为了让 `doctor` 通过而自行拼接 `command` / `args` / `env` 或 stdio proxy 配置
 - 如果内建 `codex` provider 下只读调用正常，但 `create_project`、`generate_screen`、`edit_screens` 这类写操作卡在本地，优先检查是否真正走了 `codex exec --dangerously-bypass-approvals-and-sandbox`
 - 如果项目显式覆写 `.skillrc.plugins.stitch.runner` 且仍由 Codex 负责 Stitch 写操作，自定义 runner / wrapper 也必须显式带上 `--dangerously-bypass-approvals-and-sandbox`
 - 修改代码后同步更新 `SKILL.md`
@@ -60,7 +60,7 @@ tags: [ai, guide, ospec]
 
 ## Stitch Provider Baseline
 
-- 如果仓库里存在 `docs/stitch-plugin-spec.zh-CN.md`，优先使用文档中的原始配置片段。
+- 如果仓库里存在与项目文档语言一致的本地化 Stitch 规范，优先使用文档中的原始配置片段。
 - 如果仓库里没有这份规范，但需要启用内建 Stitch provider，默认基线如下。
 - `gemini`：修改 `%USERPROFILE%/.gemini/settings.json`，使用 `mcpServers.stitch.httpUrl` 和 `headers.X-Goog-Api-Key`。
 

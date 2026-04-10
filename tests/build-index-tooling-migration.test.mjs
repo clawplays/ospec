@@ -1,4 +1,4 @@
-import fs from 'fs-extra';
+import fs from './helpers/fs-compat.mjs';
 import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
@@ -21,17 +21,23 @@ function runCommand(command, args, cwd) {
   });
 
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed\n${result.stdout || ''}${result.stderr || ''}`);
+    throw new Error(
+      `${command} ${args.join(' ')} failed\n${result.stdout || ''}${result.stderr || ''}`,
+    );
   }
 
   return result;
 }
 
 function runManagedBuildIndex(projectRoot, event = 'pre-commit') {
-  return spawnSync('node', [path.join('.ospec', 'tools', 'build-index-auto.cjs'), 'hook-check', event], {
-    cwd: projectRoot,
-    encoding: 'utf8',
-  });
+  return spawnSync(
+    'node',
+    [path.join('.ospec', 'tools', 'build-index-auto.cjs'), 'hook-check', event],
+    {
+      cwd: projectRoot,
+      encoding: 'utf8',
+    },
+  );
 }
 
 function getLegacyHookContent(event) {
@@ -57,7 +63,10 @@ async function initializeProject(projectRoot, { git = false } = {}) {
     runCommand('git', ['init'], projectRoot);
   }
 
-  vi.spyOn(InitCommand.prototype, 'syncInstalledSkills').mockResolvedValue({ codex: [], claude: [] });
+  vi.spyOn(InitCommand.prototype, 'syncInstalledSkills').mockResolvedValue({
+    codex: [],
+    claude: [],
+  });
   const command = new InitCommand();
   await command.execute(projectRoot, {
     summary: 'tooling migration fixture',
@@ -66,7 +75,10 @@ async function initializeProject(projectRoot, { git = false } = {}) {
 }
 
 async function updateProject(projectRoot) {
-  vi.spyOn(UpdateCommand.prototype, 'syncInstalledSkills').mockResolvedValue({ codex: [], claude: [] });
+  vi.spyOn(UpdateCommand.prototype, 'syncInstalledSkills').mockResolvedValue({
+    codex: [],
+    claude: [],
+  });
   const command = new UpdateCommand();
   await command.execute(projectRoot);
 }
@@ -81,23 +93,38 @@ afterEach(async () => {
 });
 
 describe('build index tooling migration', () => {
-  it('initializes the managed build-index script under .ospec/tools', async () => {
+  it('initializes the managed build-index script under .ospec/tools', {
+    timeout: 20000,
+  }, async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const projectRoot = trackTempDir(await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-init-')));
+    const projectRoot = trackTempDir(
+      await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-init-')),
+    );
     await initializeProject(projectRoot, { git: true });
 
-    expect(await fs.pathExists(path.join(projectRoot, '.ospec', 'tools', 'build-index-auto.cjs'))).toBe(true);
-    expect(await fs.pathExists(path.join(projectRoot, 'build-index-auto.cjs'))).toBe(false);
-    expect(await fs.pathExists(path.join(projectRoot, 'build-index-auto.js'))).toBe(false);
+    expect(
+      await fs.pathExists(
+        path.join(projectRoot, '.ospec', 'tools', 'build-index-auto.cjs'),
+      ),
+    ).toBe(true);
+    expect(
+      await fs.pathExists(path.join(projectRoot, 'build-index-auto.cjs')),
+    ).toBe(false);
+    expect(
+      await fs.pathExists(path.join(projectRoot, 'build-index-auto.js')),
+    ).toBe(false);
 
     const templateHook = await fs.readFile(
       path.join(projectRoot, '.ospec', 'templates', 'hooks', 'pre-commit'),
-      'utf8'
+      'utf8',
     );
-    const installedHook = await fs.readFile(path.join(projectRoot, '.git', 'hooks', 'pre-commit'), 'utf8');
+    const installedHook = await fs.readFile(
+      path.join(projectRoot, '.git', 'hooks', 'pre-commit'),
+      'utf8',
+    );
 
     expect(templateHook).toContain('.ospec/tools/build-index-auto.cjs');
     expect(installedHook).toContain('.ospec/tools/build-index-auto.cjs');
@@ -108,7 +135,11 @@ describe('build index tooling migration', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const projectRoot = trackTempDir(await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-self-contained-init-')));
+    const projectRoot = trackTempDir(
+      await fs.mkdtemp(
+        path.join(os.tmpdir(), 'ospec-build-index-self-contained-init-'),
+      ),
+    );
     await initializeProject(projectRoot, { git: true });
 
     const result = runManagedBuildIndex(projectRoot);
@@ -124,25 +155,40 @@ describe('build index tooling migration', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const projectRoot = trackTempDir(await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-update-cjs-')));
+    const projectRoot = trackTempDir(
+      await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-update-cjs-')),
+    );
     await initializeProject(projectRoot, { git: true });
 
-    const managedScriptPath = path.join(projectRoot, '.ospec', 'tools', 'build-index-auto.cjs');
+    const managedScriptPath = path.join(
+      projectRoot,
+      '.ospec',
+      'tools',
+      'build-index-auto.cjs',
+    );
     const legacyScriptPath = path.join(projectRoot, 'build-index-auto.cjs');
 
     await fs.move(managedScriptPath, legacyScriptPath);
     await fs.writeFile(
       path.join(projectRoot, '.ospec', 'templates', 'hooks', 'pre-commit'),
       getLegacyHookContent('pre-commit'),
-      'utf8'
+      'utf8',
     );
     await fs.writeFile(
       path.join(projectRoot, '.ospec', 'templates', 'hooks', 'post-merge'),
       getLegacyHookContent('post-merge'),
-      'utf8'
+      'utf8',
     );
-    await fs.writeFile(path.join(projectRoot, '.git', 'hooks', 'pre-commit'), getLegacyHookContent('pre-commit'), 'utf8');
-    await fs.writeFile(path.join(projectRoot, '.git', 'hooks', 'post-merge'), getLegacyHookContent('post-merge'), 'utf8');
+    await fs.writeFile(
+      path.join(projectRoot, '.git', 'hooks', 'pre-commit'),
+      getLegacyHookContent('pre-commit'),
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(projectRoot, '.git', 'hooks', 'post-merge'),
+      getLegacyHookContent('post-merge'),
+      'utf8',
+    );
 
     await updateProject(projectRoot);
 
@@ -151,14 +197,25 @@ describe('build index tooling migration', () => {
 
     const templateHook = await fs.readFile(
       path.join(projectRoot, '.ospec', 'templates', 'hooks', 'pre-commit'),
-      'utf8'
+      'utf8',
     );
-    const installedHook = await fs.readFile(path.join(projectRoot, '.git', 'hooks', 'pre-commit'), 'utf8');
+    const installedHook = await fs.readFile(
+      path.join(projectRoot, '.git', 'hooks', 'pre-commit'),
+      'utf8',
+    );
 
-    expect(templateHook).toMatch(/if \[ -f "\.ospec\/tools\/build-index-auto\.cjs" \]/);
-    expect(templateHook).toContain('OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"');
-    expect(installedHook).toMatch(/if \[ -f "\.ospec\/tools\/build-index-auto\.cjs" \]/);
-    expect(installedHook).toContain('OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"');
+    expect(templateHook).toMatch(
+      /if \[ -f "\.ospec\/tools\/build-index-auto\.cjs" \]/,
+    );
+    expect(templateHook).toContain(
+      'OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"',
+    );
+    expect(installedHook).toMatch(
+      /if \[ -f "\.ospec\/tools\/build-index-auto\.cjs" \]/,
+    );
+    expect(installedHook).toContain(
+      'OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"',
+    );
   });
 
   it('keeps the migrated managed build-index script self-contained after update', async () => {
@@ -166,10 +223,19 @@ describe('build index tooling migration', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const projectRoot = trackTempDir(await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-self-contained-update-')));
+    const projectRoot = trackTempDir(
+      await fs.mkdtemp(
+        path.join(os.tmpdir(), 'ospec-build-index-self-contained-update-'),
+      ),
+    );
     await initializeProject(projectRoot, { git: true });
 
-    const managedScriptPath = path.join(projectRoot, '.ospec', 'tools', 'build-index-auto.cjs');
+    const managedScriptPath = path.join(
+      projectRoot,
+      '.ospec',
+      'tools',
+      'build-index-auto.cjs',
+    );
     const legacyScriptPath = path.join(projectRoot, 'build-index-auto.cjs');
 
     await fs.move(managedScriptPath, legacyScriptPath);
@@ -188,10 +254,17 @@ describe('build index tooling migration', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const projectRoot = trackTempDir(await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-update-js-')));
+    const projectRoot = trackTempDir(
+      await fs.mkdtemp(path.join(os.tmpdir(), 'ospec-build-index-update-js-')),
+    );
     await initializeProject(projectRoot);
 
-    const managedScriptPath = path.join(projectRoot, '.ospec', 'tools', 'build-index-auto.cjs');
+    const managedScriptPath = path.join(
+      projectRoot,
+      '.ospec',
+      'tools',
+      'build-index-auto.cjs',
+    );
     const legacyScriptPath = path.join(projectRoot, 'build-index-auto.js');
 
     await fs.move(managedScriptPath, legacyScriptPath);

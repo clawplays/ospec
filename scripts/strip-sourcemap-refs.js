@@ -8,7 +8,7 @@ const TARGET_SUFFIXES = ['.js', '.d.ts'];
 const SOURCE_MAP_LINE = /^\/\/# sourceMappingURL=.*$/;
 
 function shouldProcess(filePath) {
-  return TARGET_SUFFIXES.some(suffix => filePath.endsWith(suffix));
+  return TARGET_SUFFIXES.some((suffix) => filePath.endsWith(suffix));
 }
 
 function stripSourceMapReference(content) {
@@ -31,7 +31,9 @@ function stripSourceMapReference(content) {
   });
 
   const newline = content.includes('\r\n') ? '\r\n' : '\n';
-  const nextContent = filteredLines.join(newline).replace(new RegExp(`${newline}+$`), newline);
+  const nextContent = filteredLines
+    .join(newline)
+    .replace(new RegExp(`${newline}+$`), newline);
   return { changed: nextContent !== content, content: nextContent };
 }
 
@@ -50,16 +52,17 @@ function walk(dirPath, results = []) {
 }
 
 function main() {
-  return stripDistSourceMapReferences();
+  const targetDir = process.argv[2] ? path.resolve(process.argv[2]) : DIST_DIR;
+  return stripDistSourceMapReferences(targetDir);
 }
 
-function stripDistSourceMapReferences() {
-  if (!fs.existsSync(DIST_DIR)) {
+function stripDistSourceMapReferences(targetDir = DIST_DIR, options = {}) {
+  if (!fs.existsSync(targetDir)) {
     return 0;
   }
 
   let changedFiles = 0;
-  for (const filePath of walk(DIST_DIR)) {
+  for (const filePath of walk(targetDir)) {
     const currentContent = fs.readFileSync(filePath, 'utf8');
     const result = stripSourceMapReference(currentContent);
     if (!result.changed) {
@@ -69,8 +72,10 @@ function stripDistSourceMapReferences() {
     changedFiles += 1;
   }
 
-  if (changedFiles > 0) {
-    console.log(`[ospec] stripped sourceMappingURL from ${changedFiles} dist files`);
+  if (changedFiles > 0 && options.silent !== true) {
+    console.log(
+      `[ospec] stripped sourceMappingURL from ${changedFiles} dist files`,
+    );
   }
 
   return changedFiles;

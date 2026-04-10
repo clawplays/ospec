@@ -29,7 +29,9 @@ class TemplateInputFactory {
         const normalized = {
             feature: input.feature,
             mode: input.mode ?? 'standard',
-            placement: input.placement === constants_1.DIR_NAMES.QUEUED ? constants_1.DIR_NAMES.QUEUED : constants_1.DIR_NAMES.ACTIVE,
+            placement: input.placement === constants_1.DIR_NAMES.QUEUED
+                ? constants_1.DIR_NAMES.QUEUED
+                : constants_1.DIR_NAMES.ACTIVE,
             affects: input.affects ?? [],
             flags: input.flags ?? [],
             optionalSteps: input.optionalSteps ?? [],

@@ -32,15 +32,12 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VerifyCommand = void 0;
 const path = __importStar(require("path"));
-const gray_matter_1 = __importDefault(require("gray-matter"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const helpers_1 = require("../utils/helpers");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
 class VerifyCommand extends BaseCommand_1.BaseCommand {
@@ -86,7 +83,7 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
             ];
             let activatedSteps = [];
             if (proposalExists) {
-                const proposal = (0, gray_matter_1.default)(await services_1.services.fileService.readFile(proposalPath));
+                const proposal = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(proposalPath));
                 const flags = Array.isArray(proposal.data.flags) ? proposal.data.flags : [];
                 activatedSteps = workflow.getActivatedSteps(flags);
                 checks.push({

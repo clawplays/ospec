@@ -340,10 +340,10 @@ if (!geminiSettings.stitchConfigured) {
     fail(`Gemini CLI stitch MCP is not configured in ${geminiSettings.settingsPath}. Add mcpServers.stitch before using the built-in adapter.`);
 }
 if (!geminiSettings.stitchHttpUrlConfigured) {
-    fail(`Gemini CLI stitch MCP in ${geminiSettings.settingsPath} must set httpUrl = "https://stitch.googleapis.com/mcp". Follow the Gemini snippet from docs/stitch-plugin-spec.zh-CN.md.`);
+    fail(`Gemini CLI stitch MCP in ${geminiSettings.settingsPath} must set httpUrl = "https://stitch.googleapis.com/mcp". Follow the Gemini snippet from the repo-local localized Stitch plugin spec.`);
 }
 if (!geminiSettings.stitchAuthConfigured) {
-    fail(`Gemini CLI stitch MCP in ${geminiSettings.settingsPath} must set headers["X-Goog-Api-Key"]. Follow the Gemini snippet from docs/stitch-plugin-spec.zh-CN.md.`);
+    fail(`Gemini CLI stitch MCP in ${geminiSettings.settingsPath} must set headers["X-Goog-Api-Key"]. Follow the Gemini snippet from the repo-local localized Stitch plugin spec.`);
 }
 const statePath = path.join(changePath, 'state.json');
 const proposalPath = path.join(changePath, 'proposal.md');

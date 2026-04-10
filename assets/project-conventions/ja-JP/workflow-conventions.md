@@ -38,3 +38,9 @@ tags: [conventions, workflow, change, ospec]
 - optional step の有効化は `.skillrc.workflow` で管理する
 - proposal flags は workflow 設定と整合していなければならない
 - 有効化された optional step は `tasks.md` と `verification.md` に必ず出す
+
+## Plugin Gates
+
+- プラグイン機能は `.skillrc.plugins` で管理する
+- Stitch / Checkpoint のインストール、provider 切り替え、doctor 修復、MCP、認証設定、またはプラグイン有効化に関わる場合は、まずプロジェクト採用文書言語に一致するリポジトリ内のローカライズ済みプラグイン仕様を読む
+- その言語の仕様書が存在しない場合のみ、別言語の仕様書へフォールバックする

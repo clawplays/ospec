@@ -353,13 +353,13 @@ if (!codexSettings.stitchConfigured) {
     fail(`Codex stitch MCP is not configured in ${codexSettings.settingsPath}. Add [mcp_servers.stitch] before using the built-in adapter.`, '', 'missing_mcp');
 }
 if (!codexSettings.stitchTransportHttp) {
-    fail(`Codex stitch MCP in ${codexSettings.settingsPath} must set type = "http". Follow the Codex snippet from docs/stitch-plugin-spec.zh-CN.md.`, '', 'missing_transport');
+    fail(`Codex stitch MCP in ${codexSettings.settingsPath} must set type = "http". Follow the Codex snippet from the repo-local localized Stitch plugin spec.`, '', 'missing_transport');
 }
 if (!codexSettings.stitchUrlConfigured) {
-    fail(`Codex stitch MCP in ${codexSettings.settingsPath} must set url = "https://stitch.googleapis.com/mcp". Follow the Codex snippet from docs/stitch-plugin-spec.zh-CN.md.`, '', 'missing_url');
+    fail(`Codex stitch MCP in ${codexSettings.settingsPath} must set url = "https://stitch.googleapis.com/mcp". Follow the Codex snippet from the repo-local localized Stitch plugin spec.`, '', 'missing_url');
 }
 if (!codexSettings.stitchAuthConfigured) {
-    fail(`Codex stitch MCP in ${codexSettings.settingsPath} must set X-Goog-Api-Key in headers or [mcp_servers.stitch.http_headers]. Follow the Codex snippet from docs/stitch-plugin-spec.zh-CN.md.`, '', 'missing_auth');
+    fail(`Codex stitch MCP in ${codexSettings.settingsPath} must set X-Goog-Api-Key in headers or [mcp_servers.stitch.http_headers]. Follow the Codex snippet from the repo-local localized Stitch plugin spec.`, '', 'missing_auth');
 }
 const statePath = path.join(changePath, 'state.json');
 const proposalPath = path.join(changePath, 'proposal.md');

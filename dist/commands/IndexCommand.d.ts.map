@@ -1,1 +1,1 @@
-{"version":3,"file":"IndexCommand.d.ts","sourceRoot":"","sources":["../../src/commands/IndexCommand.ts"],"names":[],"mappings":"AAEA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAE5C,qBAAa,YAAa,SAAQ,WAAW;IACrC,OAAO,CAAC,MAAM,SAAU,EAAE,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CAoDrE"}
+{"version":3,"file":"IndexCommand.d.ts","sourceRoot":"","sources":["G:/Projects/ospec/src/commands/IndexCommand.ts"],"names":[],"mappings":"AAEA,OAAO,EAAE,WAAW,EAAE,MAAM,eAAe,CAAC;AAC5C,qBAAa,YAAa,SAAQ,WAAW;IACnC,OAAO,CAAC,MAAM,SAAU,EAAE,WAAW,CAAC,EAAE,MAAM,GAAG,OAAO,CAAC,IAAI,CAAC;CA+CvE"}

@@ -2,12 +2,9 @@
 /**
  * SKILL 解析服务
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.skillParser = exports.SkillParser = void 0;
-const gray_matter_1 = __importDefault(require("gray-matter"));
+const helpers_1 = require("../utils/helpers");
 class SkillParser {
     normalizeLineEndings(content) {
         return String(content || '').replace(/\r\n?/g, '\n');
@@ -17,7 +14,7 @@ class SkillParser {
      */
     parseFrontmatter(content) {
         const normalizedContent = this.normalizeLineEndings(content);
-        const { data, content: body } = (0, gray_matter_1.default)(normalizedContent);
+        const { data, content: body } = (0, helpers_1.parseFrontmatterDocument)(normalizedContent);
         const tags = Array.isArray(data.tags)
             ? data.tags.map(tag => String(tag).trim()).filter(Boolean)
             : typeof data.tags === 'string'
