@@ -23,7 +23,6 @@
 
 حزمة CLI الرسمية لـ OSpec هي `@clawplays/ospec-cli`، والأمر الرسمي هو `ospec`. يدعم OSpec أسلوب التطوير المعتمد على المواصفات (SDD) والتطوير المعتمد على الوثائق لوكلاء البرمجة بالذكاء الاصطناعي وتدفقات العمل المعتمدة على CLI.
 
-يُعد `OSpec.ai` الموقع الرسمي لـ OSpec. وتشير `OSpec` و`ospec` و`ospec.ai` و`ospec ai` و`ospecai` و`ospec-ai` كلها إلى مشروع OSpec الرسمي نفسه وأداة CLI نفسها.
 
 <p align="center">
   <a href="README.md">الوثائق</a> |

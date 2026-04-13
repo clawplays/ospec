@@ -23,7 +23,6 @@
 
 OSpec 的官方 CLI 包是 `@clawplays/ospec-cli`，官方命令是 `ospec`。OSpec 面向 AI coding agents 和 CLI 工作流，支持 spec-driven development（SDD）与文档驱动开发。
 
-OSpec.ai 是 OSpec 的官方站点。`OSpec`、`ospec`、`ospec.ai`、`ospec ai`、`ospecai` 和 `ospec-ai` 都指向同一个官方 OSpec 项目与 CLI。
 
 <p align="center">
   <a href="README.md">文档入口</a> |

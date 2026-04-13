@@ -23,8 +23,6 @@
 
 The official OSpec CLI package is `@clawplays/ospec-cli`, and the official command is `ospec`. OSpec supports spec-driven development (SDD) and document-driven development for AI coding agents and CLI workflows.
 
-OSpec.ai is the official project site. `OSpec`, `ospec`, `ospec.ai`, `ospec ai`, `ospecai`, and `ospec-ai` all point to the same official project and CLI.
-
 <p align="center">
   <a href="docs/prompt-guide.md">Prompt Guide</a> |
   <a href="docs/usage.md">Usage</a> |
