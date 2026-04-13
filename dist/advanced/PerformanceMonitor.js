@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 性能监控系统
- * 跟踪和优化系统性能
+ * Performance monitoring system.
+ * Tracks and optimizes system performance.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.performanceMonitor = exports.PerformanceMonitor = void 0;
@@ -11,13 +11,13 @@ class PerformanceMonitor {
         this.startTimes = new Map();
     }
     /**
-     * 开始计时
+     * Start timing.
      */
     start(label) {
         this.startTimes.set(label, Date.now());
     }
     /**
-     * 结束计时并记录
+     * Stop timing and record the result.
      */
     end(label, metadata) {
         const startTime = this.startTimes.get(label);
@@ -37,7 +37,7 @@ class PerformanceMonitor {
             this.metrics.set(label, []);
         }
         this.metrics.get(label).push(metric);
-        // 限制每个标签最多保存1000条记录
+        // Keep at most 1,000 records per label.
         const metricList = this.metrics.get(label);
         if (metricList.length > 1000) {
             metricList.shift();
@@ -45,7 +45,7 @@ class PerformanceMonitor {
         return duration;
     }
     /**
-     * 获取统计信息
+     * Get statistics.
      */
     getSummary(label) {
         if (label) {
@@ -58,7 +58,7 @@ class PerformanceMonitor {
         return summary;
     }
     /**
-     * 计算统计数据
+     * Calculate statistics.
      */
     calculateSummary(label) {
         const metricList = this.metrics.get(label) || [];
@@ -88,7 +88,7 @@ class PerformanceMonitor {
         };
     }
     /**
-     * 获取原始指标
+     * Get raw metrics.
      */
     getMetrics(label) {
         if (label) {
@@ -97,7 +97,7 @@ class PerformanceMonitor {
         return Object.fromEntries(this.metrics);
     }
     /**
-     * 清空指标
+     * Clear metrics.
      */
     clear(label) {
         if (label) {
@@ -108,7 +108,7 @@ class PerformanceMonitor {
         }
     }
     /**
-     * 生成性能报告
+     * Generate a performance report.
      */
     generateReport() {
         const summary = this.getSummary();

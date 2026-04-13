@@ -1,5 +1,5 @@
 /**
- * 错误类定义
+ * Error type definitions.
  */
 export declare class OSpecError extends Error {
     code: string;

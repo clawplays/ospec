@@ -99,7 +99,8 @@ async function runHookCheck(rootDir, event) {
     return 0;
 }
 async function writeIndex(rootDir, options) {
-    const indexPath = path.join(rootDir, INDEX_FILE);
+    const layout = await getProjectLayout(rootDir);
+    const indexPath = resolveManagedPath(rootDir, INDEX_FILE, layout);
     const nextIndex = await buildIndex(rootDir);
     const currentIndex = await readJsonIfExists(indexPath);
     if (currentIndex && isSameIndex(currentIndex, nextIndex)) {
@@ -121,7 +122,8 @@ async function writeIndex(rootDir, options) {
     return { changed: true, index: output };
 }
 async function computeIndexStatus(rootDir) {
-    const currentIndex = await readJsonIfExists(path.join(rootDir, INDEX_FILE));
+    const layout = await getProjectLayout(rootDir);
+    const currentIndex = await readJsonIfExists(resolveManagedPath(rootDir, INDEX_FILE, layout));
     const nextIndex = await buildIndex(rootDir);
     return {
         stale: !currentIndex || !isSameIndex(currentIndex, nextIndex),
@@ -130,13 +132,15 @@ async function computeIndexStatus(rootDir) {
     };
 }
 async function buildIndex(rootDir) {
+    const layout = await getProjectLayout(rootDir);
+    const managedRoot = getManagedRoot(rootDir, layout);
     const modules = {};
     const tagIndex = {};
     let totalFiles = 0;
     let totalSections = 0;
-    await walk(rootDir, async fullPath => {
+    await walk(managedRoot, async fullPath => {
         totalFiles += 1;
-        const relativePath = normalizePath(path.relative(rootDir, fullPath));
+        const relativePath = normalizeManagedRelativePath(rootDir, fullPath, layout);
         const content = await fsp.readFile(fullPath, 'utf8');
         const parsed = parseSkillFile(content);
         const moduleName = parsed.frontmatter.name || relativePath;
@@ -159,7 +163,7 @@ async function buildIndex(rootDir) {
     for (const tag of Object.keys(tagIndex).sort((left, right) => left.localeCompare(right))) {
         tagIndex[tag] = tagIndex[tag].sort((left, right) => left.localeCompare(right));
     }
-    const activeChanges = await listActiveChanges(rootDir);
+    const activeChanges = await listActiveChanges(rootDir, layout);
     return {
         version: '1.0',
         generated: new Date().toISOString(),
@@ -190,7 +194,8 @@ async function walk(currentDir, onSkillFile) {
     }
 }
 async function buildChangeSummary(rootDir, changeName, config) {
-    const featureDir = path.join(rootDir, 'changes', 'active', changeName);
+    const layout = await getProjectLayout(rootDir);
+    const featureDir = resolveManagedPath(rootDir, `changes/active/${changeName}`, layout);
     const state = await readJsonIfExists(path.join(featureDir, 'state.json'));
     if (!state) {
         return null;
@@ -303,7 +308,7 @@ function calculateProgress(state) {
 function collectAffectedChanges(stagedFiles, activeChanges) {
     const affected = new Set();
     for (const filePath of stagedFiles) {
-        const match = filePath.match(/^changes\/active\/([^/]+)\//);
+        const match = filePath.match(/^(?:\.ospec\/)?changes\/active\/([^/]+)\//);
         if (match) {
             affected.add(match[1]);
         }
@@ -319,10 +324,11 @@ function isHookRelevantPath(filePath) {
     return filePath === '.skillrc' || isIndexRelevantPath(filePath);
 }
 function isIndexRelevantPath(filePath) {
-    return filePath === SKILL_FILE || /(^|\/)SKILL\.md$/.test(filePath) || filePath.startsWith('changes/active/');
+    return filePath === SKILL_FILE || /(^|\/)SKILL\.md$/.test(filePath) || filePath.startsWith('changes/active/') || filePath.startsWith('.ospec/changes/active/');
 }
-async function listActiveChanges(rootDir) {
-    const activeDir = path.join(rootDir, 'changes', 'active');
+async function listActiveChanges(rootDir, layout) {
+    const resolvedLayout = layout || (await getProjectLayout(rootDir));
+    const activeDir = resolveManagedPath(rootDir, 'changes/active', resolvedLayout);
     if (!(await exists(activeDir))) {
         return [];
     }
@@ -677,6 +683,44 @@ function printIndexStats(index) {
 }
 function normalizePath(filePath) {
     return filePath.replace(/\\/g, '/');
+}
+function getManagedRoot(rootDir, layout) {
+    return layout === 'nested' ? path.join(rootDir, '.ospec') : rootDir;
+}
+function resolveManagedPath(rootDir, relativePath, layout) {
+    const normalizedRelativePath = normalizePath(relativePath).replace(/^\.\/+/, '');
+    if (layout !== 'nested' || normalizedRelativePath === '.skillrc' || normalizedRelativePath === 'README.md' || normalizedRelativePath === '.ospec' || normalizedRelativePath.startsWith('.ospec/')) {
+        return path.join(rootDir, ...normalizedRelativePath.split('/'));
+    }
+    return path.join(rootDir, '.ospec', ...normalizedRelativePath.split('/'));
+}
+function hasClassicManagedMarkers(rootDir) {
+    return [
+        'changes',
+        'for-ai',
+        'docs/project',
+        SKILL_FILE,
+        INDEX_FILE,
+    ].some(relativePath => fs.existsSync(path.join(rootDir, ...relativePath.split('/'))));
+}
+function normalizeManagedRelativePath(rootDir, fullPath, layout) {
+    const relativePath = normalizePath(path.relative(rootDir, fullPath));
+    if (layout !== 'nested') {
+        return relativePath;
+    }
+    return relativePath.startsWith('.ospec/')
+        ? relativePath.slice('.ospec/'.length)
+        : relativePath;
+}
+async function getProjectLayout(rootDir) {
+    const config = (await readJsonIfExists(path.join(rootDir, '.skillrc'))) || {};
+    if (config?.projectLayout !== 'nested') {
+        return 'classic';
+    }
+    if (fs.existsSync(path.join(rootDir, '.ospec'))) {
+        return 'nested';
+    }
+    return hasClassicManagedMarkers(rootDir) ? 'classic' : 'nested';
 }
 async function exists(targetPath) {
     try {

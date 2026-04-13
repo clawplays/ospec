@@ -1,32 +1,32 @@
 /**
- * 命令基类
+ * Base command class.
  */
 import { Logger } from '../services/Logger';
 export declare abstract class BaseCommand {
     protected logger: Logger;
     constructor();
     /**
-     * 执行命令
+     * Execute the command.
      */
     abstract execute(...args: any[]): Promise<void>;
     /**
-     * 验证命令参数
+     * Validate command arguments.
      */
     protected validateArgs(args: any[], requiredCount: number): void;
     /**
-     * 打印成功信息
+     * Print a success message.
      */
     protected success(message: string): void;
     /**
-     * 打印信息
+     * Print an informational message.
      */
     protected info(message: string): void;
     /**
-     * 打印错误信息
+     * Print an error message.
      */
     protected error(message: string): void;
     /**
-     * 打印警告信息
+     * Print a warning message.
      */
     protected warn(message: string): void;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "0.4.0",
+  "version": "0.3.10",
   "description": "Official OSpec CLI package for spec-driven development (SDD) and document-driven development in AI coding agent and CLI workflows.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,7 +14,6 @@
     "postinstall": "node scripts/postinstall.js",
     "prepack": "node scripts/strip-sourcemap-refs.js",
     "index:rebuild": "node dist/tools/build-index.js",
-    "validate": "node dist/cli/commands/validate.js",
     "release:cut": "node scripts/release-cut.js",
     "release:cut:patch": "node scripts/release-cut.js patch",
     "release:cut:minor": "node scripts/release-cut.js minor",
@@ -61,7 +60,8 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "semver": "^7.7.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",

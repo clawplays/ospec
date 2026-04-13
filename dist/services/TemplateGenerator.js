@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 模板生成服务
- * 负责生成 proposal.md、tasks.md、verification.md 等模板文件
+ * Template generation service.
+ * Generates template files such as proposal.md, tasks.md, and verification.md.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TemplateGenerator = void 0;
@@ -10,7 +10,7 @@ const SkillParser_1 = require("./SkillParser");
 const constants_1 = require("../core/constants");
 class TemplateGenerator {
     /**
-     * 生成 proposal.md 模板
+     * Generate the proposal.md template.
      */
     static generateProposalTemplate(featureName, affects = []) {
         const now = new Date().toISOString().split('T')[0];
@@ -45,7 +45,7 @@ flags: []
 `;
     }
     /**
-     * 生成 tasks.md 模板
+     * Generate the tasks.md template.
      */
     static generateTasksTemplate(featureName, coreRequiredSteps = [], optionalSteps = []) {
         const now = new Date().toISOString().split('T')[0];
@@ -60,7 +60,7 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
 ### 核心任务
 
 `;
-        // 添加核心任务
+        // Add core tasks.
         if (coreRequiredSteps.length > 0) {
             coreRequiredSteps.forEach((step, index) => {
                 content += `- [ ] ${step}\n`;
@@ -72,7 +72,7 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
             content += `- [ ] 更新索引\n`;
             content += `- [ ] 运行测试\n`;
         }
-        // 添加可选任务
+        // Add optional tasks.
         if (optionalSteps.length > 0) {
             content += `\n### 可选任务\n\n`;
             optionalSteps.forEach((step, index) => {
@@ -82,7 +82,7 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
         return content;
     }
     /**
-     * 生成 verification.md 模板
+     * Generate the verification.md template.
      */
     static generateVerificationTemplate(featureName, optionalSteps = []) {
         const now = new Date().toISOString().split('T')[0];
@@ -122,7 +122,7 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
         return content;
     }
     /**
-     * 生成 state.json 内容
+     * Generate the state.json payload.
      */
     static generateStateJson(featureName, affects = [], mode = 'standard') {
         return {
@@ -148,46 +148,46 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
         };
     }
     /**
-     * 创建 feature 目录和文件
+     * Create the feature directory and files.
      */
     static async createFeatureDirectory(projectRoot, featureName, affects = [], coreRequiredSteps = [], optionalSteps = []) {
         const featurePath = FileService_1.FileService.joinPath(projectRoot, 'changes', 'active', featureName);
-        // 创建目录
+        // Create the directory.
         await FileService_1.FileService.createDirectory(featurePath);
-        // 生成 proposal.md
+        // Generate proposal.md.
         const proposalContent = this.generateProposalTemplate(featureName, affects);
         await FileService_1.FileService.writeFile(FileService_1.FileService.joinPath(featurePath, constants_1.FILE_NAMES.PROPOSAL), proposalContent);
-        // 生成 tasks.md
+        // Generate tasks.md.
         const tasksContent = this.generateTasksTemplate(featureName, coreRequiredSteps, optionalSteps);
         await FileService_1.FileService.writeFile(FileService_1.FileService.joinPath(featurePath, constants_1.FILE_NAMES.TASKS), tasksContent);
-        // 生成 verification.md
+        // Generate verification.md.
         const verificationContent = this.generateVerificationTemplate(featureName, optionalSteps);
         await FileService_1.FileService.writeFile(FileService_1.FileService.joinPath(featurePath, constants_1.FILE_NAMES.VERIFICATION), verificationContent);
-        // 生成 state.json
+        // Generate state.json.
         const stateJson = this.generateStateJson(featureName, affects);
         await FileService_1.FileService.writeJSON(FileService_1.FileService.joinPath(featurePath, constants_1.FILE_NAMES.STATE), stateJson);
     }
     /**
-     * 生成项目初始化文件
+     * Generate project initialization files.
      */
     static async initializeProject(projectRoot, mode = 'lite') {
-        // 创建必要的目录
+        // Create the required directories.
         await FileService_1.FileService.createDirectory(FileService_1.FileService.joinPath(projectRoot, 'changes', 'active'));
         await FileService_1.FileService.createDirectory(FileService_1.FileService.joinPath(projectRoot, 'changes', 'archived'));
         await FileService_1.FileService.createDirectory(FileService_1.FileService.joinPath(projectRoot, 'for-ai'));
         await FileService_1.FileService.createDirectory(FileService_1.FileService.joinPath(projectRoot, 'docs'));
-        // 生成 SKILL.md
+        // Generate SKILL.md.
         const skillContent = SkillParser_1.SkillParser.createDefaultSkill('project', ['project', 'root'], 'Project Root');
         await FileService_1.FileService.writeFile(FileService_1.FileService.joinPath(projectRoot, constants_1.FILE_NAMES.SKILL_MD), skillContent);
-        // 生成 ai-guide.md
+        // Generate ai-guide.md.
         const aiGuideContent = this.generateAiGuide();
         await FileService_1.FileService.writeFile(FileService_1.FileService.joinPath(projectRoot, 'for-ai', 'ai-guide.md'), aiGuideContent);
-        // 生成 execution-protocol.md
+        // Generate execution-protocol.md.
         const executionProtocolContent = this.generateExecutionProtocol();
         await FileService_1.FileService.writeFile(FileService_1.FileService.joinPath(projectRoot, 'for-ai', 'execution-protocol.md'), executionProtocolContent);
     }
     /**
-     * 生成 AI 指南
+     * Generate the AI guide.
      */
     static generateAiGuide() {
         return `# AI 指南
@@ -234,7 +234,7 @@ ospec feature archive my-feature
 `;
     }
     /**
-     * 生成执行协议
+     * Generate the execution protocol.
      */
     static generateExecutionProtocol() {
         return `# AI 执行协议

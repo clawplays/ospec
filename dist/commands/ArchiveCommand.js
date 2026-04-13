@@ -41,21 +41,26 @@ const helpers_1 = require("../utils/helpers");
 const ArchiveGate_1 = require("../workflow/ArchiveGate");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class ArchiveCommand extends BaseCommand_1.BaseCommand {
     async execute(featurePath, options = {}) {
         await this.run(featurePath, options);
     }
     async run(featurePath, options = {}) {
         try {
-            const targetPath = path.resolve(featurePath || process.cwd());
+            const rawTargetPath = featurePath && !path.isAbsolute(featurePath)
+                ? (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), featurePath, await services_1.services.configManager.loadConfig(process.cwd()).catch(() => null))
+                : path.resolve(featurePath || process.cwd());
             const checkOnly = options.checkOnly === true;
+            const projectRoot = await this.findProjectRoot(rawTargetPath);
+            const config = await services_1.services.configManager.loadConfig(projectRoot);
+            const targetPath = (0, ProjectLayout_1.resolveManagedInputPath)(projectRoot, path.relative(projectRoot, rawTargetPath), config);
             this.logger.info(`${checkOnly ? 'Checking archive readiness' : 'Archiving change'} at ${targetPath}`);
             const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
             const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);
             const tasksPath = path.join(targetPath, constants_1.FILE_NAMES.TASKS);
             const verificationPath = path.join(targetPath, constants_1.FILE_NAMES.VERIFICATION);
-            const projectRoot = path.resolve(targetPath, '..', '..', '..');
-            const expectedParent = path.join(projectRoot, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ACTIVE);
+            const expectedParent = (0, ProjectLayout_1.resolveManagedInputPath)(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, config);
             if (path.dirname(targetPath) !== expectedParent) {
                 throw new Error('Archive target must be a change directory under changes/active.');
             }
@@ -63,7 +68,6 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 throw new Error('Change state file not found.');
             }
             const featureState = await services_1.services.fileService.readJSON(statePath);
-            const config = await services_1.services.configManager.loadConfig(projectRoot);
             const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
             const proposal = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(proposalPath));
             const tasks = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(tasksPath));
@@ -147,6 +151,44 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     result.blockers.push('Checkpoint result.json or summary.md is required before archiving');
                 }
             }
+            const externalPluginCapabilities = workflow.getPluginCapabilities()
+                .filter(capability => capability.plugin !== 'stitch' && capability.plugin !== 'checkpoint')
+                .filter(capability => activatedSteps.includes(capability.step));
+            const externalStepsByPlugin = externalPluginCapabilities.reduce((accumulator, capability) => {
+                accumulator[capability.plugin] = accumulator[capability.plugin] || [];
+                accumulator[capability.plugin].push(capability.step);
+                return accumulator;
+            }, {});
+            for (const [pluginName, pluginSteps] of Object.entries(externalStepsByPlugin)) {
+                const pluginDir = path.join(targetPath, 'artifacts', pluginName);
+                const gatePath = path.join(pluginDir, 'gate.json');
+                const resultPath = path.join(pluginDir, 'result.json');
+                const summaryPath = path.join(pluginDir, 'summary.md');
+                const gateExists = await services_1.services.fileService.exists(gatePath);
+                if (!gateExists) {
+                    result.blockers.push(`artifacts/${pluginName}/gate.json is required before archiving`);
+                    continue;
+                }
+                const gate = await services_1.services.fileService.readJSON(gatePath);
+                if (gate.plugin !== pluginName) {
+                    result.blockers.push(`${pluginName} gate artifact plugin must be ${pluginName}`);
+                }
+                const gateStatus = typeof gate.status === 'string' ? gate.status : 'pending';
+                if (!(gateStatus === 'passed' || gateStatus === 'approved')) {
+                    result.blockers.push(`${pluginName} gate must be passed or approved before archiving (current: ${gateStatus})`);
+                }
+                for (const stepName of pluginSteps) {
+                    const stepStatus = gate.steps?.[stepName]?.status || 'missing';
+                    if (!(stepStatus === 'passed' || stepStatus === 'approved')) {
+                        result.blockers.push(`${pluginName} step ${stepName} must be passed or approved before archiving (current: ${stepStatus})`);
+                    }
+                }
+                const resultExists = await services_1.services.fileService.exists(resultPath);
+                const summaryExists = await services_1.services.fileService.exists(summaryPath);
+                if (!resultExists && !summaryExists) {
+                    result.blockers.push(`${pluginName} result.json or summary.md is required before archiving`);
+                }
+            }
             result.canArchive = result.blockers.length === 0;
             console.log('\nArchive Gate Check:');
             console.log('===================\n');
@@ -189,8 +231,27 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             throw error;
         }
     }
+    async findProjectRoot(startPath) {
+        let currentPath = path.resolve(startPath);
+        while (true) {
+            const skillrcPath = path.join(currentPath, constants_1.FILE_NAMES.SKILLRC);
+            if (await services_1.services.fileService.exists(skillrcPath)) {
+                return currentPath;
+            }
+            const parentPath = path.dirname(currentPath);
+            if (parentPath === currentPath) {
+                break;
+            }
+            currentPath = parentPath;
+        }
+        const inferredRoot = this.inferProjectRootFromChangePath(startPath);
+        if (inferredRoot) {
+            return inferredRoot;
+        }
+        throw new Error('Unable to locate project root containing .skillrc from the provided change path.');
+    }
     async performArchive(targetPath, projectRoot, featureState, config) {
-        const archivedRoot = path.join(projectRoot, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ARCHIVED);
+        const archivedRoot = (0, ProjectLayout_1.resolveManagedPath)(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         await services_1.services.fileService.ensureDir(archivedRoot);
         const archivePath = await this.resolveArchivePath(archivedRoot, featureState.feature, config);
         const nextState = {
@@ -207,6 +268,23 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
         await services_1.services.projectService.rebaseMovedChangeMarkdownLinks(targetPath, archivePath);
         await services_1.services.projectService.rebuildIndex(projectRoot);
         return this.toRelativePath(projectRoot, archivePath);
+    }
+    inferProjectRootFromChangePath(startPath) {
+        const normalizedPath = path.resolve(startPath);
+        const segments = normalizedPath.split(path.sep);
+        for (let index = 0; index < segments.length - 2; index += 1) {
+            if (segments[index] === constants_1.DIR_NAMES.CHANGES && segments[index + 1] === constants_1.DIR_NAMES.ACTIVE) {
+                return segments.slice(0, index).join(path.sep) || path.sep;
+            }
+        }
+        for (let index = 0; index < segments.length - 3; index += 1) {
+            if (segments[index] === '.ospec' &&
+                segments[index + 1] === constants_1.DIR_NAMES.CHANGES &&
+                segments[index + 2] === constants_1.DIR_NAMES.ACTIVE) {
+                return segments.slice(0, index).join(path.sep) || path.sep;
+            }
+        }
+        return null;
     }
     async updateProposalStatus(targetPath, status) {
         const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);

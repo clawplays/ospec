@@ -1,5 +1,5 @@
 /**
- * 工作流层导出
+ * Workflow layer entrypoints.
  */
 export { WorkflowEngine, workflowEngine } from './WorkflowEngine';
 export { VerificationSystem, verificationSystem } from './VerificationSystem';

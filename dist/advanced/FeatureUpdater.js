@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 特性更新系统
- * 处理特性的更新和迁移
+ * Feature update system.
+ * Handles feature updates and migrations.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -46,18 +46,18 @@ class FeatureUpdater {
         this.updateLogs = [];
     }
     /**
-     * 更新特性属性
+     * Update feature properties.
      */
     async updateFeature(featurePath, options) {
         const statePath = path.join(featurePath, constants_1.FILE_NAMES.STATE);
         const state = await services_1.services.fileService.readJSON(statePath);
         const changes = {};
-        // 更新状态
+        // Update status.
         if (options.status && options.status !== state.status) {
             changes.status = options.status;
             state.status = options.status;
         }
-        // 更新描述（存在proposal中）
+        // Update the description when it exists in the proposal.
         if (options.description) {
             const proposalPath = path.join(featurePath, 'proposal', 'PROPOSAL.md');
             const proposalExists = await services_1.services.fileService.exists(proposalPath);
@@ -65,16 +65,16 @@ class FeatureUpdater {
                 changes.description = options.description;
             }
         }
-        // 更新标签
+        // Update tags.
         if (options.tags && JSON.stringify(options.tags) !== JSON.stringify(state.pending)) {
             changes.tags = options.tags;
         }
-        // 更新受影响模块
+        // Update affected modules.
         if (options.affects && JSON.stringify(options.affects) !== JSON.stringify(state.affects)) {
             changes.affects = options.affects;
             state.affects = options.affects;
         }
-        // 记录更新日志
+        // Record update history.
         if (Object.keys(changes).length > 0) {
             this.logUpdate('property', changes);
             state.last_updated = new Date().toISOString();
@@ -83,7 +83,7 @@ class FeatureUpdater {
         return state;
     }
     /**
-     * 批量更新特性
+     * Batch update features.
      */
     async batchUpdateFeatures(projectDir, filter, updates) {
         const featuresDir = path.join(projectDir, 'features');
@@ -109,7 +109,7 @@ class FeatureUpdater {
         return features;
     }
     /**
-     * 迁移特性版本
+     * Migrate a feature version.
      */
     async migrateFeature(featurePath, targetVersion) {
         const statePath = path.join(featurePath, constants_1.FILE_NAMES.STATE);
@@ -123,7 +123,7 @@ class FeatureUpdater {
         });
     }
     /**
-     * 记录更新日志
+     * Record update history.
      */
     logUpdate(type, changes) {
         const log = {
@@ -134,13 +134,13 @@ class FeatureUpdater {
         this.updateLogs.push(log);
     }
     /**
-     * 获取更新日志
+     * Get update history.
      */
     getUpdateLogs() {
         return this.updateLogs;
     }
     /**
-     * 清空日志
+     * Clear the log.
      */
     clearLogs() {
         this.updateLogs = [];

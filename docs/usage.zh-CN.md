@@ -18,8 +18,41 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
+ospec plugins list
+ospec plugins install <plugin>
+ospec plugins installed
+ospec plugins update <plugin>
+ospec plugins update --all
 ospec plugins status [path]
 ospec plugins enable stitch [path]
+ospec plugins enable checkpoint [path] --base-url <url>
+```
+
+## 插件快速开始
+
+AI / `$ospec`：
+
+- 如果用户说“帮我打开 Stitch 插件”，应理解为“先检查 Stitch 是否已经全局安装；未安装才安装；然后在当前项目启用”
+- 如果用户说“帮我打开 Checkpoint 插件”，应理解为“先检查 Checkpoint 是否已经全局安装；未安装才安装；然后在当前项目启用”
+- 插件启用后，详细说明会同步到 `.ospec/plugins/<plugin>/docs/`
+- 真正执行前，先用 `ospec plugins info <plugin>` 或 `ospec plugins installed` 检查插件是否已全局安装
+- 如果插件已经安装，就跳过安装，直接在当前项目里启用
+- 只有用户明确要求“更新所有已安装插件”时，AI 才能运行 `ospec plugins update --all`
+
+命令行：
+
+```bash
+ospec plugins list
+ospec plugins info stitch
+ospec plugins install stitch
+ospec plugins enable stitch [path]
+```
+
+```bash
+ospec plugins list
+ospec plugins info checkpoint
+ospec plugins install checkpoint
+ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 ## 推荐流程
@@ -33,92 +66,16 @@ ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-推荐的用户主流程是：
+新项目执行 `ospec init [path]` 后，默认使用 nested 布局：仓库根目录保留 `.skillrc` 与 `README.md`，其余 OSpec 托管文件写入 `.ospec/`。
+命令行仍然接受 `changes/active/<change>` 这类简写；在 nested 项目里，对应的实际目录是 `.ospec/changes/active/<change>`。
+如果你要把旧的 classic 项目迁移到新布局，请显式运行 `ospec layout migrate --to nested`。
 
-- 初始化仓库
-- 在一个 change 中执行需求
-- 先走项目自己的部署与验证流程，再执行 `ospec verify`
-- 用 `ospec finalize` 归档已验证通过的 change
-
-现在的 `ospec init` 目标是把仓库直接带到 `change-ready` 状态：
-
-- 创建协议壳
-- 生成基础项目知识文档
-- 有现成项目文档时自动复用
-- 如果当前是 AI 协作流程且缺少上下文，只追问一次简短的项目概况或技术栈
-- 缺少上下文时自动落占位文档
-- 不自动创建第一个 change
-- 不自动应用业务 scaffold
-
-如果你希望在初始化时直接带上项目上下文，可以这样传：
+## 升级已有项目
 
 ```bash
-ospec init [path] --summary "内部管理后台" --tech-stack node,react,postgres
-ospec init [path] --architecture "单体 Web 应用 + API + 统一鉴权" --document-language zh-CN
-ospec init [path] --architecture "支持团队工作台" --document-language ja-JP
-ospec init [path] --architecture "客户运营门户" --document-language ar
-```
-
-初始化时的语言解析优先级：
-
-- 显式传入 `--document-language`
-- 从现有项目文档 / `for-ai/*` / asset manifest 推断
-- 最终回退到 `en-US`
-
-直接执行 CLI 的 `ospec init` 仍然保持非交互。如果仓库没有可复用的项目说明，且你也没有显式传参，OSpec 也会先生成待补充的占位文档，并把仓库带到可直接执行 `ospec new` 的状态。
-
-如果你只是想额外查看项目快照，仍然可以手动执行 `ospec status [path]`，但它不再是推荐主流程的默认第一步。
-
-## 项目知识层维护
-
-当仓库已经初始化后，如果你只是想刷新、修复或补齐项目知识层，请使用：
-
-```bash
-ospec docs generate [path]
-```
-
-典型场景：
-
-- 老仓库是在旧流程下初始化的
-- 项目知识文档被删除了，或者已经漂移
-- 新增了模块或 API，需要刷新知识层
-
-`docs generate` 的职责是：
-
-- 刷新项目知识文档
-- 保持 scaffold 显式
-- 不自动创建第一个 change
-- 不生成 `docs/project/bootstrap-summary.md`
-
-## 队列流程
-
-如果你明确要按队列管理多个 change：
-
-```bash
-ospec queue add <change-name> [path]
-ospec queue status [path]
-ospec run start [path] --profile manual-safe
-ospec run step [path]
-```
-
-这里仍然是显式模式：
-
-- 默认流程仍然是单个 active change
-- 如果已经存在一个 active change，就继续用 `ospec progress` 推进它；额外工作请改用 `ospec queue add`，不要再创建第二个 active change
-- 只有显式使用 `queue` / `run` 时，才进入队列流程
-- `manual-safe` 不改变现有手动执行方式，只负责显式跟踪和推进队列
-- `archive-chain` 只会在一次显式 `run step` 中尝试 finalize 并推进下一个 queued change
-
-## 已有项目升级
-
-如果是已经初始化过的项目：
-
-```bash
-npm install -g @clawplays/ospec-cli@0.4.0
+npm install -g @clawplays/ospec-cli@0.3.10
 ospec update [path]
 ```
-
-这里升级的是官方 CLI 包 `@clawplays/ospec-cli`，对应命令仍然是 `ospec`。
 
 如果你是从当前仓库本地安装：
 
@@ -127,42 +84,31 @@ npm install -g .
 ospec update [path]
 ```
 
-`ospec update [path]` 会：
+`ospec update [path]` 会刷新协议文档、工具链、托管 skills、归档布局元数据，以及已启用插件的项目资产。
+它也可以修复仍然保留 OSpec 痕迹、但缺少较新核心运行目录的旧项目，并规范化旧项目结构，例如把根目录里的 `build-index-auto.*` 工具迁移到 `.ospec/tools/`，并整理 `.skillrc` 里的旧版 Stitch 插件键。
+如果某个已启用插件已经在全局安装记录中，但包被用户手动删除了，`ospec update [path]` 会先尝试自动补装，再继续同步项目资产。
+如果某个已启用插件存在更新的兼容 npm 版本，`ospec update [path]` 会自动升级这个全局插件包，并输出从旧版本到新版本的升级明细。
+它不会升级当前项目里未启用的全局插件。
+它不会自动升级 CLI 本身。
+它不会自动把 classic 布局迁移成 nested 布局。
+如果你需要切换到新布局，请单独运行 `ospec layout migrate --to nested`。
+它不会自动安装全新插件，也不会自动启用插件，或自动迁移 active / queued changes。
 
-- 刷新协议文档
-- 刷新项目 tooling 与 Git hooks
-- 同步托管安装的 `ospec` 与 `ospec-change` skills
-- 刷新已启用插件的托管工作目录资产
-- 把旧的 `changes/archived/YYYY-MM-DD-change-name` 归档迁移到新的 `changes/archived/YYYY-MM/YYYY-MM-DD/change-name` 布局
+## 更新所有已安装插件
 
-`ospec update [path]` 不会：
-
-- 自动启用或停用插件
-- 自动迁移已有 active changes 或 queued changes
-- 自动替你完成 Stitch 审批或补建插件产物
-
-如果老项目还缺项目知识文档，可以直接重新执行：
+如果你想显式更新机器上所有已安装插件，而不是只更新当前项目已启用的插件，请使用：
 
 ```bash
-ospec init [path]
+ospec plugins update --all
 ```
 
-如果你只是想维护文档层，也可以执行：
+常见变体：
 
 ```bash
-ospec docs generate [path]
+ospec plugins update stitch
+ospec plugins update --all --check
 ```
 
-## 进度与收口
-
-进入执行阶段后，重点使用这些命令：
-
-```bash
-ospec changes status [path]
-ospec progress [changes/active/<change>]
-ospec verify [changes/active/<change>]
-ospec archive [changes/active/<change>]
-ospec finalize [changes/active/<change>]
-```
-
-`ospec finalize` 是标准收口路径。它会验证 change、刷新索引、执行归档，并把 Git 提交留给后续手动处理。
+`ospec plugins update --all` 会检查 OSpec 记录过的所有全局已安装插件，并在发现更高兼容版本时逐个升级。
+如果某个已安装插件包被手动删除，这个命令也会先尝试补装，再继续升级。
+AI / `$ospec` 只有在用户明确要求“更新所有已安装插件”时，才应该运行 `ospec plugins update --all`。

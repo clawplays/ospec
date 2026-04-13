@@ -1,5 +1,5 @@
 /**
- * 日志服务
+ * Logging service.
  */
 export declare enum LogLevel {
     DEBUG = "DEBUG",

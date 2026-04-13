@@ -1,6 +1,6 @@
 /**
- * 索引再生成引擎
- * 重新生成项目的功能索引
+ * Index regeneration engine.
+ * Rebuilds the project feature index.
  */
 export interface IndexEntry {
     name: string;
@@ -22,23 +22,23 @@ export interface ProjectIndex {
 }
 export declare class IndexRegenerator {
     /**
-     * 生成完整索引
+     * Generate the complete index.
      */
     regenerateIndex(projectDir: string): Promise<ProjectIndex>;
     /**
-     * 保存索引文件
+     * Persist the index file.
      */
     private saveIndex;
     /**
-     * 读取现有索引
+     * Read the existing index.
      */
     readIndex(projectDir: string): Promise<ProjectIndex | null>;
     /**
-     * 获取索引统计
+     * Get index statistics.
      */
     getIndexStats(projectDir: string): Promise<ProjectIndex['stats']>;
     /**
-     * 验证索引完整性
+     * Validate index integrity.
      */
     validateIndex(projectDir: string): Promise<{
         valid: boolean;

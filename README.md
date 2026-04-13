@@ -30,6 +30,8 @@ OSpec.ai is the official project site. `OSpec`, `ospec`, `ospec.ai`, `ospec ai`,
   <a href="docs/usage.md">Usage</a> |
   <a href="docs/project-overview.md">Overview</a> |
   <a href="docs/installation.md">Installation</a> |
+  <a href="docs/external-plugins.md">External Plugins</a> |
+  <a href="docs/plugin-release.md">Plugin Release</a> |
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
@@ -91,8 +93,10 @@ CLI notes:
 - `--architecture`: short architecture description
 - `--document-language`: generated doc language, choose from `en-US`, `zh-CN`, `ja-JP`, or `ar`
 - AI-first language resolution order: explicit language request in the conversation -> current conversation language -> persisted project language in `.skillrc`
-- CLI language resolution order: explicit `--document-language` -> persisted project language in `.skillrc` -> existing project docs / `for-ai/*` / asset manifest -> fallback `en-US`
+- CLI language resolution order: explicit `--document-language` -> persisted project language in `.skillrc` -> existing project docs / managed `for-ai/*` guidance / asset manifest -> fallback `en-US`
 - OSpec persists the chosen project document language in `.skillrc` and reuses it for `for-ai` guidance, `ospec new`, and `ospec update`
+- new projects initialized by `ospec init` default to the nested layout: root `.skillrc` and `README.md`, with OSpec-managed files under `.ospec/`
+- CLI commands still accept shorthand like `changes/active/<change-name>`, but the physical path in nested projects is `.ospec/changes/active/<change-name>`
 - if you pass these values, OSpec uses them directly when generating project docs
 - if you do not pass them, OSpec reuses existing docs when possible and otherwise creates placeholder docs first
 
@@ -154,7 +158,8 @@ Archive notes:
 - run your project-specific deploy, test, and QA flow first
 - use `ospec verify` to confirm the active change is ready
 - use `ospec finalize` to rebuild indexes and archive the accepted change
-- new projects archive under `changes/archived/YYYY-MM/YYYY-MM-DD/<change-name>`; existing flat archives are reorganized by `ospec update`
+- new nested projects archive under `.ospec/changes/archived/YYYY-MM/YYYY-MM-DD/<change-name>`; CLI shorthand under `changes/archived/...` still works
+- existing flat archives are reorganized by `ospec update`
 
 </details>
 
@@ -167,6 +172,11 @@ ospec update
 ```
 
 `ospec update` also migrates legacy root-level `build-index-auto.cjs` / `build-index-auto.js` tooling into `.ospec/tools/build-index-auto.cjs` and refreshes OSpec-managed hook entrypoints to use the new location.
+It also repairs older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, refreshes managed skills and archive layout metadata, and syncs project assets for already-enabled plugins.
+When an already-enabled plugin has a newer compatible npm package version available, `ospec update` upgrades that global plugin package automatically and prints the version transition.
+It does not upgrade the CLI itself, and it does not enable plugins or migrate active / queued changes automatically.
+It also does not switch a classic project layout to nested automatically.
+If you want to convert an older classic project to the new layout, run `ospec layout migrate --to nested` explicitly.
 
 ## How The OSpec Workflow Works
 
@@ -181,10 +191,11 @@ ospec update
 │  2. INIT TO CHANGE-READY                                       │
 │     ospec init                                                 │
 │     - .skillrc                                                 │
+│     - README.md                                                │
 │     - .ospec/                                                  │
-│     - changes/active + changes/archived                        │
-│     - root SKILL files and for-ai guidance                     │
-│     - docs/project/* baseline knowledge docs                   │
+│     - .ospec/changes/active + .ospec/changes/archived          │
+│     - .ospec/SKILL.md + .ospec/SKILL.index.json + .ospec/for-ai│
+│     - .ospec/docs/project/* baseline knowledge docs            │
 │     - reuse docs or fall back to placeholders                  │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -214,7 +225,7 @@ ospec update
 
 | Concept | What It Means |
 |---------|---------------|
-| **Protocol Shell** | The minimum collaboration skeleton: `.skillrc`, `.ospec/`, `changes/`, root `SKILL.md`, `SKILL.index.json`, and `for-ai/` guidance. |
+| **Protocol Shell** | The minimum collaboration skeleton: root `.skillrc` and `README.md`, plus managed OSpec files under `.ospec/` for change state, SKILL docs, index state, `for-ai/` guidance, and project docs. |
 | **Project Knowledge Layer** | Explicit project context such as `docs/project/*`, layered skill files, and index state that AI can read consistently. |
 | **Active Change** | A dedicated execution container for one requirement, usually with `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. |
 
@@ -226,70 +237,40 @@ ospec update
 - **Docs maintenance**: `ospec docs generate` refreshes or repairs project knowledge docs when you need it later.
 - **Tracked requirement execution**: each change can keep proposal, tasks, state, verification, and review files aligned.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.
-- **Plugin workflow gates**: built-in plugin commands support Stitch design review and Checkpoint automation.
+- **Plugin workflow gates**: plugin commands support Stitch design review and Checkpoint automation through npm-installed official plugins.
 - **Skill management**: install and inspect OSpec skills for Codex and Claude Code.
 - **Standard closeout**: `finalize` verifies, rebuilds indexes, and archives the change before manual Git commit.
 
-## Plugin Features
+## Plugin Installation
 
-OSpec includes two optional plugins that extend the document-driven workflow with UI review and flow validation.
-
-### Stitch
-
-Use Stitch for page design review and preview collaboration, especially for landing pages, marketing pages, and UI-heavy changes.
-
-AI conversation:
+OSpec supports plugins for UI review and runtime validation.
+Keep the public flow simple:
 
 ```text
-OSpec, enable the Stitch plugin and connect using Codex/Gemini.
+$ospec open Stitch for this project.
+$ospec open Checkpoint for this project.
 ```
 
-Claude / Codex skill mode:
+In AI / `$ospec` flows, requests like "open Stitch" or "open Checkpoint" should be handled as: check whether the plugin is already installed globally, install only when missing, then enable it in the current project.
 
-```text
-$ospec enable the Stitch plugin and connect using Codex/Gemini.
-```
-
-<details>
-<summary>Command line</summary>
+Command line fallback:
 
 ```bash
+ospec plugins list
+ospec plugins install stitch
 ospec plugins enable stitch .
-```
-
-</details>
-
-### Checkpoint
-
-Use Checkpoint for app flow validation and automated checks, especially for submission flows, critical paths, and pre-acceptance runtime verification.
-
-AI conversation:
-
-```text
-OSpec, enable the Checkpoint plugin.
-```
-
-Claude / Codex skill mode:
-
-```text
-$ospec enable the Checkpoint plugin.
-```
-
-<details>
-<summary>Command line</summary>
-
-```bash
+ospec plugins install checkpoint
 ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 ```
 
-Notes:
+Official npm plugin packages:
 
-- `--base-url` points to the running app used by automated checks
-- Enabling the built-in Checkpoint runner automatically installs `playwright`, `pixelmatch`, and `pngjs` into the target project
-- If a user asks an AI assistant to enable Checkpoint, that install step must complete before the plugin should be considered successfully enabled
-- Disabling Checkpoint only turns off the plugin configuration; it does not uninstall those project dependencies
+- `@clawplays/ospec-plugin-stitch`
+- `@clawplays/ospec-plugin-checkpoint`
 
-</details>
+After a plugin is enabled, its detailed setup docs are synced into `.ospec/plugins/<plugin>/docs/`.
+
+Maintainers can find plugin publishing and automation details in `docs/plugin-release.md`.
 
 ## Documentation
 
@@ -300,11 +281,8 @@ Notes:
 - [Project Overview](docs/project-overview.md)
 - [Installation](docs/installation.md)
 - [Skills Installation](docs/skills-installation.md)
-
-### Plugin Specs
-
-- [Stitch Plugin Spec](docs/stitch-plugin-spec.md)
-- [Checkpoint Plugin Spec](docs/checkpoint-plugin-spec.md)
+- [External Plugins](docs/external-plugins.md)
+- [Plugin Release](docs/plugin-release.md)
 
 ## Repository Structure
 

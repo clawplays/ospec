@@ -1,5 +1,5 @@
 /**
- * 工具函数导出
+ * Utility entrypoints.
  */
 export * from './PathUtils';
 export * from './StringUtils';

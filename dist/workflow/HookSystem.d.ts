@@ -1,6 +1,6 @@
 /**
- * 钩子系统
- * 执行工作流前后的回调
+ * Hook system.
+ * Executes callbacks before and after workflow steps.
  */
 export type HookEvent = 'pre-init' | 'post-init' | 'pre-new' | 'post-new' | 'pre-verify' | 'post-verify' | 'pre-archive' | 'post-archive' | 'pre-commit' | 'post-merge';
 export interface Hook {
@@ -11,23 +11,23 @@ export interface Hook {
 export declare class HookSystem {
     private hooks;
     /**
-     * 注册钩子
+     * Register a hook.
      */
     register(event: HookEvent, handler: (context: any) => Promise<void> | void, priority?: number): void;
     /**
-     * 执行钩子
+     * Execute hooks.
      */
     execute(event: HookEvent, context?: any): Promise<void>;
     /**
-     * 移除钩子
+     * Remove a hook.
      */
     unregister(event: HookEvent, handler: (context: any) => Promise<void> | void): void;
     /**
-     * 清空所有钩子
+     * Clear all hooks.
      */
     clear(): void;
     /**
-     * 获取已注册的钩子列表
+     * Get the list of registered hooks.
      */
     getHooks(event?: HookEvent): {
         event: HookEvent;

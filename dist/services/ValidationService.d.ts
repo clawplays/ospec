@@ -1,17 +1,17 @@
 /**
- * 验证服务
+ * Validation service.
  */
 export declare class ValidationService {
     /**
-     * 验证变更名称格式
+     * Validate change-name format.
      */
     validateFeatureName(name: string): boolean;
     /**
-     * 验证JSON格式
+     * Validate JSON format.
      */
     validateJSON(content: string): boolean;
     /**
-     * 验证必填字段
+     * Validate required fields.
      */
     validateRequiredFields(data: Record<string, any>, fields: string[]): boolean;
 }

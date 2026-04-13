@@ -18,7 +18,7 @@ This document is the project-adopted AI guide copied from the OSpec mother spec.
 4. Read the relevant `SKILL.md` files
 5. Read the current change execution files
 6. If Stitch is enabled and the current change activates `stitch_design_review`, inspect `artifacts/stitch/approval.json` first
-7. If you need to handle Stitch or Checkpoint installation, provider switching, doctor remediation, MCP setup, auth setup, or plugin enablement, read the repo-local localized plugin spec that matches the project document language first; only fall back when that language-specific file is missing
+7. If you need to handle Stitch or Checkpoint installation, provider switching, doctor remediation, MCP setup, auth setup, or plugin enablement, read the repo-local localized plugin docs under `.ospec/plugins/<plugin>/docs/` first; if they are missing, install or enable the plugin to sync its docs before changing config
 
 ## Required Behavior
 
@@ -41,7 +41,7 @@ This document is the project-adopted AI guide copied from the OSpec mother spec.
 - If the project uses a custom runner and `token_env` is configured, confirm the matching environment variable is set before running
 - If the runner, Gemini CLI, Codex CLI, stitch MCP, or auth readiness is unclear, run `ospec plugins doctor stitch <project-path>` first
 - If `plugins doctor stitch` reports non-PASS for the selected provider checks, prompt the user to install the required CLI and complete the stitch MCP / API token setup in the matching user config
-- For Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup, read the repo-local localized Stitch spec first; copy the documented Gemini / Codex config shape instead of inventing a `command` / `args` / `env` or stdio-proxy workaround just to satisfy doctor
+- For Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup, read `.ospec/plugins/stitch/docs/` first and follow the plugin's documented config shape instead of inventing a `command` / `args` / `env` or stdio-proxy workaround just to satisfy doctor
 - If the built-in `codex` provider succeeds on read-only calls but `create_project`, `generate_screen`, or `edit_screens` stalls locally, first verify the run actually uses `codex exec --dangerously-bypass-approvals-and-sandbox`
 - If the project explicitly overrides `.skillrc.plugins.stitch.runner` and Codex still performs Stitch writes, the custom runner / wrapper must also pass `--dangerously-bypass-approvals-and-sandbox`
 - Sync `SKILL.md` after meaningful code changes
@@ -54,37 +54,10 @@ This document is the project-adopted AI guide copied from the OSpec mother spec.
 - Workflow conventions: `docs/project/workflow-conventions.md`
 - Development guide: `docs/project/development-guide.md`
 
-## Stitch Provider Baseline
+## Stitch Provider Docs
 
-- When the repo contains a localized Stitch plugin spec that matches the project document language, use its original config snippets first.
-- When the repo does not contain that spec and the built-in Stitch provider must be enabled, use these baselines.
-- `gemini`: edit `%USERPROFILE%/.gemini/settings.json` and use `mcpServers.stitch.httpUrl` plus `headers.X-Goog-Api-Key`.
-
-```json
-{
-  "mcpServers": {
-    "stitch": {
-      "httpUrl": "https://stitch.googleapis.com/mcp",
-      "headers": {
-        "X-Goog-Api-Key": "your-stitch-api-key"
-      }
-    }
-  }
-}
-```
-
-- `codex`: edit `%USERPROFILE%/.codex/config.toml` and use HTTP transport, the fixed Stitch MCP URL, and the `X-Goog-Api-Key` header.
-- The built-in `codex` adapter should launch Stitch write operations through `codex exec --dangerously-bypass-approvals-and-sandbox`; if a custom runner replaces it, that runner must provide the same write-bypass behavior.
-
-```toml
-[mcp_servers.stitch]
-type = "http"
-url = "https://stitch.googleapis.com/mcp"
-headers = { X-Goog-Api-Key = "your-stitch-api-key" }
-
-[mcp_servers.stitch.http_headers]
-X-Goog-Api-Key = "your-stitch-api-key"
-```
+- Provider, MCP, auth, and runner details live in `.ospec/plugins/stitch/docs/` after the Stitch plugin is installed and enabled for the project.
+- If those docs are missing, install or enable Stitch first so the plugin can sync its localized docs into the repository before changing config.
 
 ## Stitch Canonical Layout
 

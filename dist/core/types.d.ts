@@ -1,4 +1,5 @@
 export type ProjectMode = 'lite' | 'standard' | 'full';
+export type ProjectLayout = 'classic' | 'nested';
 export type HookCheckPolicy = 'off' | 'warn' | 'error';
 export type ChangeSummaryStatus = 'pass' | 'warn' | 'fail';
 export type FeatureStatus = 'queued' | 'draft' | 'proposed' | 'planned' | 'implementing' | 'verifying' | 'ready_to_archive' | 'archived';
@@ -89,12 +90,18 @@ export interface CheckpointPluginConfig {
         auto_pass_stitch_review: boolean;
     };
 }
+export interface SkillrcPluginsConfig {
+    stitch?: StitchPluginConfig;
+    checkpoint?: CheckpointPluginConfig;
+    [name: string]: any;
+}
 export interface ArchiveConfig {
     layout: 'flat' | 'month-day';
 }
 export interface SkillrcConfig {
     version: string;
     mode: ProjectMode;
+    projectLayout?: ProjectLayout;
     documentLanguage?: 'en-US' | 'zh-CN' | 'ja-JP' | 'ar';
     hooks: {
         'pre-commit': boolean;
@@ -108,10 +115,7 @@ export interface SkillrcConfig {
         exclude?: string[];
     };
     archive?: ArchiveConfig;
-    plugins?: {
-        stitch?: StitchPluginConfig;
-        checkpoint?: CheckpointPluginConfig;
-    };
+    plugins?: SkillrcPluginsConfig;
     workflow?: {
         core_required: string[];
         optional_steps: Record<string, {

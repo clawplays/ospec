@@ -1,5 +1,5 @@
 /**
- * OSpec CLI 主导出 (更新版本)
+ * OSpec CLI main entrypoints.
  */
 export * from './cli';
 export * from './services';

@@ -1,6 +1,6 @@
 "use strict";
 /**
- * 日志服务
+ * Logging service.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.logger = exports.Logger = exports.LogLevel = void 0;

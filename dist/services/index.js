@@ -1,6 +1,6 @@
 "use strict";
 /**
- * 服务层导出
+ * Service layer entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.services = exports.ServiceContainer = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
@@ -47,7 +47,7 @@ Object.defineProperty(exports, "createQueueService", { enumerable: true, get: fu
 var RunService_1 = require("./RunService");
 Object.defineProperty(exports, "RunService", { enumerable: true, get: function () { return RunService_1.RunService; } });
 Object.defineProperty(exports, "createRunService", { enumerable: true, get: function () { return RunService_1.createRunService; } });
-// 服务容器
+// Service container
 const FileService_2 = require("./FileService");
 const ConfigManager_2 = require("./ConfigManager");
 const StateManager_2 = require("./StateManager");
@@ -62,6 +62,7 @@ const ProjectScaffoldCommandService_2 = require("./ProjectScaffoldCommandService
 const ProjectService_2 = require("./ProjectService");
 const QueueService_2 = require("./QueueService");
 const RunService_2 = require("./RunService");
+const PluginRegistryService_1 = require("./PluginRegistryService");
 class ServiceContainer {
     constructor() {
         this.fileService = FileService_2.fileService;
@@ -78,6 +79,12 @@ class ServiceContainer {
         this.projectService = (0, ProjectService_2.createProjectService)(FileService_2.fileService, this.configManager, TemplateEngine_2.templateEngine, this.indexBuilder, this.skillParser, this.projectAssetService, this.projectScaffoldService, this.projectScaffoldCommandService);
         this.queueService = (0, QueueService_2.createQueueService)(FileService_2.fileService, this.projectService);
         this.runService = (0, RunService_2.createRunService)(FileService_2.fileService, this.projectService, this.queueService);
+        Object.defineProperty(this, 'pluginRegistryService', {
+            value: (0, PluginRegistryService_1.createPluginRegistryService)(FileService_2.fileService),
+            enumerable: false,
+            configurable: false,
+            writable: false,
+        });
     }
     static getInstance() {
         if (!ServiceContainer.instance) {

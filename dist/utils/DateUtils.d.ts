@@ -1,17 +1,17 @@
 /**
- * 日期工具函数
+ * Date utilities.
  */
 export declare class DateUtils {
     /**
-     * 获取 ISO 格式的当前时间
+     * Get the current time in ISO format.
      */
     static now(): string;
     /**
-     * 格式化日期
+     * Format a date.
      */
     static format(date: Date, format?: string): string;
     /**
-     * 解析 ISO 字符串
+     * Parse an ISO string.
      */
     static parseISO(dateString: string): Date;
 }

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "checkpoint",
+      "packageName": "@clawplays/ospec-plugin-checkpoint",
+      "installRange": ">=1.0.0 <2.0.0",
+      "displayName": "Checkpoint",
+      "official": true,
+      "description": "Runtime review and flow validation for OSpec projects.",
+      "kinds": [
+        "runtime",
+        "skill",
+        "knowledge"
+      ],
+      "docs": {
+        "locales": {
+          "en-US": "plugins/checkpoint/docs/plugin.md",
+          "zh-CN": "plugins/checkpoint/docs/plugin.zh-CN.md",
+          "ja-JP": "plugins/checkpoint/docs/plugin.ja.md",
+          "ar": "plugins/checkpoint/docs/plugin.ar.md"
+        }
+      }
+    },
+    {
+      "id": "stitch",
+      "packageName": "@clawplays/ospec-plugin-stitch",
+      "installRange": ">=1.0.0 <2.0.0",
+      "displayName": "Stitch",
+      "official": true,
+      "description": "Page design review and preview collaboration for OSpec projects.",
+      "kinds": [
+        "runtime",
+        "skill",
+        "knowledge"
+      ],
+      "docs": {
+        "locales": {
+          "en-US": "plugins/stitch/docs/plugin.md",
+          "zh-CN": "plugins/stitch/docs/plugin.zh-CN.md",
+          "ja-JP": "plugins/stitch/docs/plugin.ja.md",
+          "ar": "plugins/stitch/docs/plugin.ar.md"
+        }
+      }
+    }
+  ]
+}

@@ -12,5 +12,6 @@ export declare class QueueService {
     private buildQueuedChangeStatusItem;
     private extractDescription;
     private toRelativePath;
+    private getProjectConfig;
 }
 export declare function createQueueService(fileService: FileService, projectService: ProjectService): QueueService;

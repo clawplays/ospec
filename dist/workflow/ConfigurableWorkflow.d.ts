@@ -1,7 +1,7 @@
 /**
- * 可配置工作流系统
- * 基于 OSpec 官方规范实现
- * 支持核心步骤 + 可选步骤 + Feature Flags
+ * Configurable workflow system.
+ * Implemented against the official OSpec specification.
+ * Supports core steps, optional steps, and feature flags.
  */
 export type CoreStep = 'proposal' | 'tasks' | 'state' | 'verification' | 'skill_update' | 'index_regenerated';
 export type OptionalStep = 'code_review' | 'design_doc' | 'plan_doc' | 'security_review' | 'adr' | 'db_change_doc' | 'api_change_doc';
@@ -23,7 +23,7 @@ export interface WorkflowConfigType {
     };
 }
 /**
- * 3种预定义工作流模板
+ * Three predefined workflow presets.
  */
 export declare const WORKFLOW_PRESETS: Record<string, WorkflowConfigType>;
 export declare class ConfigurableWorkflow {
@@ -31,38 +31,38 @@ export declare class ConfigurableWorkflow {
     private mode;
     constructor(mode: string);
     /**
-     * 根据 feature flags 确定激活的可选步骤
+     * Resolve activated optional steps from feature flags.
      */
     getActivatedSteps(featureFlags: string[]): OptionalStep[];
     /**
-     * 获取完整的工作流步骤（核心 + 激活的可选）
+     * Get the full workflow steps: core plus activated optional steps.
      */
     getFullWorkflow(featureFlags: string[]): string[];
     /**
-     * 获取核心步骤
+     * Get the core steps.
      */
     getCoreSteps(): CoreStep[];
     /**
-     * 获取所有支持的 feature flags
+     * Get all supported feature flags.
      */
     getSupportedFlags(): string[];
     /**
-     * 验证 feature flags
+     * Validate feature flags.
      */
     validateFlags(flags: string[]): {
         valid: boolean;
         unsupported: string[];
     };
     /**
-     * 获取步骤的依赖关系
+     * Get step dependencies.
      */
     getStepDependencies(step: string): string[];
     /**
-     * 获取工作流配置
+     * Get the workflow configuration.
      */
     getConfig(): WorkflowConfigType;
     /**
-     * 获取存档门禁配置
+     * Get the archive gate configuration.
      */
     getArchiveGate(): {
         require_verification: boolean;
@@ -71,7 +71,7 @@ export declare class ConfigurableWorkflow {
         require_optional_steps_passed: boolean;
     };
     /**
-     * 生成工作流摘要
+     * Generate a workflow summary.
      */
     getSummary(featureFlags: string[]): {
         mode: string;
@@ -82,7 +82,7 @@ export declare class ConfigurableWorkflow {
         unsupportedFlags: string[];
     };
     /**
-     * 获取当前模式
+     * Get the current mode.
      */
     getMode(): string;
 }

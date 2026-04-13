@@ -1,6 +1,6 @@
 /**
- * 性能监控系统
- * 跟踪和优化系统性能
+ * Performance monitoring system.
+ * Tracks and optimizes system performance.
  */
 export interface PerformanceMetric {
     name: string;
@@ -20,31 +20,31 @@ export declare class PerformanceMonitor {
     private metrics;
     private startTimes;
     /**
-     * 开始计时
+     * Start timing.
      */
     start(label: string): void;
     /**
-     * 结束计时并记录
+     * Stop timing and record the result.
      */
     end(label: string, metadata?: Record<string, any>): number;
     /**
-     * 获取统计信息
+     * Get statistics.
      */
     getSummary(label?: string): PerformanceSummary | Record<string, PerformanceSummary>;
     /**
-     * 计算统计数据
+     * Calculate statistics.
      */
     private calculateSummary;
     /**
-     * 获取原始指标
+     * Get raw metrics.
      */
     getMetrics(label?: string): PerformanceMetric[] | Record<string, PerformanceMetric[]>;
     /**
-     * 清空指标
+     * Clear metrics.
      */
     clear(label?: string): void;
     /**
-     * 生成性能报告
+     * Generate a performance report.
      */
     generateReport(): string;
 }

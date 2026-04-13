@@ -105,6 +105,10 @@ export declare class ProjectService {
     private projectScaffoldService;
     private projectScaffoldCommandService;
     constructor(fileService: FileService, configManager: ConfigManager, templateEngine: TemplateEngine, indexBuilder: IndexBuilder, skillParser: SkillParser, projectAssetService: ProjectAssetService, projectScaffoldService: ProjectScaffoldService, projectScaffoldCommandService: ProjectScaffoldCommandService);
+    private getProjectLayout;
+    private getManagedRootDir;
+    private resolveManagedPath;
+    private toProjectRelativePath;
     initializeProject(rootDir: string, mode: ProjectMode, input?: ProjectBootstrapInput): Promise<ProjectInitializationResult>;
     generateProjectKnowledge(rootDir: string, input?: ProjectBootstrapInput): Promise<ProjectKnowledgeGenerationResult>;
     syncProtocolGuidance(rootDir: string): Promise<ProjectProtocolSyncResult>;
@@ -202,6 +206,7 @@ export declare class ProjectService {
     private buildUpgradeSuggestions;
     private filterKnowledgeDocsByAffects;
     private toRelativePath;
+    private findProjectRootFromPath;
     private toSlug;
     private scanDocsInDirectory;
 }

@@ -1373,7 +1373,7 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 2. Read the relevant \`SKILL.md\` files before editing code.
 3. Use \`changes/active/<change>\` as the execution layer.
 4. If Stitch is enabled and the current change activates \`stitch_design_review\`, inspect \`artifacts/stitch/approval.json\` first and do not treat the change as ready to continue or archive until it is \`approved\`.
-5. If Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup is involved, read the repo-local Stitch spec first; if the repo does not contain that spec, use the built-in baselines instead: Gemini uses \`%USERPROFILE%/.gemini/settings.json\` with \`mcpServers.stitch.httpUrl\` and \`headers.X-Goog-Api-Key\`, and Codex uses \`%USERPROFILE%/.codex/config.toml\` with \`[mcp_servers.stitch]\`, \`type = "http"\`, \`url = "https://stitch.googleapis.com/mcp"\`, and \`X-Goog-Api-Key\`.
+5. If Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup is involved, read \`.ospec/plugins/stitch/docs/\` first; if those docs are missing, install or enable Stitch to sync them before changing config.
 6. If the built-in Codex provider succeeds on read-only calls but Stitch write operations stall, first verify the run actually uses \`codex exec --dangerously-bypass-approvals-and-sandbox\`; if the project overrides a custom Codex runner, that runner must also pass the same flag explicitly.
 7. Update skill documents and rebuild the index after meaningful changes.`, `# AI ガイド
 
@@ -1450,7 +1450,7 @@ Use active changes for current implementation work.
 - Read \`.skillrc.plugins\` first to detect enabled blocking plugins.
 - If the current change activates \`stitch_design_review\` in \`tasks.md\` or \`verification.md\`, inspect \`artifacts/stitch/approval.json\` before advancing the change.
 - When \`approval.json.status\` is not \`approved\`, do not treat the change as ready for continued implementation, completion claims, or archive readiness.
-- If Stitch provider, MCP, or auth config is involved, read the repo-local Stitch spec first; if the repo does not contain that spec, use the built-in baselines instead: Gemini uses \`%USERPROFILE%/.gemini/settings.json\` with \`mcpServers.stitch.httpUrl\` and \`headers.X-Goog-Api-Key\`, and Codex uses \`%USERPROFILE%/.codex/config.toml\` with \`[mcp_servers.stitch]\`, \`type = "http"\`, \`url = "https://stitch.googleapis.com/mcp"\`, and \`X-Goog-Api-Key\`.
+- If Stitch provider, MCP, or auth config is involved, read \`.ospec/plugins/stitch/docs/\` first; if those docs are missing, install or enable Stitch to sync them before changing config.
 - If the built-in Codex provider succeeds on read-only calls but Stitch write operations stall, first verify the run actually uses \`codex exec --dangerously-bypass-approvals-and-sandbox\`; if the project overrides a custom Codex runner, that runner must also pass the same flag explicitly.
 - When recording manual review decisions, prefer \`ospec plugins approve stitch <change-path>\` or \`ospec plugins reject stitch <change-path>\`.`, `# 実行プロトコル
 

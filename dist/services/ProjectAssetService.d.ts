@@ -1,6 +1,8 @@
 import { FileService } from './FileService';
 import { DirectCopyProjectAssetDefinition } from './ProjectAssetRegistry';
+import { ProjectLayout } from '../core/types';
 interface AssetManifestOptions {
+    projectLayout?: ProjectLayout;
     documentLanguage?: string;
     templateGeneratedPaths: string[];
     runtimeGeneratedPaths: string[];
@@ -9,8 +11,8 @@ export declare class ProjectAssetService {
     private readonly fileService;
     constructor(fileService: FileService);
     getDirectCopyAssets(): DirectCopyProjectAssetDefinition[];
-    getDirectCopyTargetPaths(): string[];
-    getAssetPlan(documentLanguage?: string): {
+    getDirectCopyTargetPaths(projectLayout?: ProjectLayout): string[];
+    getAssetPlan(documentLanguage?: string, projectLayout?: ProjectLayout): {
         directCopyFiles: string[];
         templateGeneratedFiles: string[];
         runtimeGeneratedFiles: string[];
@@ -19,12 +21,13 @@ export declare class ProjectAssetService {
             sourceRelativePath: string;
         }>;
     };
-    installDirectCopyAssets(rootDir: string, documentLanguage?: string): Promise<{
+    installDirectCopyAssets(rootDir: string, documentLanguage?: string, projectLayout?: ProjectLayout): Promise<{
         created: string[];
         skipped: string[];
     }>;
     syncDirectCopyAssets(rootDir: string, documentLanguage?: string, options?: {
         targetRelativePaths?: string[];
+        projectLayout?: ProjectLayout;
     }): Promise<{
         created: string[];
         refreshed: string[];

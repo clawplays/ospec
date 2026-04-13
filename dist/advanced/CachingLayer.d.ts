@@ -1,6 +1,6 @@
 /**
- * 缓存层系统
- * 优化性能和减少磁盘访问
+ * Caching layer.
+ * Optimizes performance and reduces disk access.
  */
 export interface CacheEntry<T> {
     key: string;
@@ -15,31 +15,31 @@ export declare class CachingLayer<T = any> {
     private cleanupInterval?;
     constructor(maxSize?: number);
     /**
-     * 设置缓存值
+     * Set a cache value.
      */
     set(key: string, value: T, ttl?: number): void;
     /**
-     * 获取缓存值
+     * Get a cache value.
      */
     get(key: string): T | null;
     /**
-     * 检查键是否存在
+     * Check whether a key exists.
      */
     has(key: string): boolean;
     /**
-     * 删除缓存
+     * Delete a cache entry.
      */
     delete(key: string): boolean;
     /**
-     * 清空缓存
+     * Clear the cache.
      */
     clear(): void;
     /**
-     * 获取缓存大小
+     * Get cache size.
      */
     size(): number;
     /**
-     * 获取统计信息
+     * Get cache statistics.
      */
     getStats(): {
         hits: number;
@@ -50,15 +50,15 @@ export declare class CachingLayer<T = any> {
         maxSize: number;
     };
     /**
-     * 启动清理过期条目
+     * Start cleaning expired entries.
      */
     private startCleanup;
     /**
-     * 停止清理
+     * Stop cleanup.
      */
     stopCleanup(): void;
     /**
-     * 销毁缓存
+     * Dispose the cache.
      */
     destroy(): void;
 }

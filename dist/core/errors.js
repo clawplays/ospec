@@ -1,6 +1,6 @@
 "use strict";
 /**
- * 错误类定义
+ * Error type definitions.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.VerificationError = exports.WorkflowError = exports.ConfigError = exports.FileOperationError = exports.ValidationError = exports.InvalidStateTransitionError = exports.FeatureAlreadyExistsError = exports.FeatureNotFoundError = exports.ProjectNotInitializedError = exports.OSpecError = void 0;

@@ -1,12 +1,12 @@
 "use strict";
 /**
- * 字符串工具函数
+ * String utilities.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StringUtils = void 0;
 class StringUtils {
     /**
-     * 转换为 kebab-case
+     * Convert to kebab-case.
      */
     static toKebabCase(str) {
         return str
@@ -15,7 +15,7 @@ class StringUtils {
             .toLowerCase();
     }
     /**
-     * 转换为 camelCase
+     * Convert to camelCase.
      */
     static toCamelCase(str) {
         return str
@@ -23,7 +23,7 @@ class StringUtils {
             .replace(/^(.)/, (_, c) => c.toLowerCase());
     }
     /**
-     * 转换为 PascalCase
+     * Convert to PascalCase.
      */
     static toPascalCase(str) {
         return str
@@ -31,13 +31,13 @@ class StringUtils {
             .replace(/^(.)/, (_, c) => c.toUpperCase());
     }
     /**
-     * 截断字符串
+     * Truncate a string.
      */
     static truncate(str, length, suffix = '...') {
         return str.length > length ? str.substring(0, length - suffix.length) + suffix : str;
     }
     /**
-     * 去除空白
+     * Trim whitespace.
      */
     static trim(str) {
         return str.trim();

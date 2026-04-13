@@ -63,7 +63,12 @@ Workflow Commands:
 function getPluginsHelpText() {
     return `
 Plugins Commands:
-  ospec plugins list [path]            - list plugins available in the project config
+  ospec plugins list [--json]           - list official and installed npm plugins with current npm metadata when available
+  ospec plugins info <plugin> [--json]  - show one plugin's package, version, manifest, and install status
+  ospec plugins install <plugin|package> - install one plugin globally with npm and sync its skill/knowledge assets locally
+  ospec plugins installed [--json]      - list globally installed OSpec plugins from ~/.ospec/plugins/installed.json
+  ospec plugins update <plugin> [--check] - check or update one globally installed plugin package
+  ospec plugins update --all [--check]  - check or update every globally installed plugin package recorded by OSpec
   ospec plugins status [path]          - show plugin and capability status
   ospec plugins doctor stitch [path]   - validate the configured Stitch provider adapter or custom Stitch runner config
   ospec plugins doctor checkpoint [path] - validate checkpoint base_url, workspace scaffold, target-project deps, and runner config

@@ -32,6 +32,7 @@ export declare class RunService {
     private getCurrentRunPath;
     private getHistoryRunPath;
     private resolveRunFilePath;
+    private getProjectConfig;
     private buildActiveInstruction;
     private describeRunStage;
     private getIdleInstruction;

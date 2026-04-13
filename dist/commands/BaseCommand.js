@@ -1,6 +1,6 @@
 "use strict";
 /**
- * 命令基类
+ * Base command class.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BaseCommand = void 0;
@@ -10,7 +10,7 @@ class BaseCommand {
         this.logger = services_1.services.logger;
     }
     /**
-     * 验证命令参数
+     * Validate command arguments.
      */
     validateArgs(args, requiredCount) {
         if (args.length < requiredCount) {
@@ -18,25 +18,25 @@ class BaseCommand {
         }
     }
     /**
-     * 打印成功信息
+     * Print a success message.
      */
     success(message) {
         console.log(`✓ ${message}`);
     }
     /**
-     * 打印信息
+     * Print an informational message.
      */
     info(message) {
         console.log(message);
     }
     /**
-     * 打印错误信息
+     * Print an error message.
      */
     error(message) {
         console.error(`✗ ${message}`);
     }
     /**
-     * 打印警告信息
+     * Print a warning message.
      */
     warn(message) {
         console.warn(`⚠ ${message}`);

@@ -1,41 +1,45 @@
 # スキルのインストール
 
-管理対象スキル：
+管理対象スキル:
 
 - `ospec`
 - `ospec-change`
 
-これらの2つのスキルは、以下によって自動的に同期されます：
+これらの2つのスキルは、以下によって自動的に同期されます:
 
 - `npm install -g .`
 - `ospec init [path]`
 - `ospec update [path]`
 
-`ospec init` および `ospec update` は常にCodexを同期します。また、`CLAUDE_HOME` または既存の `~/.claude` ホームが存在する場合は、Claude Codeも同期します。
+`ospec init` と `ospec update` は常に Codex を同期します。また、`CLAUDE_HOME` または既存の `~/.claude` ホームが存在する場合は、Claude Code も同期します。
+
+既存プロジェクトでは、`ospec update [path]` は古い OSpec の痕跡を修復し、現在のプロジェクトで有効化されているプラグインについて、欠けているパッケージの再インストールと互換バージョンへの自動更新を行います。
+現在のプロジェクトで有効化されていないグローバルプラグインは更新しません。
+マシン全体のプラグインを更新したい場合は、明示的に `ospec plugins update --all` を使います。
 
 ## Codex
 
-管理対象スキルの確認：
+管理対象スキルの確認:
 
 ```bash
 ospec skill status ospec
 ospec skill status ospec-change
 ```
 
-管理対象スキルを明示的にインストールまたは同期：
+管理対象スキルを明示的にインストールまたは同期:
 
 ```bash
 ospec skill install ospec
 ospec skill install ospec-change
 ```
 
-デフォルトの場所：
+既定の場所:
 
 ```text
 ~/.codex/skills/
 ```
 
-他のスキルを明示的にインストール：
+別のスキルを明示的にインストール:
 
 ```bash
 ospec skill install ospec-init
@@ -43,36 +47,36 @@ ospec skill install ospec-init
 
 ## Claude Code
 
-管理対象スキルの確認：
+管理対象スキルの確認:
 
 ```bash
 ospec skill status-claude ospec
 ospec skill status-claude ospec-change
 ```
 
-管理対象スキルを明示的にインストールまたは同期：
+管理対象スキルを明示的にインストールまたは同期:
 
 ```bash
 ospec skill install-claude ospec
 ospec skill install-claude ospec-change
 ```
 
-デフォルトの場所：
+既定の場所:
 
 ```text
 ~/.claude/skills/
 ```
 
-他のスキルを明示的にインストール：
+別のスキルを明示的にインストール:
 
 ```bash
 ospec skill install-claude ospec-init
 ```
 
-## プロンプトの命名規則
+## プロンプト名
 
-新しいプロンプトでは `$ospec` を優先して使用してください。
+新しいプロンプトでは `$ospec` を優先します。
 
-ユーザーの意図が特に「変更を作成または進める」ことである場合は、`$ospec-change` を使用してください。
+ユーザー意図が「change を作成して進める」ことに特化している場合は `$ospec-change` を使います。
 
-`$ospec-cli` は、古い自動化や習慣が依然としてレガシー名を参照している場合にのみ使用してください。
+`$ospec-cli` は、古い自動化や習慣がまだレガシー名を参照している場合にだけ使います。

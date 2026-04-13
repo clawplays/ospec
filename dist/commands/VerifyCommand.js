@@ -40,10 +40,13 @@ const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class VerifyCommand extends BaseCommand_1.BaseCommand {
     async execute(featurePath) {
         try {
-            const targetPath = featurePath || process.cwd();
+            const targetPath = featurePath && !path.isAbsolute(featurePath)
+                ? (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), featurePath, await services_1.services.configManager.loadConfig(process.cwd()).catch(() => null))
+                : featurePath || process.cwd();
             this.logger.info(`Verifying change at ${targetPath}`);
             const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
             const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);
@@ -59,7 +62,7 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                 throw new Error('Change state file not found. Expected changes/active/<change>/state.json');
             }
             const featureState = await services_1.services.fileService.readJSON(statePath);
-            const projectRoot = path.resolve(targetPath, '..', '..', '..');
+            const projectRoot = await this.findProjectRoot(targetPath);
             const config = await services_1.services.configManager.loadConfig(projectRoot);
             const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
             const checks = [
@@ -199,6 +202,65 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                         : 'Checkpoint result.json or summary.md is required',
                 });
             }
+            const externalPluginCapabilities = workflow.getPluginCapabilities()
+                .filter(capability => capability.plugin !== 'stitch' && capability.plugin !== 'checkpoint')
+                .filter(capability => activatedSteps.includes(capability.step));
+            const externalStepsByPlugin = externalPluginCapabilities.reduce((accumulator, capability) => {
+                accumulator[capability.plugin] = accumulator[capability.plugin] || [];
+                accumulator[capability.plugin].push(capability.step);
+                return accumulator;
+            }, {});
+            for (const [pluginName, pluginSteps] of Object.entries(externalStepsByPlugin)) {
+                const pluginDir = path.join(targetPath, 'artifacts', pluginName);
+                const gatePath = path.join(pluginDir, 'gate.json');
+                const resultPath = path.join(pluginDir, 'result.json');
+                const summaryPath = path.join(pluginDir, 'summary.md');
+                const gateExists = await services_1.services.fileService.exists(gatePath);
+                checks.push({
+                    name: `${pluginName}.gate`,
+                    status: gateExists ? 'pass' : 'fail',
+                    message: gateExists
+                        ? `${pluginName} gate artifact exists`
+                        : `artifacts/${pluginName}/gate.json is missing`,
+                });
+                if (gateExists) {
+                    const gate = await services_1.services.fileService.readJSON(gatePath);
+                    const gateStatus = typeof gate.status === 'string' ? gate.status : 'pending';
+                    checks.push({
+                        name: `${pluginName}.gate.plugin`,
+                        status: gate.plugin === pluginName ? 'pass' : 'fail',
+                        message: gate.plugin === pluginName
+                            ? `${pluginName} gate plugin matches ${pluginName}`
+                            : `${pluginName} gate plugin is ${gate.plugin || '(missing)'}`,
+                    });
+                    checks.push({
+                        name: `${pluginName}.gate.status`,
+                        status: gateStatus === 'passed' || gateStatus === 'approved' ? 'pass' : 'fail',
+                        message: gateStatus === 'passed' || gateStatus === 'approved'
+                            ? `${pluginName} gate status is ${gateStatus}`
+                            : `${pluginName} gate status is ${gateStatus}`,
+                    });
+                    for (const stepName of pluginSteps) {
+                        const stepStatus = gate.steps?.[stepName]?.status || 'missing';
+                        checks.push({
+                            name: `${pluginName}.${stepName}`,
+                            status: stepStatus === 'passed' || stepStatus === 'approved' ? 'pass' : 'fail',
+                            message: stepStatus === 'passed' || stepStatus === 'approved'
+                                ? `${stepName} status is ${stepStatus}`
+                                : `${stepName} status is ${stepStatus}`,
+                        });
+                    }
+                }
+                const resultExists = await services_1.services.fileService.exists(resultPath);
+                const summaryExists = await services_1.services.fileService.exists(summaryPath);
+                checks.push({
+                    name: `${pluginName}.artifacts`,
+                    status: resultExists || summaryExists ? 'pass' : 'fail',
+                    message: resultExists || summaryExists
+                        ? `${pluginName} artifacts present${resultExists && summaryExists ? ' (result.json and summary.md)' : resultExists ? ' (result.json)' : ' (summary.md)'}`
+                        : `${pluginName} result.json or summary.md is required`,
+                });
+            }
             checks.push({
                 name: 'state.json',
                 status: 'pass',
@@ -233,6 +295,21 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
             this.error(`Verification failed: ${error}`);
             throw error;
         }
+    }
+    async findProjectRoot(startPath) {
+        let currentPath = path.resolve(startPath);
+        while (true) {
+            const skillrcPath = path.join(currentPath, constants_1.FILE_NAMES.SKILLRC);
+            if (await services_1.services.fileService.exists(skillrcPath)) {
+                return currentPath;
+            }
+            const parentPath = path.dirname(currentPath);
+            if (parentPath === currentPath) {
+                break;
+            }
+            currentPath = parentPath;
+        }
+        throw new Error('Unable to locate project root containing .skillrc from the provided change path.');
     }
 }
 exports.VerifyCommand = VerifyCommand;

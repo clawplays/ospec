@@ -1,6 +1,6 @@
 # 使い方
 
-## 一般的なコマンド
+## よく使うコマンド
 
 ```bash
 ospec status [path]
@@ -18,13 +18,44 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
+ospec plugins list
+ospec plugins install <plugin>
+ospec plugins installed
+ospec plugins update <plugin>
+ospec plugins update --all
 ospec plugins status [path]
+ospec plugins enable stitch [path]
+ospec plugins enable checkpoint [path] --base-url <url>
+```
+
+## プラグインの最短手順
+
+AI / `$ospec`:
+
+- 「Stitch を開いて」と言われたら、まず Stitch がグローバルインストール済みか確認し、未インストールならインストールし、その後で現在のプロジェクトに対して有効化する意味として扱います
+- 「Checkpoint を開いて」と言われたら、まず Checkpoint がグローバルインストール済みか確認し、未インストールならインストールし、その後で現在のプロジェクトに対して有効化する意味として扱います
+- 詳細なプラグイン文書は、有効化後に `.ospec/plugins/<plugin>/docs/` へ同期されます
+- `ospec plugins update --all` は、ユーザーが「インストール済みプラグインを全部更新したい」と明示した場合にだけ実行します
+
+コマンドライン:
+
+```bash
+ospec plugins list
+ospec plugins info stitch
+ospec plugins install stitch
 ospec plugins enable stitch [path]
 ```
 
-## 推奨されるフロー
+```bash
+ospec plugins list
+ospec plugins info checkpoint
+ospec plugins install checkpoint
+ospec plugins enable checkpoint [path] --base-url <url>
+```
 
-新規ディレクトリの場合：
+## 推奨フロー
+
+新しいディレクトリでは次の流れを推奨します。
 
 ```bash
 ospec init [path]
@@ -33,135 +64,49 @@ ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-推奨されるユーザー向けシーケンス：
+新規プロジェクトで `ospec init [path]` を実行すると、既定で nested レイアウトを使います。リポジトリ直下に残るのは `.skillrc` と `README.md` だけで、OSpec が管理する他のファイルは `.ospec/` に入ります。
+CLI は `changes/active/<change>` のような短縮パスも受け付けますが、nested プロジェクトでの実体パスは `.ospec/changes/active/<change>` です。
+古い classic プロジェクトを新しいレイアウトへ移行したい場合は、明示的に `ospec layout migrate --to nested` を実行してください。
 
-- リポジトリを初期化する
-- 1つの変更（change）で1つの要件を実行する
-- プロジェクト固有のフローでデプロイと検証を行い、その後 `ospec verify` を実行する
-- 検証済みの変更を `ospec finalize` でアーカイブする
-
-`ospec init` は、リポジトリを `change-ready`（変更準備完了）状態にすることを目指しています：
-
-- プロトコルシェルの作成
-- ベースラインのプロジェクト知識ドキュメントの生成
-- 利用可能な場合は既存のプロジェクトドキュメントを再利用
-- 文脈が不足している場合、AI支援フローでプロジェクトの概要や技術スタックについて1つの簡潔なフォローアップを質問
-- それでも文脈が不足している場合は、プレースホルダードキュメントにフォールバック
-- 最初の変更を自動的に作成しない
-- ビジネススキャフォールドを自動的に適用しない
-
-初期化中にプロジェクトのコンテキストを渡したい場合は、直接実行できます：
+## 既存プロジェクトの更新
 
 ```bash
-ospec init [path] --summary "内部管理ポータル" --tech-stack node,react,postgres
-ospec init [path] --architecture "APIと共有認証を備えたシングルウェブアプリ" --document-language ja-JP
-ospec init [path] --architecture "サポートチーム用ワークスペース" --document-language en-US
-ospec init [path] --architecture "運用ポータル" --document-language ar
-```
-
-初期化時の言語解決優先順位:
-
-- 明示的な `--document-language`
-- 既存のプロジェクト文書 / `for-ai/*` / asset manifest からの推定
-- 最後は `en-US`
-
-直接的なCLI初期化は非対話型のままです。リポジトリに使用可能なプロジェクト説明がなく、フラグも渡さない場合でも、OSpecはプレースホルダードキュメントを生成し、`ospec new` の準備が整った状態にします。
-
-トラブルシューティングのために明示的なプロジェクトスナップショットが必要な場合は、`ospec status [path]` が引き続き利用可能ですが、推奨フローのデフォルトの最初のステップではなくなりました。
-
-## プロジェクト知識の維持
-
-リポジトリがすでに初期化されており、プロジェクト知識ドキュメントを更新、修復、またはバックフィルしたい場合は、`docs generate` を使用します：
-
-```bash
-ospec docs generate [path]
-```
-
-ユースケース：
-
-- 古いリポジトリが新しい `change-ready` 初期化フローの前に初期化されていた
-- プロジェクトドキュメントが削除されたか、内容が古くなった
-- 新しいモジュールやAPIを追加し、知識レイヤーを更新したい
-
-`docs generate` は以下の動作をします：
-
-- プロジェクト知識ドキュメントを更新
-- スキャフォールドを明示的な状態に保つ
-- 最初の変更を自動的に作成しない
-- `docs/project/bootstrap-summary.md` を作成しない
-
-## キューフロー
-
-複数の変更をキューとして明示的に管理したい場合：
-
-```bash
-ospec queue add <change-name> [path]
-ospec queue status [path]
-ospec run start [path] --profile manual-safe
-ospec run step [path]
-```
-
-キューモードは明示的なままです：
-
-- デフォルトのワークフローは引き続き1つのアクティブな変更です
-- すでに1つのアクティブな change がある場合は、`ospec progress` でそれを継続し、追加の作業は `ospec queue add` を使ってください。2つ目の active change は作成しないでください
-- キューモードは、`queue` または `run` を明示的に使用した場合にのみ開始されます
-- `manual-safe` は実行をマニュアルに保ち、キューの追跡または進行のみを明示的に行います
-- `archive-chain` は、明示的な `run step` でのみ確定し、進行します
-
-## 既存プロジェクトのアップグレード
-
-すでに初期化されているプロジェクトの場合：
-
-```bash
-npm install -g @clawplays/ospec-cli@0.3.9
+npm install -g @clawplays/ospec-cli@0.3.10
 ospec update [path]
 ```
 
-ここで更新するのは公式 CLI パッケージ `@clawplays/ospec-cli` で、コマンドは引き続き `ospec` です。
-
-このリポジトリからローカルにインストールした場合：
+このリポジトリからローカルに入れた場合:
 
 ```bash
 npm install -g .
 ospec update [path]
 ```
 
-`ospec update [path]` は以下のことを行います：
+`ospec update [path]` は、プロトコル文書、ツール、managed skills、アーカイブレイアウトのメタデータ、そして有効化済みプラグインの資産を更新します。
+さらに、OSpec の痕跡は残っているものの新しいコア実行ディレクトリが欠けている古い OSpec プロジェクトを修復し、ルートの `build-index-auto.*` や `.skillrc` 内の旧 Stitch キーも正規化します。
+有効化済みプラグインのグローバルパッケージが手動で削除されていた場合、`ospec update [path]` はまずそのパッケージの復旧を試みてからプロジェクト資産の同期を続けます。
+有効化済みプラグインに、より新しい互換 npm バージョンがある場合、`ospec update [path]` はそのグローバルプラグインパッケージを自動で更新し、旧バージョンから新バージョンへの遷移を表示します。
+現在のプロジェクトで有効化されていないグローバルプラグインは更新しません。
+CLI 本体は自動更新しません。
+新規プラグインの自動インストールや自動有効化、active / queued changes の自動移行は行いません。
 
-- プロトコルドキュメントの更新
-- プロジェクトツールとGitフックの更新
-- 管理されている `ospec` および `ospec-change` スキルの同期
-- すでに有効になっているプラグインの管理されたワークスペースアセットの更新
+## インストール済みプラグインを全部更新する
 
-`ospec update [path]` は以下のことは行いません：
+現在のプロジェクトだけでなく、マシン上のインストール済みプラグインをまとめて更新したい場合は、明示的に次を使います。
 
-- プラグインを自動的に有効化または無効化しない
-- 既存のアクティブな変更を新しいプラグインワークフローに自動的に移行しない
-- Stitchの承認を完了させたり、プラグインのレビュー成果物を自動的に作成したりしない
-
-古いプロジェクトでまだプロジェクト知識ドキュメントが不足している場合は、以下を再実行してください：
-
-```bash
-ospec init [path]
-```
-
-または、ドキュメントのメンテナンスのみを行いたい場合は：
+`ospec update [path]` は classic レイアウトを nested レイアウトへ自動移行することはありません。新しいレイアウトへ切り替えたい場合は、`ospec layout migrate --to nested` を個別に実行してください。
 
 ```bash
-ospec docs generate [path]
+ospec plugins update --all
 ```
 
-## 進捗とクローズアウト
-
-実行中の主なコマンドは以下の通りです：
+よく使う派生:
 
 ```bash
-ospec changes status [path]
-ospec progress [changes/active/<change>]
-ospec verify [changes/active/<change>]
-ospec archive [changes/active/<change>]
-ospec finalize [changes/active/<change>]
+ospec plugins update stitch
+ospec plugins update --all --check
 ```
 
-`ospec finalize` は標準的なクローズアウトパスです。変更を検証し、インデックスを更新し、変更をアーカイブします。Gitのコミットは、別の手動ステップとして残されます。
+`ospec plugins update --all` は、OSpec が記録しているグローバルインストール済みプラグインをすべて確認し、より新しい互換バージョンがあれば順に更新します。
+インストール済みプラグインのパッケージが手動で削除されていた場合は、まず復旧を試みてから更新します。
+AI / `$ospec` では、ユーザーが「インストール済みプラグインを全部更新したい」と明示した場合にだけ `ospec plugins update --all` を実行してください。

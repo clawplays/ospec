@@ -1,7 +1,5 @@
 /**
-
- * 命令导出
-
+ * Command entrypoints.
  */
 export { BaseCommand } from './BaseCommand';
 export { InitCommand } from './InitCommand';
@@ -21,3 +19,4 @@ export { IndexCommand } from './IndexCommand';
 export { QueueCommand } from './QueueCommand';
 export { RunCommand } from './RunCommand';
 export { UpdateCommand } from './UpdateCommand';
+export { LayoutCommand } from './LayoutCommand';

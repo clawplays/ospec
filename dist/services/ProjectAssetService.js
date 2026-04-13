@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createProjectAssetService = exports.ProjectAssetService = void 0;
 const path_1 = __importDefault(require("path"));
 const ProjectAssetRegistry_1 = require("./ProjectAssetRegistry");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class ProjectAssetService {
     constructor(fileService) {
         this.fileService = fileService;
@@ -13,33 +14,34 @@ class ProjectAssetService {
     getDirectCopyAssets() {
         return ProjectAssetRegistry_1.DIRECT_COPY_PROJECT_ASSETS;
     }
-    getDirectCopyTargetPaths() {
-        return this.getDirectCopyAssets().map(asset => asset.targetRelativePath);
+    getDirectCopyTargetPaths(projectLayout = 'classic') {
+        return this.getDirectCopyAssets().map(asset => (0, ProjectLayout_1.toManagedRelativePath)(asset.targetRelativePath, projectLayout));
     }
-    getAssetPlan(documentLanguage) {
+    getAssetPlan(documentLanguage, projectLayout = 'classic') {
         return {
-            directCopyFiles: this.getDirectCopyTargetPaths(),
+            directCopyFiles: this.getDirectCopyTargetPaths(projectLayout),
             templateGeneratedFiles: [],
             runtimeGeneratedFiles: [],
             localizedCopySources: this.getDirectCopyAssets().map(asset => ({
-                targetRelativePath: asset.targetRelativePath,
+                targetRelativePath: (0, ProjectLayout_1.toManagedRelativePath)(asset.targetRelativePath, projectLayout),
                 sourceRelativePath: this.resolveStaticSourceHint(asset, documentLanguage),
             })),
         };
     }
-    async installDirectCopyAssets(rootDir, documentLanguage) {
+    async installDirectCopyAssets(rootDir, documentLanguage, projectLayout = 'classic') {
         const created = [];
         const skipped = [];
         for (const asset of this.getDirectCopyAssets()) {
-            const targetPath = path_1.default.join(rootDir, ...asset.targetRelativePath.split('/'));
+            const targetRelativePath = (0, ProjectLayout_1.toManagedRelativePath)(asset.targetRelativePath, projectLayout);
+            const targetPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, asset.targetRelativePath, projectLayout);
             if (await this.fileService.exists(targetPath)) {
-                skipped.push(asset.targetRelativePath);
+                skipped.push(targetRelativePath);
                 continue;
             }
             const sourceRelativePath = await this.resolveSourceRelativePath(asset, documentLanguage);
             const sourcePath = path_1.default.join(this.getPackageRoot(), ...sourceRelativePath.split('/'));
             await this.fileService.copy(sourcePath, targetPath);
-            created.push(asset.targetRelativePath);
+            created.push(targetRelativePath);
         }
         return { created, skipped };
     }
@@ -47,29 +49,31 @@ class ProjectAssetService {
         const created = [];
         const refreshed = [];
         const skipped = [];
+        const projectLayout = options.projectLayout || 'classic';
         const targetFilter = Array.isArray(options.targetRelativePaths)
             ? new Set(this.normalizePaths(options.targetRelativePaths))
             : null;
         for (const asset of this.getDirectCopyAssets()) {
-            if (targetFilter && !targetFilter.has(asset.targetRelativePath)) {
+            const targetRelativePath = (0, ProjectLayout_1.toManagedRelativePath)(asset.targetRelativePath, projectLayout);
+            if (targetFilter && !targetFilter.has(targetRelativePath)) {
                 continue;
             }
-            const targetPath = path_1.default.join(rootDir, ...asset.targetRelativePath.split('/'));
+            const targetPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, asset.targetRelativePath, projectLayout);
             const sourceRelativePath = await this.resolveSourceRelativePath(asset, documentLanguage);
             const sourcePath = path_1.default.join(this.getPackageRoot(), ...sourceRelativePath.split('/'));
             const sourceContent = await this.fileService.readFile(sourcePath);
             if (!(await this.fileService.exists(targetPath))) {
                 await this.fileService.writeFile(targetPath, sourceContent);
-                created.push(asset.targetRelativePath);
+                created.push(targetRelativePath);
                 continue;
             }
             const targetContent = await this.fileService.readFile(targetPath);
             if (targetContent === sourceContent) {
-                skipped.push(asset.targetRelativePath);
+                skipped.push(targetRelativePath);
                 continue;
             }
             await this.fileService.writeFile(targetPath, sourceContent);
-            refreshed.push(asset.targetRelativePath);
+            refreshed.push(targetRelativePath);
         }
         return { created, refreshed, skipped };
     }
@@ -121,14 +125,16 @@ class ProjectAssetService {
         return { installed, skipped };
     }
     async writeAssetManifest(rootDir, options) {
+        const projectLayout = options.projectLayout || 'classic';
         const copyEntries = await Promise.all(this.getDirectCopyAssets().map(async (asset) => {
-            const targetPath = path_1.default.join(rootDir, ...asset.targetRelativePath.split('/'));
+            const targetRelativePath = (0, ProjectLayout_1.toManagedRelativePath)(asset.targetRelativePath, projectLayout);
+            const targetPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, asset.targetRelativePath, projectLayout);
             return {
                 id: asset.id,
                 strategy: 'direct_copy',
                 category: asset.category,
                 description: asset.description,
-                targetRelativePath: asset.targetRelativePath,
+                targetRelativePath,
                 sourceRelativePath: await this.resolveSourceRelativePath(asset, options.documentLanguage),
                 overwritePolicy: asset.overwritePolicy,
                 exists: await this.fileService.exists(targetPath),
@@ -139,22 +145,22 @@ class ProjectAssetService {
             strategy: 'template_generated',
             category: 'templates',
             description: 'Generated from OSpec template builders during project initialization.',
-            targetRelativePath,
+            targetRelativePath: (0, ProjectLayout_1.toManagedRelativePath)(targetRelativePath, projectLayout),
             sourceRelativePath: null,
             overwritePolicy: 'if_missing',
-            exists: await this.fileService.exists(path_1.default.join(rootDir, ...targetRelativePath.split('/'))),
+            exists: await this.fileService.exists((0, ProjectLayout_1.resolveManagedPath)(rootDir, targetRelativePath, projectLayout)),
         })));
         const runtimeEntries = await Promise.all(this.normalizePaths(options.runtimeGeneratedPaths).map(async (targetRelativePath) => ({
             id: `runtime:${targetRelativePath}`,
             strategy: 'runtime_generated',
             category: 'runtime',
             description: 'Generated by OSpec at runtime or during index/config initialization.',
-            targetRelativePath,
+            targetRelativePath: (0, ProjectLayout_1.toManagedRelativePath)(targetRelativePath, projectLayout),
             sourceRelativePath: null,
             overwritePolicy: 'rebuild',
-            exists: targetRelativePath === '.ospec/asset-sources.json'
+            exists: (0, ProjectLayout_1.toManagedRelativePath)(targetRelativePath, projectLayout) === '.ospec/asset-sources.json'
                 ? true
-                : await this.fileService.exists(path_1.default.join(rootDir, ...targetRelativePath.split('/'))),
+                : await this.fileService.exists((0, ProjectLayout_1.resolveManagedPath)(rootDir, targetRelativePath, projectLayout)),
         })));
         const assets = [...copyEntries, ...templateEntries, ...runtimeEntries];
         const manifestAsset = assets.find(asset => asset.targetRelativePath === '.ospec/asset-sources.json');
@@ -164,6 +170,7 @@ class ProjectAssetService {
         const manifest = {
             version: '1.0',
             generatedAt: new Date().toISOString(),
+            projectLayout,
             documentLanguage: options.documentLanguage || 'en-US',
             assets,
             summary: {

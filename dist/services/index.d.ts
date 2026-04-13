@@ -1,5 +1,5 @@
 /**
- * 服务层导出
+ * Service layer entrypoints.
  */
 export { FileService, fileService } from './FileService';
 export { ConfigManager, createConfigManager } from './ConfigManager';

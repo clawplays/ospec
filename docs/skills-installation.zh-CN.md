@@ -13,6 +13,10 @@
 
 `ospec init` 与 `ospec update` 一定会同步 Codex；如果检测到 `CLAUDE_HOME` 或已有 `~/.claude` 目录，也会同步 Claude Code。
 
+对于已有项目，`ospec update [path]` 还会修复旧的 OSpec 足迹，重新安装当前项目已启用插件中缺失的包，并在发现更高兼容版本时自动升级这些已启用插件的包。
+它不会更新当前项目里未启用的全局插件。
+如果你想显式更新机器上所有已安装插件，请使用 `ospec plugins update --all`。
+
 ## Codex
 
 检查单个托管 skill：

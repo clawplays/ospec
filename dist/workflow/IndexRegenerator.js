@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 索引再生成引擎
- * 重新生成项目的功能索引
+ * Index regeneration engine.
+ * Rebuilds the project feature index.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -43,7 +43,7 @@ const services_1 = require("../services");
 const constants_1 = require("../core/constants");
 class IndexRegenerator {
     /**
-     * 生成完整索引
+     * Generate the complete index.
      */
     async regenerateIndex(projectDir) {
         const featuresDir = path.join(projectDir, 'features');
@@ -67,7 +67,7 @@ class IndexRegenerator {
                     });
                 }
                 catch (error) {
-                    // 如果没有状态文件，跳过
+                    // Skip entries with no state file.
                     services_1.services.logger.warn(`No state file for feature: ${featureName}`);
                 }
             }
@@ -75,7 +75,7 @@ class IndexRegenerator {
         catch (error) {
             services_1.services.logger.warn(`Features directory not found: ${featuresDir}`);
         }
-        // 生成统计数据
+        // Generate summary statistics.
         const stats = {
             total: features.length,
             draft: features.filter(f => f.status === 'draft').length,
@@ -88,19 +88,19 @@ class IndexRegenerator {
             features: features.sort((a, b) => a.name.localeCompare(b.name)),
             stats,
         };
-        // 保存索引文件
+        // Persist the index file.
         await this.saveIndex(projectDir, index);
         return index;
     }
     /**
-     * 保存索引文件
+     * Persist the index file.
      */
     async saveIndex(projectDir, index) {
         const indexPath = path.join(projectDir, constants_1.FILE_NAMES.INDEX);
         await services_1.services.fileService.writeJSON(indexPath, index);
     }
     /**
-     * 读取现有索引
+     * Read the existing index.
      */
     async readIndex(projectDir) {
         try {
@@ -112,14 +112,14 @@ class IndexRegenerator {
         }
     }
     /**
-     * 获取索引统计
+     * Get index statistics.
      */
     async getIndexStats(projectDir) {
         const index = await this.readIndex(projectDir);
         return index?.stats || { total: 0, draft: 0, active: 0, completed: 0 };
     }
     /**
-     * 验证索引完整性
+     * Validate index integrity.
      */
     async validateIndex(projectDir) {
         const index = await this.readIndex(projectDir);
@@ -128,7 +128,7 @@ class IndexRegenerator {
             errors.push('Index file not found');
             return { valid: false, errors };
         }
-        // 验证所有条目
+        // Validate all entries.
         for (const entry of index.features) {
             const statePath = path.join(entry.path, constants_1.FILE_NAMES.STATE);
             const exists = await services_1.services.fileService.exists(statePath);

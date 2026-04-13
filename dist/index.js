@@ -1,6 +1,6 @@
 "use strict";
 /**
- * OSpec CLI 主导出 (更新版本)
+ * OSpec CLI main entrypoints.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;

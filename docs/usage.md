@@ -18,8 +18,41 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
+ospec plugins list
+ospec plugins install <plugin>
+ospec plugins installed
+ospec plugins update <plugin>
+ospec plugins update --all
 ospec plugins status [path]
 ospec plugins enable stitch [path]
+ospec plugins enable checkpoint [path] --base-url <url>
+```
+
+## Plugin Quick Start
+
+AI / `$ospec`:
+
+- asking to "open Stitch" should first check whether Stitch is already installed globally, install it only when missing, then enable it in the current project
+- asking to "open Checkpoint" should first check whether Checkpoint is already installed globally, install it only when missing, then enable it in the current project
+- detailed plugin setup docs are synced into `.ospec/plugins/<plugin>/docs/` after enable
+- before installing, check `ospec plugins info <plugin>` or `ospec plugins installed`
+- if the plugin is already installed globally, skip install and just enable it in the current project
+- do not run `ospec plugins update --all` unless the user explicitly asks to update every installed plugin on the machine
+
+Command line:
+
+```bash
+ospec plugins list
+ospec plugins info stitch
+ospec plugins install stitch
+ospec plugins enable stitch [path]
+```
+
+```bash
+ospec plugins list
+ospec plugins info checkpoint
+ospec plugins install checkpoint
+ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 ## Recommended Flow
@@ -33,98 +66,16 @@ ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-Recommended user-facing sequence:
-
-- initialize the repository
-- execute one requirement in a change
-- deploy and validate with your project-specific flow, then run `ospec verify`
-- archive the validated change with `ospec finalize`
-
-`ospec init` now aims to leave the repository in a `change-ready` state:
-
-- create the protocol shell
-- generate baseline project knowledge docs
-- reuse existing project docs when available
-- ask one concise follow-up for project summary or tech stack in AI-assisted flows when context is missing
-- fall back to placeholder docs when context is still missing
-- do not create the first change automatically
-- do not apply business scaffold automatically
-
-If you want to pass project context during init, you can do it directly:
-
-```bash
-ospec init [path] --summary "Internal admin portal" --tech-stack node,react,postgres
-ospec init [path] --architecture "Single web app with API and shared auth" --document-language en-US
-ospec init [path] --architecture "Support workspace" --document-language ja-JP
-ospec init [path] --architecture "Customer operations portal" --document-language ar
-```
-
-Language resolution priority during init:
-
-- in AI-assisted flows: explicit language request in the conversation -> current conversation language -> persisted project language in `.skillrc`
-- in CLI flows: explicit `--document-language` -> persisted project language in `.skillrc` -> inferred from existing project docs / `for-ai/*` / asset manifest
-- fallback `en-US`
-
-Project language persistence:
-
-- OSpec stores the selected project document language in `.skillrc`
-- later `for-ai` guidance refreshes, `ospec new`, and `ospec update` reuse that persisted project language by default
-- change the project language explicitly if you want future generated docs to switch languages
-
-Direct CLI init stays non-interactive. If the repository has no usable project description and you do not pass flags, OSpec should still generate placeholder docs and leave the repository ready for `ospec new`.
-
-If you want an explicit project snapshot for troubleshooting, `ospec status [path]` is still available, but it is no longer the default first step in the recommended flow.
-
-## Project Knowledge Maintenance
-
-Use `docs generate` when the repository is already initialized and you want to refresh, repair, or backfill project knowledge docs:
-
-```bash
-ospec docs generate [path]
-```
-
-Use cases:
-
-- an older repository was initialized before the new `change-ready` init flow
-- project docs were deleted or drifted out of date
-- you added new modules or APIs and want the knowledge layer refreshed
-
-`docs generate`:
-
-- refreshes project knowledge docs
-- keeps scaffold explicit
-- does not create the first change automatically
-- does not create `docs/project/bootstrap-summary.md`
-
-## Queue Flow
-
-If you explicitly want to manage multiple changes as a queue:
-
-```bash
-ospec queue add <change-name> [path]
-ospec queue status [path]
-ospec run start [path] --profile manual-safe
-ospec run step [path]
-```
-
-Queue mode stays explicit:
-
-- the default workflow is still one active change
-- if one active change already exists, use `ospec progress` to continue it and use `ospec queue add` for additional work instead of creating another active change
-- queue mode starts only when you explicitly use `queue` or `run`
-- `manual-safe` keeps execution manual and only tracks or advances the queue explicitly
-- `archive-chain` only finalizes and advances on an explicit `run step`
+New projects initialized by `ospec init [path]` use the nested layout by default: keep `.skillrc` and `README.md` at the repository root, and place other OSpec-managed files under `.ospec/`.
+CLI commands still accept shorthand such as `changes/active/<change>`, but the physical path in nested projects is `.ospec/changes/active/<change>`.
+If you want to convert an older classic project to the new layout, run `ospec layout migrate --to nested`.
 
 ## Upgrading An Existing Project
 
-For a project that is already initialized:
-
 ```bash
-npm install -g @clawplays/ospec-cli@0.4.0
+npm install -g @clawplays/ospec-cli@0.3.10
 ospec update [path]
 ```
-
-This upgrades the official OSpec CLI package `@clawplays/ospec-cli` and keeps the `ospec` command in sync.
 
 If you installed from this repository locally:
 
@@ -133,43 +84,31 @@ npm install -g .
 ospec update [path]
 ```
 
-`ospec update [path]` will:
+`ospec update [path]` refreshes protocol docs, tooling, managed skills, archive layout metadata, and assets for already-enabled plugins.
+It can also repair older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, and it normalizes legacy root `build-index-auto.*` tooling plus legacy Stitch plugin keys in `.skillrc`.
+If an already-enabled plugin is missing globally, `ospec update [path]` attempts to restore that package before syncing project assets.
+When an already-enabled plugin has a newer compatible npm package version available, `ospec update [path]` upgrades that global plugin package automatically and prints the version transition.
+It does not upgrade plugins that are installed globally but not enabled in the current project.
+It does not upgrade the CLI itself.
+It does not migrate a classic project layout to nested automatically.
+Use `ospec layout migrate --to nested` when you want the new nested layout.
+It does not install brand-new plugins automatically, and it does not enable plugins or migrate active / queued changes automatically.
 
-- refresh protocol docs
-- refresh project tooling and Git hooks
-- migrate legacy root-level `build-index-auto.cjs` / `build-index-auto.js` into `.ospec/tools/build-index-auto.cjs`
-- sync managed `ospec` and `ospec-change` skills
-- refresh managed workspace assets for already-enabled plugins
-- backfill `.skillrc.documentLanguage` for older projects when the language can be recovered from existing project assets
+## Updating All Installed Plugins
 
-`ospec update [path]` will not:
-
-- enable or disable plugins automatically
-- migrate existing active changes into a new plugin workflow automatically
-- complete Stitch approval or create plugin review artifacts for you
-
-If an older project is still missing project knowledge docs, rerun:
+Use this only when you explicitly want a machine-wide plugin update, not a project-scoped refresh:
 
 ```bash
-ospec init [path]
+ospec plugins update --all
 ```
 
-or, if you only want docs maintenance:
+Useful variants:
 
 ```bash
-ospec docs generate [path]
+ospec plugins update stitch
+ospec plugins update --all --check
 ```
 
-## Progress And Closeout
-
-During execution, the main commands are:
-
-```bash
-ospec changes status [path]
-ospec progress [changes/active/<change>]
-ospec verify [changes/active/<change>]
-ospec archive [changes/active/<change>]
-ospec finalize [changes/active/<change>]
-```
-
-`ospec finalize` is the standard closeout path. It verifies the change, refreshes the index, archives the change, and leaves Git commit as a separate manual step.
+`ospec plugins update --all` checks every globally installed plugin recorded by OSpec and upgrades each one when a newer compatible version is available.
+If a recorded installed plugin package was manually deleted, this command also attempts to restore it before upgrading.
+AI / `$ospec` flows should only run `ospec plugins update --all` when the user explicitly asks to update all installed plugins.

@@ -398,7 +398,7 @@ async function main() {
     ]);
     assertContains(
       output,
-      `ospec progress "${path.join(projectDir, 'changes', 'active', 'release-smoke')}"`,
+      `ospec progress "${path.join(projectDir, '.ospec', 'changes', 'active', 'release-smoke')}"`,
       'quoted progress suggestion',
     );
     assertContains(
@@ -409,6 +409,7 @@ async function main() {
 
     const featureDir = path.join(
       projectDir,
+      '.ospec',
       'changes',
       'active',
       'release-smoke',
@@ -426,12 +427,13 @@ async function main() {
 
     const projectOverviewPath = path.join(
       projectDir,
+      '.ospec',
       'docs',
       'project',
       'overview.md',
     );
 
-    const activeOverviewLink = `[docs/project/overview.md](${toPosixRelative(featureDir, projectOverviewPath)})`;
+    const activeOverviewLink = `[.ospec/docs/project/overview.md](${toPosixRelative(featureDir, projectOverviewPath)})`;
 
     assertContains(
       await fs.readFile(proposalPath, 'utf8'),
@@ -508,7 +510,7 @@ async function main() {
     assertContains(output, 'Change finalized:', 'finalize output');
 
     const archivedFeatureDir = await findArchivedChangeDir(
-      path.join(projectDir, 'changes', 'archived'),
+      path.join(projectDir, '.ospec', 'changes', 'archived'),
       'release-smoke',
     );
 
@@ -516,7 +518,7 @@ async function main() {
       throw new Error('Expected release-smoke to be archived');
     }
 
-    const archivedOverviewLink = `[docs/project/overview.md](${toPosixRelative(archivedFeatureDir, projectOverviewPath)})`;
+    const archivedOverviewLink = `[.ospec/docs/project/overview.md](${toPosixRelative(archivedFeatureDir, projectOverviewPath)})`;
 
     assertContains(
       await fs.readFile(path.join(archivedFeatureDir, 'proposal.md'), 'utf8'),
@@ -555,12 +557,13 @@ async function main() {
 
     const activatedQueuedDir = path.join(
       projectDir,
+      '.ospec',
       'changes',
       'active',
       'queued-smoke',
     );
 
-    const queuedOverviewLink = `[docs/project/overview.md](${toPosixRelative(activatedQueuedDir, projectOverviewPath)})`;
+    const queuedOverviewLink = `[.ospec/docs/project/overview.md](${toPosixRelative(activatedQueuedDir, projectOverviewPath)})`;
 
     assertContains(
       await fs.readFile(path.join(activatedQueuedDir, 'tasks.md'), 'utf8'),

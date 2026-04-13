@@ -198,6 +198,9 @@ ospec run status [path]
 ospec run step [path]
 ospec run resume [path]
 ospec run stop [path]
+ospec plugins available
+ospec plugins info <plugin>
+ospec plugins install <plugin>
 ospec plugins status [path]
 ospec plugins approve stitch [changes/active/<change>]
 ospec plugins reject stitch [changes/active/<change>]

@@ -23,7 +23,7 @@ exports.DEFAULT_STITCH_PLUGIN_CONFIG = {
     runner: {
         mode: 'command',
         command: 'node',
-        args: ['${ospec_package_path}/dist/adapters/gemini-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}'],
+        args: ['${plugin_package_path}/dist/gemini-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}'],
         cwd: '${project_path}',
         timeout_ms: 900000,
         token_env: '',
@@ -72,7 +72,7 @@ exports.DEFAULT_CHECKPOINT_PLUGIN_CONFIG = {
     runner: {
         mode: 'command',
         command: 'node',
-        args: ['${ospec_package_path}/dist/adapters/playwright-checkpoint-adapter.js', '--change', '${change_path}', '--project', '${project_path}'],
+        args: ['${plugin_package_path}/dist/playwright-checkpoint-adapter.js', '--change', '${change_path}', '--project', '${project_path}'],
         cwd: '${project_path}',
         timeout_ms: 900000,
         token_env: '',
@@ -123,22 +123,15 @@ class PluginWorkflowComposer {
         return activated;
     }
     getEnabledPlugins() {
-        const plugins = [];
-        const stitchConfig = this.config.plugins?.stitch;
-        if (stitchConfig?.enabled) {
-            plugins.push({
-                name: 'stitch',
-                blocking: stitchConfig.blocking !== false,
-            });
-        }
-        const checkpointConfig = this.config.plugins?.checkpoint;
-        if (checkpointConfig?.enabled) {
-            plugins.push({
-                name: 'checkpoint',
-                blocking: checkpointConfig.blocking !== false,
-            });
-        }
-        return plugins;
+        const plugins = this.config.plugins && typeof this.config.plugins === 'object'
+            ? this.config.plugins
+            : {};
+        return Object.entries(plugins)
+            .filter(([, pluginConfig]) => pluginConfig?.enabled === true)
+            .map(([name, pluginConfig]) => ({
+            name,
+            blocking: pluginConfig?.blocking !== false,
+        }));
     }
     getStitchCapabilities() {
         return this.getPluginCapabilities().filter(item => item.plugin === 'stitch');
@@ -148,39 +141,34 @@ class PluginWorkflowComposer {
     }
     getPluginCapabilities() {
         const capabilities = [];
-        const stitchConfig = this.config.plugins?.stitch;
-        if (stitchConfig?.enabled) {
-            const pageDesignReview = stitchConfig.capabilities?.page_design_review;
-            if (pageDesignReview?.enabled) {
-                capabilities.push({
-                    plugin: 'stitch',
-                    capability: 'page_design_review',
-                    step: pageDesignReview.step,
-                    activateWhenFlags: [...pageDesignReview.activate_when_flags],
-                    blocking: stitchConfig.blocking !== false,
-                });
+        const plugins = this.config.plugins && typeof this.config.plugins === 'object'
+            ? this.config.plugins
+            : {};
+        for (const [pluginName, pluginConfig] of Object.entries(plugins)) {
+            if (!pluginConfig?.enabled) {
+                continue;
             }
-        }
-        const checkpointConfig = this.config.plugins?.checkpoint;
-        if (checkpointConfig?.enabled) {
-            const uiReview = checkpointConfig.capabilities?.ui_review;
-            if (uiReview?.enabled) {
+            const pluginCapabilities = pluginConfig.capabilities && typeof pluginConfig.capabilities === 'object'
+                ? pluginConfig.capabilities
+                : {};
+            for (const [capabilityName, capabilityConfig] of Object.entries(pluginCapabilities)) {
+                if (!capabilityConfig?.enabled) {
+                    continue;
+                }
+                const step = typeof capabilityConfig.step === 'string' && capabilityConfig.step.trim().length > 0
+                    ? capabilityConfig.step.trim()
+                    : '';
+                if (!step) {
+                    continue;
+                }
                 capabilities.push({
-                    plugin: 'checkpoint',
-                    capability: 'ui_review',
-                    step: uiReview.step,
-                    activateWhenFlags: [...uiReview.activate_when_flags],
-                    blocking: checkpointConfig.blocking !== false,
-                });
-            }
-            const flowCheck = checkpointConfig.capabilities?.flow_check;
-            if (flowCheck?.enabled) {
-                capabilities.push({
-                    plugin: 'checkpoint',
-                    capability: 'flow_check',
-                    step: flowCheck.step,
-                    activateWhenFlags: [...flowCheck.activate_when_flags],
-                    blocking: checkpointConfig.blocking !== false,
+                    plugin: pluginName,
+                    capability: capabilityName,
+                    step,
+                    activateWhenFlags: Array.isArray(capabilityConfig.activate_when_flags)
+                        ? capabilityConfig.activate_when_flags.map((flag) => String(flag).trim()).filter(Boolean)
+                        : [],
+                    blocking: capabilityConfig?.blocking !== false && pluginConfig?.blocking !== false,
                 });
             }
         }

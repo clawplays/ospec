@@ -1,6 +1,6 @@
 /**
- * 状态持久化系统
- * 处理状态的保存、加载和版本控制
+ * State persistence system.
+ * Handles state persistence, loading, and version control.
  */
 import { FeatureState } from '../core/types';
 export interface StateSnapshot {
@@ -21,35 +21,35 @@ export declare class StatePersistence {
     private stateCache;
     private snapshots;
     /**
-     * 保存状态快照
+     * Save a state snapshot.
      */
     saveSnapshot(featurePath: string, state: FeatureState): Promise<StateSnapshot>;
     /**
-     * 加载状态
+     * Load state.
      */
     loadState(featurePath: string): Promise<FeatureState | null>;
     /**
-     * 比较两个状态
+     * Compare two states.
      */
     compareStates(oldState: FeatureState, newState: FeatureState): StateDiff;
     /**
-     * 生成状态哈希
+     * Generate a state hash.
      */
     private generateHash;
     /**
-     * 获取状态历史
+     * Get state history.
      */
     getStateHistory(): StateSnapshot[];
     /**
-     * 恢复到之前的快照
+     * Restore a previous snapshot.
      */
     restoreSnapshot(index: number): Promise<FeatureState | null>;
     /**
-     * 清空缓存
+     * Clear the cache.
      */
     clearCache(): void;
     /**
-     * 获取缓存统计
+     * Get cache statistics.
      */
     getCacheStats(): {
         cachedItems: number;

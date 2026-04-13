@@ -36,12 +36,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PathUtils = void 0;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
+const ProjectLayout_1 = require("./ProjectLayout");
 class PathUtils {
-    static getChangeDir(rootDir, bucket, featureName) {
-        return path.join(rootDir, constants_1.DIR_NAMES.CHANGES, bucket, featureName);
+    static getChangeDir(rootDir, bucket, featureName, layout) {
+        return (0, ProjectLayout_1.getChangeDir)(rootDir, bucket, featureName, layout);
     }
-    static getFeatureDir(rootDir, featureName) {
-        return this.getChangeDir(rootDir, constants_1.DIR_NAMES.ACTIVE, featureName);
+    static getFeatureDir(rootDir, featureName, layout) {
+        return this.getChangeDir(rootDir, constants_1.DIR_NAMES.ACTIVE, featureName, layout);
     }
     static getFeatureFile(featureDir, type) {
         const fileNames = {
@@ -60,6 +61,15 @@ class PathUtils {
     }
     static getRelative(from, to) {
         return path.relative(from, to).replace(/\\/g, '/');
+    }
+    static getProjectLayout(config) {
+        return (0, ProjectLayout_1.getProjectLayout)(config);
+    }
+    static toManagedRelativePath(relativePath, layout) {
+        return (0, ProjectLayout_1.toManagedRelativePath)(relativePath, layout);
+    }
+    static resolveManagedInputPath(rootDir, candidatePath, layout) {
+        return (0, ProjectLayout_1.resolveManagedInputPath)(rootDir, candidatePath, layout);
     }
 }
 exports.PathUtils = PathUtils;

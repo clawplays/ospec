@@ -38,10 +38,13 @@ const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const BaseCommand_1 = require("./BaseCommand");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class ProgressCommand extends BaseCommand_1.BaseCommand {
     async execute(featurePath) {
         try {
-            const targetPath = featurePath || process.cwd();
+            const targetPath = featurePath && !path.isAbsolute(featurePath)
+                ? (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), featurePath, await services_1.services.configManager.loadConfig(process.cwd()).catch(() => null))
+                : featurePath || process.cwd();
             this.logger.info(`Checking progress for change at ${targetPath}`);
             const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
             if (!(await services_1.services.fileService.exists(statePath))) {

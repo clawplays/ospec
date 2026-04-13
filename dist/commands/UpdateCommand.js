@@ -8,9 +8,16 @@ const BaseCommand_1 = require("./BaseCommand");
 const PluginsCommand_1 = require("./PluginsCommand");
 const SkillCommand_1 = require("./SkillCommand");
 class UpdateCommand extends BaseCommand_1.BaseCommand {
+    getPluginRegistryService() {
+        return services_1.services.pluginRegistryService;
+    }
     async execute(rootDir) {
         const targetPath = rootDir ? (0, path_1.resolve)(rootDir) : process.cwd();
-        const structure = await services_1.services.projectService.detectProjectStructure(targetPath);
+        const detectedStructure = await services_1.services.projectService.detectProjectStructure(targetPath);
+        const legacyRepair = await this.repairLegacyProjectForUpdate(targetPath, detectedStructure);
+        const structure = legacyRepair.performed
+            ? await services_1.services.projectService.detectProjectStructure(targetPath)
+            : detectedStructure;
         if (!structure.initialized) {
             throw new Error('Project is not initialized. Run "ospec init" first.');
         }
@@ -33,6 +40,15 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         this.info(`  created: ${createdFiles.length}`);
         this.info(`  refreshed: ${refreshedFiles.length}`);
         this.info(`  skipped: ${skippedFiles.length}`);
+        if (legacyRepair.performed) {
+            this.info(`  legacy project repaired: ${legacyRepair.markers.join(', ')}`);
+            if (legacyRepair.createdPaths.length > 0) {
+                this.info(`  legacy paths created: ${legacyRepair.createdPaths.join(', ')}`);
+            }
+            if (legacyRepair.refreshedPaths.length > 0) {
+                this.info(`  legacy paths normalized: ${legacyRepair.refreshedPaths.join(', ')}`);
+            }
+        }
         if (toolingResult.hookInstalledFiles.length > 0) {
             this.info(`  git hooks refreshed: ${toolingResult.hookInstalledFiles.join(', ')}`);
         }
@@ -52,6 +68,18 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         if (pluginResult.enabledPlugins.length > 0) {
             this.info(`  plugin assets refreshed: ${pluginResult.enabledPlugins.join(', ')}`);
         }
+        const restoredPluginPackages = pluginResult.packageUpdates.filter(result => result.status === 'restored');
+        for (const packageUpdate of restoredPluginPackages) {
+            this.info(`  plugin package restored: ${packageUpdate.pluginName} ${packageUpdate.previousVersion} -> ${packageUpdate.nextVersion} (${packageUpdate.packageName})`);
+        }
+        const upgradedPluginPackages = pluginResult.packageUpdates.filter(result => result.status === 'upgraded');
+        for (const packageUpdate of upgradedPluginPackages) {
+            this.info(`  plugin package upgraded: ${packageUpdate.pluginName} ${packageUpdate.previousVersion} -> ${packageUpdate.nextVersion} (${packageUpdate.packageName})`);
+        }
+        const skippedPluginPackages = pluginResult.packageUpdates.filter(result => result.status === 'missing' || result.status === 'skipped');
+        for (const packageUpdate of skippedPluginPackages) {
+            this.info(`  plugin package check skipped: ${packageUpdate.pluginName} (${packageUpdate.reason})`);
+        }
         if (pluginResult.configSaved) {
             this.info('  plugin config normalized: .skillrc');
         }
@@ -62,7 +90,75 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             this.info(`  archived changes migrated: ${archiveResult.migratedChanges.length}`);
         }
         this.info('  note: update refreshes protocol docs, tooling, hooks, managed skills, managed assets for already-enabled plugins, and the archive layout when needed');
+        this.info('  note: it can repair legacy OSpec projects with an existing OSpec footprint before refreshing assets');
+        this.info('  note: it auto-upgrades already-enabled plugin npm packages only when a newer compatible version is available');
+        this.info('  note: it does not upgrade the CLI itself');
         this.info('  note: it does not enable, disable, or migrate active or queued changes automatically');
+    }
+    async repairLegacyProjectForUpdate(rootDir, structure) {
+        if (structure.initialized) {
+            return {
+                performed: false,
+                markers: [],
+                createdPaths: [],
+                refreshedPaths: [],
+            };
+        }
+        const markers = await this.detectLegacyProjectMarkers(rootDir);
+        const strongMarkers = markers.filter(marker => marker === '.skillrc' || marker === '.ospec' || marker === 'changes' || marker === 'for-ai' || marker === 'SKILL.index.json');
+        const repairable = markers.includes('.skillrc')
+            ? strongMarkers.length >= 1
+            : strongMarkers.length >= 2;
+        if (!repairable) {
+            return {
+                performed: false,
+                markers,
+                createdPaths: [],
+                refreshedPaths: [],
+            };
+        }
+        const createdPaths = [];
+        const refreshedPaths = [];
+        let config = null;
+        if (markers.includes('.skillrc')) {
+            const normalizedConfig = await services_1.services.configManager.loadConfig(rootDir);
+            await services_1.services.configManager.saveConfig(rootDir, normalizedConfig);
+            config = normalizedConfig;
+            refreshedPaths.push('.skillrc');
+        }
+        else {
+            const defaultConfig = await services_1.services.configManager.createDefaultConfig('full');
+            await services_1.services.configManager.saveConfig(rootDir, defaultConfig);
+            config = defaultConfig;
+            createdPaths.push('.skillrc');
+        }
+        const projectLayout = config?.projectLayout === 'nested' ? 'nested' : 'classic';
+        const layoutPaths = projectLayout === 'nested'
+            ? ['.ospec', '.ospec/changes/active', '.ospec/changes/archived']
+            : ['.ospec', 'changes/active', 'changes/archived'];
+        for (const relativePath of layoutPaths) {
+            const targetPath = (0, path_1.join)(rootDir, ...relativePath.split('/'));
+            if (await services_1.services.fileService.exists(targetPath)) {
+                continue;
+            }
+            await services_1.services.fileService.ensureDir(targetPath);
+            createdPaths.push(relativePath);
+        }
+        return {
+            performed: true,
+            markers,
+            createdPaths,
+            refreshedPaths,
+        };
+    }
+    async detectLegacyProjectMarkers(rootDir) {
+        const markers = [];
+        for (const relativePath of ['.skillrc', '.ospec', 'changes', 'for-ai', 'SKILL.index.json', 'SKILL.md']) {
+            if (await services_1.services.fileService.exists((0, path_1.join)(rootDir, ...relativePath.split('/')))) {
+                markers.push(relativePath);
+            }
+        }
+        return markers;
     }
     async syncProjectTooling(rootDir, documentLanguage) {
         const migrationResult = await this.migrateLegacyBuildIndexScript(rootDir);
@@ -118,40 +214,78 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         const refreshedFiles = [];
         const skippedFiles = [];
         const enabledPlugins = [];
+        const packageUpdates = [];
         let configChanged = false;
         const hasLegacyPluginKeys = Boolean(rawConfig?.plugins?.['stitch-gemini'] || rawConfig?.plugins?.['stitch-codex']);
         if (nextConfig.plugins?.stitch?.enabled) {
             enabledPlugins.push('stitch');
+            const stitchRestore = await this.ensureEnabledPluginPackageAvailable('stitch', nextConfig.plugins.stitch);
+            if (stitchRestore.status !== 'current') {
+                packageUpdates.push(stitchRestore);
+            }
+            packageUpdates.push(await this.maybeUpgradeEnabledPluginPackage('stitch'));
             configChanged = this.normalizeEnabledStitchPlugin(nextConfig.plugins.stitch, pluginsCommand) || configChanged;
-            const stitchAssets = await this.ensureManagedPluginAssets(rootDir, [
-                '.ospec/plugins/stitch/project.json',
-                '.ospec/plugins/stitch/README.md',
-                '.ospec/plugins/stitch/exports/.gitkeep',
-                '.ospec/plugins/stitch/baselines/.gitkeep',
-                '.ospec/plugins/stitch/cache/.gitkeep',
-            ], async () => {
-                await pluginsCommand.ensureStitchWorkspaceScaffold(rootDir, nextConfig.plugins.stitch);
-            });
-            createdFiles.push(...stitchAssets.createdFiles);
-            skippedFiles.push(...stitchAssets.skippedFiles);
+            const installedStitch = await this.getPluginRegistryService().getInstalledPluginManifest('stitch');
+            const stitchWorkspaceRoot = typeof nextConfig.plugins.stitch?.workspace_root === 'string' && nextConfig.plugins.stitch.workspace_root.trim().length > 0
+                ? nextConfig.plugins.stitch.workspace_root.trim()
+                : '.ospec/plugins/stitch';
+            if (installedStitch) {
+                const stitchDefaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedStitch.record.package_name, installedStitch.record.version, installedStitch.manifest);
+                configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins.stitch, installedStitch, stitchDefaultConfig) || configChanged;
+                const stitchAssets = await this.getPluginRegistryService().syncProjectPluginAssets('stitch', rootDir, stitchWorkspaceRoot);
+                createdFiles.push(...stitchAssets);
+            }
+            else {
+                skippedFiles.push('.ospec/plugins/stitch');
+            }
         }
         if (nextConfig.plugins?.checkpoint?.enabled) {
             enabledPlugins.push('checkpoint');
+            const checkpointRestore = await this.ensureEnabledPluginPackageAvailable('checkpoint', nextConfig.plugins.checkpoint);
+            if (checkpointRestore.status !== 'current') {
+                packageUpdates.push(checkpointRestore);
+            }
+            packageUpdates.push(await this.maybeUpgradeEnabledPluginPackage('checkpoint'));
             configChanged = this.normalizeEnabledCheckpointPlugin(nextConfig.plugins.checkpoint, pluginsCommand) || configChanged;
-            const checkpointAssets = await this.ensureManagedPluginAssets(rootDir, [
-                '.ospec/plugins/checkpoint/routes.yaml',
-                '.ospec/plugins/checkpoint/flows.yaml',
-                '.ospec/plugins/checkpoint/README.md',
-                '.ospec/plugins/checkpoint/baselines/.gitkeep',
-                '.ospec/plugins/checkpoint/auth/.gitkeep',
-                '.ospec/plugins/checkpoint/auth/README.md',
-                '.ospec/plugins/checkpoint/auth/login.example.js',
-                '.ospec/plugins/checkpoint/cache/.gitkeep',
-            ], async () => {
-                await pluginsCommand.ensureCheckpointWorkspaceScaffold(rootDir, nextConfig.plugins.checkpoint);
-            });
-            createdFiles.push(...checkpointAssets.createdFiles);
-            skippedFiles.push(...checkpointAssets.skippedFiles);
+            const installedCheckpoint = await this.getPluginRegistryService().getInstalledPluginManifest('checkpoint');
+            const checkpointWorkspaceRoot = typeof nextConfig.plugins.checkpoint?.workspace_root === 'string' && nextConfig.plugins.checkpoint.workspace_root.trim().length > 0
+                ? nextConfig.plugins.checkpoint.workspace_root.trim()
+                : '.ospec/plugins/checkpoint';
+            if (installedCheckpoint) {
+                const checkpointDefaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedCheckpoint.record.package_name, installedCheckpoint.record.version, installedCheckpoint.manifest);
+                configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins.checkpoint, installedCheckpoint, checkpointDefaultConfig) || configChanged;
+                const checkpointAssets = await this.getPluginRegistryService().syncProjectPluginAssets('checkpoint', rootDir, checkpointWorkspaceRoot);
+                createdFiles.push(...checkpointAssets);
+            }
+            else {
+                skippedFiles.push('.ospec/plugins/checkpoint');
+            }
+        }
+        for (const [pluginName, pluginConfig] of Object.entries(nextConfig.plugins || {})) {
+            if (pluginName === 'stitch' || pluginName === 'checkpoint' || !pluginConfig?.enabled) {
+                continue;
+            }
+            enabledPlugins.push(pluginName);
+            const pluginRestore = await this.ensureEnabledPluginPackageAvailable(pluginName, pluginConfig);
+            if (pluginRestore.status !== 'current') {
+                packageUpdates.push(pluginRestore);
+            }
+            packageUpdates.push(await this.maybeUpgradeEnabledPluginPackage(pluginName));
+            const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
+            if (!installedPlugin) {
+                skippedFiles.push(`.ospec/plugins/${pluginName}`);
+                continue;
+            }
+            const before = JSON.stringify(pluginConfig);
+            const defaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedPlugin.record.package_name, installedPlugin.record.version, installedPlugin.manifest);
+            nextConfig.plugins[pluginName] = pluginsCommand.mergeExternalPluginConfig(defaultConfig, pluginConfig, true);
+            configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins[pluginName], installedPlugin, defaultConfig) || configChanged;
+            configChanged = before !== JSON.stringify(nextConfig.plugins[pluginName]) || configChanged;
+            const workspaceRoot = typeof nextConfig.plugins[pluginName]?.workspace_root === 'string' && nextConfig.plugins[pluginName].workspace_root.trim().length > 0
+                ? nextConfig.plugins[pluginName].workspace_root.trim()
+                : `.ospec/plugins/${pluginName}`;
+            const externalCreatedFiles = await this.getPluginRegistryService().syncProjectPluginAssets(pluginName, rootDir, workspaceRoot);
+            createdFiles.push(...externalCreatedFiles);
         }
         if (enabledPlugins.length > 0 && (hasLegacyPluginKeys || configChanged)) {
             await services_1.services.configManager.saveConfig(rootDir, nextConfig);
@@ -163,7 +297,108 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             skippedFiles,
             enabledPlugins,
             configSaved: refreshedFiles.includes('.skillrc'),
+            packageUpdates,
         };
+    }
+    async ensureEnabledPluginPackageAvailable(pluginName, pluginConfig) {
+        const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
+        if (installedPlugin) {
+            return {
+                pluginName,
+                packageName: installedPlugin.record.package_name,
+                previousVersion: installedPlugin.record.version,
+                nextVersion: installedPlugin.record.version,
+                official: installedPlugin.record.official === true,
+                status: 'current',
+                reason: 'plugin package is already installed',
+            };
+        }
+        const recordedVersion = typeof pluginConfig?.version === 'string' && pluginConfig.version.trim().length > 0
+            ? pluginConfig.version.trim()
+            : 'missing';
+        const packageName = typeof pluginConfig?.package_name === 'string' ? pluginConfig.package_name.trim() : '';
+        const official = pluginName === 'stitch' || pluginName === 'checkpoint' || pluginConfig?.official === true;
+        try {
+            const restored = official
+                ? await this.getPluginRegistryService().installOfficialPlugin(pluginName, 'update-repair-missing')
+                : packageName
+                    ? await this.getPluginRegistryService().reinstallPluginPackage(pluginName, recordedVersion !== 'missing' ? `${packageName}@${recordedVersion}` : packageName, {
+                        reason: 'update-repair-missing',
+                        packageName,
+                        resolvedVersion: recordedVersion !== 'missing' ? recordedVersion : undefined,
+                    })
+                    : null;
+            if (!restored) {
+                throw new Error(`Enabled plugin ${pluginName} is missing globally and cannot be restored because no package_name is recorded in .skillrc.`);
+            }
+            return {
+                pluginName,
+                packageName: restored.package_name,
+                previousVersion: `${recordedVersion} (missing)`,
+                nextVersion: restored.version,
+                official: restored.official === true,
+                status: 'restored',
+                reason: '',
+            };
+        }
+        catch (error) {
+            throw new Error(`Enabled plugin ${pluginName} is missing globally and could not be restored automatically: ${error instanceof Error ? error.message : String(error || 'unknown error')}`);
+        }
+    }
+    async maybeUpgradeEnabledPluginPackage(pluginName) {
+        let inspection;
+        try {
+            inspection = await this.getPluginRegistryService().inspectInstalledPluginUpgrade(pluginName);
+        }
+        catch (error) {
+            return {
+                pluginName,
+                packageName: '',
+                previousVersion: '',
+                nextVersion: '',
+                official: false,
+                status: 'skipped',
+                reason: error instanceof Error ? error.message : String(error || 'unknown error'),
+            };
+        }
+        if (inspection.status !== 'upgrade') {
+            return {
+                pluginName,
+                packageName: inspection.packageName,
+                previousVersion: inspection.installedVersion,
+                nextVersion: inspection.targetVersion || inspection.installedVersion,
+                official: inspection.official,
+                status: inspection.status === 'current'
+                    ? 'current'
+                    : inspection.status === 'missing'
+                        ? 'missing'
+                        : 'skipped',
+                reason: inspection.reason,
+            };
+        }
+        const upgraded = await this.getPluginRegistryService().upgradeInstalledPlugin(pluginName, 'update');
+        return {
+            pluginName,
+            packageName: upgraded.packageName,
+            previousVersion: upgraded.previousVersion,
+            nextVersion: upgraded.current.version,
+            official: upgraded.official,
+            status: 'upgraded',
+            reason: '',
+        };
+    }
+    refreshExternalPluginInstalledMetadata(pluginConfig, installedPlugin, defaultConfig) {
+        const before = JSON.stringify(pluginConfig);
+        pluginConfig.package_name = installedPlugin.record.package_name;
+        pluginConfig.version = installedPlugin.record.version;
+        pluginConfig.display_name = installedPlugin.manifest.displayName;
+        pluginConfig.description = installedPlugin.manifest.description;
+        pluginConfig.official = installedPlugin.manifest.official === true;
+        pluginConfig.kinds = [...installedPlugin.manifest.kinds];
+        if (!pluginConfig.source && defaultConfig?.source) {
+            pluginConfig.source = defaultConfig.source;
+        }
+        return before !== JSON.stringify(pluginConfig);
     }
     normalizeEnabledStitchPlugin(stitchConfig, pluginsCommand) {
         const before = JSON.stringify(stitchConfig);

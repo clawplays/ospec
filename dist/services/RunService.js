@@ -8,6 +8,7 @@ exports.createRunService = createRunService;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 const RUN_PROFILES = {
     'manual-safe': {
         autoFinalize: false,
@@ -151,6 +152,7 @@ class RunService {
         return this.readLogTail(resolvedRootDir, run.logPath, lineCount);
     }
     async buildStatusReport(rootDir, run) {
+        const config = await this.getProjectConfig(rootDir);
         const [activeNames, queuedChanges, logTail] = await Promise.all([
             this.projectService.listActiveChangeNames(rootDir),
             this.queueService.getQueuedChanges(rootDir),
@@ -159,8 +161,8 @@ class RunService {
         const activeChange = activeNames.length === 1
             ? {
                 name: activeNames[0],
-                path: `changes/active/${activeNames[0]}`,
-                status: (await this.fileService.readJSON(path_1.default.join(rootDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ACTIVE, activeNames[0], constants_1.FILE_NAMES.STATE))).status,
+                path: (0, ProjectLayout_1.toManagedRelativePath)(`changes/active/${activeNames[0]}`, config),
+                status: (await this.fileService.readJSON((0, ProjectLayout_1.resolveManagedPath)(rootDir, `changes/active/${activeNames[0]}/${constants_1.FILE_NAMES.STATE}`, config))).status,
             }
             : null;
         return {
@@ -173,13 +175,14 @@ class RunService {
         };
     }
     async synchronizeRun(rootDir, run, options) {
+        const config = await this.getProjectConfig(rootDir);
         const events = [];
         const activeNames = await this.projectService.listActiveChangeNames(rootDir);
         if (activeNames.length > 1) {
             run.status = 'failed';
             run.failedChange = {
                 name: activeNames.join(', '),
-                path: 'changes/active',
+                path: (0, ProjectLayout_1.toManagedRelativePath)('changes/active', config),
                 status: 'draft',
                 recordedAt: new Date().toISOString(),
                 note: 'multiple-active-changes',
@@ -206,7 +209,7 @@ class RunService {
                 events.push(`Runner attached to active change ${activeName}.`);
             }
             run.currentChange = activeName;
-            run.currentChangePath = `changes/active/${activeName}`;
+            run.currentChangePath = (0, ProjectLayout_1.toManagedRelativePath)(`changes/active/${activeName}`, config);
             if (run.status !== 'failed') {
                 run.failedChange = null;
             }
@@ -346,7 +349,8 @@ class RunService {
         }
     }
     async findArchivedChangePath(rootDir, changeName) {
-        const archivedDir = path_1.default.join(rootDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ARCHIVED);
+        const config = await this.getProjectConfig(rootDir);
+        const archivedDir = (0, ProjectLayout_1.resolveManagedPath)(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         if (!(await this.fileService.exists(archivedDir))) {
             return null;
         }
@@ -360,7 +364,7 @@ class RunService {
             try {
                 const state = await this.fileService.readJSON(statePath);
                 if (state?.feature === changeName && state?.status === 'archived') {
-                    matches.push(this.toArchivedRelativePath(archivedDir, candidatePath));
+                    matches.push(this.toArchivedRelativePath(rootDir, archivedDir, candidatePath, config));
                 }
             }
             catch {
@@ -400,9 +404,9 @@ class RunService {
         }
         return candidates;
     }
-    toArchivedRelativePath(archivedDir, candidatePath) {
+    toArchivedRelativePath(rootDir, archivedDir, candidatePath, config) {
         const relativePath = path_1.default.relative(archivedDir, candidatePath).replace(/\\/g, '/');
-        return `changes/archived/${relativePath}`;
+        return (0, ProjectLayout_1.toManagedRelativePath)(`changes/archived/${relativePath}`, config);
     }
     async ensureRunDirectories(rootDir) {
         await Promise.all([
@@ -419,6 +423,18 @@ class RunService {
     }
     resolveRunFilePath(rootDir, targetPath) {
         return path_1.default.isAbsolute(targetPath) ? targetPath : path_1.default.join(rootDir, targetPath);
+    }
+    async getProjectConfig(rootDir) {
+        const configPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILLRC);
+        if (!(await this.fileService.exists(configPath))) {
+            return null;
+        }
+        try {
+            return await this.fileService.readJSON(configPath);
+        }
+        catch {
+            return null;
+        }
     }
     buildActiveInstruction(changePath, profileId) {
         if (profileId === 'archive-chain') {

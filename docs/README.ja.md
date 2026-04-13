@@ -91,7 +91,7 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 - `--tech-stack`: `node,react,postgres` のようなカンマ区切りの技術スタック
 - `--architecture`: 短いアーキテクチャ説明
 - `--document-language`: 生成ドキュメントの言語。`en-US`、`zh-CN`、`ja-JP`、`ar` から選択
-- 言語解決優先順位: 明示的な `--document-language` -> 既存のプロジェクト文書 / `for-ai/*` / asset manifest -> `en-US`
+- 言語解決優先順位: 明示的な `--document-language` -> 既存のプロジェクト文書 / `.ospec/for-ai/*`（または旧 `for-ai/*`） / asset manifest -> `en-US`
 - 値を渡した場合はその内容を使ってドキュメントを生成します
 - 値を渡さない場合は既存ドキュメントを優先利用し、無ければ補完用のプレースホルダを生成します
 
@@ -148,6 +148,9 @@ ospec verify changes/active/<change-name>
 ospec finalize changes/active/<change-name>
 ```
 
+新規プロジェクトでは `ospec init` の既定レイアウトは nested です。リポジトリ直下に残るのは `.skillrc` と `README.md` だけで、change や `SKILL`、`for-ai` などの管理ファイルは `.ospec/` 配下に置かれます。
+CLI は `changes/active/<change-name>` の短縮パスも受け付けますが、nested プロジェクトでの実体パスは `.ospec/changes/active/<change-name>` です。
+
 メモ:
 
 - 先にプロジェクト固有のデプロイ、テスト、QA を実行します
@@ -164,6 +167,8 @@ ospec finalize changes/active/<change-name>
 ospec update
 ```
 
+`ospec update` は classic レイアウトを nested レイアウトへ自動移行しません。古い classic プロジェクトを新しいレイアウトへ切り替えたい場合は、`ospec layout migrate --to nested` を明示的に実行してください。
+
 ## OSpec の動作イメージ
 
 ```text
@@ -178,9 +183,10 @@ ospec update
 │     ospec init                                                 │
 │     - .skillrc                                                 │
 │     - .ospec/                                                  │
-│     - changes/active + changes/archived                        │
-│     - root SKILL files and for-ai guidance                     │
-│     - docs/project/* baseline knowledge docs                   │
+│     - README.md                                                │
+│     - .ospec/changes/active + .ospec/changes/archived          │
+│     - .ospec/SKILL.md + .ospec/SKILL.index.json + .ospec/for-ai│
+│     - .ospec/docs/project/* baseline knowledge docs            │
 │     - reuse docs or fall back to placeholders                  │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -210,7 +216,7 @@ ospec update
 
 | 概念 | 説明 |
 |------|------|
-| **Protocol Shell** | `.skillrc`、`.ospec/`、`changes/`、ルートの `SKILL.md`、`SKILL.index.json`、`for-ai/` を含む最小の協調骨格 |
+| **Protocol Shell** | ルートの `.skillrc` と `README.md`、そして change 状態、`SKILL`、index、`for-ai`、project docs を含む `.ospec/` 配下の managed files から成る最小の協調骨格 |
 | **Project Knowledge Layer** | `docs/project/*`、レイヤード skill ファイル、index 状態など AI が継続的に参照するコンテキスト |
 | **Active Change** | 1 つの要件専用の実行コンテナ。通常 `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` を持つ |
 
@@ -295,10 +301,12 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 - [Installation](installation.ja.md)
 - [Skills Installation](skills-installation.ja.md)
 
-### プラグイン仕様
+### プラグインのインストール方法
 
-- [Stitch Plugin Spec](stitch-plugin-spec.ja.md)
-- [Checkpoint Plugin Spec](checkpoint-plugin-spec.ja.md)
+- `ospec plugins list`
+- `ospec plugins install <plugin>`
+- `ospec plugins enable <plugin> [path]`
+- 会話で「Stitch / Checkpoint を開いて」と頼まれた場合は、まずグローバルインストール済みか確認し、未インストールならインストールし、その後に有効化する
 
 ## リポジトリ構成
 

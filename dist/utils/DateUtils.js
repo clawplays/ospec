@@ -1,18 +1,18 @@
 "use strict";
 /**
- * 日期工具函数
+ * Date utilities.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DateUtils = void 0;
 class DateUtils {
     /**
-     * 获取 ISO 格式的当前时间
+     * Get the current time in ISO format.
      */
     static now() {
         return new Date().toISOString();
     }
     /**
-     * 格式化日期
+     * Format a date.
      */
     static format(date, format = 'YYYY-MM-DD HH:mm:ss') {
         const year = date.getFullYear();
@@ -30,7 +30,7 @@ class DateUtils {
             .replace('ss', seconds);
     }
     /**
-     * 解析 ISO 字符串
+     * Parse an ISO string.
      */
     static parseISO(dateString) {
         return new Date(dateString);

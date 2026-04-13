@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 缓存层系统
- * 优化性能和减少磁盘访问
+ * Caching layer.
+ * Optimizes performance and reduces disk access.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cachingLayer = exports.CachingLayer = void 0;
@@ -18,10 +18,10 @@ class CachingLayer {
         this.startCleanup();
     }
     /**
-     * 设置缓存值
+     * Set a cache value.
      */
     set(key, value, ttl) {
-        // 如果超过最大大小，移除最旧的条目
+        // Remove the oldest entry when the cache exceeds the maximum size.
         if (this.cache.size >= this.maxSize) {
             const oldestKey = Array.from(this.cache.entries()).sort((a, b) => a[1].timestamp - b[1].timestamp)[0]?.[0];
             if (oldestKey) {
@@ -38,7 +38,7 @@ class CachingLayer {
         this.cache.set(key, entry);
     }
     /**
-     * 获取缓存值
+     * Get a cache value.
      */
     get(key) {
         const entry = this.cache.get(key);
@@ -46,7 +46,7 @@ class CachingLayer {
             this.stats.misses++;
             return null;
         }
-        // 检查是否过期
+        // Check whether the entry has expired.
         if (entry.ttl && Date.now() - entry.timestamp > entry.ttl) {
             this.cache.delete(key);
             this.stats.misses++;
@@ -56,31 +56,31 @@ class CachingLayer {
         return entry.value;
     }
     /**
-     * 检查键是否存在
+     * Check whether a key exists.
      */
     has(key) {
         return this.get(key) !== null;
     }
     /**
-     * 删除缓存
+     * Delete a cache entry.
      */
     delete(key) {
         return this.cache.delete(key);
     }
     /**
-     * 清空缓存
+     * Clear the cache.
      */
     clear() {
         this.cache.clear();
     }
     /**
-     * 获取缓存大小
+     * Get cache size.
      */
     size() {
         return this.cache.size;
     }
     /**
-     * 获取统计信息
+     * Get cache statistics.
      */
     getStats() {
         const total = this.stats.hits + this.stats.misses;
@@ -95,7 +95,7 @@ class CachingLayer {
         };
     }
     /**
-     * 启动清理过期条目
+     * Start cleaning expired entries.
      */
     startCleanup() {
         this.cleanupInterval = setInterval(() => {
@@ -110,12 +110,12 @@ class CachingLayer {
             if (removed > 0) {
                 this.stats.evictions += removed;
             }
-        }, 60000); // 每分钟检查一次
+        }, 60000); // Check once per minute.
         // Do not keep unrelated CLI commands alive just because the cache module was imported.
         this.cleanupInterval.unref?.();
     }
     /**
-     * 停止清理
+     * Stop cleanup.
      */
     stopCleanup() {
         if (this.cleanupInterval) {
@@ -124,7 +124,7 @@ class CachingLayer {
         }
     }
     /**
-     * 销毁缓存
+     * Dispose the cache.
      */
     destroy() {
         this.stopCleanup();

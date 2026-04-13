@@ -5,6 +5,7 @@ const path = require("path");
 const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class StatusCommand extends BaseCommand_1.BaseCommand {
     async execute(projectPath) {
         try {
@@ -17,6 +18,9 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
                 services_1.services.projectService.getSkillsStatus(targetPath),
                 services_1.services.queueService.getQueuedChanges(targetPath),
             ]);
+            const projectConfig = structure.initialized
+                ? await services_1.services.configManager.loadConfig(targetPath).catch(() => null)
+                : null;
             let execution = {
                 totalActiveChanges: summary.activeChangeCount,
                 byStatus: {},
@@ -114,7 +118,7 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
             }
             console.log('\nRecommended Next Step');
             console.log('---------------------');
-            for (const step of this.getRecommendedNextSteps(targetPath, structure, docs, execution, queuedChanges, runReport)) {
+            for (const step of this.getRecommendedNextSteps(targetPath, structure, docs, execution, queuedChanges, runReport, projectConfig)) {
                 console.log(`  - ${step}`);
             }
             console.log('');
@@ -124,7 +128,7 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
             throw error;
         }
     }
-    getRecommendedNextSteps(projectPath, structure, docs, execution, queuedChanges, runReport) {
+    getRecommendedNextSteps(projectPath, structure, docs, execution, queuedChanges, runReport, projectConfig) {
         const formatCommand = (...args) => (0, helpers_1.formatCliCommand)('ospec', ...args);
         if (!structure.initialized) {
             return [
@@ -158,7 +162,7 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
             ];
         }
         const currentChange = execution.activeChanges[0];
-        const currentChangePath = path.join(projectPath, 'changes', 'active', currentChange.name);
+        const currentChangePath = (0, ProjectLayout_1.resolveManagedPath)(projectPath, `changes/active/${currentChange.name}`, projectConfig);
         const nextSteps = [
             `Continue the active change "${currentChange.name}" with "${formatCommand('progress', currentChangePath)}".`,
             `Run "${formatCommand('verify', currentChangePath)}" before trying to archive it.`,

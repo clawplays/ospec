@@ -31,7 +31,7 @@ Use this action when the user intent is initialization.
 
 - use \`ospec init [path]\` so the repository ends in change-ready state
 
-- verify \`.skillrc\`, \`.ospec/\`, \`changes/\`, \`SKILL.md\`, \`SKILL.index.json\`, \`.ospec/tools/build-index-auto.cjs\`, \`for-ai/\`, and \`docs/project/\` files on disk
+- verify root \`.skillrc\` and \`README.md\`, plus managed OSpec files under \`.ospec/\` including \`.ospec/SKILL.md\`, \`.ospec/SKILL.index.json\`, \`.ospec/changes/\`, \`.ospec/tools/build-index-auto.cjs\`, \`.ospec/for-ai/\`, and \`.ospec/docs/project/\` on disk for new projects
 
 - if project overview context is missing and AI can ask follow-up questions, ask for a brief summary or tech stack before initialization; if the user declines, fall back to placeholder docs
 
@@ -154,7 +154,7 @@ ospec index check [path]
         title: 'OSpec Change',
         description: 'Create or advance an active change inside an OSpec project while respecting workflow files and optional-step activation.',
         shortDescription: 'Create or advance a change',
-        defaultPrompt: 'Use $ospec-change to handle a requirement through the full OSpec change lifecycle. Inspect project state first, read the project-adopted for-ai guidance before writing, preserve the project document language already established in for-ai and existing change files, and work inside changes/active/<change>. Default to one active change and do not enter queue mode unless the user explicitly asks to split work into multiple changes, create a queue, or execute a queue. When queue behavior is explicitly requested, derive an ordered kebab-case list of change names, use ospec queue add to create queued changes, and use ospec run manual-safe only when the user explicitly asks to run the queue. Use verify, archive-check, or finalize for closeout. If Stitch or Checkpoint installation, provider switching, doctor remediation, MCP setup, auth setup, or plugin enablement is involved, read the repo-local localized plugin spec that matches the project document language first; only fall back to another localized spec when the matching file is missing. If the relevant Stitch spec is missing, use these built-in baselines: Gemini uses %USERPROFILE%/.gemini/settings.json with mcpServers.stitch.httpUrl and headers.X-Goog-Api-Key; Codex uses %USERPROFILE%/.codex/config.toml with [mcp_servers.stitch], type="http", url="https://stitch.googleapis.com/mcp", and X-Goog-Api-Key in headers or [mcp_servers.stitch.http_headers].',
+        defaultPrompt: 'Use $ospec-change to handle a requirement through the full OSpec change lifecycle. Inspect project state first, read the project-adopted guidance under `.ospec/for-ai/` (or legacy `for-ai/`) before writing, preserve the project document language already established in managed guidance and existing change files, and work inside the active change container. In new nested projects the physical change directory lives under `.ospec/changes/active/<change>`, while CLI shorthand like `changes/active/<change>` is still accepted. Default to one active change and do not enter queue mode unless the user explicitly asks to split work into multiple changes, create a queue, or execute a queue. When queue behavior is explicitly requested, derive an ordered kebab-case list of change names, use ospec queue add to create queued changes, and use ospec run manual-safe only when the user explicitly asks to run the queue. Use verify, archive-check, or finalize for closeout. For plugin discovery use ospec plugins list or ospec plugins info. Before any npm plugin install step, check ospec plugins info <plugin> or ospec plugins installed first. If the plugin is already installed globally, reuse it and only enable it in the current project. For npm plugin installation use ospec plugins install only when the plugin is not installed yet or the user explicitly asks to reinstall or upgrade it. If the user asks to open or use Stitch or Checkpoint, do not reinstall by default: check whether it is already installed globally first, install only when missing, then enable/doctor/run/approve/reject in the current project as needed. Treat `ospec update [path]` as project-scoped: it repairs the current project and only upgrades plugins that are enabled in that project. Do not run `ospec plugins update --all` unless the user explicitly asks to update every installed plugin on the machine. If Stitch, Checkpoint, or any external plugin installation, provider switching, doctor remediation, MCP setup, auth setup, or plugin enablement is involved, read the localized plugin docs under .ospec/plugins/<plugin>/docs/ first; if they are missing, install or enable the plugin to sync them before changing config.',
         markdown: `# OSpec Change
 
 
@@ -193,21 +193,21 @@ This skill is the single entry for the full change lifecycle inside an initializ
 
 1. \`.skillrc\`
 
-2. \`SKILL.index.json\`
+2. \`.ospec/SKILL.index.json\` for nested projects, or root \`SKILL.index.json\` for legacy classic projects
 
-3. \`for-ai/ai-guide.md\`
+3. \`.ospec/for-ai/ai-guide.md\` for nested projects, or legacy \`for-ai/ai-guide.md\`
 
-4. \`for-ai/execution-protocol.md\`
+4. \`.ospec/for-ai/execution-protocol.md\` for nested projects, or legacy \`for-ai/execution-protocol.md\`
 
-5. \`changes/active/<change>/proposal.md\`
+5. \`.ospec/changes/active/<change>/proposal.md\` for nested projects, or legacy \`changes/active/<change>/proposal.md\`
 
-6. \`changes/active/<change>/tasks.md\`
+6. \`.ospec/changes/active/<change>/tasks.md\` for nested projects, or legacy \`changes/active/<change>/tasks.md\`
 
-7. \`changes/active/<change>/state.json\`
+7. \`.ospec/changes/active/<change>/state.json\` for nested projects, or legacy \`changes/active/<change>/state.json\`
 
-8. \`changes/active/<change>/verification.md\`
+8. \`.ospec/changes/active/<change>/verification.md\` for nested projects, or legacy \`changes/active/<change>/verification.md\`
 
-9. \`changes/active/<change>/review.md\`
+9. \`.ospec/changes/active/<change>/review.md\` for nested projects, or legacy \`changes/active/<change>/review.md\`
 
 
 
@@ -215,7 +215,7 @@ This skill is the single entry for the full change lifecycle inside an initializ
 
 
 
-- Follow the project-adopted document language from \`for-ai/\` and existing change docs.
+- Follow the project-adopted document language from managed \`for-ai/\` guidance and existing change docs.
 
 - Keep Chinese projects in Chinese unless the repo explicitly adopts English.
 
@@ -233,11 +233,15 @@ This skill is the single entry for the full change lifecycle inside an initializ
 
 4. If the matching active change already exists, continue it instead of duplicating it.
 
-5. Treat \`changes/active/<change>/\` as the execution container.
+5. Treat the managed active change directory as the execution container. In nested projects that is \`.ospec/changes/active/<change>/\`, while CLI shorthand such as \`changes/active/<change>\` is still acceptable.
 
 6. Keep \`proposal.md\`, \`tasks.md\`, \`state.json\`, \`verification.md\`, and \`review.md\` aligned with actual execution and with the project's established document language.
 
 7. Use OSpec closeout commands instead of inventing a parallel process.
+
+8. Use \`ospec plugins list\` or \`ospec plugins info\` before assuming an npm plugin exists.
+
+9. Treat plugin installation and project enablement as separate actions unless the user explicitly asks for both.
 
 
 
@@ -260,6 +264,12 @@ ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>] --check
 
 ospec finalize [changes/active/<change>]
+
+ospec plugins list
+
+ospec plugins info <plugin>
+
+ospec plugins install <plugin>
 
 \`\`\`
 

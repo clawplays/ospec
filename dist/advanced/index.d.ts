@@ -1,5 +1,5 @@
 /**
- * 高级功能层导出
+ * Advanced feature layer entrypoints.
  */
 export { FeatureUpdater, featureUpdater } from './FeatureUpdater';
 export type { UpdateOptions, UpdateLog } from './FeatureUpdater';

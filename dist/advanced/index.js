@@ -1,6 +1,6 @@
 "use strict";
 /**
- * 高级功能层导出
+ * Advanced feature layer entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.cachingLayer = exports.CachingLayer = exports.performanceMonitor = exports.PerformanceMonitor = exports.batchOperations = exports.BatchOperations = exports.statePersistence = exports.StatePersistence = exports.featureUpdater = exports.FeatureUpdater = void 0;

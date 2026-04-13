@@ -1,6 +1,6 @@
 "use strict";
 /**
- * 工作流层导出
+ * Workflow layer entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PluginWorkflowComposer = exports.DEFAULT_CHECKPOINT_PLUGIN_CONFIG = exports.DEFAULT_STITCH_PLUGIN_CONFIG = exports.WORKFLOW_PRESETS = exports.ConfigurableWorkflow = exports.archiveGate = exports.ArchiveGate = exports.indexRegenerator = exports.IndexRegenerator = exports.skillUpdateEngine = exports.SkillUpdateEngine = exports.hookSystem = exports.HookSystem = exports.verificationSystem = exports.VerificationSystem = exports.workflowEngine = exports.WorkflowEngine = void 0;

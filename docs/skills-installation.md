@@ -13,6 +13,10 @@ These two skills are synced automatically by:
 
 `ospec init` and `ospec update` always sync Codex. They also sync Claude Code when `CLAUDE_HOME` or an existing `~/.claude` home is present.
 
+For existing projects, `ospec update [path]` also repairs older OSpec footprints, reinstalls missing packages for already-enabled plugins, and upgrades those enabled plugin packages when a newer compatible version is available.
+It does not update globally installed plugins that are not enabled in the current project.
+If you want a machine-wide plugin update, use `ospec plugins update --all` explicitly.
+
 ## Codex
 
 Check one managed skill:

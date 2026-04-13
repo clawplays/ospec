@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 工作流命令
- * 显示和管理工作流配置
+ * Workflow command.
+ * Displays and manages workflow configuration.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WorkflowCommand = void 0;
@@ -34,7 +34,7 @@ class WorkflowCommand extends BaseCommand_1.BaseCommand {
                     break;
                 }
                 case 'simulate': {
-                    // 需要传入 mode 和 flags
+                    // mode and flags are required
                     console.error('Usage: ospec workflow simulate <mode> <flags...>');
                     break;
                 }
@@ -49,7 +49,7 @@ class WorkflowCommand extends BaseCommand_1.BaseCommand {
     }
     async showWorkflow(projectPath) {
         try {
-            // ?????????
+            // Load config and render the effective workflow.
             const config = await services_1.services.configManager.loadConfig(projectPath);
             const mode = config.mode;
             const workflow = new workflow_1.ConfigurableWorkflow(mode);

@@ -1,6 +1,6 @@
 "use strict";
 /**
- * SKILL 解析服务
+ * SKILL parsing service.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.skillParser = exports.SkillParser = void 0;
@@ -10,7 +10,7 @@ class SkillParser {
         return String(content || '').replace(/\r\n?/g, '\n');
     }
     /**
-     * 解析 SKILL.md 的前置信息和内容
+     * Parse SKILL.md frontmatter and content.
      */
     parseFrontmatter(content) {
         const normalizedContent = this.normalizeLineEndings(content);
@@ -36,7 +36,7 @@ class SkillParser {
         };
     }
     /**
-     * 提取 Markdown 中的标题结构
+     * Extract heading structure from Markdown.
      */
     extractSections(content) {
         const sections = {};
@@ -64,7 +64,7 @@ class SkillParser {
         return sections;
     }
     /**
-     * 完整解析 SKILL.md 文件
+     * Fully parse a SKILL.md file.
      */
     parseSkillFile(content) {
         const { data, content: body } = this.parseFrontmatter(this.normalizeLineEndings(content));

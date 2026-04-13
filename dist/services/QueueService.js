@@ -9,6 +9,7 @@ const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class QueueService {
     constructor(fileService, projectService) {
         this.fileService = fileService;
@@ -19,7 +20,8 @@ class QueueService {
         return queuedChanges.map(change => change.name);
     }
     async getQueuedChanges(rootDir) {
-        const queuedDir = path_1.default.join(rootDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.QUEUED);
+        const config = await this.getProjectConfig(rootDir);
+        const queuedDir = (0, ProjectLayout_1.resolveManagedPath)(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.QUEUED}`, config);
         if (!(await this.fileService.exists(queuedDir))) {
             return [];
         }
@@ -55,11 +57,12 @@ class QueueService {
         if (activeNames.length > 0) {
             throw new Error(`Cannot activate queued change while active changes exist: ${activeNames.join(', ')}`);
         }
-        const queuedPath = path_1.default.join(rootDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.QUEUED, changeName);
+        const config = await this.getProjectConfig(rootDir);
+        const queuedPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.QUEUED}/${changeName}`, config);
         if (!(await this.fileService.exists(queuedPath))) {
             throw new Error(`Queued change not found: ${changeName}`);
         }
-        const activeRoot = path_1.default.join(rootDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ACTIVE);
+        const activeRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, config);
         const activePath = path_1.default.join(activeRoot, changeName);
         if (await this.fileService.exists(activePath)) {
             throw new Error(`Active change already exists: ${changeName}`);
@@ -134,6 +137,18 @@ class QueueService {
     }
     toRelativePath(rootDir, targetPath) {
         return path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/');
+    }
+    async getProjectConfig(rootDir) {
+        const configPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILLRC);
+        if (!(await this.fileService.exists(configPath))) {
+            return null;
+        }
+        try {
+            return await this.fileService.readJSON(configPath);
+        }
+        catch {
+            return null;
+        }
     }
 }
 exports.QueueService = QueueService;

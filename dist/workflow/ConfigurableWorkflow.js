@@ -1,13 +1,13 @@
 "use strict";
 /**
- * 可配置工作流系统
- * 基于 OSpec 官方规范实现
- * 支持核心步骤 + 可选步骤 + Feature Flags
+ * Configurable workflow system.
+ * Implemented against the official OSpec specification.
+ * Supports core steps, optional steps, and feature flags.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigurableWorkflow = exports.WORKFLOW_PRESETS = void 0;
 /**
- * 3种预定义工作流模板
+ * Three predefined workflow presets.
  */
 exports.WORKFLOW_PRESETS = {
     lite: {
@@ -88,14 +88,14 @@ class ConfigurableWorkflow {
         this.config = exports.WORKFLOW_PRESETS[mode];
     }
     /**
-     * 根据 feature flags 确定激活的可选步骤
+     * Resolve activated optional steps from feature flags.
      */
     getActivatedSteps(featureFlags) {
         const activated = [];
         for (const [stepName, stepConfig] of Object.entries(this.config.optional_steps)) {
             if (!stepConfig.enabled)
                 continue;
-            // 检查 feature flags 与 step.when 是否有交集
+            // Check whether featureFlags intersect with step.when.
             const hasMatch = stepConfig.when.some(flag => featureFlags.includes(flag));
             if (hasMatch) {
                 activated.push(stepName);
@@ -104,26 +104,26 @@ class ConfigurableWorkflow {
         return activated;
     }
     /**
-     * 获取完整的工作流步骤（核心 + 激活的可选）
+     * Get the full workflow steps: core plus activated optional steps.
      */
     getFullWorkflow(featureFlags) {
         const activated = this.getActivatedSteps(featureFlags);
         return [...this.config.core_required, ...activated];
     }
     /**
-     * 获取核心步骤
+     * Get the core steps.
      */
     getCoreSteps() {
         return this.config.core_required;
     }
     /**
-     * 获取所有支持的 feature flags
+     * Get all supported feature flags.
      */
     getSupportedFlags() {
         return this.config.feature_flags.supported;
     }
     /**
-     * 验证 feature flags
+     * Validate feature flags.
      */
     validateFlags(flags) {
         const supported = new Set(this.config.feature_flags.supported);
@@ -134,7 +134,7 @@ class ConfigurableWorkflow {
         };
     }
     /**
-     * 获取步骤的依赖关系
+     * Get step dependencies.
      */
     getStepDependencies(step) {
         const dependencies = {
@@ -149,19 +149,19 @@ class ConfigurableWorkflow {
         return dependencies[step] || [];
     }
     /**
-     * 获取工作流配置
+     * Get the workflow configuration.
      */
     getConfig() {
         return this.config;
     }
     /**
-     * 获取存档门禁配置
+     * Get the archive gate configuration.
      */
     getArchiveGate() {
         return this.config.archive_gate;
     }
     /**
-     * 生成工作流摘要
+     * Generate a workflow summary.
      */
     getSummary(featureFlags) {
         const activated = this.getActivatedSteps(featureFlags);
@@ -176,7 +176,7 @@ class ConfigurableWorkflow {
         };
     }
     /**
-     * 获取当前模式
+     * Get the current mode.
      */
     getMode() {
         return this.mode;

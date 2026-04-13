@@ -1,25 +1,25 @@
 /**
- * 字符串工具函数
+ * String utilities.
  */
 export declare class StringUtils {
     /**
-     * 转换为 kebab-case
+     * Convert to kebab-case.
      */
     static toKebabCase(str: string): string;
     /**
-     * 转换为 camelCase
+     * Convert to camelCase.
      */
     static toCamelCase(str: string): string;
     /**
-     * 转换为 PascalCase
+     * Convert to PascalCase.
      */
     static toPascalCase(str: string): string;
     /**
-     * 截断字符串
+     * Truncate a string.
      */
     static truncate(str: string, length: number, suffix?: string): string;
     /**
-     * 去除空白
+     * Trim whitespace.
      */
     static trim(str: string): string;
 }

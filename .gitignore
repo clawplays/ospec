@@ -10,3 +10,4 @@ coverage/
 .local/
 .claude/
 .skills/
+dist/**/*.map

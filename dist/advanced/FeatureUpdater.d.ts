@@ -1,6 +1,6 @@
 /**
- * 特性更新系统
- * 处理特性的更新和迁移
+ * Feature update system.
+ * Handles feature updates and migrations.
  */
 import { FeatureState, FeatureStatus } from '../core/types';
 export interface UpdateOptions {
@@ -18,27 +18,27 @@ export interface UpdateLog {
 export declare class FeatureUpdater {
     private updateLogs;
     /**
-     * 更新特性属性
+     * Update feature properties.
      */
     updateFeature(featurePath: string, options: UpdateOptions): Promise<FeatureState>;
     /**
-     * 批量更新特性
+     * Batch update features.
      */
     batchUpdateFeatures(projectDir: string, filter: (state: FeatureState) => boolean, updates: UpdateOptions): Promise<FeatureState[]>;
     /**
-     * 迁移特性版本
+     * Migrate a feature version.
      */
     migrateFeature(featurePath: string, targetVersion: string): Promise<void>;
     /**
-     * 记录更新日志
+     * Record update history.
      */
     private logUpdate;
     /**
-     * 获取更新日志
+     * Get update history.
      */
     getUpdateLogs(): UpdateLog[];
     /**
-     * 清空日志
+     * Clear the log.
      */
     clearLogs(): void;
 }

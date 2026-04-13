@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 状态持久化系统
- * 处理状态的保存、加载和版本控制
+ * State persistence system.
+ * Handles state persistence, loading, and version control.
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -46,7 +46,7 @@ class StatePersistence {
         this.snapshots = [];
     }
     /**
-     * 保存状态快照
+     * Save a state snapshot.
      */
     async saveSnapshot(featurePath, state) {
         const hash = this.generateHash(state);
@@ -57,25 +57,25 @@ class StatePersistence {
             state: JSON.parse(JSON.stringify(state)), // Deep copy
         };
         this.snapshots.push(snapshot);
-        // 限制保留最后100个快照
+        // Keep only the latest 100 snapshots.
         if (this.snapshots.length > 100) {
             this.snapshots = this.snapshots.slice(-100);
         }
         return snapshot;
     }
     /**
-     * 加载状态
+     * Load state.
      */
     async loadState(featurePath) {
         const cacheKey = featurePath;
-        // 检查缓存
+        // Check the cache first.
         if (this.stateCache.has(cacheKey)) {
             return this.stateCache.get(cacheKey);
         }
         try {
             const stateFile = path.join(featurePath, 'state.json');
             const state = await services_1.services.fileService.readJSON(stateFile);
-            // 缓存状态
+            // Cache the loaded state.
             this.stateCache.set(cacheKey, state);
             return state;
         }
@@ -85,7 +85,7 @@ class StatePersistence {
         }
     }
     /**
-     * 比较两个状态
+     * Compare two states.
      */
     compareStates(oldState, newState) {
         const diff = {
@@ -93,7 +93,7 @@ class StatePersistence {
             removed: [],
             modified: {},
         };
-        // 比较基本属性
+        // Compare basic properties.
         const keys = new Set([
             ...Object.keys(oldState),
             ...Object.keys(newState),
@@ -115,7 +115,7 @@ class StatePersistence {
         return diff;
     }
     /**
-     * 生成状态哈希
+     * Generate a state hash.
      */
     generateHash(state) {
         const content = JSON.stringify(state);
@@ -128,13 +128,13 @@ class StatePersistence {
         return Math.abs(hash).toString(16);
     }
     /**
-     * 获取状态历史
+     * Get state history.
      */
     getStateHistory() {
         return this.snapshots;
     }
     /**
-     * 恢复到之前的快照
+     * Restore a previous snapshot.
      */
     async restoreSnapshot(index) {
         if (index < 0 || index >= this.snapshots.length) {
@@ -143,13 +143,13 @@ class StatePersistence {
         return this.snapshots[index].state;
     }
     /**
-     * 清空缓存
+     * Clear the cache.
      */
     clearCache() {
         this.stateCache.clear();
     }
     /**
-     * 获取缓存统计
+     * Get cache statistics.
      */
     getCacheStats() {
         const cachedItems = this.stateCache.size;

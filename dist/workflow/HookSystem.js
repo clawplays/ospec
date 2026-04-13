@@ -1,7 +1,7 @@
 "use strict";
 /**
- * 钩子系统
- * 执行工作流前后的回调
+ * Hook system.
+ * Executes callbacks before and after workflow steps.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.hookSystem = exports.HookSystem = void 0;
@@ -10,7 +10,7 @@ class HookSystem {
         this.hooks = new Map();
     }
     /**
-     * 注册钩子
+     * Register a hook.
      */
     register(event, handler, priority = 0) {
         if (!this.hooks.has(event)) {
@@ -18,11 +18,11 @@ class HookSystem {
         }
         const hookList = this.hooks.get(event);
         hookList.push({ event, handler, priority });
-        // 按优先级排序（降序）
+        // Sort by priority in descending order.
         hookList.sort((a, b) => (b.priority || 0) - (a.priority || 0));
     }
     /**
-     * 执行钩子
+     * Execute hooks.
      */
     async execute(event, context = {}) {
         const hookList = this.hooks.get(event) || [];
@@ -31,7 +31,7 @@ class HookSystem {
         }
     }
     /**
-     * 移除钩子
+     * Remove a hook.
      */
     unregister(event, handler) {
         if (!this.hooks.has(event))
@@ -43,13 +43,13 @@ class HookSystem {
         }
     }
     /**
-     * 清空所有钩子
+     * Clear all hooks.
      */
     clear() {
         this.hooks.clear();
     }
     /**
-     * 获取已注册的钩子列表
+     * Get the list of registered hooks.
      */
     getHooks(event) {
         if (event) {

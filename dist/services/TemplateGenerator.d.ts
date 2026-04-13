@@ -1,39 +1,39 @@
 /**
- * 模板生成服务
- * 负责生成 proposal.md、tasks.md、verification.md 等模板文件
+ * Template generation service.
+ * Generates template files such as proposal.md, tasks.md, and verification.md.
  */
 import { FeatureState } from '../core/types';
 export declare class TemplateGenerator {
     /**
-     * 生成 proposal.md 模板
+     * Generate the proposal.md template.
      */
     static generateProposalTemplate(featureName: string, affects?: string[]): string;
     /**
-     * 生成 tasks.md 模板
+     * Generate the tasks.md template.
      */
     static generateTasksTemplate(featureName: string, coreRequiredSteps?: string[], optionalSteps?: string[]): string;
     /**
-     * 生成 verification.md 模板
+     * Generate the verification.md template.
      */
     static generateVerificationTemplate(featureName: string, optionalSteps?: string[]): string;
     /**
-     * 生成 state.json 内容
+     * Generate the state.json payload.
      */
     static generateStateJson(featureName: string, affects?: string[], mode?: 'lite' | 'standard' | 'full'): FeatureState;
     /**
-     * 创建 feature 目录和文件
+     * Create the feature directory and files.
      */
     static createFeatureDirectory(projectRoot: string, featureName: string, affects?: string[], coreRequiredSteps?: string[], optionalSteps?: string[]): Promise<void>;
     /**
-     * 生成项目初始化文件
+     * Generate project initialization files.
      */
     static initializeProject(projectRoot: string, mode?: 'lite' | 'standard' | 'full'): Promise<void>;
     /**
-     * 生成 AI 指南
+     * Generate the AI guide.
      */
     private static generateAiGuide;
     /**
-     * 生成执行协议
+     * Generate the execution protocol.
      */
     private static generateExecutionProtocol;
 }

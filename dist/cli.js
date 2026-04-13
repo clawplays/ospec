@@ -53,8 +53,9 @@ const StatusCommand_1 = require("./commands/StatusCommand");
 const RunCommand_1 = require("./commands/RunCommand");
 const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
+const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '0.4.0';
+const CLI_VERSION = '0.3.10';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -292,6 +293,11 @@ async function main() {
                 await workflowCmd.execute(commandArgs[0] || 'show', ...commandArgs.slice(1));
                 break;
             }
+            case 'layout': {
+                const layoutCmd = new LayoutCommand_1.LayoutCommand();
+                await layoutCmd.execute(commandArgs[0] || 'help', ...commandArgs.slice(1));
+                break;
+            }
             case 'update': {
                 const updateCmd = new UpdateCommand_1.UpdateCommand();
                 await updateCmd.execute(commandArgs[0]);
@@ -338,11 +344,12 @@ Commands:
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
   docs [action] [path]      Docs helpers (status, generate)
   skills [action] [path]    Skills status helpers (status)
-  plugins [action] [path]   Plugin helpers (list, status, enable, disable, approve, reject)
+  plugins [action] [path]   Plugin helpers (available, info, install, installed, update, list, status, enable, disable, approve, reject)
   skill [action] [skill] [dir] Skill package helpers (managed skills: ospec, ospec-change)
   index [action] [path]     Index helpers (check, build)
   workflow [action]         Workflow configuration (show, list-flags)
-  update [path]             Refresh protocol docs, tooling, hooks, and installed skills; does not enable or migrate plugins
+  layout [action]           Project layout helpers (migrate)
+  update [path]             Repair legacy projects, refresh docs/tooling/skills, and auto-upgrade enabled plugins
   help, -h, --help          Show this help message
   version, -v, --version    Show version
 
@@ -366,6 +373,12 @@ Examples:
   ospec docs generate
   ospec docs sync-protocol
   ospec skills status
+  ospec plugins list
+  ospec plugins info stitch
+  ospec plugins install stitch
+  ospec plugins installed
+  ospec plugins update stitch
+  ospec plugins update --all
   ospec plugins status
   ospec plugins enable stitch
   ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
@@ -384,6 +397,7 @@ Examples:
   ospec changes status
   ospec workflow show
   ospec workflow set-mode full
+  ospec layout migrate --to nested
   ospec update .
 `);
 }

@@ -8,7 +8,12 @@ const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
 const services_1 = require("../services");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
+const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class PluginsCommand extends BaseCommand_1.BaseCommand {
+    getPluginRegistryService() {
+        return services_1.services.pluginRegistryService;
+    }
     async execute(action, ...args) {
         try {
             if ((0, subcommandHelp_1.isHelpAction)(action)) {
@@ -16,8 +21,33 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 return;
             }
             switch (action) {
+                case 'info': {
+                    if (args.length === 0) {
+                        console.error('Usage: ospec plugins info <plugin> [--json]');
+                        process.exit(1);
+                    }
+                    await this.showPluginInfo(args);
+                    break;
+                }
+                case 'install': {
+                    if (args.length === 0) {
+                        console.error('Usage: ospec plugins install <plugin|package>');
+                        process.exit(1);
+                    }
+                    await this.installExternalPlugin(args[0]);
+                    break;
+                }
+                case 'installed': {
+                    await this.showInstalledPlugins(args);
+                    break;
+                }
+                case 'update': {
+                    const parsedUpdateArgs = this.parsePluginUpdateArgs(args);
+                    await this.updateInstalledPlugins(parsedUpdateArgs);
+                    break;
+                }
                 case 'list': {
-                    await this.listPlugins(args[0] || process.cwd());
+                    await this.showAvailablePlugins(args);
                     break;
                 }
                 case 'status': {
@@ -87,26 +117,354 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             throw error;
         }
     }
-    async listPlugins(projectPath) {
-        const config = await services_1.services.configManager.loadConfig(projectPath);
-        const plugins = this.getPluginEntries(config);
+    wantsJsonOutput(args) {
+        return args.some(arg => arg === '--json');
+    }
+    removeJsonFlag(args) {
+        return args.filter(arg => arg !== '--json');
+    }
+    parsePluginUpdateArgs(args) {
+        const filteredArgs = args.filter(arg => arg !== '--json');
+        const checkOnly = filteredArgs.includes('--check');
+        const positionalArgs = filteredArgs.filter(arg => arg !== '--check');
+        if (positionalArgs.length === 0) {
+            console.error('Usage: ospec plugins update <plugin> [--check]');
+            console.error('       ospec plugins update --all [--check]');
+            process.exit(1);
+        }
+        if (positionalArgs.length > 1) {
+            console.error('Usage: ospec plugins update <plugin> [--check]');
+            console.error('       ospec plugins update --all [--check]');
+            process.exit(1);
+        }
+        return {
+            pluginName: positionalArgs[0],
+            updateAll: positionalArgs[0] === '--all',
+            checkOnly,
+        };
+    }
+    async showAvailablePlugins(args) {
+        const json = this.wantsJsonOutput(args);
+        const available = await this.getPluginRegistryService().getAvailablePlugins();
+        const details = [];
+        for (const entry of available) {
+            details.push(await this.getPluginRegistryService().getPluginInfo(entry.id));
+        }
+        if (json) {
+            console.log(JSON.stringify(details, null, 2));
+            return;
+        }
         console.log('\nAvailable Plugins:');
         console.log('==================\n');
-        if (plugins.length === 0) {
+        if (details.length === 0) {
             console.log('  (none)');
             console.log('\n' + '='.repeat(18) + '\n');
             return;
         }
-        plugins.forEach(plugin => {
-            console.log(`  - ${plugin.name}`);
-            console.log(`    Enabled: ${plugin.enabled ? 'yes' : 'no'}`);
-            console.log(`    Blocking: ${plugin.blocking ? 'yes' : 'no'}`);
-            console.log(`    Capabilities: ${plugin.capabilities.length}`);
-            if (plugin.runner) {
-                console.log(`    Runner configured: ${plugin.runner.configured ? 'yes' : 'no'}`);
+        for (const plugin of details) {
+            console.log(`  - ${plugin.id}`);
+            console.log(`    Name: ${plugin.displayName}`);
+            console.log(`    Package: ${plugin.packageName}`);
+            console.log(`    Official: ${plugin.official ? 'yes' : 'no'}`);
+            console.log(`    Kinds: ${plugin.kinds.join(', ') || '(none)'}`);
+            if (plugin.installRange) {
+                console.log(`    Install range: ${plugin.installRange}`);
             }
-        });
+            console.log(`    Latest: ${plugin.latestVersion || '(unknown)'}`);
+            console.log(`    Installed: ${plugin.installed ? plugin.installed.version : 'no'}`);
+            console.log(`    Description: ${plugin.description || '(none)'}`);
+        }
         console.log('\n' + '='.repeat(18) + '\n');
+    }
+    async showPluginInfo(args) {
+        const normalizedArgs = this.removeJsonFlag(args);
+        const json = this.wantsJsonOutput(args);
+        const plugin = await this.getPluginRegistryService().getPluginInfo(normalizedArgs[0]);
+        if (json) {
+            console.log(JSON.stringify(plugin, null, 2));
+            return;
+        }
+        console.log(`\nPlugin: ${plugin.id}`);
+        console.log(`${'='.repeat(`Plugin: ${plugin.id}`.length)}\n`);
+        console.log(`Name: ${plugin.displayName}`);
+        console.log(`Package: ${plugin.packageName}`);
+        console.log(`Official: ${plugin.official ? 'yes' : 'no'}`);
+        console.log(`Kinds: ${plugin.kinds.join(', ') || '(none)'}`);
+        if (plugin.installRange) {
+            console.log(`Install range: ${plugin.installRange}`);
+        }
+        console.log(`Latest version: ${plugin.latestVersion || '(unknown)'}`);
+        console.log(`Installed: ${plugin.installed ? `yes (${plugin.installed.version})` : 'no'}`);
+        console.log(`Description: ${plugin.description || '(none)'}`);
+        if (Object.keys(plugin.distTags).length > 0) {
+            console.log(`Dist tags: ${Object.entries(plugin.distTags).map(([tag, value]) => `${tag}=${value}`).join(', ')}`);
+        }
+        if (plugin.manifest) {
+            console.log(`Compatibility: ${plugin.manifest.compatibility.ospec}`);
+            console.log(`Capabilities: ${plugin.manifest.capabilities.length}`);
+        }
+        console.log('');
+    }
+    async installExternalPlugin(identifier) {
+        const result = await this.getPluginRegistryService().installPlugin(identifier);
+        this.success(`Installed plugin ${result.id} (${result.package_name})`);
+        this.info(`  version: ${result.version || '(unknown)'}`);
+        this.info(`  kinds: ${result.kinds.join(', ') || '(none)'}`);
+        this.info(`  codex skill: ${this.getPluginRegistryService().getInstalledSkillTargetDir('codex', result.id)}`);
+        this.info(`  project enable remains explicit: ${(0, helpers_1.formatCliCommand)('ospec', 'plugins', 'enable', result.id, '<project-path>')}`);
+    }
+    async showInstalledPlugins(args) {
+        const json = this.wantsJsonOutput(args);
+        const installed = await this.getPluginRegistryService().getInstalledPlugins();
+        if (json) {
+            console.log(JSON.stringify(installed, null, 2));
+            return;
+        }
+        console.log('\nInstalled Plugins:');
+        console.log('==================\n');
+        if (installed.length === 0) {
+            console.log('  (none)');
+            console.log('\n' + '='.repeat(18) + '\n');
+            return;
+        }
+        for (const plugin of installed) {
+            console.log(`  - ${plugin.id}`);
+            console.log(`    Package: ${plugin.package_name}`);
+            console.log(`    Version: ${plugin.version || '(unknown)'}`);
+            console.log(`    Official: ${plugin.official ? 'yes' : 'no'}`);
+            console.log(`    Kinds: ${plugin.kinds.join(', ') || '(none)'}`);
+            console.log(`    Installed at: ${plugin.installed_at}`);
+        }
+        console.log('\n' + '='.repeat(18) + '\n');
+    }
+    async updateInstalledPlugins(parsed) {
+        if (parsed.updateAll) {
+            await this.updateAllInstalledPlugins(parsed.checkOnly);
+            return;
+        }
+        await this.updateOneInstalledPlugin(parsed.pluginName, parsed.checkOnly);
+    }
+    async updateAllInstalledPlugins(checkOnly) {
+        const installed = await this.getPluginRegistryService().getInstalledPlugins();
+        if (installed.length === 0) {
+            this.info('No installed plugins are recorded under ~/.ospec/plugins/installed.json');
+            return;
+        }
+        const results = [];
+        for (const plugin of installed) {
+            try {
+                results.push(await this.updateInstalledPluginRecord(plugin.id, checkOnly, plugin));
+            }
+            catch (error) {
+                results.push({
+                    pluginName: plugin.id,
+                    packageName: plugin.package_name || '',
+                    previousVersion: plugin.version || '',
+                    nextVersion: '',
+                    status: 'skipped',
+                    reason: error instanceof Error ? error.message : String(error || 'unknown error'),
+                });
+            }
+        }
+        if (checkOnly) {
+            this.success(`Checked ${results.length} installed plugin${results.length === 1 ? '' : 's'}`);
+        }
+        else {
+            this.success(`Updated ${results.length} installed plugin${results.length === 1 ? '' : 's'}`);
+        }
+        for (const result of results) {
+            switch (result.status) {
+                case 'restored':
+                    this.info(`  restored: ${result.pluginName} ${result.previousVersion} -> ${result.nextVersion} (${result.packageName})`);
+                    break;
+                case 'upgraded':
+                    this.info(`  upgraded: ${result.pluginName} ${result.previousVersion} -> ${result.nextVersion} (${result.packageName})`);
+                    break;
+                case 'current':
+                    this.info(`  current: ${result.pluginName} ${result.nextVersion || result.previousVersion} (${result.packageName || 'unknown package'})`);
+                    break;
+                default:
+                    this.info(`  skipped: ${result.pluginName} (${result.reason || 'no update available'})`);
+                    break;
+            }
+        }
+    }
+    async updateOneInstalledPlugin(pluginName, checkOnly) {
+        const result = await this.updateInstalledPluginRecord(pluginName, checkOnly);
+        if (!checkOnly && (result.status === 'missing' || result.status === 'skipped')) {
+            throw new Error(result.reason || `Plugin ${result.pluginName} could not be updated.`);
+        }
+        if (checkOnly || (result.status !== 'restored' && result.status !== 'upgraded')) {
+            this.success(`Checked plugin ${result.pluginName}`);
+        }
+        else {
+            this.success(`Updated plugin ${result.pluginName}`);
+        }
+        switch (result.status) {
+            case 'restored':
+                this.info(`  restored: ${result.previousVersion} -> ${result.nextVersion}`);
+                this.info(`  package: ${result.packageName}`);
+                break;
+            case 'upgraded':
+                this.info(`  upgraded: ${result.previousVersion} -> ${result.nextVersion}`);
+                this.info(`  package: ${result.packageName}`);
+                break;
+            case 'current':
+                this.info(`  current: ${result.nextVersion || result.previousVersion}`);
+                this.info(`  package: ${result.packageName || '(unknown)'}`);
+                break;
+            default:
+                this.info(`  status: ${result.status}`);
+                this.info(`  reason: ${result.reason || '(unknown)'}`);
+                if (result.packageName) {
+                    this.info(`  package: ${result.packageName}`);
+                }
+                break;
+        }
+    }
+    async updateInstalledPluginRecord(pluginName, checkOnly, installedRecord = null) {
+        const recordedPlugin = installedRecord || (await this.getPluginRegistryService().getInstalledPlugins())
+            .find(plugin => plugin.id === pluginName) || null;
+        const currentManifest = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
+        if (!currentManifest && checkOnly && recordedPlugin) {
+            return {
+                pluginName,
+                packageName: recordedPlugin.package_name || '',
+                previousVersion: recordedPlugin.version || '',
+                nextVersion: '',
+                status: 'missing',
+                reason: 'plugin package is missing globally; run ospec plugins update again without --check to restore it',
+            };
+        }
+        if (!currentManifest && !checkOnly && recordedPlugin) {
+            const restored = await this.restoreTrackedPluginPackage(pluginName, recordedPlugin);
+            const inspectionAfterRestore = await this.getPluginRegistryService().inspectInstalledPluginUpgrade(pluginName);
+            if (inspectionAfterRestore.status === 'upgrade') {
+                const upgraded = await this.getPluginRegistryService().upgradeInstalledPlugin(pluginName, 'plugins-update');
+                return {
+                    pluginName,
+                    packageName: upgraded.packageName,
+                    previousVersion: `${recordedPlugin.version || 'missing'} (missing)`,
+                    nextVersion: upgraded.current.version,
+                    status: 'upgraded',
+                    reason: '',
+                };
+            }
+            return {
+                pluginName,
+                packageName: restored.package_name,
+                previousVersion: `${recordedPlugin.version || 'missing'} (missing)`,
+                nextVersion: restored.version,
+                status: 'restored',
+                reason: '',
+            };
+        }
+        const inspection = await this.getPluginRegistryService().inspectInstalledPluginUpgrade(pluginName);
+        if (inspection.status === 'upgrade' && !checkOnly) {
+            const upgraded = await this.getPluginRegistryService().upgradeInstalledPlugin(pluginName, 'plugins-update');
+            return {
+                pluginName,
+                packageName: upgraded.packageName,
+                previousVersion: upgraded.previousVersion,
+                nextVersion: upgraded.current.version,
+                status: 'upgraded',
+                reason: '',
+            };
+        }
+        return {
+            pluginName,
+            packageName: inspection.packageName,
+            previousVersion: inspection.installedVersion,
+            nextVersion: inspection.targetVersion || inspection.installedVersion,
+            status: inspection.status === 'current'
+                ? 'current'
+                : inspection.status === 'missing'
+                    ? 'missing'
+                    : 'skipped',
+            reason: inspection.reason,
+        };
+    }
+    async restoreTrackedPluginPackage(pluginName, recordedPlugin) {
+        const packageName = typeof recordedPlugin?.package_name === 'string' ? recordedPlugin.package_name.trim() : '';
+        const recordedVersion = typeof recordedPlugin?.resolved_version === 'string' && recordedPlugin.resolved_version.trim().length > 0
+            ? recordedPlugin.resolved_version.trim()
+            : typeof recordedPlugin?.version === 'string' ? recordedPlugin.version.trim() : '';
+        const official = recordedPlugin?.official === true || pluginName === 'stitch' || pluginName === 'checkpoint';
+        if (official) {
+            return this.getPluginRegistryService().installOfficialPlugin(pluginName, 'plugins-update-missing');
+        }
+        if (!packageName) {
+            throw new Error(`Plugin ${pluginName} is missing globally and cannot be restored because no package_name is recorded.`);
+        }
+        const packageSpecifier = recordedVersion ? `${packageName}@${recordedVersion}` : packageName;
+        return this.getPluginRegistryService().reinstallPluginPackage(pluginName, packageSpecifier, {
+            reason: 'plugins-update-missing',
+            packageName,
+            resolvedVersion: recordedVersion || undefined,
+        });
+    }
+    async resolveInstalledPluginForCommand(pluginName) {
+        const pluginInfo = await this.getPluginRegistryService().getPluginInfo(pluginName);
+        return this.getPluginRegistryService().getInstalledPluginManifest(pluginInfo.id);
+    }
+    emitHookResultOutput(hookResult, hookConfig) {
+        if (hookConfig?.passthrough_stdio !== true) {
+            return;
+        }
+        if (hookResult?.stdout) {
+            process.stdout.write(String(hookResult.stdout));
+        }
+        if (hookResult?.stderr) {
+            process.stderr.write(String(hookResult.stderr));
+        }
+    }
+    async executeManagedLifecycleHook(pluginName, hookName, context) {
+        const installedPlugin = await this.resolveInstalledPluginForCommand(pluginName);
+        if (!installedPlugin) {
+            return null;
+        }
+        const config = await services_1.services.configManager.loadConfig(context.project_path || process.cwd());
+        const pluginConfig = config.plugins?.[pluginName];
+        const hookConfig = this.getExternalPluginHookConfig(pluginConfig, installedPlugin.manifest, hookName);
+        if (!hookConfig) {
+            return null;
+        }
+        const hookResult = this.executeExternalPluginHook(hookConfig, context.project_path || process.cwd(), {
+            ...context,
+            plugin_id: pluginName,
+            plugin_package_path: installedPlugin.packagePath,
+            action: hookName,
+        });
+        const hookOutput = this.parseExternalHookJsonOutput(hookResult.stdout, hookResult.stderr);
+        this.emitHookResultOutput(hookResult, hookConfig);
+        return {
+            hookConfig,
+            hookResult,
+            installedPlugin,
+            hookOutput,
+        };
+    }
+    parseExternalHookJsonOutput(stdout, stderr) {
+        const normalizedStdout = String(stdout || '').trim();
+        const normalizedStderr = String(stderr || '').trim();
+        const stdoutLines = normalizedStdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const stderrLines = normalizedStderr.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const candidates = Array.from(new Set([
+            normalizedStdout,
+            stdoutLines[stdoutLines.length - 1] || '',
+            stderrLines[stderrLines.length - 1] || '',
+        ].filter(Boolean)));
+        for (const candidate of candidates) {
+            try {
+                const parsed = JSON.parse(candidate);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return parsed;
+                }
+            }
+            catch {
+            }
+        }
+        return null;
     }
     async showStatus(projectPath) {
         const config = await services_1.services.configManager.loadConfig(projectPath);
@@ -120,13 +478,28 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             return;
         }
         plugins.forEach(plugin => {
+            const printedStatusLabels = new Set();
             console.log(`${plugin.name.toUpperCase()}: ${plugin.enabled ? 'ENABLED' : 'DISABLED'}`);
             console.log(`  Blocking: ${plugin.blocking ? 'yes' : 'no'}`);
             if (plugin.runtimeBaseUrl) {
                 console.log(`  Base URL: ${plugin.runtimeBaseUrl}`);
+                printedStatusLabels.add('base url');
             }
             if (plugin.storageState) {
                 console.log(`  Storage state: ${plugin.storageState}`);
+                printedStatusLabels.add('storage state');
+            }
+            if (Array.isArray(plugin.statusFields) && plugin.statusFields.length > 0) {
+                plugin.statusFields.forEach(field => {
+                    const normalizedLabel = String(field.label || '').trim().toLowerCase();
+                    if (normalizedLabel && printedStatusLabels.has(normalizedLabel)) {
+                        return;
+                    }
+                    console.log(`  ${field.label}: ${field.value || '(not set)'}`);
+                    if (normalizedLabel) {
+                        printedStatusLabels.add(normalizedLabel);
+                    }
+                });
             }
             if (plugin.capabilities.length === 0) {
                 console.log('  Capabilities: (none)');
@@ -172,6 +545,11 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
     }
     async setPluginEnabled(pluginName, enabled, projectPath, options = {}) {
         const normalizedName = this.resolvePluginAlias(pluginName);
+        const pluginInfo = await this.getPluginRegistryService().getPluginInfo(normalizedName).catch(() => null);
+        if (pluginInfo?.official) {
+            await this.setManagedExternalPluginEnabled(normalizedName, enabled, projectPath, options);
+            return;
+        }
         const config = await services_1.services.configManager.loadConfig(projectPath);
         const nextConfig = JSON.parse(JSON.stringify(config));
         switch (normalizedName) {
@@ -330,12 +708,277 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 this.info('  Affects new changes by default; update existing changes manually if needed');
                 return;
             }
-            default:
-                throw new Error(`Unsupported plugin: ${pluginName}`);
+            default: {
+                if (options.base_url) {
+                    throw new Error(`${normalizedName} does not accept --base-url. Only checkpoint requires a runtime base URL.`);
+                }
+                nextConfig.plugins = nextConfig.plugins || {};
+                if (enabled) {
+                    const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(normalizedName);
+                    if (!installedPlugin) {
+                        throw new Error(`Plugin ${normalizedName} is not installed globally. Run "ospec plugins install ${normalizedName}" first.`);
+                    }
+                    const defaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedPlugin.record.package_name, installedPlugin.record.version, installedPlugin.manifest);
+                    const existingConfig = nextConfig.plugins[normalizedName] && typeof nextConfig.plugins[normalizedName] === 'object'
+                        ? nextConfig.plugins[normalizedName]
+                        : {};
+                    nextConfig.plugins[normalizedName] = this.mergeExternalPluginConfig(defaultConfig, existingConfig, true);
+                    const workspaceRoot = typeof nextConfig.plugins[normalizedName]?.workspace_root === 'string' && nextConfig.plugins[normalizedName].workspace_root.trim().length > 0
+                        ? nextConfig.plugins[normalizedName].workspace_root.trim()
+                        : `.ospec/plugins/${normalizedName}`;
+                    await this.getPluginRegistryService().syncProjectPluginAssets(normalizedName, projectPath, workspaceRoot);
+                    await services_1.services.configManager.saveConfig(projectPath, nextConfig);
+                    this.success(`Enabled plugin ${normalizedName} for ${projectPath}`);
+                    this.info(`  package: ${installedPlugin.record.package_name}`);
+                    this.info(`  version: ${installedPlugin.record.version || '(unknown)'}`);
+                    this.info(`  workspace: ${workspaceRoot}`);
+                    this.info(`  capabilities: ${Object.keys(nextConfig.plugins[normalizedName]?.capabilities || {}).length}`);
+                    this.info('  Affects new changes by default; update existing changes manually if needed');
+                    return;
+                }
+                if (!nextConfig.plugins[normalizedName] || typeof nextConfig.plugins[normalizedName] !== 'object') {
+                    throw new Error(`Plugin ${normalizedName} is not configured for this project.`);
+                }
+                nextConfig.plugins[normalizedName] = this.mergeExternalPluginConfig(nextConfig.plugins[normalizedName], nextConfig.plugins[normalizedName], false);
+                await services_1.services.configManager.saveConfig(projectPath, nextConfig);
+                this.success(`Disabled plugin ${normalizedName} for ${projectPath}`);
+                this.info(`  capabilities: ${Object.keys(nextConfig.plugins[normalizedName]?.capabilities || {}).length}`);
+                this.info('  Affects new changes by default; update existing changes manually if needed');
+                return;
+            }
         }
+    }
+    async setManagedExternalPluginEnabled(pluginName, enabled, projectPath, options = {}) {
+        if (options.base_url && pluginName !== 'checkpoint') {
+            throw new Error(`${pluginName} does not accept --base-url. Only checkpoint requires a runtime base URL.`);
+        }
+        const config = await services_1.services.configManager.loadConfig(projectPath);
+        const nextConfig = JSON.parse(JSON.stringify(config));
+        nextConfig.plugins = nextConfig.plugins || {};
+        if (!enabled) {
+            const existingConfig = nextConfig.plugins[pluginName];
+            if (!existingConfig || typeof existingConfig !== 'object') {
+                throw new Error(`Plugin ${pluginName} is not configured for this project.`);
+            }
+            nextConfig.plugins[pluginName] = this.mergeExternalPluginConfig(existingConfig, existingConfig, false);
+            await services_1.services.configManager.saveConfig(projectPath, nextConfig);
+            this.success(`Disabled plugin ${pluginName} for ${projectPath}`);
+            this.info(`  capabilities: ${Object.keys(nextConfig.plugins[pluginName]?.capabilities || {}).length}`);
+            if (pluginName === 'checkpoint') {
+                this.info('  note: disabling checkpoint does not uninstall any previously installed checkpoint project dependencies');
+            }
+            this.info('  Affects new changes by default; update existing changes manually if needed');
+            return;
+        }
+        const installedPlugin = await this.resolveInstalledPluginForCommand(pluginName);
+        if (!installedPlugin) {
+            throw new Error(`Plugin ${pluginName} is not installed globally. Run "ospec plugins install ${pluginName}" first.`);
+        }
+        const defaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedPlugin.record.package_name, installedPlugin.record.version, installedPlugin.manifest);
+        const existingConfig = nextConfig.plugins[pluginName] && typeof nextConfig.plugins[pluginName] === 'object'
+            ? nextConfig.plugins[pluginName]
+            : {};
+        let mergedConfig = this.mergeExternalPluginConfig(defaultConfig, existingConfig, true);
+        if (defaultConfig?.capabilities && typeof defaultConfig.capabilities === 'object') {
+            for (const [capabilityName, capabilityConfig] of Object.entries(defaultConfig.capabilities)) {
+                if (!mergedConfig.capabilities?.[capabilityName]) {
+                    continue;
+                }
+                mergedConfig.capabilities[capabilityName].enabled = capabilityConfig?.enabled !== false;
+            }
+        }
+        const workspaceRoot = typeof mergedConfig?.workspace_root === 'string' && mergedConfig.workspace_root.trim().length > 0
+            ? mergedConfig.workspace_root.trim()
+            : `.ospec/plugins/${pluginName}`;
+        const enableHook = this.getExternalPluginHookConfig(mergedConfig, installedPlugin.manifest, 'enable');
+        let hookOutput = null;
+        if (enableHook) {
+            const hookResult = this.executeExternalPluginHook(enableHook, projectPath, {
+                plugin_id: pluginName,
+                project_path: projectPath,
+                workspace_root: workspaceRoot,
+                plugin_package_path: installedPlugin.packagePath,
+                change_path: '',
+                gate_path: '',
+                result_path: '',
+                summary_path: '',
+                approval_path: '',
+                change_name: '',
+                action: 'enable',
+                options_json: JSON.stringify(options || {}),
+                plugin_config_json: JSON.stringify(mergedConfig),
+            });
+            hookOutput = this.parseExternalHookJsonOutput(hookResult.stdout, hookResult.stderr);
+            if (hookResult.status !== 0) {
+                throw new Error(hookOutput?.error || hookOutput?.message || hookResult.stderr || hookResult.stdout || `Plugin enable hook failed for ${pluginName}`);
+            }
+            if (hookOutput?.config_patch && typeof hookOutput.config_patch === 'object' && !Array.isArray(hookOutput.config_patch)) {
+                mergedConfig = this.mergeExternalPluginConfig(mergedConfig, hookOutput.config_patch, true);
+            }
+        }
+        nextConfig.plugins[pluginName] = mergedConfig;
+        await this.getPluginRegistryService().syncProjectPluginAssets(pluginName, projectPath, workspaceRoot);
+        await services_1.services.configManager.saveConfig(projectPath, nextConfig);
+        this.success(`Enabled plugin ${pluginName} for ${projectPath}`);
+        this.info(`  package: ${installedPlugin.record.package_name}`);
+        this.info(`  version: ${installedPlugin.record.version || '(unknown)'}`);
+        this.info(`  workspace: ${workspaceRoot}`);
+        this.info(`  capabilities: ${Object.keys(nextConfig.plugins[pluginName]?.capabilities || {}).length}`);
+        if (Array.isArray(nextConfig.plugins[pluginName]?.status_fields)) {
+            nextConfig.plugins[pluginName].status_fields.forEach((field) => {
+                const source = typeof field?.source === 'string' ? field.source : '';
+                const label = typeof field?.label === 'string' ? field.label : '';
+                if (!source || !label) {
+                    return;
+                }
+                const value = this.readConfigValueBySourcePath(nextConfig.plugins[pluginName], source);
+                this.info(`  ${label.toLowerCase()}: ${value || '(not set)'}`);
+            });
+        }
+        if (Array.isArray(hookOutput?.messages)) {
+            hookOutput.messages.forEach((message) => {
+                this.info(`  ${message}`);
+            });
+        }
+        if (hookOutput?.dependency_install_result) {
+            const dependencyInstallResult = hookOutput.dependency_install_result;
+            this.info(`  checkpoint deps: ${dependencyInstallResult.installedNow?.length > 0
+                ? `installed into the target project with ${dependencyInstallResult.packageManager}: ${dependencyInstallResult.installedNow.join(', ')}`
+                : `already available in the target project (${dependencyInstallResult.packageManager})`}`);
+            this.info('  note: AI/chat-based checkpoint enable must include this dependency install step');
+            this.info('  note: disabling checkpoint later will not uninstall these project dependencies');
+        }
+        this.info('  Affects new changes by default; update existing changes manually if needed');
+    }
+    mergeExternalPluginConfig(defaultConfig, existingConfig, enabled) {
+        const mergeRecords = (left, right) => {
+            if (!left || typeof left !== 'object' || Array.isArray(left)) {
+                return right && typeof right === 'object' && !Array.isArray(right) ? { ...right } : right;
+            }
+            if (!right || typeof right !== 'object' || Array.isArray(right)) {
+                return { ...left };
+            }
+            const merged = { ...left };
+            for (const [key, value] of Object.entries(right)) {
+                if (Array.isArray(value)) {
+                    merged[key] = [...value];
+                    continue;
+                }
+                if (value && typeof value === 'object' && !Array.isArray(value) && left[key] && typeof left[key] === 'object' && !Array.isArray(left[key])) {
+                    merged[key] = mergeRecords(left[key], value);
+                    continue;
+                }
+                merged[key] = value;
+            }
+            return merged;
+        };
+        const mergedBase = mergeRecords(defaultConfig, existingConfig);
+        const nextConfig = {
+            ...mergedBase,
+            enabled,
+            settings: {
+                ...(defaultConfig?.settings && typeof defaultConfig.settings === 'object' ? defaultConfig.settings : {}),
+                ...(existingConfig?.settings && typeof existingConfig.settings === 'object' ? existingConfig.settings : {}),
+            },
+            docs: {
+                locales: {
+                    ...(defaultConfig?.docs?.locales && typeof defaultConfig.docs.locales === 'object' ? defaultConfig.docs.locales : {}),
+                    ...(existingConfig?.docs?.locales && typeof existingConfig.docs.locales === 'object' ? existingConfig.docs.locales : {}),
+                },
+            },
+            scaffold: {
+                projectFiles: Array.isArray(defaultConfig?.scaffold?.projectFiles)
+                    ? defaultConfig.scaffold.projectFiles
+                    : Array.isArray(existingConfig?.scaffold?.projectFiles)
+                        ? existingConfig.scaffold.projectFiles
+                        : [],
+            },
+            skills: {
+                providers: {
+                    ...(defaultConfig?.skills?.providers && typeof defaultConfig.skills.providers === 'object' ? defaultConfig.skills.providers : {}),
+                    ...(existingConfig?.skills?.providers && typeof existingConfig.skills.providers === 'object' ? existingConfig.skills.providers : {}),
+                },
+            },
+            knowledge: {
+                bundle: typeof existingConfig?.knowledge?.bundle === 'string' && existingConfig.knowledge.bundle.trim().length > 0
+                    ? existingConfig.knowledge.bundle.trim()
+                    : typeof defaultConfig?.knowledge?.bundle === 'string'
+                        ? defaultConfig.knowledge.bundle.trim()
+                        : '',
+            },
+            hooks: {
+                ...(defaultConfig?.hooks && typeof defaultConfig.hooks === 'object' ? defaultConfig.hooks : {}),
+                ...(existingConfig?.hooks && typeof existingConfig.hooks === 'object' ? existingConfig.hooks : {}),
+            },
+            status_fields: Array.isArray(existingConfig?.status_fields)
+                ? existingConfig.status_fields
+                : Array.isArray(defaultConfig?.status_fields)
+                    ? defaultConfig.status_fields
+                    : [],
+            capabilities: {},
+        };
+        const defaultCapabilities = defaultConfig?.capabilities && typeof defaultConfig.capabilities === 'object'
+            ? defaultConfig.capabilities
+            : {};
+        const existingCapabilities = existingConfig?.capabilities && typeof existingConfig.capabilities === 'object'
+            ? existingConfig.capabilities
+            : {};
+        for (const [capabilityName, capabilityConfig] of Object.entries({
+            ...defaultCapabilities,
+            ...existingCapabilities,
+        })) {
+            const defaultCapability = defaultCapabilities?.[capabilityName] && typeof defaultCapabilities[capabilityName] === 'object'
+                ? defaultCapabilities[capabilityName]
+                : {};
+            const currentCapability = capabilityConfig && typeof capabilityConfig === 'object'
+                ? capabilityConfig
+                : {};
+            nextConfig.capabilities[capabilityName] = {
+                ...defaultCapability,
+                ...currentCapability,
+                enabled: enabled && currentCapability.enabled !== false,
+                blocking: currentCapability.blocking !== false && defaultCapability.blocking !== false,
+                step: typeof currentCapability.step === 'string' && currentCapability.step.trim().length > 0
+                    ? currentCapability.step.trim()
+                    : typeof defaultCapability.step === 'string' && defaultCapability.step.trim().length > 0
+                        ? defaultCapability.step.trim()
+                        : capabilityName,
+                activate_when_flags: Array.isArray(currentCapability.activate_when_flags)
+                    ? currentCapability.activate_when_flags.map((flag) => String(flag).trim()).filter(Boolean)
+                    : Array.isArray(defaultCapability.activate_when_flags)
+                        ? defaultCapability.activate_when_flags.map((flag) => String(flag).trim()).filter(Boolean)
+                        : [],
+                execution: typeof currentCapability.execution === 'string' && currentCapability.execution.trim().length > 0
+                    ? currentCapability.execution.trim()
+                    : typeof defaultCapability.execution === 'string' && defaultCapability.execution.trim().length > 0
+                        ? defaultCapability.execution.trim()
+                        : 'runtime',
+            };
+        }
+        return nextConfig;
     }
     async doctorPlugin(pluginName, projectPath) {
         const normalizedName = this.resolvePluginAlias(pluginName);
+        const managedHook = await this.executeManagedLifecycleHook(normalizedName, 'doctor', {
+            project_path: projectPath,
+            workspace_root: '',
+            change_path: '',
+            gate_path: '',
+            result_path: '',
+            summary_path: '',
+            approval_path: '',
+            change_name: '',
+        });
+        if (managedHook) {
+            if (managedHook.hookResult.status !== 0) {
+                process.exit(1);
+            }
+            return;
+        }
+        const pluginInfo = await this.getPluginRegistryService().getPluginInfo(normalizedName).catch(() => null);
+        if (pluginInfo?.official) {
+            throw new Error(`Plugin ${normalizedName} is not installed globally. Run "ospec plugins install ${normalizedName}" first.`);
+        }
         switch (normalizedName) {
             case 'stitch':
                 await this.doctorStitch(projectPath);
@@ -344,7 +987,8 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 await this.doctorCheckpoint(projectPath);
                 return;
             default:
-                throw new Error(`Unsupported plugin: ${pluginName}`);
+                await this.doctorExternalPlugin(normalizedName, projectPath);
+                return;
         }
     }
     async doctorStitch(projectPath) {
@@ -820,6 +1464,154 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         }
         this.success(`Plugin doctor passed${warnCount > 0 ? ` with ${warnCount} warning(s)` : ''}`);
     }
+    async doctorExternalPlugin(pluginName, projectPath) {
+        const config = await services_1.services.configManager.loadConfig(projectPath);
+        const pluginConfig = config.plugins?.[pluginName];
+        const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
+        const checks = [];
+        checks.push({
+            name: 'plugin.enabled',
+            status: pluginConfig?.enabled ? 'pass' : 'fail',
+            message: pluginConfig?.enabled
+                ? `${pluginName} plugin is enabled for this project`
+                : `${pluginName} plugin is disabled. Run "ospec plugins enable ${pluginName} <project-path>" first.`,
+        });
+        checks.push({
+            name: 'plugin.installed',
+            status: installedPlugin ? 'pass' : 'fail',
+            message: installedPlugin
+                ? `${pluginName} package is installed globally: ${installedPlugin.record.package_name}@${installedPlugin.record.version || '(unknown)'}`
+                : `${pluginName} is not installed globally. Run "ospec plugins install ${pluginName}" first.`,
+        });
+        const workspaceRoot = typeof pluginConfig?.workspace_root === 'string' && pluginConfig.workspace_root.trim().length > 0
+            ? pluginConfig.workspace_root.trim()
+            : `.ospec/plugins/${pluginName}`;
+        checks.push({
+            name: 'workspace.root',
+            status: await services_1.services.fileService.exists(path.join(projectPath, workspaceRoot)) ? 'pass' : 'warn',
+            message: await services_1.services.fileService.exists(path.join(projectPath, workspaceRoot))
+                ? `Plugin workspace exists: ${workspaceRoot}`
+                : `Plugin workspace is missing at ${workspaceRoot}. Re-enable the plugin to refresh project assets.`,
+        });
+        const doctorHook = this.getExternalPluginHookConfig(pluginConfig, installedPlugin?.manifest, 'doctor');
+        checks.push({
+            name: 'hooks.doctor',
+            status: doctorHook ? 'pass' : 'warn',
+            message: doctorHook
+                ? `Doctor hook is configured: ${doctorHook.command}`
+                : `No doctor hook is configured for ${pluginName}.`,
+        });
+        let hookResult = null;
+        if (pluginConfig?.enabled && installedPlugin && doctorHook) {
+            hookResult = this.executeExternalPluginHook(doctorHook, projectPath, {
+                plugin_id: pluginName,
+                project_path: projectPath,
+                workspace_root: workspaceRoot,
+                plugin_package_path: installedPlugin.packagePath,
+                change_path: '',
+                gate_path: '',
+                result_path: '',
+                summary_path: '',
+                approval_path: '',
+                change_name: '',
+            });
+            checks.push({
+                name: 'hooks.doctor.exit',
+                status: hookResult.status === 0 ? 'pass' : 'fail',
+                message: hookResult.status === 0
+                    ? `Doctor hook completed successfully: ${hookResult.command}`
+                    : `Doctor hook exited with code ${hookResult.status}: ${hookResult.stderr || hookResult.stdout || '(no output)'}`,
+            });
+        }
+        const failCount = checks.filter(check => check.status === 'fail').length;
+        const warnCount = checks.filter(check => check.status === 'warn').length;
+        console.log('\nPlugin Doctor');
+        console.log('=============\n');
+        console.log(`Project: ${projectPath}`);
+        console.log(`Plugin: ${pluginName}\n`);
+        checks.forEach(check => {
+            const icon = check.status === 'pass' ? 'PASS' : check.status === 'warn' ? 'WARN' : 'FAIL';
+            console.log(`${icon} ${check.name}: ${check.message}`);
+        });
+        if (hookResult?.stdout?.trim()) {
+            console.log('');
+            console.log('Hook stdout:');
+            console.log(hookResult.stdout.trim());
+        }
+        if (hookResult?.stderr?.trim()) {
+            console.log('');
+            console.log('Hook stderr:');
+            console.log(hookResult.stderr.trim());
+        }
+        console.log('');
+        if (failCount > 0) {
+            this.error(`Plugin doctor found ${failCount} blocking issue(s)${warnCount > 0 ? ` and ${warnCount} warning(s)` : ''}`);
+            process.exit(1);
+        }
+        this.success(`Plugin doctor passed${warnCount > 0 ? ` with ${warnCount} warning(s)` : ''}`);
+    }
+    getExternalPluginHookConfig(pluginConfig, manifest, hookName) {
+        const projectHook = pluginConfig?.hooks?.[hookName];
+        if (projectHook && typeof projectHook === 'object' && !Array.isArray(projectHook) && typeof projectHook.command === 'string' && projectHook.command.trim().length > 0) {
+            return projectHook;
+        }
+        const manifestHook = manifest?.hooks?.[hookName];
+        if (manifestHook && typeof manifestHook === 'object' && !Array.isArray(manifestHook) && typeof manifestHook.command === 'string' && manifestHook.command.trim().length > 0) {
+            return manifestHook;
+        }
+        return null;
+    }
+    executeExternalPluginHook(hook, projectPath, context) {
+        const rawCommand = typeof hook?.command === 'string' ? hook.command.trim() : '';
+        if (!rawCommand) {
+            throw new Error('Plugin hook command is not configured.');
+        }
+        const command = this.resolveRunnerCommand(this.replaceRunnerTokens(rawCommand, context), projectPath);
+        const args = Array.isArray(hook?.args)
+            ? hook.args.map((arg) => this.replaceRunnerTokens(String(arg), context))
+            : [];
+        const rawCwd = typeof hook?.cwd === 'string' && hook.cwd.trim().length > 0
+            ? this.replaceRunnerTokens(hook.cwd.trim(), context)
+            : context.project_path || projectPath;
+        const cwd = path.isAbsolute(rawCwd) ? rawCwd : path.resolve(projectPath, rawCwd);
+        const timeoutMs = Number.isFinite(hook?.timeout_ms) && hook.timeout_ms > 0 ? Math.floor(hook.timeout_ms) : 300000;
+        const env = {
+            ...process.env,
+            OSPEC_PLUGIN_ID: context.plugin_id || '',
+            OSPEC_PLUGIN_PROJECT_PATH: context.project_path || projectPath,
+            OSPEC_PLUGIN_CHANGE_PATH: context.change_path || '',
+            OSPEC_PLUGIN_WORKSPACE_ROOT: context.workspace_root || '',
+            OSPEC_PLUGIN_PACKAGE_PATH: context.plugin_package_path || '',
+            OSPEC_PLUGIN_GATE_PATH: context.gate_path || '',
+            OSPEC_PLUGIN_RESULT_PATH: context.result_path || '',
+            OSPEC_PLUGIN_SUMMARY_PATH: context.summary_path || '',
+            OSPEC_PLUGIN_APPROVAL_PATH: context.approval_path || '',
+            OSPEC_PLUGIN_CHANGE_NAME: context.change_name || '',
+            OSPEC_PLUGIN_OSPEC_PACKAGE_PATH: path.resolve(__dirname, '..', '..'),
+            OSPEC_PLUGIN_ACTION: context.action || '',
+            OSPEC_PLUGIN_OPTIONS_JSON: context.options_json || '',
+            OSPEC_PLUGIN_CONFIG_JSON: context.plugin_config_json || '',
+        };
+        const result = (0, child_process_1.spawnSync)(command, args, {
+            cwd,
+            env,
+            encoding: 'utf-8',
+            timeout: timeoutMs,
+            shell: false,
+        });
+        if (result.error) {
+            throw new Error(`Failed to execute plugin hook: ${result.error.message}`);
+        }
+        return {
+            command,
+            args,
+            cwd,
+            timeoutMs,
+            status: typeof result.status === 'number' ? result.status : 1,
+            stdout: String(result.stdout || ''),
+            stderr: String(result.stderr || ''),
+        };
+    }
     getCheckpointProjectDependencies() {
         return ['playwright', 'pixelmatch', 'pngjs'];
     }
@@ -878,9 +1670,6 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         }
         return 'npm';
     }
-    resolvePackageManagerRunner(packageManager) {
-        return process.platform === 'win32' ? `${packageManager}.cmd` : packageManager;
-    }
     getCheckpointDependencyInstallArgs(packageManager, packages) {
         switch (packageManager) {
             case 'pnpm':
@@ -906,14 +1695,19 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         if (!packageManagerAvailability.available) {
             throw new Error(`Checkpoint uses the built-in Playwright adapter, but ${packageManager} is not available on PATH. Install ${packageManager} or switch checkpoint to a custom runner before enabling it.`);
         }
-        const runner = this.resolvePackageManagerRunner(packageManager);
         const installArgs = this.getCheckpointDependencyInstallArgs(packageManager, initialState.missing);
         const displayCommand = (0, helpers_1.formatCliCommand)(packageManager, ...installArgs);
-        const result = (0, child_process_1.spawnSync)(runner, installArgs, {
-            cwd: projectPath,
-            encoding: 'utf-8',
-            shell: false,
-        });
+        const result = process.platform === 'win32'
+            ? (0, child_process_1.spawnSync)('cmd.exe', ['/d', '/s', '/c', packageManager, ...installArgs], {
+                cwd: projectPath,
+                encoding: 'utf-8',
+                shell: false,
+            })
+            : (0, child_process_1.spawnSync)(packageManager, installArgs, {
+                cwd: projectPath,
+                encoding: 'utf-8',
+                shell: false,
+            });
         if (result.error) {
             throw new Error(`Checkpoint dependency install failed while running "${displayCommand}": ${result.error.message}`);
         }
@@ -1006,6 +1800,39 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
     }
     async runPlugin(pluginName, changePath) {
         const normalizedName = this.resolvePluginAlias(pluginName);
+        const targetPath = path.resolve(changePath);
+        const changeFiles = await this.getChangeRuntimePaths(targetPath);
+        const projectPath = await this.findProjectRoot(targetPath);
+        const installedPlugin = await this.resolveInstalledPluginForCommand(normalizedName);
+        if (installedPlugin) {
+            const config = await services_1.services.configManager.loadConfig(projectPath);
+            const pluginConfig = config.plugins?.[normalizedName];
+            const hookConfig = this.getExternalPluginHookConfig(pluginConfig, installedPlugin.manifest, 'run');
+            if (hookConfig?.manages_own_artifacts) {
+                const managedHook = this.executeExternalPluginHook(hookConfig, projectPath, {
+                    plugin_id: normalizedName,
+                    project_path: projectPath,
+                    workspace_root: typeof pluginConfig?.workspace_root === 'string' ? pluginConfig.workspace_root.trim() : '',
+                    plugin_package_path: installedPlugin.packagePath,
+                    change_path: targetPath,
+                    gate_path: path.join(targetPath, 'artifacts', normalizedName, 'gate.json'),
+                    result_path: path.join(targetPath, 'artifacts', normalizedName, 'result.json'),
+                    summary_path: path.join(targetPath, 'artifacts', normalizedName, 'summary.md'),
+                    approval_path: changeFiles.approvalPath,
+                    change_name: '',
+                    action: 'run',
+                });
+                this.emitHookResultOutput(managedHook, hookConfig);
+                if (managedHook.status !== 0) {
+                    process.exit(1);
+                }
+                return;
+            }
+        }
+        const pluginInfo = await this.getPluginRegistryService().getPluginInfo(normalizedName).catch(() => null);
+        if (pluginInfo?.official) {
+            throw new Error(`Plugin ${normalizedName} is not installed globally. Run "ospec plugins install ${normalizedName}" first.`);
+        }
         switch (normalizedName) {
             case 'stitch':
                 await this.runStitch(changePath);
@@ -1014,8 +1841,289 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 await this.runCheckpoint(changePath);
                 return;
             default:
-                throw new Error(`Unsupported plugin: ${pluginName}`);
+                await this.runExternalPlugin(normalizedName, changePath);
+                return;
         }
+    }
+    async runExternalPlugin(pluginName, changePath) {
+        const targetPath = path.resolve(changePath);
+        const changeFiles = await this.getChangeRuntimePaths(targetPath);
+        const projectPath = await this.findProjectRoot(targetPath);
+        const config = await services_1.services.configManager.loadConfig(projectPath);
+        const pluginConfig = config.plugins?.[pluginName];
+        if (!pluginConfig?.enabled) {
+            throw new Error(`${pluginName} plugin is not enabled for this project. Run "ospec plugins enable ${pluginName} <project-path>" first.`);
+        }
+        const verification = await this.readVerification(changeFiles.verificationPath);
+        const optionalSteps = Array.isArray(verification.data.optional_steps) ? verification.data.optional_steps : [];
+        const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
+        const activeCapabilities = workflow.getPluginCapabilities()
+            .filter((capability) => capability.plugin === pluginName)
+            .filter((capability) => optionalSteps.includes(capability.step));
+        if (activeCapabilities.length === 0) {
+            throw new Error(`This change does not activate any ${pluginName} optional steps, so the plugin cannot run for it.`);
+        }
+        const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
+        if (!installedPlugin) {
+            throw new Error(`Plugin ${pluginName} is not installed globally. Run "ospec plugins install ${pluginName}" first.`);
+        }
+        const runHook = this.getExternalPluginHookConfig(pluginConfig, installedPlugin.manifest, 'run');
+        if (!runHook) {
+            throw new Error(`Plugin ${pluginName} does not declare a run hook.`);
+        }
+        const pluginDir = path.join(targetPath, 'artifacts', pluginName);
+        const gatePath = path.join(pluginDir, 'gate.json');
+        const resultPath = path.join(pluginDir, 'result.json');
+        const summaryPath = path.join(pluginDir, 'summary.md');
+        await services_1.services.fileService.ensureDir(pluginDir);
+        const featureState = await services_1.services.fileService.readJSON(changeFiles.statePath);
+        const workspaceRoot = typeof pluginConfig?.workspace_root === 'string' && pluginConfig.workspace_root.trim().length > 0
+            ? pluginConfig.workspace_root.trim()
+            : `.ospec/plugins/${pluginName}`;
+        const hookResult = this.executeExternalPluginHook(runHook, projectPath, {
+            plugin_id: pluginName,
+            project_path: projectPath,
+            change_path: targetPath,
+            workspace_root: workspaceRoot,
+            plugin_package_path: installedPlugin.packagePath,
+            gate_path: gatePath,
+            result_path: resultPath,
+            summary_path: summaryPath,
+            approval_path: '',
+            change_name: featureState.feature || path.basename(targetPath),
+        });
+        const parsedOutput = this.parseExternalPluginRunnerOutput(hookResult.stdout, hookResult.stderr);
+        const normalizedOutput = this.normalizeExternalPluginRunnerResult(parsedOutput, activeCapabilities);
+        if (hookResult.status !== 0) {
+            normalizedOutput.status = 'failed';
+            if (normalizedOutput.issues.length === 0 || !normalizedOutput.issues.some((issue) => typeof issue?.message === 'string' && issue.message.trim().length > 0)) {
+                normalizedOutput.issues.push({
+                    message: hookResult.stderr || hookResult.stdout || `Plugin hook exited with code ${hookResult.status}`,
+                });
+            }
+            for (const capability of activeCapabilities) {
+                const stepState = normalizedOutput.steps?.[capability.step];
+                if (!stepState) {
+                    continue;
+                }
+                stepState.status = 'failed';
+                if (!Array.isArray(stepState.issues) || stepState.issues.length === 0) {
+                    stepState.issues = [
+                        {
+                            message: hookResult.stderr || hookResult.stdout || `Plugin hook exited with code ${hookResult.status}`,
+                        },
+                    ];
+                }
+            }
+        }
+        let summaryMarkdown = normalizedOutput.summary_markdown;
+        if (!summaryMarkdown && normalizedOutput.summary_path) {
+            const summarySourcePath = this.resolveReferencedPath(normalizedOutput.summary_path, hookResult.cwd, projectPath);
+            if (await services_1.services.fileService.exists(summarySourcePath)) {
+                summaryMarkdown = await services_1.services.fileService.readFile(summarySourcePath);
+            }
+        }
+        const gate = {
+            plugin: pluginName,
+            status: normalizedOutput.status,
+            blocking: pluginConfig?.blocking !== false,
+            executed_at: normalizedOutput.executed_at,
+            steps: Object.fromEntries(activeCapabilities.map((capability) => [
+                capability.step,
+                {
+                    capability: capability.capability,
+                    status: normalizedOutput.steps?.[capability.step]?.status || 'pending',
+                    issues: normalizedOutput.steps?.[capability.step]?.issues || [],
+                    artifacts: normalizedOutput.steps?.[capability.step]?.artifacts || [],
+                },
+            ])),
+            issues: normalizedOutput.issues,
+        };
+        const resultArtifact = {
+            plugin: pluginName,
+            status: normalizedOutput.status,
+            executed_at: normalizedOutput.executed_at,
+            active_steps: activeCapabilities.map((capability) => capability.step),
+            runner: {
+                mode: 'command',
+                command: hookResult.command,
+                args: hookResult.args,
+                cwd: hookResult.cwd,
+                timeout_ms: hookResult.timeoutMs,
+                package_name: installedPlugin.record.package_name,
+                version: installedPlugin.record.version,
+            },
+            output: normalizedOutput,
+        };
+        const finalSummary = summaryMarkdown || this.buildExternalPluginSummaryMarkdown(pluginName, gate, normalizedOutput);
+        await services_1.services.fileService.writeJSON(gatePath, gate);
+        await services_1.services.fileService.writeJSON(resultPath, resultArtifact);
+        await services_1.services.fileService.writeFile(summaryPath, finalSummary);
+        for (const capability of activeCapabilities) {
+            const stepStatus = gate.steps?.[capability.step]?.status || 'pending';
+            await this.syncVerificationOptionalStep(changeFiles.verificationPath, capability.step, stepStatus === 'passed' || stepStatus === 'approved');
+        }
+        const passed = gate.status === 'passed' || gate.status === 'approved';
+        if (!passed) {
+            this.info(`  gate: ${path.relative(targetPath, gatePath).replace(/\\/g, '/')}`);
+            this.info(`  result: ${path.relative(targetPath, resultPath).replace(/\\/g, '/')}`);
+            this.info(`  summary: ${path.relative(targetPath, summaryPath).replace(/\\/g, '/')}`);
+            this.info(`  status: ${gate.status}`);
+            this.error(`${pluginName} gate failed. Inspect artifacts/${pluginName}/summary.md for details.`);
+            process.exit(1);
+        }
+        this.success(`Ran plugin ${pluginName} for ${changePath}`);
+        this.info(`  gate: ${path.relative(targetPath, gatePath).replace(/\\/g, '/')}`);
+        this.info(`  result: ${path.relative(targetPath, resultPath).replace(/\\/g, '/')}`);
+        this.info(`  summary: ${path.relative(targetPath, summaryPath).replace(/\\/g, '/')}`);
+        this.info(`  status: ${gate.status}`);
+    }
+    parseExternalPluginRunnerOutput(stdout, stderr) {
+        const normalizedStdout = String(stdout || '').trim();
+        const normalizedStderr = String(stderr || '').trim();
+        const stdoutLines = normalizedStdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const stderrLines = normalizedStderr.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const candidates = Array.from(new Set([
+            normalizedStdout,
+            stdoutLines[stdoutLines.length - 1] || '',
+            stderrLines[stderrLines.length - 1] || '',
+        ].filter(Boolean)));
+        for (const candidate of candidates) {
+            try {
+                const parsed = JSON.parse(candidate);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return parsed;
+                }
+            }
+            catch {
+            }
+        }
+        return {
+            overall_status: 'failed',
+            issues: [normalizedStderr || normalizedStdout || 'Plugin runner produced no structured JSON output.'],
+        };
+    }
+    normalizeExternalPluginRunnerResult(result, activeCapabilities) {
+        const firstString = (...values) => values.find(value => typeof value === 'string' && value.trim().length > 0)?.trim() || '';
+        const normalizeStatus = (value, fallback = 'pending') => {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (normalized === 'pass') {
+                return 'passed';
+            }
+            if (normalized === 'fail' || normalized === 'error') {
+                return 'failed';
+            }
+            if (normalized === 'passed' || normalized === 'approved' || normalized === 'pending' || normalized === 'failed' || normalized === 'rejected' || normalized === 'skipped') {
+                return normalized;
+            }
+            return fallback;
+        };
+        const normalizeIssues = (value) => {
+            if (!Array.isArray(value)) {
+                return [];
+            }
+            return value
+                .map((entry) => {
+                if (typeof entry === 'string' && entry.trim().length > 0) {
+                    return { message: entry.trim() };
+                }
+                if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                    return null;
+                }
+                const message = firstString(entry.message, entry.notes, entry.title, entry.code);
+                if (!message) {
+                    return null;
+                }
+                return {
+                    message,
+                    severity: firstString(entry.severity, entry.level),
+                    code: firstString(entry.code),
+                    path: firstString(entry.path),
+                };
+            })
+                .filter(Boolean);
+        };
+        const capabilityEntries = Array.isArray(result?.capabilities)
+            ? result.capabilities
+            : [];
+        const capabilityMap = result?.capabilities && typeof result.capabilities === 'object' && !Array.isArray(result.capabilities)
+            ? result.capabilities
+            : {};
+        const steps = Object.fromEntries(activeCapabilities.map(capability => {
+            const rawCapability = capabilityEntries.find((entry) => entry?.name === capability.capability || entry?.step === capability.step)
+                || capabilityMap?.[capability.capability]
+                || capabilityMap?.[capability.step]
+                || {};
+            return [
+                capability.step,
+                {
+                    capability: capability.capability,
+                    status: normalizeStatus(rawCapability?.status, 'pending'),
+                    issues: normalizeIssues(rawCapability?.issues || rawCapability?.errors),
+                    artifacts: this.normalizeRunnerArtifacts(rawCapability?.artifacts || rawCapability?.files || rawCapability?.outputs),
+                },
+            ];
+        }));
+        const derivedStatus = activeCapabilities.some(capability => {
+            const stepStatus = steps?.[capability.step]?.status || 'pending';
+            return stepStatus === 'failed' || stepStatus === 'rejected';
+        })
+            ? 'failed'
+            : activeCapabilities.length > 0 && activeCapabilities.every(capability => {
+                const stepStatus = steps?.[capability.step]?.status || 'pending';
+                return stepStatus === 'passed' || stepStatus === 'approved';
+            })
+                ? 'passed'
+                : 'pending';
+        return {
+            plugin: firstString(result?.plugin),
+            version: firstString(result?.version),
+            status: normalizeStatus(result?.overall_status || result?.status, derivedStatus),
+            executed_at: firstString(result?.executed_at, result?.executedAt) || new Date().toISOString(),
+            issues: normalizeIssues(result?.issues || result?.errors),
+            artifacts: this.normalizeRunnerArtifacts(result?.artifacts || result?.files || result?.outputs),
+            summary_markdown: firstString(result?.summary_markdown, result?.summaryMarkdown, result?.summary),
+            summary_path: firstString(result?.summary_path, result?.summaryPath),
+            metadata: result?.metadata && typeof result.metadata === 'object' && !Array.isArray(result.metadata)
+                ? result.metadata
+                : {},
+            steps,
+        };
+    }
+    buildExternalPluginSummaryMarkdown(pluginName, gate, output) {
+        const lines = [
+            `# ${pluginName} Summary`,
+            '',
+            `- Status: ${gate.status}`,
+            `- Executed at: ${gate.executed_at}`,
+            `- Blocking: ${gate.blocking ? 'yes' : 'no'}`,
+            '',
+        ];
+        for (const [stepName, stepState] of Object.entries(gate.steps || {})) {
+            lines.push(`## ${stepName}`);
+            lines.push('');
+            lines.push(`- Status: ${stepState.status}`);
+            const issues = Array.isArray(stepState.issues) ? stepState.issues : [];
+            if (issues.length === 0) {
+                lines.push('- Issues: none');
+            }
+            else {
+                lines.push('- Issues:');
+                issues.forEach(issue => {
+                    lines.push(`  - ${issue.message || issue}`);
+                });
+            }
+            lines.push('');
+        }
+        if (Array.isArray(output?.issues) && output.issues.length > 0) {
+            lines.push('## Global Issues');
+            lines.push('');
+            output.issues.forEach((issue) => {
+                lines.push(`- ${issue.message || issue}`);
+            });
+            lines.push('');
+        }
+        return lines.join('\n');
     }
     async runCheckpoint(changePath) {
         const targetPath = path.resolve(changePath);
@@ -1023,8 +2131,12 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         const projectPath = await this.findProjectRoot(targetPath);
         const config = await services_1.services.configManager.loadConfig(projectPath);
         const checkpointConfig = config.plugins?.checkpoint;
+        const installedCheckpoint = await this.getPluginRegistryService().getInstalledPluginManifest('checkpoint');
         if (!checkpointConfig?.enabled) {
             throw new Error('checkpoint plugin is not enabled for this project. Run "ospec plugins enable checkpoint <project-path> --base-url <url>" first.');
+        }
+        if (!installedCheckpoint) {
+            throw new Error('checkpoint plugin is not installed globally. Run "ospec plugins install checkpoint" first.');
         }
         const verification = await this.readVerification(changeFiles.verificationPath);
         const optionalSteps = Array.isArray(verification.data.optional_steps) ? verification.data.optional_steps : [];
@@ -1052,6 +2164,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         const context = {
             change_path: targetPath,
             project_path: projectPath,
+            plugin_package_path: installedCheckpoint.packagePath,
             approval_path: changeFiles.approvalPath,
             gate_path: changeFiles.checkpointGatePath,
             summary_path: changeFiles.checkpointSummaryPath,
@@ -1127,9 +2240,13 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         const projectPath = await this.findProjectRoot(targetPath);
         const config = await services_1.services.configManager.loadConfig(projectPath);
         const stitchConfig = config.plugins?.stitch;
+        const installedStitch = await this.getPluginRegistryService().getInstalledPluginManifest('stitch');
         const provider = this.getStitchProvider(stitchConfig);
         if (!stitchConfig?.enabled) {
             throw new Error('stitch plugin is not enabled for this project. Run "ospec plugins enable stitch <project-path>" first.');
+        }
+        if (!installedStitch) {
+            throw new Error('stitch plugin is not installed globally. Run "ospec plugins install stitch" first.');
         }
         if (!stitchConfig.capabilities?.page_design_review?.enabled) {
             throw new Error('stitch capability page_design_review is not enabled for this project.');
@@ -1157,6 +2274,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         const context = {
             change_path: targetPath,
             project_path: projectPath,
+            plugin_package_path: installedStitch.packagePath,
             approval_path: changeFiles.approvalPath,
             summary_path: changeFiles.summaryPath,
             result_path: changeFiles.resultPath,
@@ -1385,11 +2503,35 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
     }
     async setPluginApproval(pluginName, status, changePath) {
         const normalizedName = this.resolvePluginAlias(pluginName);
+        const targetPath = path.resolve(changePath);
+        const changeFiles = await this.getChangeRuntimePaths(targetPath);
+        const projectPath = await this.findProjectRoot(targetPath);
+        const managedHook = await this.executeManagedLifecycleHook(normalizedName, status === 'approved' ? 'approve' : 'reject', {
+            project_path: projectPath,
+            workspace_root: '',
+            change_path: targetPath,
+            gate_path: '',
+            result_path: path.join(targetPath, 'artifacts', normalizedName, 'result.json'),
+            summary_path: path.join(targetPath, 'artifacts', normalizedName, 'summary.md'),
+            approval_path: changeFiles.approvalPath,
+            change_name: '',
+        });
+        if (managedHook) {
+            if (managedHook.hookResult.status !== 0) {
+                process.exit(1);
+            }
+            return;
+        }
+        const pluginInfo = await this.getPluginRegistryService().getPluginInfo(normalizedName).catch(() => null);
+        if (pluginInfo?.official) {
+            throw new Error(`Plugin ${normalizedName} is not installed globally. Run "ospec plugins install ${normalizedName}" first.`);
+        }
         if (normalizedName !== 'stitch') {
             throw new Error(`Unsupported plugin: ${pluginName}`);
         }
-        const targetPath = path.resolve(changePath);
-        const changeFiles = await this.getChangeRuntimePaths(targetPath);
+        await this.setLegacyStitchApproval(status, changePath, changeFiles);
+    }
+    async setLegacyStitchApproval(status, changePath, changeFiles) {
         if (!(await services_1.services.fileService.exists(changeFiles.approvalPath))) {
             throw new Error('Stitch approval artifact not found. Expected artifacts/stitch/approval.json');
         }
@@ -1421,7 +2563,9 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         this.info(`  verification.md passed_optional_steps: ${status === 'approved' ? 'includes stitch_design_review' : 'removed stitch_design_review'}`);
     }
     async getChangeRuntimePaths(changePath) {
-        const targetPath = path.resolve(changePath);
+        const targetPath = path.isAbsolute(changePath)
+            ? path.resolve(changePath)
+            : (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), changePath, await services_1.services.configManager.loadConfig(process.cwd()).catch(() => null));
         const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
         const verificationPath = path.join(targetPath, constants_1.FILE_NAMES.VERIFICATION);
         if (!(await services_1.services.fileService.exists(statePath))) {
@@ -1985,7 +3129,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             '    steps:',
             '      - action: wait_for_load',
             '      - action: assert_text',
-            '        text: TODO',
+            '        text: REPLACE_WITH_EXPECTED_TEXT',
             '    assert_command: ""',
             '',
         ].join('\n'));
@@ -2051,7 +3195,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             '',
             '  try {',
             "    await page.goto(new URL('/login', baseUrl).toString(), { waitUntil: 'networkidle', timeout: 60000 });",
-            "    // TODO: replace selectors and credentials for the real project.",
+            "    // Replace selectors and credentials with the real project values.",
             "    // await page.locator('input[name=\"email\"]').fill(process.env.CHECKPOINT_LOGIN_EMAIL || '');",
             "    // await page.locator('input[name=\"password\"]').fill(process.env.CHECKPOINT_LOGIN_PASSWORD || '');",
             "    // await page.locator('button[type=\"submit\"]').click();",
@@ -2097,6 +3241,9 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             .replace(/\{gate_path\}|\$\{gate_path\}/g, context.gate_path || '')
             .replace(/\{summary_path\}|\$\{summary_path\}/g, context.summary_path)
             .replace(/\{result_path\}|\$\{result_path\}/g, context.result_path)
+            .replace(/\{plugin_package_path\}|\$\{plugin_package_path\}/g, context.plugin_package_path || '')
+            .replace(/\{workspace_root\}|\$\{workspace_root\}/g, context.workspace_root || '')
+            .replace(/\{plugin_id\}|\$\{plugin_id\}/g, context.plugin_id || '')
             .replace(/\{ospec_package_path\}|\$\{ospec_package_path\}/g, path.resolve(__dirname, '..', '..'))
             .replace(/\{change_name\}|\$\{change_name\}/g, context.change_name);
     }
@@ -2368,12 +3515,12 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         };
     }
     getDefaultCheckpointRunnerArgs() {
-        return ['${ospec_package_path}/dist/adapters/playwright-checkpoint-adapter.js', '--change', '${change_path}', '--project', '${project_path}'];
+        return ['${plugin_package_path}/dist/playwright-checkpoint-adapter.js', '--change', '${change_path}', '--project', '${project_path}'];
     }
     getDefaultRunnerArgs(provider) {
         return provider === 'codex'
-            ? ['${ospec_package_path}/dist/adapters/codex-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}']
-            : ['${ospec_package_path}/dist/adapters/gemini-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}'];
+            ? ['${plugin_package_path}/dist/codex-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}']
+            : ['${plugin_package_path}/dist/gemini-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}'];
     }
     getStitchProvider(stitchConfig) {
         return String(stitchConfig?.provider || '').trim().toLowerCase() === 'codex' ? 'codex' : 'gemini';
@@ -2571,6 +3718,26 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         const args = Array.isArray(runnerConfig?.args) ? runnerConfig.args.map(arg => String(arg)) : [];
         return command === 'node' && args.some(arg => arg.includes('playwright-checkpoint-adapter.js'));
     }
+    readConfigValueBySourcePath(target, sourcePath) {
+        const segments = String(sourcePath || '').split('.').map(segment => segment.trim()).filter(Boolean);
+        let current = target;
+        for (const segment of segments) {
+            if (!current || typeof current !== 'object' || Array.isArray(current)) {
+                return '';
+            }
+            current = current[segment];
+        }
+        if (Array.isArray(current)) {
+            return current.join(', ');
+        }
+        if (typeof current === 'string') {
+            return current.trim();
+        }
+        if (typeof current === 'number' || typeof current === 'boolean') {
+            return String(current);
+        }
+        return '';
+    }
     getPluginEntries(config) {
         const plugins = config.plugins || {};
         return Object.entries(plugins).map(([name, pluginConfig]) => {
@@ -2588,7 +3755,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 ? this.getEffectiveStitchRunnerConfig(pluginConfig, pluginConfig?.runner)
                 : name === 'checkpoint'
                     ? this.getEffectiveCheckpointRunnerConfig(pluginConfig, pluginConfig?.runner)
-                    : pluginConfig?.runner;
+                    : this.getExternalPluginHookConfig(pluginConfig, null, 'run');
             const tokenEnv = typeof effectiveRunner?.token_env === 'string' ? effectiveRunner.token_env.trim() : '';
             const command = typeof effectiveRunner?.command === 'string' ? effectiveRunner.command.trim() : '';
             const extraEnvCount = effectiveRunner?.extra_env && typeof effectiveRunner.extra_env === 'object'
@@ -2605,7 +3772,9 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                             ? 'built-in Codex adapter'
                             : name === 'checkpoint' && this.isBuiltInCheckpointRunner(pluginConfig?.runner)
                                 ? 'built-in Playwright adapter'
-                                : 'custom',
+                                : name !== 'stitch' && name !== 'checkpoint' && this.getExternalPluginHookConfig(pluginConfig, null, 'run')
+                                    ? `external package${typeof pluginConfig?.package_name === 'string' && pluginConfig.package_name.trim().length > 0 ? ` (${pluginConfig.package_name.trim()})` : ''}`
+                                    : 'custom',
                     cwd: typeof effectiveRunner.cwd === 'string' ? effectiveRunner.cwd : '',
                     timeoutMs: Number.isFinite(effectiveRunner.timeout_ms) && effectiveRunner.timeout_ms > 0
                         ? Math.floor(effectiveRunner.timeout_ms)
@@ -2623,6 +3792,17 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 blocking: pluginConfig?.blocking !== false,
                 capabilities,
                 runner,
+                statusFields: Array.isArray(pluginConfig?.status_fields)
+                    ? pluginConfig.status_fields
+                        .map((field) => ({
+                        key: typeof field?.key === 'string' ? field.key.trim() : '',
+                        label: typeof field?.label === 'string' ? field.label.trim() : '',
+                        value: typeof field?.source === 'string'
+                            ? this.readConfigValueBySourcePath(pluginConfig, field.source)
+                            : '',
+                    }))
+                        .filter((field) => field.key && field.label)
+                    : [],
                 runtimeBaseUrl: name === 'checkpoint' && typeof pluginConfig?.runtime?.base_url === 'string'
                     ? pluginConfig.runtime.base_url.trim()
                     : '',

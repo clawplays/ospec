@@ -1,5 +1,5 @@
 /**
- * SKILL 解析服务
+ * SKILL parsing service.
  */
 import { SkillFrontmatter, SkillSection } from '../core/types';
 interface ParsedSkillFrontmatter {
@@ -8,15 +8,15 @@ interface ParsedSkillFrontmatter {
 }
 export declare class SkillParser {
     /**
-     * 解析 SKILL.md 的前置信息和内容
+     * Parse SKILL.md frontmatter and content.
      */
     parseFrontmatter(content: string): ParsedSkillFrontmatter;
     /**
-     * 提取 Markdown 中的标题结构
+     * Extract heading structure from Markdown.
      */
     extractSections(content: string): Record<string, SkillSection>;
     /**
-     * 完整解析 SKILL.md 文件
+     * Fully parse a SKILL.md file.
      */
     parseSkillFile(content: string): {
         frontmatter: SkillFrontmatter;

@@ -7,5 +7,6 @@ export declare class IndexBuilder {
     write(rootDir: string): Promise<SkillIndex>;
     createEmpty(rootDir: string): Promise<SkillIndex>;
     private stripVolatileFields;
+    private readProjectConfig;
 }
 export declare const createIndexBuilder: (skillParser: SkillParser) => IndexBuilder;

@@ -40,6 +40,7 @@ const constants_1 = require("../core/constants");
 const errors_1 = require("../core/errors");
 const ConfigurableWorkflow_1 = require("../workflow/ConfigurableWorkflow");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class ConfigManager {
     constructor(fileService) {
         this.fileService = fileService;
@@ -71,6 +72,7 @@ class ConfigManager {
         return {
             version: '4.0',
             mode,
+            projectLayout: 'nested',
             hooks: {
                 'pre-commit': true,
                 'post-merge': true,
@@ -93,6 +95,162 @@ class ConfigManager {
             stitch: PluginWorkflowComposer_1.DEFAULT_STITCH_PLUGIN_CONFIG,
             checkpoint: PluginWorkflowComposer_1.DEFAULT_CHECKPOINT_PLUGIN_CONFIG,
         }));
+    }
+    normalizeExternalPluginConfig(pluginName, pluginConfig) {
+        const normalizedPluginName = String(pluginName || '').trim();
+        const capabilities = pluginConfig?.capabilities && typeof pluginConfig.capabilities === 'object' && !Array.isArray(pluginConfig.capabilities)
+            ? Object.fromEntries(Object.entries(pluginConfig.capabilities)
+                .map(([capabilityName, capabilityConfig]) => {
+                const config = capabilityConfig && typeof capabilityConfig === 'object' && !Array.isArray(capabilityConfig)
+                    ? capabilityConfig
+                    : {};
+                const activateWhenFlags = Array.isArray(config.activate_when_flags)
+                    ? Array.from(new Set(config.activate_when_flags
+                        .map(flag => String(flag).trim())
+                        .filter(Boolean)))
+                    : [];
+                const step = typeof config.step === 'string' && config.step.trim().length > 0
+                    ? config.step.trim()
+                    : String(capabilityName || '').trim();
+                if (!step) {
+                    return null;
+                }
+                return [
+                    String(capabilityName).trim(),
+                    {
+                        enabled: config.enabled !== false,
+                        blocking: config.blocking !== false,
+                        step,
+                        activate_when_flags: activateWhenFlags,
+                        execution: typeof config.execution === 'string' && config.execution.trim().length > 0
+                            ? config.execution.trim()
+                            : 'runtime',
+                    },
+                ];
+            })
+                .filter(Boolean))
+            : {};
+        const normalizeHook = (value) => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                return undefined;
+            }
+            const command = typeof value.command === 'string' ? value.command.trim() : '';
+            if (!command) {
+                return undefined;
+            }
+            return {
+                command,
+                args: Array.isArray(value.args) ? value.args.map(arg => String(arg)) : [],
+                cwd: typeof value.cwd === 'string' ? value.cwd.trim() : '',
+                timeout_ms: Number.isFinite(value.timeout_ms) && value.timeout_ms > 0
+                    ? Math.floor(value.timeout_ms)
+                    : 300000,
+            };
+        };
+        const docsLocales = pluginConfig?.docs?.locales && typeof pluginConfig.docs.locales === 'object' && !Array.isArray(pluginConfig.docs.locales)
+            ? Object.fromEntries(Object.entries(pluginConfig.docs.locales)
+                .map(([locale, value]) => [String(locale), String(value || '').trim()])
+                .filter(([, value]) => value.length > 0))
+            : {};
+        const scaffoldProjectFiles = Array.isArray(pluginConfig?.scaffold?.projectFiles)
+            ? pluginConfig.scaffold.projectFiles
+                .map((entry) => {
+                if (typeof entry === 'string' && entry.trim().length > 0) {
+                    return entry.trim();
+                }
+                if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                    return null;
+                }
+                const from = typeof entry.from === 'string' ? entry.from.trim() : '';
+                const to = typeof entry.to === 'string' ? entry.to.trim() : '';
+                if (!from || !to) {
+                    return null;
+                }
+                return { from, to };
+            })
+                .filter(Boolean)
+            : [];
+        const skillProviders = pluginConfig?.skills?.providers && typeof pluginConfig.skills.providers === 'object' && !Array.isArray(pluginConfig.skills.providers)
+            ? Object.fromEntries(Object.entries(pluginConfig.skills.providers)
+                .map(([provider, value]) => [String(provider), String(value || '').trim()])
+                .filter(([, value]) => value.length > 0))
+            : {};
+        const statusFields = Array.isArray(pluginConfig?.status_fields)
+            ? pluginConfig.status_fields
+                .map((entry) => {
+                if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                    return null;
+                }
+                const key = typeof entry.key === 'string' ? entry.key.trim() : '';
+                const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+                const source = typeof entry.source === 'string' ? entry.source.trim() : '';
+                if (!key || !label || !source) {
+                    return null;
+                }
+                return { key, label, source };
+            })
+                .filter(Boolean)
+            : [];
+        return {
+            enabled: pluginConfig?.enabled !== false && pluginConfig?.enabled === true,
+            blocking: pluginConfig?.blocking !== false,
+            source: typeof pluginConfig?.source === 'string' && pluginConfig.source.trim().length > 0
+                ? pluginConfig.source.trim()
+                : 'npm',
+            package_name: typeof pluginConfig?.package_name === 'string'
+                ? pluginConfig.package_name.trim()
+                : '',
+            version: typeof pluginConfig?.version === 'string' ? pluginConfig.version.trim() : '',
+            workspace_root: typeof pluginConfig?.workspace_root === 'string' && pluginConfig.workspace_root.trim().length > 0
+                ? pluginConfig.workspace_root.trim()
+                : `.ospec/plugins/${normalizedPluginName}`,
+            display_name: typeof pluginConfig?.display_name === 'string'
+                ? pluginConfig.display_name.trim()
+                : '',
+            description: typeof pluginConfig?.description === 'string'
+                ? pluginConfig.description.trim()
+                : '',
+            official: pluginConfig?.official === true,
+            kinds: Array.isArray(pluginConfig?.kinds)
+                ? Array.from(new Set(pluginConfig.kinds.map(kind => String(kind).trim()).filter(Boolean)))
+                : [],
+            settings: pluginConfig?.settings && typeof pluginConfig.settings === 'object' && !Array.isArray(pluginConfig.settings)
+                ? pluginConfig.settings
+                : {},
+            capabilities,
+            docs: {
+                locales: docsLocales,
+            },
+            scaffold: {
+                projectFiles: scaffoldProjectFiles,
+            },
+            skills: {
+                providers: skillProviders,
+            },
+            knowledge: {
+                bundle: typeof pluginConfig?.knowledge?.bundle === 'string'
+                    ? pluginConfig.knowledge.bundle.trim()
+                    : '',
+            },
+            hooks: {
+                ...(normalizeHook(pluginConfig?.hooks?.enable)
+                    ? { enable: normalizeHook(pluginConfig?.hooks?.enable) }
+                    : {}),
+                ...(normalizeHook(pluginConfig?.hooks?.doctor)
+                    ? { doctor: normalizeHook(pluginConfig?.hooks?.doctor) }
+                    : {}),
+                ...(normalizeHook(pluginConfig?.hooks?.run)
+                    ? { run: normalizeHook(pluginConfig?.hooks?.run) }
+                    : {}),
+                ...(normalizeHook(pluginConfig?.hooks?.approve)
+                    ? { approve: normalizeHook(pluginConfig?.hooks?.approve) }
+                    : {}),
+                ...(normalizeHook(pluginConfig?.hooks?.reject)
+                    ? { reject: normalizeHook(pluginConfig?.hooks?.reject) }
+                    : {}),
+            },
+            status_fields: statusFields,
+        };
     }
     normalizeDocumentLanguage(input) {
         return input === 'en-US' || input === 'zh-CN' || input === 'ja-JP' || input === 'ar'
@@ -170,7 +328,7 @@ class ConfigManager {
             : defaults.stitch.provider;
         const provider = normalizedProvider === 'codex' ? 'codex' : 'gemini';
         const defaultRunnerArgs = provider === 'codex'
-            ? ['${ospec_package_path}/dist/adapters/codex-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}']
+            ? ['${plugin_package_path}/dist/codex-stitch-adapter.js', '--change', '${change_path}', '--project', '${project_path}']
             : [...defaults.stitch.runner.args];
         const runnerArgs = Array.isArray(stitchRunner.args)
             ? stitchRunner.args.map(arg => String(arg)).filter(arg => arg.length > 0)
@@ -200,8 +358,106 @@ class ConfigManager {
         const normalizeCommandTimeout = (value, fallback) => Number.isFinite(value) && value > 0
             ? Math.floor(value)
             : fallback;
-        return {
+        const normalizeSharedMeta = (pluginName, pluginConfig) => {
+            const normalizeHook = (value) => {
+                if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                    return undefined;
+                }
+                const command = typeof value.command === 'string' ? value.command.trim() : '';
+                if (!command) {
+                    return undefined;
+                }
+                return {
+                    command,
+                    args: Array.isArray(value.args) ? value.args.map((arg) => String(arg)) : [],
+                    cwd: typeof value.cwd === 'string' ? value.cwd.trim() : '',
+                    timeout_ms: Number.isFinite(value.timeout_ms) && value.timeout_ms > 0
+                        ? Math.floor(value.timeout_ms)
+                        : 300000,
+                    manages_own_artifacts: value.manages_own_artifacts === true,
+                    passthrough_stdio: value.passthrough_stdio === true,
+                };
+            };
+            return {
+                ...(typeof pluginConfig?.source === 'string' && pluginConfig.source.trim().length > 0
+                    ? { source: pluginConfig.source.trim() }
+                    : {}),
+                ...(typeof pluginConfig?.package_name === 'string' && pluginConfig.package_name.trim().length > 0
+                    ? { package_name: pluginConfig.package_name.trim() }
+                    : {}),
+                ...(typeof pluginConfig?.version === 'string' && pluginConfig.version.trim().length > 0
+                    ? { version: pluginConfig.version.trim() }
+                    : {}),
+                ...(typeof pluginConfig?.workspace_root === 'string' && pluginConfig.workspace_root.trim().length > 0
+                    ? { workspace_root: pluginConfig.workspace_root.trim() }
+                    : {}),
+                ...(typeof pluginConfig?.display_name === 'string' && pluginConfig.display_name.trim().length > 0
+                    ? { display_name: pluginConfig.display_name.trim() }
+                    : {}),
+                ...(typeof pluginConfig?.description === 'string' && pluginConfig.description.trim().length > 0
+                    ? { description: pluginConfig.description.trim() }
+                    : {}),
+                ...(pluginConfig?.official === true ? { official: true } : {}),
+                ...(Array.isArray(pluginConfig?.kinds)
+                    ? {
+                        kinds: Array.from(new Set(pluginConfig.kinds.map((kind) => String(kind).trim()).filter(Boolean))),
+                    }
+                    : {}),
+                ...(pluginConfig?.docs && typeof pluginConfig.docs === 'object' && !Array.isArray(pluginConfig.docs)
+                    ? { docs: pluginConfig.docs }
+                    : {}),
+                ...(pluginConfig?.scaffold && typeof pluginConfig.scaffold === 'object' && !Array.isArray(pluginConfig.scaffold)
+                    ? { scaffold: pluginConfig.scaffold }
+                    : {}),
+                ...(pluginConfig?.skills && typeof pluginConfig.skills === 'object' && !Array.isArray(pluginConfig.skills)
+                    ? { skills: pluginConfig.skills }
+                    : {}),
+                ...(pluginConfig?.knowledge && typeof pluginConfig.knowledge === 'object' && !Array.isArray(pluginConfig.knowledge)
+                    ? { knowledge: pluginConfig.knowledge }
+                    : {}),
+                ...((() => {
+                    const hooks = {
+                        ...(normalizeHook(pluginConfig?.hooks?.enable)
+                            ? { enable: normalizeHook(pluginConfig?.hooks?.enable) }
+                            : {}),
+                        ...(normalizeHook(pluginConfig?.hooks?.doctor)
+                            ? { doctor: normalizeHook(pluginConfig?.hooks?.doctor) }
+                            : {}),
+                        ...(normalizeHook(pluginConfig?.hooks?.run)
+                            ? { run: normalizeHook(pluginConfig?.hooks?.run) }
+                            : {}),
+                        ...(normalizeHook(pluginConfig?.hooks?.approve)
+                            ? { approve: normalizeHook(pluginConfig?.hooks?.approve) }
+                            : {}),
+                        ...(normalizeHook(pluginConfig?.hooks?.reject)
+                            ? { reject: normalizeHook(pluginConfig?.hooks?.reject) }
+                            : {}),
+                    };
+                    return Object.keys(hooks).length > 0 ? { hooks } : {};
+                })()),
+                ...(Array.isArray(pluginConfig?.status_fields)
+                    ? {
+                        status_fields: pluginConfig.status_fields
+                            .map((entry) => {
+                            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                                return null;
+                            }
+                            const key = typeof entry.key === 'string' ? entry.key.trim() : '';
+                            const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+                            const source = typeof entry.source === 'string' ? entry.source.trim() : '';
+                            if (!key || !label || !source) {
+                                return null;
+                            }
+                            return { key, label, source };
+                        })
+                            .filter(Boolean),
+                    }
+                    : {}),
+            };
+        };
+        const normalizedPlugins = {
             stitch: {
+                ...normalizeSharedMeta('stitch', stitch),
                 enabled: mergedStitch.enabled === true,
                 blocking: mergedStitch.blocking !== false,
                 project: {
@@ -256,6 +512,7 @@ class ConfigManager {
                 },
             },
             checkpoint: {
+                ...normalizeSharedMeta('checkpoint', checkpoint),
                 enabled: checkpoint.enabled === true,
                 blocking: checkpoint.blocking !== false,
                 runtime: {
@@ -345,6 +602,16 @@ class ConfigManager {
                 },
             },
         };
+        const pluginEntries = plugins && typeof plugins === 'object' && !Array.isArray(plugins)
+            ? Object.entries(plugins)
+            : [];
+        for (const [pluginName, pluginConfig] of pluginEntries) {
+            if (pluginName === 'stitch' || pluginName === 'checkpoint' || pluginName === 'stitch-gemini' || pluginName === 'stitch-codex') {
+                continue;
+            }
+            normalizedPlugins[pluginName] = this.normalizeExternalPluginConfig(pluginName, pluginConfig);
+        }
+        return normalizedPlugins;
     }
     normalizeConfig(config) {
         const mode = ['lite', 'standard', 'full'].includes(config.mode) ? config.mode : 'full';
@@ -373,6 +640,7 @@ class ConfigManager {
             ...config,
             version: config.version === '3.0' ? '4.0' : config.version,
             mode,
+            projectLayout: (0, ProjectLayout_1.normalizeProjectLayout)(config.projectLayout) || 'classic',
             documentLanguage: this.normalizeDocumentLanguage(config.documentLanguage),
             archive: {
                 layout: archive.layout === 'month-day' ? 'month-day' : 'flat',

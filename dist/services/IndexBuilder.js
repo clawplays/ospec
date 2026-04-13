@@ -7,6 +7,7 @@ exports.createIndexBuilder = exports.IndexBuilder = void 0;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes', 'for-ai']);
 async function pathExists(targetPath) {
     try {
@@ -25,6 +26,9 @@ class IndexBuilder {
         this.skillParser = skillParser;
     }
     async build(rootDir) {
+        const config = await this.readProjectConfig(rootDir);
+        const projectLayout = (0, ProjectLayout_1.getProjectLayout)(config);
+        const managedRoot = (0, ProjectLayout_1.getProjectManagedRoot)(rootDir, projectLayout);
         const modules = {};
         const tagIndex = {};
         let totalFiles = 0;
@@ -65,10 +69,10 @@ class IndexBuilder {
                 }
             }
         };
-        if (await pathExists(rootDir)) {
-            await visit(rootDir);
+        if (await pathExists(managedRoot)) {
+            await visit(managedRoot);
         }
-        const activeChangesDir = path_1.default.join(rootDir, 'changes', 'active');
+        const activeChangesDir = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'changes/active', projectLayout);
         const activeChanges = (await pathExists(activeChangesDir))
             ? (await fs_1.promises.readdir(activeChangesDir)).sort((left, right) => left.localeCompare(right))
             : [];
@@ -90,7 +94,8 @@ class IndexBuilder {
         };
     }
     async write(rootDir) {
-        const indexPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILL_INDEX);
+        const config = await this.readProjectConfig(rootDir);
+        const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
         const previous = (await pathExists(indexPath))
             ? (await readJson(indexPath))
             : null;
@@ -108,7 +113,8 @@ class IndexBuilder {
         return output;
     }
     async createEmpty(rootDir) {
-        const indexPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILL_INDEX);
+        const config = await this.readProjectConfig(rootDir);
+        const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
         const previous = (await pathExists(indexPath))
             ? (await readJson(indexPath))
             : null;
@@ -134,6 +140,18 @@ class IndexBuilder {
     stripVolatileFields(index) {
         const { generated: _generated, ...stable } = index;
         return stable;
+    }
+    async readProjectConfig(rootDir) {
+        const configPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILLRC);
+        if (!(await pathExists(configPath))) {
+            return null;
+        }
+        try {
+            return await readJson(configPath);
+        }
+        catch {
+            return null;
+        }
     }
 }
 exports.IndexBuilder = IndexBuilder;

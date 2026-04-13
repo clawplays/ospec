@@ -1,5 +1,5 @@
 /**
- * 导出入口
+ * Export entry point.
  */
 export * from './types';
 export * from './constants';

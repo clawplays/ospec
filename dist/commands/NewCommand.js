@@ -41,20 +41,23 @@ const helpers_1 = require("../utils/helpers");
 const PathUtils_1 = require("../utils/PathUtils");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 class NewCommand extends BaseCommand_1.BaseCommand {
     async execute(featureName, rootDir, options = {}) {
         try {
             this.validateArgs([featureName], 1);
             services_1.services.validationService.validateFeatureName(featureName);
             const targetDir = rootDir || process.cwd();
-            const placement = options.placement === constants_1.DIR_NAMES.QUEUED ? constants_1.DIR_NAMES.QUEUED : constants_1.DIR_NAMES.ACTIVE;
-            const featureDir = PathUtils_1.PathUtils.getChangeDir(targetDir, placement, featureName);
-            this.logger.info(`Creating ${placement === constants_1.DIR_NAMES.QUEUED ? 'queued change' : 'change'}: ${featureName}`);
-            await this.ensureChangeNameAvailable(targetDir, featureName);
-            await this.ensureSingleActiveMode(targetDir, placement, featureName);
-            await services_1.services.fileService.ensureDir(path.join(targetDir, constants_1.DIR_NAMES.CHANGES, placement));
-            await services_1.services.fileService.ensureDir(featureDir);
             const config = await services_1.services.configManager.loadConfig(targetDir);
+            const placement = options.placement === constants_1.DIR_NAMES.QUEUED
+                ? constants_1.DIR_NAMES.QUEUED
+                : constants_1.DIR_NAMES.ACTIVE;
+            const featureDir = PathUtils_1.PathUtils.getChangeDir(targetDir, placement, featureName, config);
+            this.logger.info(`Creating ${placement === constants_1.DIR_NAMES.QUEUED ? 'queued change' : 'change'}: ${featureName}`);
+            await this.ensureChangeNameAvailable(targetDir, featureName, config);
+            await this.ensureSingleActiveMode(targetDir, placement, featureName, config);
+            await services_1.services.fileService.ensureDir((0, ProjectLayout_1.resolveManagedPath)(targetDir, `${constants_1.DIR_NAMES.CHANGES}/${placement}`, config));
+            await services_1.services.fileService.ensureDir(featureDir);
             const composer = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
             const flags = this.normalizeFlags(options.flags);
             const activatedSteps = composer.getActivatedSteps(flags);
@@ -114,7 +117,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 projectRoot: targetDir,
                 documentPath: path.join(featureDir, constants_1.FILE_NAMES.REVIEW),
             }));
-            await this.writePluginArtifacts(featureDir, activatedSteps);
+            await this.writePluginArtifacts(targetDir, featureDir, activatedSteps);
             this.success(`${placement === constants_1.DIR_NAMES.QUEUED ? 'Queued change' : 'Change'} ${featureName} created at ${featureDir}`);
             if (flags.length > 0) {
                 this.info(`  Flags: ${flags.join(', ')}`);
@@ -133,11 +136,11 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         if (configLanguage) {
             return configLanguage;
         }
-        const manifestLanguage = await this.readDocumentLanguageFromAssetManifest(targetDir);
+        const manifestLanguage = await this.readDocumentLanguageFromAssetManifest(targetDir, config);
         if (manifestLanguage) {
             return manifestLanguage;
         }
-        const guideLanguage = await this.readDocumentLanguageFromAiGuide(targetDir);
+        const guideLanguage = await this.readDocumentLanguageFromAiGuide(targetDir, config);
         if (guideLanguage) {
             return guideLanguage;
         }
@@ -146,7 +149,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
     normalizeDocumentLanguage(input) {
         return input === 'en-US' || input === 'zh-CN' || input === 'ja-JP' || input === 'ar' ? input : null;
     }
-    async readDocumentLanguageFromAssetManifest(targetDir) {
+    async readDocumentLanguageFromAssetManifest(targetDir, config) {
         const manifestPath = path.join(targetDir, '.ospec', 'asset-sources.json');
         if (!(await services_1.services.fileService.exists(manifestPath))) {
             return null;
@@ -158,7 +161,10 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 return manifestLanguage;
             }
             const assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
-            for (const targetRelativePath of ['for-ai/ai-guide.md', 'for-ai/execution-protocol.md']) {
+            for (const targetRelativePath of [
+                (0, ProjectLayout_1.toManagedRelativePath)('for-ai/ai-guide.md', config),
+                (0, ProjectLayout_1.toManagedRelativePath)('for-ai/execution-protocol.md', config),
+            ]) {
                 const asset = assets.find(item => item?.targetRelativePath === targetRelativePath);
                 const sourceRelativePath = typeof asset?.sourceRelativePath === 'string' ? asset.sourceRelativePath : '';
                 if (sourceRelativePath.includes('/ar/')) {
@@ -180,8 +186,8 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         }
         return null;
     }
-    async readDocumentLanguageFromAiGuide(targetDir) {
-        const aiGuidePath = path.join(targetDir, 'for-ai', 'ai-guide.md');
+    async readDocumentLanguageFromAiGuide(targetDir, config) {
+        const aiGuidePath = (0, ProjectLayout_1.resolveManagedPath)(targetDir, 'for-ai/ai-guide.md', config);
         if (!(await services_1.services.fileService.exists(aiGuidePath))) {
             return null;
         }
@@ -224,9 +230,9 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         }
         return /[\u3005\u3006\u300C-\u300F\u30F5\u30F6]/.test(content);
     }
-    async ensureChangeNameAvailable(targetDir, featureName) {
-        const activeDir = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.ACTIVE, featureName);
-        const queuedDir = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.QUEUED, featureName);
+    async ensureChangeNameAvailable(targetDir, featureName, config) {
+        const activeDir = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.ACTIVE, featureName, config);
+        const queuedDir = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.QUEUED, featureName, config);
         const conflicts = [];
         if (await services_1.services.fileService.exists(activeDir)) {
             conflicts.push('changes/active');
@@ -239,7 +245,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         }
         throw new Error(`Change ${featureName} already exists in ${conflicts.join(' and ')}. Continue the existing change instead of creating a duplicate.`);
     }
-    async ensureSingleActiveMode(targetDir, placement, featureName) {
+    async ensureSingleActiveMode(targetDir, placement, featureName, config) {
         if (placement !== constants_1.DIR_NAMES.ACTIVE) {
             return;
         }
@@ -249,7 +255,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         }
         if (activeNames.length === 1) {
             const activeName = activeNames[0];
-            const activeChangePath = path.join(targetDir, constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ACTIVE, activeName);
+            const activeChangePath = PathUtils_1.PathUtils.getChangeDir(targetDir, constants_1.DIR_NAMES.ACTIVE, activeName, config);
             const progressCommand = (0, helpers_1.formatCliCommand)('ospec', 'progress', activeChangePath);
             const queueCommand = (0, helpers_1.formatCliCommand)('ospec', 'queue', 'add', featureName, targetDir);
             throw new Error(`A single active change is the default workflow, but "${activeName}" is already active. Continue it with "${progressCommand}" or create queued work explicitly with "${queueCommand}".`);
@@ -257,7 +263,9 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         const queueCommand = (0, helpers_1.formatCliCommand)('ospec', 'queue', 'add', featureName, targetDir);
         throw new Error(`A single active change is the default workflow, but ${activeNames.length} active changes already exist: ${activeNames.join(', ')}. Resolve the repository back to one active change before creating another, or add new work with "${queueCommand}".`);
     }
-    async writePluginArtifacts(featureDir, activatedSteps) {
+    async writePluginArtifacts(projectRoot, featureDir, activatedSteps) {
+        const config = await services_1.services.configManager.loadConfig(projectRoot);
+        const composer = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
         const checkpointSteps = activatedSteps.filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
         if (checkpointSteps.length > 0) {
             const checkpointDir = path.join(featureDir, 'artifacts', 'checkpoint');
@@ -307,6 +315,37 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             reviewer: '',
             notes: '',
         });
+        const externalPluginCapabilities = composer.getPluginCapabilities()
+            .filter(capability => capability.plugin !== 'stitch' && capability.plugin !== 'checkpoint')
+            .filter(capability => activatedSteps.includes(capability.step));
+        const externalStepsByPlugin = externalPluginCapabilities.reduce((accumulator, capability) => {
+            accumulator[capability.plugin] = accumulator[capability.plugin] || [];
+            accumulator[capability.plugin].push(capability.step);
+            return accumulator;
+        }, {});
+        for (const [pluginName, pluginSteps] of Object.entries(externalStepsByPlugin)) {
+            const pluginDir = path.join(featureDir, 'artifacts', pluginName);
+            await services_1.services.fileService.ensureDir(pluginDir);
+            await services_1.services.fileService.writeJSON(path.join(pluginDir, 'gate.json'), {
+                plugin: pluginName,
+                status: 'pending',
+                blocking: config.plugins?.[pluginName]?.blocking !== false,
+                executed_at: '',
+                steps: Object.fromEntries(pluginSteps.map(step => [step, {
+                        status: 'pending',
+                        issues: [],
+                    }])),
+                issues: [],
+            });
+            await services_1.services.fileService.writeJSON(path.join(pluginDir, 'result.json'), {
+                plugin: pluginName,
+                status: 'pending',
+                executed_at: '',
+                active_steps: pluginSteps,
+                output: {},
+            });
+            await services_1.services.fileService.writeFile(path.join(pluginDir, 'summary.md'), `# ${pluginName} Summary\n\n- Status: pending\n- The plugin runner has not been executed yet.\n`);
+        }
     }
     normalizeFlags(flags) {
         if (!Array.isArray(flags)) {

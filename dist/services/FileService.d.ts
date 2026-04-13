@@ -1,5 +1,5 @@
 /**
- * 文件操作服务
+ * File system service.
  */
 import { Stats } from 'fs';
 export declare class FileService {

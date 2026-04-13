@@ -1,13 +1,13 @@
 "use strict";
 /**
- * 验证服务
+ * Validation service.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validationService = exports.ValidationService = void 0;
 const errors_1 = require("../core/errors");
 class ValidationService {
     /**
-     * 验证变更名称格式
+     * Validate change-name format.
      */
     validateFeatureName(name) {
         const regex = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -17,7 +17,7 @@ class ValidationService {
         return true;
     }
     /**
-     * 验证JSON格式
+     * Validate JSON format.
      */
     validateJSON(content) {
         try {
@@ -29,7 +29,7 @@ class ValidationService {
         }
     }
     /**
-     * 验证必填字段
+     * Validate required fields.
      */
     validateRequiredFields(data, fields) {
         const missing = fields.filter(field => !data[field]);
