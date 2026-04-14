@@ -105,16 +105,24 @@ class LayoutCommand extends BaseCommand_1.BaseCommand {
         }
         const movePlan = await this.collectClassicMovePlan(rootDir);
         const conflicts = [];
+        const removablePlaceholderPaths = new Set();
         for (const move of movePlan) {
             if (!(await services_1.services.fileService.exists(move.sourcePath))) {
                 continue;
             }
             if (await services_1.services.fileService.exists(move.targetPath)) {
+                if (await this.isPlaceholderDirectoryTree(move.targetPath)) {
+                    removablePlaceholderPaths.add(move.targetPath);
+                    continue;
+                }
                 conflicts.push(`${move.targetRelativePath} already exists`);
             }
         }
         if (conflicts.length > 0) {
             throw new Error(`Cannot migrate to nested layout because target paths already exist:\n- ${conflicts.join('\n- ')}`);
+        }
+        for (const targetPath of Array.from(removablePlaceholderPaths).sort((left, right) => right.localeCompare(left))) {
+            await services_1.services.fileService.remove(targetPath);
         }
         const movedPaths = [];
         for (const move of movePlan) {
@@ -195,6 +203,23 @@ class LayoutCommand extends BaseCommand_1.BaseCommand {
             results.push(path.relative(rootDir, fullPath).replace(/\\/g, '/'));
         }
         return results;
+    }
+    async isPlaceholderDirectoryTree(targetPath) {
+        const stat = await services_1.services.fileService.stat(targetPath);
+        if (!stat.isDirectory()) {
+            return false;
+        }
+        const entries = await services_1.services.fileService.readDir(targetPath);
+        if (entries.length === 0) {
+            return true;
+        }
+        for (const entryName of entries) {
+            const entryPath = path.join(targetPath, entryName);
+            if (!(await this.isPlaceholderDirectoryTree(entryPath))) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 exports.LayoutCommand = LayoutCommand;

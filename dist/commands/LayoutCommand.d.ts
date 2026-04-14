@@ -5,4 +5,5 @@ export declare class LayoutCommand extends BaseCommand {
     private migrateToNested;
     private collectClassicMovePlan;
     private collectNestedSkillFiles;
+    private isPlaceholderDirectoryTree;
 }
