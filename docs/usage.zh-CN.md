@@ -73,7 +73,7 @@ ospec finalize [changes/active/<change>]
 ## 升级已有项目
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.0.0
+npm install -g @clawplays/ospec-cli@1.0.1
 ospec update [path]
 ```
 
