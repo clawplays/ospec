@@ -1,0 +1,4 @@
+{
+  "name": "1.0.0 - Modular Plugin Installation",
+  "body": "Refactored the core architecture and split the plugin system into on-demand installs."
+}

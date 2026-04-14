@@ -73,7 +73,7 @@ If you want to convert an older classic project to the new layout, run `ospec la
 ## Upgrading An Existing Project
 
 ```bash
-npm install -g @clawplays/ospec-cli@0.3.10
+npm install -g @clawplays/ospec-cli@1.0.0
 ospec update [path]
 ```
 
