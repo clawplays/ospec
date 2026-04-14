@@ -1,4 +1,21 @@
 {
-  "name": "1.0.1 - Nested Layout Migration Polish",
-  "body": "Highlights: Improves nested layout migration, cleans up maintainer release tooling, and refreshes upgrade docs for 1.0.1.\n\n## Improved\n\n- Allow `ospec layout migrate --to nested` to remove empty placeholder target trees before moving files, which reduces false conflicts during migration.\n- Stop emitting redundant `version` fields in generated and bundled skill YAML definitions to keep shipped skill metadata leaner.\n- Simplify maintainer release flow by removing the old `release:cut` and version sync scripts in favor of explicit note generation and upload steps.\n- Add repository `.editorconfig` and `.gitattributes` files for more consistent formatting and package text normalization.\n\n## Docs\n\n- Update multilingual upgrade examples to use `npm install -g @clawplays/ospec-cli@1.0.1`.\n\n## Upgrade\n\n```bash\nnpm install -g @clawplays/ospec-cli@1.0.1\nospec update\n```\n\n**Full Changelog**: https://github.com/clawplays/ospec/compare/1.0.0...1.0.1"
+  "title_suffix": "Project Scaffolding and Layout Migration",
+  "summary": "Highlights: Adds project scaffolding foundations, introduces nested layout migration support, fixes placeholder-directory conflicts during migration, and refreshes the 1.0.1 upgrade path.",
+  "new": [
+    "Add `ospec layout migrate --to nested` support through the new `LayoutCommand`.",
+    "Initialize the project distribution structure with core CLI command wiring and packaged multi-language documentation assets.",
+    "Bundle the `ospec-change` skill and related skill command support for active change workflows."
+  ],
+  "improved": [
+    "Simplify maintainer release tooling by removing the old `release:cut` and version sync scripts in favor of explicit release note generation and upload steps.",
+    "Stop emitting redundant `version` fields in generated and bundled skill YAML definitions.",
+    "Add repository `.editorconfig` and `.gitattributes` files for more consistent formatting and text normalization."
+  ],
+  "fixed": [
+    "Allow nested layout migration to remove empty placeholder target trees before moving files, reducing false conflicts when upgrading older project layouts."
+  ],
+  "docs": [
+    "Update multilingual upgrade examples to use `npm install -g @clawplays/ospec-cli@1.0.1`."
+  ],
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.0.0...1.0.1"
 }
