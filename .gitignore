@@ -7,7 +7,5 @@ coverage/
 .tmp/
 .vscode/
 .idea/
-.local/
 .claude/
-.skills/
 dist/**/*.map
