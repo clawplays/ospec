@@ -6,12 +6,7 @@ const { spawnSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const packageJson = require(path.join(rootDir, 'package.json'));
-const RELEASE_OVERRIDE_DIR = path.join(
-  rootDir,
-  '.skills',
-  'ospec-release-notes',
-  'releases',
-);
+const RELEASE_OVERRIDE_DIR = path.join(rootDir, 'releases');
 
 function parseArgs(argv) {
   const args = {};
