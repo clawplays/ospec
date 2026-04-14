@@ -14,20 +14,11 @@
     "postinstall": "node scripts/postinstall.js",
     "prepack": "node scripts/strip-sourcemap-refs.js",
     "index:rebuild": "node dist/tools/build-index.js",
-    "release:cut": "node scripts/release-cut.js",
-    "release:cut:patch": "node scripts/release-cut.js patch",
-    "release:cut:minor": "node scripts/release-cut.js minor",
-    "release:cut:major": "node scripts/release-cut.js major",
     "release:smoke": "node scripts/release-smoke.js",
     "release:notes": "node scripts/release-notes.js",
     "release:upload-notes": "node scripts/release-upload-notes.js",
-    "release:sync-version": "node scripts/sync-version.js",
-    "release:bump:patch": "npm version patch --no-git-tag-version",
-    "release:bump:minor": "npm version minor --no-git-tag-version",
-    "release:bump:major": "npm version major --no-git-tag-version",
     "release:check": "npm pack --dry-run",
-    "release:publish": "npm publish --access public",
-    "version": "npm run release:sync-version"
+    "release:publish": "npm publish --access public"
   },
   "keywords": [
     "ospec",

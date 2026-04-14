@@ -4,8 +4,6 @@ title: OSpec Change
 
 description: Create or advance an active change inside a OSpec project while respecting workflow files and optional-step activation.
 
-version: 5.1.0
-
 author: OSpec Team
 
 license: MIT

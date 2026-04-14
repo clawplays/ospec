@@ -661,8 +661,6 @@ title: ${definition.title}
 
 description: ${definition.description}
 
-version: 5.1.0
-
 author: OSpec Team
 
 license: MIT
@@ -830,8 +828,6 @@ ospec skill install-claude
 title: OSpec CLI (Legacy Alias)
 
 description: Legacy compatibility alias that redirects ospec-cli skill usage to the newer ospec skill name.
-
-version: 5.1.0
 
 author: OSpec Team
 
