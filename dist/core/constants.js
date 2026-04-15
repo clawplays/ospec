@@ -42,6 +42,7 @@ exports.DIR_NAMES = {
     RUNS: 'runs',
     HISTORY: 'history',
     LOGS: 'logs',
+    KNOWLEDGE: 'knowledge',
     FOR_AI: 'for-ai',
     DOCS: 'docs',
     PROJECT: 'project',

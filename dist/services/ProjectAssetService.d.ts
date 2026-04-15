@@ -4,6 +4,7 @@ import { ProjectLayout } from '../core/types';
 interface AssetManifestOptions {
     projectLayout?: ProjectLayout;
     documentLanguage?: string;
+    ospecCliVersion?: string;
     templateGeneratedPaths: string[];
     runtimeGeneratedPaths: string[];
 }
@@ -45,6 +46,7 @@ export declare class ProjectAssetService {
     private resolveStaticSourceHint;
     private normalizePaths;
     private getPackageRoot;
+    private getPackageVersion;
     private isOSpecManagedHook;
 }
 export declare const createProjectAssetService: (fileService: FileService) => ProjectAssetService;

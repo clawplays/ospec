@@ -5,6 +5,14 @@ export declare class UpdateCommand extends BaseCommand {
     private repairLegacyProjectForUpdate;
     private detectLegacyProjectMarkers;
     private syncProjectTooling;
+    private migrateLegacyKnowledgeLayout;
+    private syncProjectCliVersionMetadata;
+    private detectProjectCliVersion;
+    private isLegacyKnowledgeMigrationEligible;
+    private isCliVersionAtLeast;
+    private mergeLegacyKnowledgeDirectory;
+    private refreshMigratedKnowledgeLinks;
+    private rewriteFileIfChanged;
     private ensureEnabledPluginPackageAvailable;
     private maybeUpgradeEnabledPluginPackage;
     private refreshExternalPluginInstalledMetadata;

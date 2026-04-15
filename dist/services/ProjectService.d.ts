@@ -187,6 +187,7 @@ export declare class ProjectService {
     private applyProjectScaffoldPhase;
     private getProtocolShellTemplateGeneratedPaths;
     private getFullBootstrapTemplateGeneratedPaths;
+    private getExistingOptionalKnowledgeGeneratedPaths;
     private getBootstrapAssetPlan;
     private renderProtocolShellRootSkill;
     private writeBootstrapSummary;

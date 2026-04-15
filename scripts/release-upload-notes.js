@@ -3,11 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const {
-  createReleaseMetadata,
-  getCommitEntries,
-  resolvePreviousTag,
-} = require('./release-notes');
 
 const rootDir = path.resolve(__dirname, '..');
 const packageJson = require(path.join(rootDir, 'package.json'));
@@ -133,15 +128,17 @@ function readReleaseMetadata(tag) {
   const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
   const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
 
-  if (name && body) {
-    return {
-      metadataPath,
-      name,
-      body,
-    };
+  if (!name || !body) {
+    throw new Error(
+      `Local release metadata must include non-empty "name" and "body": ${metadataPath}`,
+    );
   }
 
-  return null;
+  return {
+    metadataPath,
+    name,
+    body,
+  };
 }
 
 function ensureRemoteTagExists(tag) {
@@ -230,22 +227,7 @@ async function uploadReleaseNotes(options) {
   const tag = resolveTag(options.args || {});
   const repositoryUrl = resolveRepositoryUrl();
   const repository = parseGitHubRepository(repositoryUrl);
-  const localMetadata = readReleaseMetadata(tag);
-  const previousTag = resolvePreviousTag(tag);
-  const commits = getCommitEntries(previousTag);
-  const generatedMetadata =
-    localMetadata ||
-    (await createReleaseMetadata({
-      tag,
-      previousTag,
-      commits,
-      repositoryUrl,
-    }));
-  const metadata = {
-    metadataPath: getReleaseMetadataPath(tag),
-    name: generatedMetadata.name,
-    body: generatedMetadata.body,
-  };
+  const metadata = readReleaseMetadata(tag);
   ensureRemoteTagExists(tag);
   const prerelease = tag.includes('-');
   const payload = {

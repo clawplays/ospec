@@ -16,7 +16,7 @@ const ACTION_SKILLS = [
         title: 'OSpec Init',
         description: 'Initialize an OSpec repository to change-ready state without creating the first change automatically.',
         shortDescription: 'Initialize OSpec to change-ready',
-        defaultPrompt: 'Use $ospec-init to initialize the target directory with ospec init so the repository ends in change-ready state. Reuse existing project docs when available. If the repository lacks a usable project overview and you are in an AI-assisted flow, ask one concise question for project summary or tech stack before calling ospec init with those inputs; if the user declines, run plain ospec init and allow placeholder docs. Verify the protocol-shell files and project knowledge docs on disk. Do not create the first change automatically.',
+        defaultPrompt: 'Use $ospec-init to initialize the target directory with ospec init so the repository ends in change-ready state. Reuse existing project docs when available. In AI-assisted init, map an explicit language request or the current conversation language to --document-language instead of assuming a brand-new repo will infer it. If the repository lacks a usable project overview and you are in an AI-assisted flow, ask one concise question for project summary or tech stack before calling ospec init with those inputs; if the user declines, run plain ospec init and allow placeholder docs. Verify the protocol-shell files and project knowledge docs on disk. Do not create the first change automatically.',
         markdown: `# OSpec Init
 
 
@@ -30,6 +30,8 @@ Use this action when the user intent is initialization.
 
 
 - use \`ospec init [path]\` so the repository ends in change-ready state
+
+- in AI-assisted init, map an explicit language request or the current conversation language to \`--document-language\`
 
 - verify root \`.skillrc\` and \`README.md\`, plus managed OSpec files under \`.ospec/\` including \`.ospec/SKILL.md\`, \`.ospec/SKILL.index.json\`, \`.ospec/changes/\`, \`.ospec/tools/build-index-auto.cjs\`, \`.ospec/for-ai/\`, and \`.ospec/docs/project/\` on disk for new projects
 
@@ -50,6 +52,8 @@ Use this action when the user intent is initialization.
 \`\`\`bash
 
 ospec init [path]
+
+ospec init [path] --document-language zh-CN
 
 ospec init [path] --summary "..." --tech-stack node,react
 
@@ -841,7 +845,7 @@ interface:
 
   short_description: "Legacy alias for the OSpec skill"
 
-  default_prompt: "Use $ospec to initialize this directory according to OSpec rules: init should end in change-ready state, reuse existing docs when available, ask for missing summary or tech stack in AI-assisted flows before falling back to placeholder docs, avoid assumed web templates when the project type is unclear, and do not create the first change automatically."
+  default_prompt: "Use $ospec to initialize this directory according to OSpec rules: init should end in change-ready state, reuse existing docs when available, map an explicit language request or the current conversation language to --document-language during AI-assisted init instead of assuming a brand-new repo will infer it, ask for missing summary or tech stack in AI-assisted flows before falling back to placeholder docs, avoid assumed web templates when the project type is unclear, and do not create the first change automatically."
 
 `,
             openaiYaml: `interface:
@@ -850,7 +854,7 @@ interface:
 
   short_description: "Legacy alias for the OSpec skill"
 
-  default_prompt: "Use $ospec to initialize this directory according to OSpec rules: init should end in change-ready state, reuse existing docs when available, ask for missing summary or tech stack in AI-assisted flows before falling back to placeholder docs, avoid assumed web templates when the project type is unclear, and do not create the first change automatically."
+  default_prompt: "Use $ospec to initialize this directory according to OSpec rules: init should end in change-ready state, reuse existing docs when available, map an explicit language request or the current conversation language to --document-language during AI-assisted init instead of assuming a brand-new repo will infer it, ask for missing summary or tech stack in AI-assisted flows before falling back to placeholder docs, avoid assumed web templates when the project type is unclear, and do not create the first change automatically."
 
 `,
         };

@@ -35,6 +35,8 @@ AI / `$ospec`:
 - 「Stitch を開いて」と言われたら、まず Stitch がグローバルインストール済みか確認し、未インストールならインストールし、その後で現在のプロジェクトに対して有効化する意味として扱います
 - 「Checkpoint を開いて」と言われたら、まず Checkpoint がグローバルインストール済みか確認し、未インストールならインストールし、その後で現在のプロジェクトに対して有効化する意味として扱います
 - 詳細なプラグイン文書は、有効化後に `.ospec/plugins/<plugin>/docs/` へ同期されます
+- インストール前に `ospec plugins info <plugin>` または `ospec plugins installed` を確認します
+- プラグインがすでにグローバルインストール済みなら、インストールはスキップして現在のプロジェクトでの有効化だけを行います
 - `ospec plugins update --all` は、ユーザーが「インストール済みプラグインを全部更新したい」と明示した場合にだけ実行します
 
 コマンドライン:
@@ -65,13 +67,14 @@ ospec finalize [changes/active/<change>]
 ```
 
 新規プロジェクトで `ospec init [path]` を実行すると、既定で nested レイアウトを使います。リポジトリ直下に残るのは `.skillrc` と `README.md` だけで、OSpec が管理する他のファイルは `.ospec/` に入ります。
+通常の `init` では `.ospec/knowledge/src/` や `.ospec/knowledge/tests/` のような任意の知識マップは作成しません。
 CLI は `changes/active/<change>` のような短縮パスも受け付けますが、nested プロジェクトでの実体パスは `.ospec/changes/active/<change>` です。
 古い classic プロジェクトを新しいレイアウトへ移行したい場合は、明示的に `ospec layout migrate --to nested` を実行してください。
 
 ## 既存プロジェクトの更新
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.0.1
+npm install -g @clawplays/ospec-cli@1.0.2
 ospec update [path]
 ```
 
@@ -84,6 +87,7 @@ ospec update [path]
 
 `ospec update [path]` は、プロトコル文書、ツール、managed skills、アーカイブレイアウトのメタデータ、そして有効化済みプラグインの資産を更新します。
 さらに、OSpec の痕跡は残っているものの新しいコア実行ディレクトリが欠けている古い OSpec プロジェクトを修復し、ルートの `build-index-auto.*` や `.skillrc` 内の旧 Stitch キーも正規化します。
+もし nested プロジェクトに古い `.ospec/src/` または `.ospec/tests/` の知識ディレクトリが残っている場合、`ospec update [path]` はそれらを `.ospec/knowledge/src/` と `.ospec/knowledge/tests/` に移行します。
 有効化済みプラグインのグローバルパッケージが手動で削除されていた場合、`ospec update [path]` はまずそのパッケージの復旧を試みてからプロジェクト資産の同期を続けます。
 有効化済みプラグインに、より新しい互換 npm バージョンがある場合、`ospec update [path]` はそのグローバルプラグインパッケージを自動で更新し、旧バージョンから新バージョンへの遷移を表示します。
 現在のプロジェクトで有効化されていないグローバルプラグインは更新しません。

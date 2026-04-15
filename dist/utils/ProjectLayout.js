@@ -91,6 +91,7 @@ function resolveManagedInputPath(rootDir, candidatePath, input) {
     const normalizedCandidatePath = String(candidatePath || '').replace(/\\/g, '/').replace(/^\.\/+/, '');
     if (normalizedCandidatePath.startsWith('changes/') ||
         normalizedCandidatePath.startsWith('for-ai/') ||
+        normalizedCandidatePath.startsWith('knowledge/') ||
         normalizedCandidatePath.startsWith('docs/') ||
         normalizedCandidatePath.startsWith('src/') ||
         normalizedCandidatePath.startsWith('tests/') ||

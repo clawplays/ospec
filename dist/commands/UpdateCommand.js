@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdateCommand = void 0;
+const fs_1 = require("fs");
 const os_1 = require("os");
 const path_1 = require("path");
 const services_1 = require("../services");
@@ -22,12 +23,16 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             throw new Error('Project is not initialized. Run "ospec init" first.');
         }
         this.info(`Updating OSpec project at ${targetPath}`);
+        const cliVersionMetadataSync = await this.syncProjectCliVersionMetadata(targetPath);
+        const legacyKnowledgeMigration = await this.migrateLegacyKnowledgeLayout(targetPath, cliVersionMetadataSync.effectiveProjectCliVersion);
         const protocolResult = await services_1.services.projectService.syncProtocolGuidance(targetPath);
         const toolingResult = await this.syncProjectTooling(targetPath, protocolResult.documentLanguage);
         const pluginResult = await this.syncEnabledPluginAssets(targetPath);
         const archiveResult = await this.syncArchiveLayout(targetPath);
         const skillResult = await this.syncInstalledSkills();
         const refreshedFiles = Array.from(new Set([
+            ...(cliVersionMetadataSync.configSaved ? ['.skillrc'] : []),
+            ...legacyKnowledgeMigration.refreshedFiles,
             ...protocolResult.refreshedFiles,
             ...toolingResult.refreshedFiles,
             ...pluginResult.refreshedFiles,
@@ -47,6 +52,20 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             }
             if (legacyRepair.refreshedPaths.length > 0) {
                 this.info(`  legacy paths normalized: ${legacyRepair.refreshedPaths.join(', ')}`);
+            }
+        }
+        if (cliVersionMetadataSync.configSaved) {
+            this.info('  project CLI version metadata normalized: .skillrc');
+        }
+        if (legacyKnowledgeMigration.performed) {
+            if (legacyKnowledgeMigration.migratedPaths.length > 0) {
+                this.info(`  legacy knowledge migrated: ${legacyKnowledgeMigration.migratedPaths.join(', ')}`);
+            }
+            if (legacyKnowledgeMigration.refreshedFiles.length > 0) {
+                this.info(`  migrated knowledge links refreshed: ${legacyKnowledgeMigration.refreshedFiles.join(', ')}`);
+            }
+            if (legacyKnowledgeMigration.removedPaths.length > 0) {
+                this.info(`  legacy knowledge paths removed: ${legacyKnowledgeMigration.removedPaths.join(', ')}`);
             }
         }
         if (toolingResult.hookInstalledFiles.length > 0) {
@@ -204,6 +223,228 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             migratedFiles,
             removedLegacyFiles,
         };
+    }
+    async migrateLegacyKnowledgeLayout(rootDir, effectiveProjectCliVersion) {
+        const config = await services_1.services.configManager.loadConfig(rootDir).catch(() => null);
+        if (!(await this.isLegacyKnowledgeMigrationEligible(rootDir, config, effectiveProjectCliVersion))) {
+            return {
+                performed: false,
+                migratedPaths: [],
+                refreshedFiles: [],
+                removedPaths: [],
+            };
+        }
+        const knowledgeRoot = (0, path_1.join)(rootDir, '.ospec', 'knowledge');
+        const migrations = [
+            {
+                sourcePath: (0, path_1.join)(rootDir, '.ospec', 'src'),
+                targetPath: (0, path_1.join)(knowledgeRoot, 'src'),
+                sourceRelativePath: '.ospec/src',
+                targetRelativePath: '.ospec/knowledge/src',
+            },
+            {
+                sourcePath: (0, path_1.join)(rootDir, '.ospec', 'tests'),
+                targetPath: (0, path_1.join)(knowledgeRoot, 'tests'),
+                sourceRelativePath: '.ospec/tests',
+                targetRelativePath: '.ospec/knowledge/tests',
+            },
+        ];
+        if (!(await Promise.all(migrations.map(item => services_1.services.fileService.exists(item.sourcePath)))).some(Boolean)) {
+            return {
+                performed: false,
+                migratedPaths: [],
+                refreshedFiles: [],
+                removedPaths: [],
+            };
+        }
+        await services_1.services.fileService.ensureDir(knowledgeRoot);
+        const migratedPaths = [];
+        const removedPaths = [];
+        for (const migration of migrations) {
+            if (!(await services_1.services.fileService.exists(migration.sourcePath))) {
+                continue;
+            }
+            if (!(await services_1.services.fileService.exists(migration.targetPath))) {
+                await services_1.services.fileService.move(migration.sourcePath, migration.targetPath);
+                migratedPaths.push(`${migration.sourceRelativePath} -> ${migration.targetRelativePath}`);
+                continue;
+            }
+            await this.mergeLegacyKnowledgeDirectory(migration.sourcePath, migration.targetPath);
+            await services_1.services.fileService.remove(migration.sourcePath);
+            migratedPaths.push(`${migration.sourceRelativePath} -> ${migration.targetRelativePath}`);
+            removedPaths.push(migration.sourceRelativePath);
+        }
+        const refreshedFiles = await this.refreshMigratedKnowledgeLinks(rootDir);
+        return {
+            performed: migratedPaths.length > 0 || refreshedFiles.length > 0 || removedPaths.length > 0,
+            migratedPaths,
+            refreshedFiles,
+            removedPaths,
+        };
+    }
+    async syncProjectCliVersionMetadata(rootDir) {
+        const config = await services_1.services.configManager.loadConfig(rootDir).catch(() => null);
+        if (!config) {
+            return {
+                configSaved: false,
+                effectiveProjectCliVersion: null,
+            };
+        }
+        const detectedProjectCliVersion = await this.detectProjectCliVersion(rootDir, config);
+        if (typeof config.ospecCliVersion === 'string' && config.ospecCliVersion.trim().length > 0) {
+            return {
+                configSaved: false,
+                effectiveProjectCliVersion: config.ospecCliVersion.trim(),
+            };
+        }
+        if (!detectedProjectCliVersion) {
+            return {
+                configSaved: false,
+                effectiveProjectCliVersion: null,
+            };
+        }
+        await services_1.services.configManager.saveConfig(rootDir, {
+            ...config,
+            ospecCliVersion: detectedProjectCliVersion,
+        });
+        return {
+            configSaved: true,
+            effectiveProjectCliVersion: detectedProjectCliVersion,
+        };
+    }
+    async detectProjectCliVersion(rootDir, config) {
+        if (typeof config?.ospecCliVersion === 'string' && config.ospecCliVersion.trim().length > 0) {
+            return config.ospecCliVersion.trim();
+        }
+        const assetManifestPath = (0, path_1.join)(rootDir, '.ospec', 'asset-sources.json');
+        if (await services_1.services.fileService.exists(assetManifestPath)) {
+            try {
+                const assetManifest = await services_1.services.fileService.readJSON(assetManifestPath);
+                if (typeof assetManifest?.ospecCliVersion === 'string' && assetManifest.ospecCliVersion.trim().length > 0) {
+                    return assetManifest.ospecCliVersion.trim();
+                }
+            }
+            catch {
+                return null;
+            }
+            return '1.0.0';
+        }
+        const legacyKnowledgeRoots = [
+            (0, path_1.join)(rootDir, '.ospec', 'src'),
+            (0, path_1.join)(rootDir, '.ospec', 'tests'),
+        ];
+        if ((await Promise.all(legacyKnowledgeRoots.map(target => services_1.services.fileService.exists(target)))).some(Boolean)) {
+            return '1.0.0';
+        }
+        return null;
+    }
+    async isLegacyKnowledgeMigrationEligible(rootDir, config, effectiveProjectCliVersion) {
+        if (config?.projectLayout !== 'nested') {
+            return false;
+        }
+        if (!effectiveProjectCliVersion || !this.isCliVersionAtLeast(effectiveProjectCliVersion, '1.0.0')) {
+            return false;
+        }
+        return true;
+    }
+    isCliVersionAtLeast(version, minimum) {
+        const parse = (value) => String(value || '')
+            .trim()
+            .replace(/^v/i, '')
+            .split('-', 1)[0]
+            .split('.')
+            .map(part => Number.parseInt(part, 10));
+        const left = parse(version);
+        const right = parse(minimum);
+        for (let index = 0; index < Math.max(left.length, right.length, 3); index += 1) {
+            const leftPart = Number.isFinite(left[index]) ? left[index] : 0;
+            const rightPart = Number.isFinite(right[index]) ? right[index] : 0;
+            if (leftPart > rightPart) {
+                return true;
+            }
+            if (leftPart < rightPart) {
+                return false;
+            }
+        }
+        return true;
+    }
+    async mergeLegacyKnowledgeDirectory(sourceDir, targetDir) {
+        await services_1.services.fileService.ensureDir(targetDir);
+        const entries = await fs_1.promises.readdir(sourceDir, { withFileTypes: true });
+        for (const entry of entries) {
+            const sourcePath = (0, path_1.join)(sourceDir, entry.name);
+            const targetPath = (0, path_1.join)(targetDir, entry.name);
+            if (entry.isDirectory()) {
+                await this.mergeLegacyKnowledgeDirectory(sourcePath, targetPath);
+                continue;
+            }
+            if (await services_1.services.fileService.exists(targetPath)) {
+                continue;
+            }
+            await services_1.services.fileService.move(sourcePath, targetPath);
+        }
+    }
+    async refreshMigratedKnowledgeLinks(rootDir) {
+        const refreshedFiles = [];
+        const knowledgeSourceRoot = (0, path_1.join)(rootDir, '.ospec', 'knowledge', 'src');
+        const rewrites = [
+            {
+                filePath: (0, path_1.join)(rootDir, '.ospec', 'SKILL.md'),
+                transform: content => content
+                    .replace(/\]\(src\/SKILL\.md\)/g, '](knowledge/src/SKILL.md)')
+                    .replace(/\]\(tests\/SKILL\.md\)/g, '](knowledge/tests/SKILL.md)'),
+            },
+            {
+                filePath: (0, path_1.join)(rootDir, '.ospec', 'docs', 'project', 'module-map.md'),
+                transform: content => content.replace(/\(src\/modules\//g, '(../../knowledge/src/modules/'),
+            },
+            {
+                filePath: (0, path_1.join)(knowledgeSourceRoot, 'SKILL.md'),
+                transform: content => content
+                    .replace(/src\/SKILL\.md/g, 'knowledge/src/SKILL.md')
+                    .replace(/`src\/modules\/<module>\/SKILL\.md`/g, '`knowledge/src/modules/<module>/SKILL.md`'),
+            },
+            {
+                filePath: (0, path_1.join)(knowledgeSourceRoot, 'core', 'SKILL.md'),
+                transform: content => content
+                    .replace(/src\/SKILL\.md/g, 'knowledge/src/SKILL.md')
+                    .replace(/\.\.\/\.\.\/docs\/project\//g, '../../../docs/project/'),
+            },
+        ];
+        for (const rewrite of rewrites) {
+            if (await this.rewriteFileIfChanged(rewrite.filePath, rewrite.transform)) {
+                refreshedFiles.push(this.toRelativePath(rootDir, rewrite.filePath));
+            }
+        }
+        const moduleSkillsRoot = (0, path_1.join)(knowledgeSourceRoot, 'modules');
+        if (!(await services_1.services.fileService.exists(moduleSkillsRoot))) {
+            return refreshedFiles;
+        }
+        const moduleEntries = await fs_1.promises.readdir(moduleSkillsRoot, { withFileTypes: true });
+        for (const entry of moduleEntries) {
+            if (!entry.isDirectory()) {
+                continue;
+            }
+            const skillPath = (0, path_1.join)(moduleSkillsRoot, entry.name, 'SKILL.md');
+            if (await this.rewriteFileIfChanged(skillPath, content => content
+                .replace(/src\/SKILL\.md/g, 'knowledge/src/SKILL.md')
+                .replace(/\.\.\/\.\.\/\.\.\/docs\/project\//g, '../../../../docs/project/'))) {
+                refreshedFiles.push(this.toRelativePath(rootDir, skillPath));
+            }
+        }
+        return refreshedFiles;
+    }
+    async rewriteFileIfChanged(filePath, transform) {
+        if (!(await services_1.services.fileService.exists(filePath))) {
+            return false;
+        }
+        const before = await services_1.services.fileService.readFile(filePath);
+        const after = transform(before);
+        if (after === before) {
+            return false;
+        }
+        await services_1.services.fileService.writeFile(filePath, after);
+        return true;
     }
     async syncEnabledPluginAssets(rootDir) {
         const rawConfig = await services_1.services.fileService.readJSON((0, path_1.join)(rootDir, '.skillrc'));

@@ -67,13 +67,14 @@ ospec finalize [changes/active/<change>]
 ```
 
 新项目执行 `ospec init [path]` 后，默认使用 nested 布局：仓库根目录保留 `.skillrc` 与 `README.md`，其余 OSpec 托管文件写入 `.ospec/`。
+普通 `init` 不会默认创建 `.ospec/knowledge/src/` 或 `.ospec/knowledge/tests/` 这类可选知识地图目录。
 命令行仍然接受 `changes/active/<change>` 这类简写；在 nested 项目里，对应的实际目录是 `.ospec/changes/active/<change>`。
 如果你要把旧的 classic 项目迁移到新布局，请显式运行 `ospec layout migrate --to nested`。
 
 ## 升级已有项目
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.0.1
+npm install -g @clawplays/ospec-cli@1.0.2
 ospec update [path]
 ```
 
@@ -86,6 +87,7 @@ ospec update [path]
 
 `ospec update [path]` 会刷新协议文档、工具链、托管 skills、归档布局元数据，以及已启用插件的项目资产。
 它也可以修复仍然保留 OSpec 痕迹、但缺少较新核心运行目录的旧项目，并规范化旧项目结构，例如把根目录里的 `build-index-auto.*` 工具迁移到 `.ospec/tools/`，并整理 `.skillrc` 里的旧版 Stitch 插件键。
+如果 nested 项目里还保留着旧的 `.ospec/src/` 或 `.ospec/tests/` 知识目录，`ospec update [path]` 会把它们迁移到 `.ospec/knowledge/src/` 和 `.ospec/knowledge/tests/`。
 如果某个已启用插件已经在全局安装记录中，但包被用户手动删除了，`ospec update [path]` 会先尝试自动补装，再继续同步项目资产。
 如果某个已启用插件存在更新的兼容 npm 版本，`ospec update [path]` 会自动升级这个全局插件包，并输出从旧版本到新版本的升级明细。
 它不会升级当前项目里未启用的全局插件。

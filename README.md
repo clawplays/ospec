@@ -94,6 +94,7 @@ CLI notes:
 - CLI language resolution order: explicit `--document-language` -> persisted project language in `.skillrc` -> existing project docs / managed `for-ai/*` guidance / asset manifest -> fallback `en-US`
 - OSpec persists the chosen project document language in `.skillrc` and reuses it for `for-ai` guidance, `ospec new`, and `ospec update`
 - new projects initialized by `ospec init` default to the nested layout: root `.skillrc` and `README.md`, with OSpec-managed files under `.ospec/`
+- plain init does not create optional knowledge maps such as `.ospec/knowledge/src/` or `.ospec/knowledge/tests/`; those appear only when a project already has legacy knowledge content to migrate or when future explicit knowledge-generation flows create them
 - CLI commands still accept shorthand like `changes/active/<change-name>`, but the physical path in nested projects is `.ospec/changes/active/<change-name>`
 - if you pass these values, OSpec uses them directly when generating project docs
 - if you do not pass them, OSpec reuses existing docs when possible and otherwise creates placeholder docs first
@@ -171,6 +172,7 @@ ospec update
 
 `ospec update` also migrates legacy root-level `build-index-auto.cjs` / `build-index-auto.js` tooling into `.ospec/tools/build-index-auto.cjs` and refreshes OSpec-managed hook entrypoints to use the new location.
 It also repairs older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, refreshes managed skills and archive layout metadata, and syncs project assets for already-enabled plugins.
+For nested projects that still carry legacy knowledge under `.ospec/src/` or `.ospec/tests/`, `ospec update` migrates those paths into `.ospec/knowledge/src/` and `.ospec/knowledge/tests/`.
 When an already-enabled plugin has a newer compatible npm package version available, `ospec update` upgrades that global plugin package automatically and prints the version transition.
 It does not upgrade the CLI itself, and it does not enable plugins or migrate active / queued changes automatically.
 It also does not switch a classic project layout to nested automatically.

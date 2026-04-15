@@ -101,6 +101,7 @@ export interface ArchiveConfig {
 export interface SkillrcConfig {
     version: string;
     mode: ProjectMode;
+    ospecCliVersion?: string;
     projectLayout?: ProjectLayout;
     documentLanguage?: 'en-US' | 'zh-CN' | 'ja-JP' | 'ar';
     hooks: {

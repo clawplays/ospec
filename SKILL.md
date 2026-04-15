@@ -37,9 +37,10 @@ If the user intent is simply to initialize the project or current directory, tre
 Use this exact behavior:
 
 1. run `ospec init [path]` when the directory is uninitialized or not yet change-ready
-2. if AI assistance is available and the repository lacks usable project context, ask one concise follow-up for summary or tech stack before init when helpful
-3. verify the actual filesystem result before claiming initialization is complete
-4. stop before `ospec new` unless the user explicitly asks to create a change
+2. in AI-assisted init, map an explicit language request or the current conversation language to `--document-language`; do not assume a brand-new repo will infer it
+3. if AI assistance is available and the repository lacks usable project context, ask one concise follow-up for summary or tech stack before init when helpful
+4. verify the actual filesystem result before claiming initialization is complete
+5. stop before `ospec new` unless the user explicitly asks to create a change
 
 Never replace `ospec init` with manual directory creation or a hand-written approximation.
 
@@ -66,7 +67,7 @@ Required checks after `ospec init`:
 - `docs/project/module-map.md`
 - `docs/project/api-overview.md`
 
-During plain init, do not report `docs/SKILL.md`, `src/SKILL.md`, `tests/SKILL.md`, or business scaffold as if they were part of change-ready completion.
+During plain init, do not report `docs/SKILL.md`, optional knowledge maps such as `knowledge/src/SKILL.md` / `knowledge/tests/SKILL.md`, or business scaffold as if they were part of change-ready completion.
 
 ## Prompt Profiles
 
@@ -133,6 +134,7 @@ Use ospec to create a change queue and execute it explicitly with ospec run manu
 Always keep these rules:
 
 - `ospec init` should leave the repository in a change-ready state
+- in AI-assisted init, pass `--document-language` from the explicit language request or current conversation language when the project language is already apparent
 - AI-assisted init may ask one concise follow-up question for missing summary or tech stack; if the user declines, continue with placeholder docs
 - `ospec docs generate` refreshes, repairs, or backfills project knowledge docs after initialization
 - when the user asks to initialize, execute the CLI init command and verify the protocol-shell files and `docs/project/*` files on disk before declaring success
@@ -184,6 +186,7 @@ Do not fall back to the old `features/...` layout unless the target repository r
 ```bash
 ospec status [path]
 ospec init [path]
+ospec init [path] --document-language zh-CN
 ospec init [path] --summary "..." --tech-stack node,react
 ospec docs generate [path]
 ospec new <change-name> [path]

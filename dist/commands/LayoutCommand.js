@@ -159,16 +159,16 @@ class LayoutCommand extends BaseCommand_1.BaseCommand {
             constants_1.FILE_NAMES.SKILL_INDEX,
             'changes',
             'for-ai',
+            'knowledge',
             'docs/project',
             'docs/design',
             'docs/planning',
             'docs/api',
             'docs/SKILL.md',
-            'tests/SKILL.md',
         ]) {
             plannedRelativePaths.add(relativePath);
         }
-        for (const baseDir of ['src', 'docs', 'tests']) {
+        for (const baseDir of ['knowledge', 'src', 'docs', 'tests']) {
             const absoluteBaseDir = path.join(rootDir, baseDir);
             if (!(await services_1.services.fileService.exists(absoluteBaseDir))) {
                 continue;

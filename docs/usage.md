@@ -67,13 +67,14 @@ ospec finalize [changes/active/<change>]
 ```
 
 New projects initialized by `ospec init [path]` use the nested layout by default: keep `.skillrc` and `README.md` at the repository root, and place other OSpec-managed files under `.ospec/`.
+Plain init does not create optional knowledge maps such as `.ospec/knowledge/src/` or `.ospec/knowledge/tests/`.
 CLI commands still accept shorthand such as `changes/active/<change>`, but the physical path in nested projects is `.ospec/changes/active/<change>`.
 If you want to convert an older classic project to the new layout, run `ospec layout migrate --to nested`.
 
 ## Upgrading An Existing Project
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.0.1
+npm install -g @clawplays/ospec-cli@1.0.2
 ospec update [path]
 ```
 
@@ -86,6 +87,7 @@ ospec update [path]
 
 `ospec update [path]` refreshes protocol docs, tooling, managed skills, archive layout metadata, and assets for already-enabled plugins.
 It can also repair older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, and it normalizes legacy root `build-index-auto.*` tooling plus legacy Stitch plugin keys in `.skillrc`.
+For nested projects with legacy knowledge still stored under `.ospec/src/` or `.ospec/tests/`, `ospec update [path]` migrates those paths into `.ospec/knowledge/src/` and `.ospec/knowledge/tests/`.
 If an already-enabled plugin is missing globally, `ospec update [path]` attempts to restore that package before syncing project assets.
 When an already-enabled plugin has a newer compatible npm package version available, `ospec update [path]` upgrades that global plugin package automatically and prints the version transition.
 It does not upgrade plugins that are installed globally but not enabled in the current project.

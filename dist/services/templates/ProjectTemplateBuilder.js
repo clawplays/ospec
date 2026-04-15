@@ -26,8 +26,7 @@ ${context.summary}
 
 - 根技能文档：\`SKILL.md\`
 - 文档中心：\`docs/SKILL.md\`
-- 源码地图：\`src/SKILL.md\`
-- 测试说明：\`tests/SKILL.md\`
+- 可选知识地图：\`knowledge/src/SKILL.md\`、\`knowledge/tests/SKILL.md\`
 - 语义索引：\`SKILL.index.json\`
 
 ## 执行层
@@ -49,8 +48,7 @@ ${context.summary}
 
 - Root skill: \`SKILL.md\`
 - Docs hub: \`docs/SKILL.md\`
-- Source map: \`src/SKILL.md\`
-- Test guide: \`tests/SKILL.md\`
+- Optional knowledge maps: \`knowledge/src/SKILL.md\`, \`knowledge/tests/SKILL.md\`
 - Index: \`SKILL.index.json\`
 
 ## Execution
@@ -72,8 +70,7 @@ ${context.summary}
 
 - ルート SKILL: \`SKILL.md\`
 - docs ハブ: \`docs/SKILL.md\`
-- ソースマップ: \`src/SKILL.md\`
-- テストガイド: \`tests/SKILL.md\`
+- 任意の知識マップ: \`knowledge/src/SKILL.md\`、\`knowledge/tests/SKILL.md\`
 - インデックス: \`SKILL.index.json\`
 
 ## 実行レイヤー
@@ -95,8 +92,7 @@ ${context.summary}
 
 - ملف SKILL الجذري: \`SKILL.md\`
 - مركز docs: \`docs/SKILL.md\`
-- خريطة المصدر: \`src/SKILL.md\`
-- دليل الاختبارات: \`tests/SKILL.md\`
+- خرائط معرفة اختيارية: \`knowledge/src/SKILL.md\` و \`knowledge/tests/SKILL.md\`
 - الفهرس: \`SKILL.index.json\`
 
 ## طبقة التنفيذ
@@ -128,9 +124,8 @@ ${context.architecture}
 ## 目录导航
 
 - 文档中心：[docs/SKILL.md](docs/SKILL.md)
-- 源码地图：[src/SKILL.md](src/SKILL.md)
-- 测试入口：[tests/SKILL.md](tests/SKILL.md)
 - AI 指南：[for-ai/ai-guide.md](for-ai/ai-guide.md)
+- 可选知识地图：\`knowledge/src/SKILL.md\`、\`knowledge/tests/SKILL.md\`
 
 ## 插件阻断
 
@@ -158,9 +153,8 @@ ${context.architecture}
 ## Navigation
 
 - Docs hub: [docs/SKILL.md](docs/SKILL.md)
-- Source map: [src/SKILL.md](src/SKILL.md)
-- Test guide: [tests/SKILL.md](tests/SKILL.md)
 - AI guide: [for-ai/ai-guide.md](for-ai/ai-guide.md)
+- Optional knowledge maps: \`knowledge/src/SKILL.md\`, \`knowledge/tests/SKILL.md\`
 
 ## Plugin Gates
 
@@ -188,9 +182,8 @@ ${context.architecture}
 ## ナビゲーション
 
 - docs ハブ: [docs/SKILL.md](docs/SKILL.md)
-- ソースマップ: [src/SKILL.md](src/SKILL.md)
-- テストガイド: [tests/SKILL.md](tests/SKILL.md)
 - AI ガイド: [for-ai/ai-guide.md](for-ai/ai-guide.md)
+- 任意の知識マップ: \`knowledge/src/SKILL.md\`、\`knowledge/tests/SKILL.md\`
 
 ## プラグインゲート
 
@@ -218,9 +211,8 @@ ${context.architecture}
 ## التنقل
 
 - مركز docs: [docs/SKILL.md](docs/SKILL.md)
-- خريطة المصدر: [src/SKILL.md](src/SKILL.md)
-- دليل الاختبارات: [tests/SKILL.md](tests/SKILL.md)
 - دليل الذكاء الاصطناعي: [for-ai/ai-guide.md](for-ai/ai-guide.md)
+- خرائط معرفة اختيارية: \`knowledge/src/SKILL.md\` و \`knowledge/tests/SKILL.md\`
 
 ## بوابات الإضافات
 
@@ -298,7 +290,9 @@ ${context.architecture}
         const context = this.getProjectContext(fallbackName, 'standard', input);
         const moduleLinks = this.formatLinkedList(context.modulePlans.map(plan => ({
             displayName: plan.displayName,
-            path: plan.path.replace(`${constants_1.DIR_NAMES.SRC}/`, ''),
+            path: plan.path
+                .replace(`${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/`, '')
+                .replace(`${constants_1.DIR_NAMES.SRC}/`, ''),
         })), this.copy(context.documentLanguage, '待补充', 'TBD', '未定', 'قيد التحديد'));
         const body = this.copy(context.documentLanguage, `# 源码地图
 
@@ -307,7 +301,7 @@ ${context.architecture}
 ## 目录导航
 
 - 核心层：[core/SKILL.md](core/SKILL.md)
-- 模块层：\`src/modules/<module>/SKILL.md\`
+- 模块层：\`knowledge/src/modules/<module>/SKILL.md\`
 
 ## 模块说明
 
@@ -318,7 +312,7 @@ ${moduleLinks}`, `# Source Map
 ## Navigation
 
 - Core layer: [core/SKILL.md](core/SKILL.md)
-- Module layer: \`src/modules/<module>/SKILL.md\`
+- Module layer: \`knowledge/src/modules/<module>/SKILL.md\`
 
 ## Modules
 
@@ -329,7 +323,7 @@ ${moduleLinks}`, `# ソースマップ
 ## ナビゲーション
 
 - コア層: [core/SKILL.md](core/SKILL.md)
-- モジュール層: \`src/modules/<module>/SKILL.md\`
+- モジュール層: \`knowledge/src/modules/<module>/SKILL.md\`
 
 ## モジュール
 
@@ -340,7 +334,7 @@ ${moduleLinks}`, `# خريطة المصدر
 ## التنقل
 
 - الطبقة الأساسية: [core/SKILL.md](core/SKILL.md)
-- طبقة الوحدات: \`src/modules/<module>/SKILL.md\`
+- طبقة الوحدات: \`knowledge/src/modules/<module>/SKILL.md\`
 
 ## الوحدات
 
@@ -356,7 +350,7 @@ ${moduleLinks}`);
         const body = this.copy(context.documentLanguage, `# Core 核心层
 
 > 层级：第 3 层（核心模块）
-> 上层：[src/SKILL.md](../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../SKILL.md)
 
 ## 模块概述
 
@@ -366,10 +360,10 @@ ${moduleLinks}`);
 
 ## API 文档
 
-- 项目 API 总览：[../../docs/project/api-overview.md](../../docs/project/api-overview.md)`, `# Core Layer
+- 项目 API 总览：[../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`, `# Core Layer
 
 > Layer: core module
-> Parent: [src/SKILL.md](../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../SKILL.md)
 
 ## Module Overview
 
@@ -379,10 +373,10 @@ ${moduleLinks}`);
 
 ## API Docs
 
-- Project API overview: [../../docs/project/api-overview.md](../../docs/project/api-overview.md)`, `# コア層
+- Project API overview: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`, `# コア層
 
 > レイヤー: コアモジュール
-> 親: [src/SKILL.md](../SKILL.md)
+> 親: [knowledge/src/SKILL.md](../SKILL.md)
 
 ## モジュール概要
 
@@ -392,10 +386,10 @@ ${moduleLinks}`);
 
 ## API 文書
 
-- プロジェクト API 概要: [../../docs/project/api-overview.md](../../docs/project/api-overview.md)`, `# الطبقة الأساسية
+- プロジェクト API 概要: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`, `# الطبقة الأساسية
 
 > الطبقة: الوحدة الأساسية
-> الأصل: [src/SKILL.md](../SKILL.md)
+> الأصل: [knowledge/src/SKILL.md](../SKILL.md)
 
 ## نظرة عامة على الوحدة
 
@@ -405,7 +399,7 @@ ${moduleLinks}`);
 
 ## وثائق API
 
-- نظرة عامة على API للمشروع: [../../docs/project/api-overview.md](../../docs/project/api-overview.md)`);
+- نظرة عامة على API للمشروع: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`);
         return this.withFrontmatter({
             name: 'core',
             title: this.copy(context.documentLanguage, `${context.projectName} 核心层`, `${context.projectName} Core Layer`, `${context.projectName} コア層`, `${context.projectName} الطبقة الأساسية`),
@@ -878,7 +872,7 @@ ${apiDocs}`);
         const body = presetBody ?? this.copy(context.documentLanguage, `# ${moduleName} 模块
 
 > 层级：第 3 层（业务模块文档）
-> 上层：[src/SKILL.md](../../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../../SKILL.md)
 
 ## 模块概述
 
@@ -910,12 +904,12 @@ ${this.formatReferenceList(refs, '待补充')}
 
 ## 关联文档
 
-- 项目模块地图：[../../../docs/project/module-map.md](../../../docs/project/module-map.md)
-- API 总览：[../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)
+- 项目模块地图：[../../../../docs/project/module-map.md](../../../../docs/project/module-map.md)
+- API 总览：[../../../../docs/project/api-overview.md](../../../../docs/project/api-overview.md)
 - 模块源码入口：当前目录`, `# ${moduleName}
 
 > Layer: module document
-> Parent: [src/SKILL.md](../../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## Module Overview
 
@@ -947,11 +941,11 @@ ${this.formatReferenceList(refs, 'TBD')}
 
 ## Related Docs
 
-- Module map: [../../../docs/project/module-map.md](../../../docs/project/module-map.md)
-- API overview: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`, `# ${moduleName} モジュール
+- Module map: [../../../../docs/project/module-map.md](../../../../docs/project/module-map.md)
+- API overview: [../../../../docs/project/api-overview.md](../../../../docs/project/api-overview.md)`, `# ${moduleName} モジュール
 
 > レイヤー: モジュール文書
-> 親: [src/SKILL.md](../../SKILL.md)
+> 親: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## モジュール概要
 
@@ -983,11 +977,11 @@ ${this.formatReferenceList(refs, '未定')}
 
 ## 関連文書
 
-- モジュールマップ: [../../../docs/project/module-map.md](../../../docs/project/module-map.md)
-- API 概要: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`, `# وحدة ${moduleName}
+- モジュールマップ: [../../../../docs/project/module-map.md](../../../../docs/project/module-map.md)
+- API 概要: [../../../../docs/project/api-overview.md](../../../../docs/project/api-overview.md)`, `# وحدة ${moduleName}
 
 > الطبقة: وثيقة الوحدة
-> الأصل: [src/SKILL.md](../../SKILL.md)
+> الأصل: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## نظرة عامة على الوحدة
 
@@ -1019,8 +1013,8 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 
 ## وثائق ذات صلة
 
-- خريطة الوحدات: [../../../docs/project/module-map.md](../../../docs/project/module-map.md)
-- نظرة عامة على API: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`);
+- خريطة الوحدات: [../../../../docs/project/module-map.md](../../../../docs/project/module-map.md)
+- نظرة عامة على API: [../../../../docs/project/api-overview.md](../../../../docs/project/api-overview.md)`);
         return this.withFrontmatter({
             name: slug,
             title: this.copy(context.documentLanguage, `${context.projectName} ${moduleName} 模块`, `${context.projectName} ${moduleName} Module`, `${context.projectName} ${moduleName} モジュール`, `${context.projectName} وحدة ${moduleName}`),
@@ -1601,16 +1595,16 @@ scan(rootDir)
         const moduleKey = slug.toLowerCase();
         const docsLink = this.formatReferenceList(refs, this.copy(context.documentLanguage, '待补充', 'TBD'));
         const relatedDocs = this.isEnglish(context.documentLanguage)
-            ? `- Module map: [../../../docs/project/module-map.md](../../../docs/project/module-map.md)
-- API overview: [../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`
-            : `- 项目模块地图：[../../../docs/project/module-map.md](../../../docs/project/module-map.md)
-- API 总览：[../../../docs/project/api-overview.md](../../../docs/project/api-overview.md)`;
+            ? `- Module map: [../../../../docs/project/module-map.md](../../../../docs/project/module-map.md)
+- API overview: [../../../../docs/project/api-overview.md](../../../../docs/project/api-overview.md)`
+            : `- 项目模块地图：[../../../../docs/project/module-map.md](../../../../docs/project/module-map.md)
+- API 总览：[../../../../docs/project/api-overview.md](../../../../docs/project/api-overview.md)`;
         const templates = {
             web: {
                 zh: `# ${moduleName} 模块
 
 > 层级：第 3 层（业务模块文档）
-> 上层：[src/SKILL.md](../../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../../SKILL.md)
 
 ## 模块定位
 
@@ -1646,7 +1640,7 @@ ${relatedDocs}`,
                 en: `# ${moduleName}
 
 > Layer: module document
-> Parent: [src/SKILL.md](../../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## Module Positioning
 
@@ -1684,7 +1678,7 @@ ${relatedDocs}`,
                 zh: `# ${moduleName} 模块
 
 > 层级：第 3 层（业务模块文档）
-> 上层：[src/SKILL.md](../../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../../SKILL.md)
 
 ## 模块定位
 
@@ -1720,7 +1714,7 @@ ${relatedDocs}`,
                 en: `# ${moduleName}
 
 > Layer: module document
-> Parent: [src/SKILL.md](../../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## Module Positioning
 
@@ -1758,7 +1752,7 @@ ${relatedDocs}`,
                 zh: `# ${moduleName} 模块
 
 > 层级：第 3 层（业务模块文档）
-> 上层：[src/SKILL.md](../../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../../SKILL.md)
 
 ## 模块定位
 
@@ -1794,7 +1788,7 @@ ${relatedDocs}`,
                 en: `# ${moduleName}
 
 > Layer: module document
-> Parent: [src/SKILL.md](../../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## Module Positioning
 
@@ -1832,7 +1826,7 @@ ${relatedDocs}`,
                 zh: `# ${moduleName} 模块
 
 > 层级：第 3 层（业务模块文档）
-> 上层：[src/SKILL.md](../../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../../SKILL.md)
 
 ## 模块定位
 
@@ -1868,7 +1862,7 @@ ${relatedDocs}`,
                 en: `# ${moduleName}
 
 > Layer: module document
-> Parent: [src/SKILL.md](../../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## Module Positioning
 
@@ -1906,7 +1900,7 @@ ${relatedDocs}`,
                 zh: `# ${moduleName} 模块
 
 > 层级：第 3 层（业务模块文档）
-> 上层：[src/SKILL.md](../../SKILL.md)
+> 上层：[knowledge/src/SKILL.md](../../SKILL.md)
 
 ## 模块定位
 
@@ -1942,7 +1936,7 @@ ${relatedDocs}`,
                 en: `# ${moduleName}
 
 > Layer: module document
-> Parent: [src/SKILL.md](../../SKILL.md)
+> Parent: [knowledge/src/SKILL.md](../../SKILL.md)
 
 ## Module Positioning
 

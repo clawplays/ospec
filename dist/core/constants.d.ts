@@ -19,6 +19,7 @@ export declare const DIR_NAMES: {
     CHANGES: string;
     ACTIVE: string;
     ARCHIVED: string;
+    KNOWLEDGE: string;
     FOR_AI: string;
     DOCS: string;
     PROJECT: string;

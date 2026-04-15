@@ -170,6 +170,7 @@ class ProjectAssetService {
         const manifest = {
             version: '1.0',
             generatedAt: new Date().toISOString(),
+            ospecCliVersion: options.ospecCliVersion || (await this.getPackageVersion()) || undefined,
             projectLayout,
             documentLanguage: options.documentLanguage || 'en-US',
             assets,
@@ -225,6 +226,17 @@ class ProjectAssetService {
     }
     getPackageRoot() {
         return path_1.default.resolve(__dirname, '../..');
+    }
+    async getPackageVersion() {
+        try {
+            const packageJson = await this.fileService.readJSON(path_1.default.join(this.getPackageRoot(), 'package.json'));
+            return typeof packageJson.version === 'string' && packageJson.version.trim().length > 0
+                ? packageJson.version.trim()
+                : null;
+        }
+        catch {
+            return null;
+        }
     }
     isOSpecManagedHook(content) {
         return (content.includes('.ospec/tools/build-index-auto.cjs') ||

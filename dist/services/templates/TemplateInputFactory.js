@@ -179,7 +179,7 @@ class TemplateInputFactory {
         const inferredFields = this.pickFieldKeys(fieldSources, 'inferred');
         const placeholderFields = this.pickFieldKeys(fieldSources, 'placeholder');
         const usedFallbacks = [...inferredFields, ...placeholderFields];
-        const modulePlans = this.buildPlannedFiles(modules, 'module', value => this.normalizeModuleDisplayName(value), slug => `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}/${slug}/${constants_1.FILE_NAMES.SKILL_MD}`, displayName => displayName.toLowerCase() === 'core');
+        const modulePlans = this.buildPlannedFiles(modules, 'module', value => this.normalizeModuleDisplayName(value), slug => `${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}/${slug}/${constants_1.FILE_NAMES.SKILL_MD}`, displayName => displayName.toLowerCase() === 'core');
         const moduleApiPlans = this.buildModuleApiPlans(modulePlans);
         const apiAreaPlans = this.buildPlannedFiles(apiAreas, 'api', value => this.normalizeDocDisplayName(value, constants_1.DIR_NAMES.API), slug => `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.API}/${slug}.md`);
         const designDocPlans = this.buildPlannedFiles(designDocs, 'design', value => this.normalizeDocDisplayName(value, constants_1.DIR_NAMES.DESIGN), slug => `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.DESIGN}/${slug}.md`);
@@ -314,6 +314,7 @@ class TemplateInputFactory {
     }
     normalizeModuleDisplayName(value) {
         return value
+            .replace(/^knowledge[\\/]+src[\\/]+modules[\\/]+/i, '')
             .replace(/^src[\\/]+modules[\\/]+/i, '')
             .replace(/^modules[\\/]+/i, '')
             .replace(/[\\/]+/g, ' ')

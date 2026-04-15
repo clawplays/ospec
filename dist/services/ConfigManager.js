@@ -72,6 +72,7 @@ class ConfigManager {
         return {
             version: '4.0',
             mode,
+            ospecCliVersion: await this.getPackageVersion() || undefined,
             projectLayout: 'nested',
             hooks: {
                 'pre-commit': true,
@@ -255,6 +256,11 @@ class ConfigManager {
     normalizeDocumentLanguage(input) {
         return input === 'en-US' || input === 'zh-CN' || input === 'ja-JP' || input === 'ar'
             ? input
+            : undefined;
+    }
+    normalizeCliVersion(input) {
+        return typeof input === 'string' && input.trim().length > 0
+            ? input.trim()
             : undefined;
     }
     normalizePluginsConfig(plugins) {
@@ -640,6 +646,7 @@ class ConfigManager {
             ...config,
             version: config.version === '3.0' ? '4.0' : config.version,
             mode,
+            ospecCliVersion: this.normalizeCliVersion(config.ospecCliVersion),
             projectLayout: (0, ProjectLayout_1.normalizeProjectLayout)(config.projectLayout) || 'classic',
             documentLanguage: this.normalizeDocumentLanguage(config.documentLanguage),
             archive: {
@@ -658,6 +665,17 @@ class ConfigManager {
             plugins: this.normalizePluginsConfig(config.plugins),
             workflow: config.workflow || ConfigurableWorkflow_1.WORKFLOW_PRESETS[mode],
         };
+    }
+    async getPackageVersion() {
+        try {
+            const packageJson = await this.fileService.readJSON(path.join(path.resolve(__dirname, '../..'), 'package.json'));
+            return typeof packageJson.version === 'string' && packageJson.version.trim().length > 0
+                ? packageJson.version.trim()
+                : null;
+        }
+        catch {
+            return null;
+        }
     }
 }
 exports.ConfigManager = ConfigManager;

@@ -57,8 +57,12 @@ class ProjectService {
         }
         await this.projectAssetService.writeAssetManifest(rootDir, {
             documentLanguage: normalized.documentLanguage,
+            ospecCliVersion: config.ospecCliVersion,
             projectLayout: this.getProjectLayout(config),
-            templateGeneratedPaths: this.getFullBootstrapTemplateGeneratedPaths(normalized),
+            templateGeneratedPaths: [
+                ...this.getFullBootstrapTemplateGeneratedPaths(normalized),
+                ...(await this.getExistingOptionalKnowledgeGeneratedPaths(rootDir, config)),
+            ],
             runtimeGeneratedPaths: [
                 constants_1.FILE_NAMES.SKILLRC,
                 constants_1.FILE_NAMES.SKILL_INDEX,
@@ -157,7 +161,12 @@ class ProjectService {
         ];
         await this.projectAssetService.writeAssetManifest(rootDir, {
             documentLanguage: normalized.documentLanguage,
-            templateGeneratedPaths: this.getFullBootstrapTemplateGeneratedPaths(normalized),
+            ospecCliVersion: config.ospecCliVersion,
+            projectLayout: this.getProjectLayout(config),
+            templateGeneratedPaths: [
+                ...this.getFullBootstrapTemplateGeneratedPaths(normalized),
+                ...(await this.getExistingOptionalKnowledgeGeneratedPaths(rootDir, config)),
+            ],
             runtimeGeneratedPaths: runtimeGeneratedFiles,
         });
         return {
@@ -230,7 +239,12 @@ class ProjectService {
         const assetPlan = this.getBootstrapAssetPlan(normalized.documentLanguage, normalized, { projectLayout: 'nested' });
         await this.projectAssetService.writeAssetManifest(rootDir, {
             documentLanguage: normalized.documentLanguage,
-            templateGeneratedPaths: assetPlan.templateGeneratedFiles,
+            ospecCliVersion: config.ospecCliVersion,
+            projectLayout: this.getProjectLayout(config),
+            templateGeneratedPaths: [
+                ...assetPlan.templateGeneratedFiles,
+                ...(await this.getExistingOptionalKnowledgeGeneratedPaths(rootDir, config)),
+            ],
             runtimeGeneratedPaths: assetPlan.runtimeGeneratedFiles,
         });
         return {
@@ -260,6 +274,8 @@ class ProjectService {
         }
         await this.projectAssetService.writeAssetManifest(rootDir, {
             documentLanguage: normalized.documentLanguage,
+            ospecCliVersion: config.ospecCliVersion,
+            projectLayout: this.getProjectLayout(config),
             templateGeneratedPaths: this.getProtocolShellTemplateGeneratedPaths(),
             runtimeGeneratedPaths: [
                 constants_1.FILE_NAMES.SKILLRC,
@@ -422,19 +438,30 @@ class ProjectService {
     }
     async scanModules(rootDir) {
         const config = await this.configManager.loadConfig(rootDir).catch(() => null);
-        const modulesDir = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}`, config);
-        if (!(await this.fileService.exists(modulesDir))) {
-            return [];
+        const modules = new Map();
+        const moduleDirectoryCandidates = [
+            this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}`, config),
+            this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}`, config),
+        ];
+        for (const modulesDir of moduleDirectoryCandidates) {
+            if (!(await this.fileService.exists(modulesDir))) {
+                continue;
+            }
+            const entries = await fs_1.promises.readdir(modulesDir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory() || modules.has(entry.name)) {
+                    continue;
+                }
+                const skillPath = path_1.default.join(modulesDir, entry.name, constants_1.FILE_NAMES.SKILL_MD);
+                modules.set(entry.name, {
+                    name: entry.name,
+                    path: path_1.default.join(modulesDir, entry.name),
+                    skillPath,
+                    skillExists: (0, fs_1.existsSync)(skillPath),
+                });
+            }
         }
-        const entries = await fs_1.promises.readdir(modulesDir, { withFileTypes: true });
-        return entries
-            .filter(entry => entry.isDirectory())
-            .map(entry => ({
-            name: entry.name,
-            path: path_1.default.join(modulesDir, entry.name),
-            skillPath: path_1.default.join(modulesDir, entry.name, constants_1.FILE_NAMES.SKILL_MD),
-            skillExists: (0, fs_1.existsSync)(path_1.default.join(modulesDir, entry.name, constants_1.FILE_NAMES.SKILL_MD)),
-        }));
+        return Array.from(modules.values()).sort((left, right) => left.name.localeCompare(right.name));
     }
     async scanApiDocs(rootDir) {
         return this.scanDocsInDirectory(rootDir, constants_1.DIR_NAMES.API);
@@ -948,6 +975,31 @@ class ProjectService {
         await this.configManager.saveConfig(rootDir, config);
         return true;
     }
+    inferDocumentLanguageFromBootstrapInput(input) {
+        if (!input || this.normalizeDocumentLanguage(input.documentLanguage)) {
+            return undefined;
+        }
+        const descriptiveTexts = [
+            input.summary,
+            input.architecture,
+            ...(Array.isArray(input.apiAreas) ? input.apiAreas : []),
+            ...(Array.isArray(input.designDocs) ? input.designDocs : []),
+            ...(Array.isArray(input.planningDocs) ? input.planningDocs : []),
+            input.projectName,
+        ];
+        const descriptiveLanguage = this.detectDocumentLanguageFromTexts(descriptiveTexts);
+        if (descriptiveLanguage && descriptiveLanguage !== 'en-US') {
+            return descriptiveLanguage;
+        }
+        const localizedStructuralTexts = [
+            ...(Array.isArray(input.techStack) ? input.techStack : []),
+            ...(Array.isArray(input.modules) ? input.modules : []),
+        ].filter(item => {
+            const detected = this.detectDocumentLanguageFromText(item);
+            return detected && detected !== 'en-US';
+        });
+        return this.detectDocumentLanguageFromTexts(localizedStructuralTexts);
+    }
     detectDocumentLanguageFromTexts(contents) {
         const detectionCounts = new Map();
         const firstSeenOrder = new Map();
@@ -1080,7 +1132,7 @@ class ProjectService {
             apiAreas: normalized.apiAreas,
             designDocs: normalized.designDocs,
             planningDocs: normalized.planningDocs,
-            moduleSkillFiles: normalized.modulePlans.map(plan => plan.path),
+            moduleSkillFiles: [],
             moduleApiDocFiles: normalized.moduleApiPlans.map(plan => plan.path),
             apiDocFiles: normalized.apiAreaPlans.map(plan => plan.path),
             designDocFiles: normalized.designDocPlans.map(plan => plan.path),
@@ -1108,15 +1160,11 @@ class ProjectService {
                 `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.DESIGN}/README.md`,
                 `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PLANNING}/README.md`,
                 `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.API}/README.md`,
-                `${constants_1.DIR_NAMES.SRC}/${constants_1.FILE_NAMES.SKILL_MD}`,
-                `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}/${constants_1.FILE_NAMES.SKILL_MD}`,
-                `${constants_1.DIR_NAMES.TESTS}/${constants_1.FILE_NAMES.SKILL_MD}`,
                 `${constants_1.DIR_NAMES.FOR_AI}/${constants_1.FILE_NAMES.AI_GUIDE}`,
                 `${constants_1.DIR_NAMES.FOR_AI}/${constants_1.FILE_NAMES.EXECUTION_PROTOCOL}`,
                 '.ospec/asset-sources.json',
                 ...this.projectAssetService.getDirectCopyTargetPaths(),
                 ...(scaffoldPlan?.files || []).map(file => file.path),
-                ...normalized.modulePlans.map(plan => plan.path),
                 ...normalized.moduleApiPlans.map(plan => plan.path),
                 ...normalized.apiAreaPlans.map(plan => plan.path),
                 ...normalized.designDocPlans.map(plan => plan.path),
@@ -1140,9 +1188,6 @@ class ProjectService {
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.DESIGN}`, config),
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PLANNING}`, config),
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.API}`, config),
-            this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}`, config),
-            this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}`, config),
-            this.resolveManagedPath(rootDir, constants_1.DIR_NAMES.TESTS, config),
             this.resolveManagedPath(rootDir, constants_1.DIR_NAMES.FOR_AI, config),
         ];
     }
@@ -1161,9 +1206,6 @@ class ProjectService {
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.DESIGN}`, config),
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PLANNING}`, config),
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.API}`, config),
-            this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}`, config),
-            this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}`, config),
-            this.resolveManagedPath(rootDir, constants_1.DIR_NAMES.TESTS, config),
         ];
     }
     getMinimumRuntimeStructureDefinitions() {
@@ -1335,6 +1377,12 @@ class ProjectService {
             ...(await this.getBootstrapUpgradePlan(rootDir)),
             ...(input ?? {}),
         };
+        if (!this.normalizeDocumentLanguage(mergedInput.documentLanguage)) {
+            const inferredInputDocumentLanguage = this.inferDocumentLanguageFromBootstrapInput(input);
+            if (inferredInputDocumentLanguage) {
+                mergedInput.documentLanguage = inferredInputDocumentLanguage;
+            }
+        }
         const inferredDefaults = {
             modules: await this.inferBootstrapModules(rootDir),
         };
@@ -1352,9 +1400,6 @@ class ProjectService {
         const defaultLayout = this.getProjectLayout(config || { projectLayout: 'nested' });
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, constants_1.FILE_NAMES.SKILL_MD, defaultLayout), this.templateEngine.generateRootSkillTemplate(projectName, mode, normalized), result, { overwriteProtocolShellRootSkill: true });
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.FILE_NAMES.SKILL_MD}`, defaultLayout), this.templateEngine.generateDocsSkillTemplate(projectName, normalized), result);
-        await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.FILE_NAMES.SKILL_MD}`, defaultLayout), this.templateEngine.generateSrcSkillTemplate(projectName, normalized), result);
-        await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}/${constants_1.FILE_NAMES.SKILL_MD}`, defaultLayout), this.templateEngine.generateCoreSkillTemplate(projectName, normalized), result);
-        await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.TESTS}/${constants_1.FILE_NAMES.SKILL_MD}`, defaultLayout), this.templateEngine.generateTestsSkillTemplate(projectName, normalized), result);
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/overview.md`, defaultLayout), this.templateEngine.generateProjectOverviewTemplate(projectName, mode, normalized), result);
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/tech-stack.md`, defaultLayout), this.templateEngine.generateTechStackTemplate(projectName, normalized), result);
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/architecture.md`, defaultLayout), this.templateEngine.generateArchitectureTemplate(projectName, normalized), result);
@@ -1363,10 +1408,6 @@ class ProjectService {
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.DESIGN}/README.md`, defaultLayout), this.templateEngine.generateDesignDocsTemplate(projectName, normalized), result);
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PLANNING}/README.md`, defaultLayout), this.templateEngine.generatePlanningDocsTemplate(projectName, normalized), result);
         await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.API}/README.md`, defaultLayout), this.templateEngine.generateApiDocsTemplate(projectName, normalized), result);
-        for (const modulePlan of normalized.modulePlans) {
-            await this.fileService.ensureDir(this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}/${modulePlan.name}`, defaultLayout));
-            await this.writeGeneratedFile(rootDir, this.resolveManagedPath(rootDir, modulePlan.path, defaultLayout), this.templateEngine.generateModuleSkillTemplate(projectName, modulePlan.displayName, normalized, modulePlan.name), result);
-        }
         for (const moduleApiPlan of normalized.moduleApiPlans) {
             const moduleSlug = moduleApiPlan.name.replace(/^module-/, '');
             const modulePlan = normalized.modulePlans.find(plan => plan.name === moduleSlug);
@@ -1446,9 +1487,6 @@ class ProjectService {
             constants_1.FILE_NAMES.README,
             constants_1.FILE_NAMES.SKILL_MD,
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.FILE_NAMES.SKILL_MD}`,
-            `${constants_1.DIR_NAMES.SRC}/${constants_1.FILE_NAMES.SKILL_MD}`,
-            `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}/${constants_1.FILE_NAMES.SKILL_MD}`,
-            `${constants_1.DIR_NAMES.TESTS}/${constants_1.FILE_NAMES.SKILL_MD}`,
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/overview.md`,
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/tech-stack.md`,
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/architecture.md`,
@@ -1457,12 +1495,39 @@ class ProjectService {
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.DESIGN}/README.md`,
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PLANNING}/README.md`,
             `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.API}/README.md`,
-            ...normalized.modulePlans.map(plan => plan.path),
             ...normalized.moduleApiPlans.map(plan => plan.path),
             ...normalized.apiAreaPlans.map(plan => plan.path),
             ...normalized.designDocPlans.map(plan => plan.path),
             ...normalized.planningDocPlans.map(plan => plan.path),
         ];
+    }
+    async getExistingOptionalKnowledgeGeneratedPaths(rootDir, config = null) {
+        const paths = new Set();
+        const optionalKnowledgePaths = [
+            `${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/${constants_1.FILE_NAMES.SKILL_MD}`,
+            `${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}/${constants_1.FILE_NAMES.SKILL_MD}`,
+            `${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.TESTS}/${constants_1.FILE_NAMES.SKILL_MD}`,
+            `${constants_1.DIR_NAMES.SRC}/${constants_1.FILE_NAMES.SKILL_MD}`,
+            `${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.CORE}/${constants_1.FILE_NAMES.SKILL_MD}`,
+            `${constants_1.DIR_NAMES.TESTS}/${constants_1.FILE_NAMES.SKILL_MD}`,
+        ];
+        for (const relativePath of optionalKnowledgePaths) {
+            const absolutePath = this.resolveManagedPath(rootDir, relativePath, config);
+            if (await this.fileService.exists(absolutePath)) {
+                paths.add(relativePath);
+            }
+        }
+        const modules = await this.scanModules(rootDir);
+        for (const module of modules) {
+            const relativePath = this.toRelativePath(rootDir, module.skillPath)
+                .replace(/^\.ospec\//, '')
+                .replace(/\\/g, '/');
+            if (relativePath.startsWith(`${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}/`) ||
+                relativePath.startsWith(`${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}/`)) {
+                paths.add(relativePath);
+            }
+        }
+        return Array.from(paths).sort((left, right) => left.localeCompare(right));
     }
     getBootstrapAssetPlan(documentLanguage, normalized, config = null) {
         const staticPlan = this.projectAssetService.getAssetPlan(documentLanguage, this.getProjectLayout(config || { projectLayout: 'nested' }));

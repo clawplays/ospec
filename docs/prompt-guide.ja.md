@@ -57,8 +57,6 @@ Claude / Codex skill:
 $ospec-change を使ってこの要件の change を作成して進めてください。
 ```
 
-![OSpec Change slash command example](assets/ospecchange-slash-command.ja.svg)
-
 等価なコマンドライン:
 
 ```bash
