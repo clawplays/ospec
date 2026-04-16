@@ -65,7 +65,7 @@ function getPluginsHelpText() {
 Plugins Commands:
   ospec plugins list [--json]           - list official and installed npm plugins with current npm metadata when available
   ospec plugins info <plugin> [--json]  - show one plugin's package, version, manifest, and install status
-  ospec plugins install <plugin|package> - install one plugin globally with npm and sync its skill/knowledge assets locally
+  ospec plugins install <plugin|package> - install one plugin globally with npm and cache its knowledge assets locally
   ospec plugins installed [--json]      - list globally installed OSpec plugins from ~/.ospec/plugins/installed.json
   ospec plugins update <plugin> [--check] - check or update one globally installed plugin package
   ospec plugins update --all [--check]  - check or update every globally installed plugin package recorded by OSpec

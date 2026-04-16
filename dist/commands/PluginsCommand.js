@@ -210,7 +210,6 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         this.success(`Installed plugin ${result.id} (${result.package_name})`);
         this.info(`  version: ${result.version || '(unknown)'}`);
         this.info(`  kinds: ${result.kinds.join(', ') || '(none)'}`);
-        this.info(`  codex skill: ${this.getPluginRegistryService().getInstalledSkillTargetDir('codex', result.id)}`);
         this.info(`  project enable remains explicit: ${(0, helpers_1.formatCliCommand)('ospec', 'plugins', 'enable', result.id, '<project-path>')}`);
     }
     async showInstalledPlugins(args) {

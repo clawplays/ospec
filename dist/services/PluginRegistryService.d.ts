@@ -99,7 +99,6 @@ export declare class PluginRegistryService {
     getPluginsHome(): string;
     getInstalledStatePath(): string;
     getKnowledgeCacheDir(pluginId: string): string;
-    getInstalledSkillTargetDir(provider: 'codex' | 'claude', pluginId: string): string;
     getAvailablePlugins(): Promise<PluginRegistryEntry[]>;
     getPluginInfo(identifier: string): Promise<{
         id: string;
@@ -164,9 +163,7 @@ export declare class PluginRegistryService {
     private normalizePluginManifest;
     private readInstalledState;
     private writeInstalledState;
-    private syncInstalledPluginSkills;
     private cacheKnowledgeBundle;
-    private resolveProviderHome;
     private getCurrentCliVersion;
     private readNpmPackageMetadata;
     private fetchJson;

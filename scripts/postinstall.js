@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 const { SkillCommand } = require('../dist/commands/SkillCommand');
+const { FileService } = require('../dist/services/FileService');
+const { PostSyncMaintenanceService } = require('../dist/services/PostSyncMaintenanceService');
 
 function isGlobalInstall() {
   const globalFlag = String(process.env.npm_config_global || '').toLowerCase();
@@ -32,6 +34,16 @@ async function installManagedSkill(provider, skillName) {
   );
 }
 
+async function runPostSyncMaintenance() {
+  const maintenanceService = new PostSyncMaintenanceService(new FileService());
+  const result = await maintenanceService.runManagedSkillPostprocessing();
+  if (result.removedPaths.length > 0) {
+    console.log(
+      `[ospec] removed ${result.removedPaths.length} stale plugin skill entr${result.removedPaths.length === 1 ? 'y' : 'ies'}`,
+    );
+  }
+}
+
 async function main() {
   try {
     if (shouldSkip()) {
@@ -42,6 +54,8 @@ async function main() {
       await installManagedSkill('codex', skillName);
       await installManagedSkill('claude', skillName);
     }
+
+    await runPostSyncMaintenance();
   } catch (error) {
     console.log(`[ospec] managed skill sync skipped: ${error.message}`);
     console.log(

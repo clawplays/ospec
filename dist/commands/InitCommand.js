@@ -40,6 +40,7 @@ const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
 const SkillCommand_1 = require("./SkillCommand");
+const PostSyncMaintenanceService_1 = require("../services/PostSyncMaintenanceService");
 class InitCommand extends BaseCommand_1.BaseCommand {
     async execute(rootDir, input = {}) {
         try {
@@ -60,6 +61,7 @@ class InitCommand extends BaseCommand_1.BaseCommand {
             }
             const result = await services_1.services.projectService.generateProjectKnowledge(targetDir, input);
             const skillResult = await this.syncInstalledSkills();
+            const postSyncMaintenance = await this.runPostSyncMaintenance();
             this.success(`Project initialized to change-ready state at ${targetDir}`);
             this.info(`  Protocol shell: ${protocolShellCreated ? 'created' : 'already present'}`);
             this.info(`  Project knowledge: ${result.createdFiles.length} created, ${result.refreshedFiles.length} refreshed, ${result.skippedFiles.length} skipped`);
@@ -67,6 +69,9 @@ class InitCommand extends BaseCommand_1.BaseCommand {
             this.info(`  Codex skills: ${this.formatManagedSkills(skillResult.codex)}`);
             if (skillResult.claude.length > 0) {
                 this.info(`  Claude skills: ${this.formatManagedSkills(skillResult.claude)}`);
+            }
+            if (postSyncMaintenance.removedPaths.length > 0) {
+                this.info(`  stale plugin skills removed: ${postSyncMaintenance.removedPaths.length}`);
             }
             if (input.summary || (Array.isArray(input.techStack) && input.techStack.length > 0) || input.architecture) {
                 this.info('  Applied user-provided project context to the generated knowledge docs');
@@ -100,6 +105,10 @@ class InitCommand extends BaseCommand_1.BaseCommand {
             }
         }
         return { codex, claude };
+    }
+    async runPostSyncMaintenance() {
+        const maintenanceService = new PostSyncMaintenanceService_1.PostSyncMaintenanceService(services_1.services.fileService);
+        return maintenanceService.runManagedSkillPostprocessing();
     }
     resolveProviderHome(provider) {
         const envHome = provider === 'claude'

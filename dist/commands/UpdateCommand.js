@@ -8,6 +8,7 @@ const services_1 = require("../services");
 const BaseCommand_1 = require("./BaseCommand");
 const PluginsCommand_1 = require("./PluginsCommand");
 const SkillCommand_1 = require("./SkillCommand");
+const PostSyncMaintenanceService_1 = require("../services/PostSyncMaintenanceService");
 class UpdateCommand extends BaseCommand_1.BaseCommand {
     getPluginRegistryService() {
         return services_1.services.pluginRegistryService;
@@ -30,6 +31,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         const pluginResult = await this.syncEnabledPluginAssets(targetPath);
         const archiveResult = await this.syncArchiveLayout(targetPath);
         const skillResult = await this.syncInstalledSkills();
+        const postSyncMaintenance = await this.runPostSyncMaintenance();
         const refreshedFiles = Array.from(new Set([
             ...(cliVersionMetadataSync.configSaved ? ['.skillrc'] : []),
             ...legacyKnowledgeMigration.refreshedFiles,
@@ -83,6 +85,9 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         this.info(`  codex skills: ${this.formatManagedSkills(skillResult.codex)}`);
         if (skillResult.claude.length > 0) {
             this.info(`  claude skills: ${this.formatManagedSkills(skillResult.claude)}`);
+        }
+        if (postSyncMaintenance.removedPaths.length > 0) {
+            this.info(`  stale plugin skills removed: ${postSyncMaintenance.removedPaths.length}`);
         }
         if (pluginResult.enabledPlugins.length > 0) {
             this.info(`  plugin assets refreshed: ${pluginResult.enabledPlugins.join(', ')}`);
@@ -859,6 +864,10 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             }
         }
         return { codex, claude };
+    }
+    async runPostSyncMaintenance() {
+        const maintenanceService = new PostSyncMaintenanceService_1.PostSyncMaintenanceService(services_1.services.fileService);
+        return maintenanceService.runManagedSkillPostprocessing();
     }
     resolveProviderHome(provider) {
         const envHome = provider === 'claude'

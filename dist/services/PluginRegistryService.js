@@ -93,9 +93,6 @@ class PluginRegistryService {
     getKnowledgeCacheDir(pluginId) {
         return path.join(this.getPluginsHome(), 'knowledge', pluginId);
     }
-    getInstalledSkillTargetDir(provider, pluginId) {
-        return path.join(this.resolveProviderHome(provider), 'skills', `ospec-${pluginId}`);
-    }
     async getAvailablePlugins() {
         const officialEntries = await this.getOfficialRegistryEntries();
         const installedEntries = await this.getInstalledRegistryEntries();
@@ -371,7 +368,6 @@ class PluginRegistryService {
         const packageName = options.packageName || this.extractPublishedPackageName(packageSpecifier);
         const packagePath = await this.resolveInstalledPackagePath(packageName);
         const manifest = await this.readPluginManifestFromPackage(packagePath);
-        await this.syncInstalledPluginSkills(manifest, packagePath);
         await this.cacheKnowledgeBundle(manifest, packagePath);
         const state = await this.readInstalledState();
         const nextRecord = {
@@ -891,22 +887,6 @@ class PluginRegistryService {
         await this.fileService.ensureDir(this.getPluginsHome());
         await this.fileService.writeJSON(this.getInstalledStatePath(), state);
     }
-    async syncInstalledPluginSkills(manifest, packagePath) {
-        const providers = manifest.skills.providers || {};
-        for (const providerName of ['codex', 'claude']) {
-            const relativeSkillDir = normalizeString(providers[providerName]);
-            if (!relativeSkillDir) {
-                continue;
-            }
-            const sourceDir = path.join(packagePath, ...relativeSkillDir.split('/'));
-            if (!(await this.fileService.exists(sourceDir))) {
-                continue;
-            }
-            const targetDir = this.getInstalledSkillTargetDir(providerName, manifest.id);
-            await this.fileService.remove(targetDir);
-            await this.fileService.copy(sourceDir, targetDir);
-        }
-    }
     async cacheKnowledgeBundle(manifest, packagePath) {
         const relativeBundlePath = normalizeString(manifest.knowledge.bundle);
         if (!relativeBundlePath) {
@@ -919,17 +899,6 @@ class PluginRegistryService {
         const targetDir = this.getKnowledgeCacheDir(manifest.id);
         await this.fileService.remove(targetDir);
         await this.fileService.copy(sourcePath, targetDir);
-    }
-    resolveProviderHome(provider) {
-        const envHome = provider === 'claude'
-            ? normalizeString(process.env.CLAUDE_HOME)
-            : normalizeString(process.env.CODEX_HOME);
-        if (envHome) {
-            return path.resolve(envHome);
-        }
-        return provider === 'claude'
-            ? path.join(os.homedir(), '.claude')
-            : path.join(os.homedir(), '.codex');
     }
     getCurrentCliVersion() {
         try {
