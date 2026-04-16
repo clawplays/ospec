@@ -1,5 +1,7 @@
 # 使用说明
 
+如果你主要通过 AI 使用 OSpec，优先先发一个简短的 `/ospec` 或 `/ospec-change` 提示词；这页里的 CLI 命令用于回退方案或显式自动化。
+
 ## 常用命令
 
 ```bash
@@ -30,7 +32,14 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## 插件快速开始
 
-AI / `$ospec`：
+推荐提示词：
+
+```text
+/ospec 帮我在当前项目打开 Stitch 插件。
+/ospec 帮我在当前项目打开 Checkpoint 插件。
+```
+
+AI / `/ospec`：
 
 - 如果用户说“帮我打开 Stitch 插件”，应理解为“先检查 Stitch 是否已经全局安装；未安装才安装；然后在当前项目启用”
 - 如果用户说“帮我打开 Checkpoint 插件”，应理解为“先检查 Checkpoint 是否已经全局安装；未安装才安装；然后在当前项目启用”
@@ -57,6 +66,14 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## 推荐流程
 
+推荐提示词：
+
+```text
+/ospec 初始化这个项目。
+/ospec-change 为这个需求创建并推进一个 change。
+/ospec 归档这个已验收通过的 change。
+```
+
 新目录建议这样开始：
 
 ```bash
@@ -72,6 +89,12 @@ ospec finalize [changes/active/<change>]
 如果你要把旧的 classic 项目迁移到新布局，请显式运行 `ospec layout migrate --to nested`。
 
 ## 升级已有项目
+
+推荐提示词：
+
+```text
+/ospec 刷新或修复这个目录的项目知识层。先不要创建 change。
+```
 
 ```bash
 npm install -g @clawplays/ospec-cli@1.0.2
@@ -98,6 +121,12 @@ ospec update [path]
 
 ## 更新所有已安装插件
 
+推荐提示词：
+
+```text
+/ospec 更新这台机器上所有已安装的插件。
+```
+
 如果你想显式更新机器上所有已安装插件，而不是只更新当前项目已启用的插件，请使用：
 
 ```bash
@@ -113,4 +142,4 @@ ospec plugins update --all --check
 
 `ospec plugins update --all` 会检查 OSpec 记录过的所有全局已安装插件，并在发现更高兼容版本时逐个升级。
 如果某个已安装插件包被手动删除，这个命令也会先尝试补装，再继续升级。
-AI / `$ospec` 只有在用户明确要求“更新所有已安装插件”时，才应该运行 `ospec plugins update --all`。
+AI / `/ospec` 只有在用户明确要求“更新所有已安装插件”时，才应该运行 `ospec plugins update --all`。

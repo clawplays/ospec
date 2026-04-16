@@ -1,5 +1,15 @@
 # Skills 安装说明
 
+如果你主要通过 AI 使用 OSpec，优先先用简短的 `/ospec` 和 `/ospec-change` 提示词；这页里的显式 skill 命令主要用于手动安装、同步或排错。
+
+推荐提示词：
+
+```text
+/ospec 初始化这个项目。
+/ospec 刷新或修复这个目录的项目知识层。先不要创建 change。
+/ospec-change 为这个需求创建并推进一个 change。
+```
+
 托管 skills：
 
 - `ospec`
@@ -75,8 +85,8 @@ ospec skill install-claude ospec-init
 
 ## 提示词命名
 
-新的提示词优先使用 `$ospec`。
+新的提示词优先使用 `/ospec`。
 
-当用户意图是“创建并推进一个 change”时，优先使用 `$ospec-change`。
+当用户意图是“创建并推进一个 change”时，优先使用 `/ospec-change`。
 
-`$ospec-cli` 只作为旧提示词或旧自动化的兼容别名保留。
+`/ospec-cli` 只作为旧提示词或旧自动化的兼容别名保留。

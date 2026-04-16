@@ -1,5 +1,7 @@
 # Installation
 
+If you primarily use OSpec through AI, start with a short `/ospec` prompt first. Use the CLI install steps on this page when you need explicit local setup or troubleshooting.
+
 Install the official OSpec CLI package `@clawplays/ospec-cli` and run the `ospec` command.
 
 ## Requirements
@@ -22,11 +24,11 @@ ospec --help
 
 ## Plugin Installation
 
-If you primarily use OSpec through AI / `$ospec`, start like this:
+If you primarily use OSpec through AI / `/ospec`, start like this:
 
 ```text
-$ospec open Stitch for this project.
-$ospec open Checkpoint for this project.
+/ospec open Stitch for this project.
+/ospec open Checkpoint for this project.
 ```
 
 These requests should be handled as: check whether the plugin is already installed globally, install only when missing, then enable it in the current project.
@@ -60,7 +62,7 @@ Notes:
 - `ospec plugins install <plugin>` performs the explicit global install
 - `ospec plugins update <plugin>` updates one globally installed plugin package
 - `ospec plugins update --all` updates every globally installed plugin package recorded by OSpec
-- in AI / `$ospec` flows, "open Stitch / Checkpoint" should first check whether the plugin is already installed globally, then install only when missing, and finally enable it in the current project
+- in AI / `/ospec` flows, "open Stitch / Checkpoint" should first check whether the plugin is already installed globally, then install only when missing, and finally enable it in the current project
 - plugin installation is global and shared across projects; enable is project-local
 - once a plugin is already installed globally, later projects should reuse it and only run enable
 - the plugin package's own npm dependencies are installed together with `ospec plugins install <plugin>`

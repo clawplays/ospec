@@ -71,7 +71,7 @@ OSpec, initialize this project.
 Claude / Codex skill mode:
 
 ```text
-$ospec initialize this project.
+/ospec initialize this project.
 ```
 
 <details>
@@ -114,7 +114,7 @@ OSpec, create and advance a change for this requirement.
 Claude / Codex skill mode:
 
 ```text
-$ospec-change create and advance a change for this requirement.
+/ospec-change create and advance a change for this requirement.
 ```
 
 <details>
@@ -141,7 +141,7 @@ OSpec, archive this accepted change.
 Claude / Codex skill mode:
 
 ```text
-$ospec archive this accepted change.
+/ospec archive this accepted change.
 ```
 
 <details>
@@ -247,11 +247,11 @@ OSpec supports plugins for UI review and runtime validation.
 Keep the public flow simple:
 
 ```text
-$ospec open Stitch for this project.
-$ospec open Checkpoint for this project.
+/ospec open Stitch for this project.
+/ospec open Checkpoint for this project.
 ```
 
-In AI / `$ospec` flows, requests like "open Stitch" or "open Checkpoint" should be handled as: check whether the plugin is already installed globally, install only when missing, then enable it in the current project.
+In AI / `/ospec` flows, requests like "open Stitch" or "open Checkpoint" should be handled as: check whether the plugin is already installed globally, install only when missing, then enable it in the current project.
 
 Command line fallback:
 

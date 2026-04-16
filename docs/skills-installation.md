@@ -1,5 +1,15 @@
 # Skills Installation
 
+If you primarily use OSpec through AI, prefer short `/ospec` and `/ospec-change` prompts first. Use the explicit skill commands on this page only when you need direct install, sync, or troubleshooting.
+
+Recommended prompts:
+
+```text
+/ospec initialize this project.
+/ospec refresh or repair the project knowledge layer for this directory. Do not create a change yet.
+/ospec-change create and advance a change for this requirement.
+```
+
 Managed skills:
 
 - `ospec`
@@ -75,8 +85,8 @@ ospec skill install-claude ospec-init
 
 ## Prompt Naming
 
-Prefer `$ospec` in new prompts.
+Prefer `/ospec` in new prompts.
 
-Use `$ospec-change` when the user intent is specifically "create or advance a change".
+Use `/ospec-change` when the user intent is specifically "create or advance a change".
 
-Use `$ospec-cli` only when older automation or habits still reference the legacy name.
+Use `/ospec-cli` only when older automation or habits still reference the legacy name.

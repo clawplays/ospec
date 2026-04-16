@@ -25,7 +25,7 @@ Use OSpec to initialize this project.
 Claude / Codex skill form:
 
 ```text
-Use $ospec to initialize this project.
+Use /ospec to initialize this project.
 ```
 
 Equivalent CLI:
@@ -54,7 +54,7 @@ Use OSpec to create and advance a change for this requirement.
 Claude / Codex skill form:
 
 ```text
-Use $ospec-change to create and advance a change for this requirement.
+Use /ospec-change to create and advance a change for this requirement.
 ```
 
 Equivalent CLI:
@@ -76,7 +76,7 @@ Use OSpec to archive this accepted change.
 Claude / Codex skill form:
 
 ```text
-Use $ospec to archive this accepted change.
+Use /ospec to archive this accepted change.
 ```
 
 Equivalent CLI:

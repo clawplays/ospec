@@ -25,7 +25,7 @@ OSpec を使ってこのプロジェクトを初期化してください。
 Claude / Codex skill:
 
 ```text
-$ospec を使ってこのプロジェクトを初期化してください。
+/ospec を使ってこのプロジェクトを初期化してください。
 ```
 
 等価なコマンドライン:
@@ -54,7 +54,7 @@ OSpec を使ってこの要件の change を作成して進めてください。
 Claude / Codex skill:
 
 ```text
-$ospec-change を使ってこの要件の change を作成して進めてください。
+/ospec-change を使ってこの要件の change を作成して進めてください。
 ```
 
 等価なコマンドライン:
@@ -76,7 +76,7 @@ OSpec を使って承認済みの change をアーカイブしてください。
 Claude / Codex skill:
 
 ```text
-$ospec を使って承認済みの change をアーカイブしてください。
+/ospec を使って承認済みの change をアーカイブしてください。
 ```
 
 等価なコマンドライン:

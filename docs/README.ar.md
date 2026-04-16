@@ -69,7 +69,7 @@ npm install -g @clawplays/ospec-cli
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec</span> هيّئ هذا المشروع.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">/ospec</span> هيّئ هذا المشروع.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>
@@ -108,7 +108,7 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec-change</span> أنشئ تغييرًا لهذا المتطلب وادفعه إلى الأمام.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">/ospec-change</span> أنشئ تغييرًا لهذا المتطلب وادفعه إلى الأمام.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>
@@ -131,7 +131,7 @@ ospec new update-billing-copy .
 
 وضع المهارة في Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code><span dir="ltr">$ospec</span> أرشف هذا التغيير المقبول.</code></pre>
+<pre dir="rtl" lang="ar"><code><span dir="ltr">/ospec</span> أرشف هذا التغيير المقبول.</code></pre>
 
 <details>
 <summary>سطر الأوامر</summary>

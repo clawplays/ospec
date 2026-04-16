@@ -22,7 +22,7 @@
 
 صيغة مهارة Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لتهيئة هذا المشروع.</code></pre>
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">/ospec</span> لتهيئة هذا المشروع.</code></pre>
 
 ما يعادله في واجهة سطر الأوامر (CLI):
 
@@ -47,7 +47,7 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 
 صيغة مهارة Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec-change</span> لإنشاء تغيير لهذا المتطلب ودفعه إلى الأمام.</code></pre>
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">/ospec-change</span> لإنشاء تغيير لهذا المتطلب ودفعه إلى الأمام.</code></pre>
 
 ما يعادله في واجهة سطر الأوامر (CLI):
 
@@ -65,7 +65,7 @@ ospec new update-billing-copy .
 
 صيغة مهارة Claude / Codex:
 
-<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">$ospec</span> لأرشفة هذا التغيير المقبول.</code></pre>
+<pre dir="rtl" lang="ar"><code>استخدم <span dir="ltr">/ospec</span> لأرشفة هذا التغيير المقبول.</code></pre>
 
 ما يعادله في واجهة سطر الأوامر (CLI):
 

@@ -1,5 +1,7 @@
 # 安装说明
 
+如果你主要通过 AI 使用 OSpec，优先先发一个简短的 `/ospec` 提示词；这页里的 CLI 安装步骤用于显式本地安装或排错。
+
 安装 OSpec 时，请使用官方 CLI 包 `@clawplays/ospec-cli`，命令为 `ospec`。
 
 ## 环境要求
@@ -22,11 +24,11 @@ ospec --help
 
 ## 插件安装方式
 
-如果你主要通过 AI / `$ospec` 使用 OSpec，推荐先这样说：
+如果你主要通过 AI / `/ospec` 使用 OSpec，推荐先这样说：
 
 ```text
-$ospec 帮我在当前项目打开 Stitch 插件。
-$ospec 帮我在当前项目打开 Checkpoint 插件。
+/ospec 帮我在当前项目打开 Stitch 插件。
+/ospec 帮我在当前项目打开 Checkpoint 插件。
 ```
 
 这类请求应理解为：“先检查插件是否已经全局安装；未安装才安装；然后在当前项目启用”。
@@ -60,7 +62,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 - `ospec plugins install <plugin>` 用于显式安装插件
 - `ospec plugins update <plugin>` 用于升级单个全局插件包
 - `ospec plugins update --all` 用于升级 OSpec 记录过的所有全局插件包
-- 如果通过 AI / `$ospec` 说“帮我打开 Stitch / Checkpoint 插件”，应理解为“先检查是否已全局安装；未安装才安装；然后在当前项目启用”
+- 如果通过 AI / `/ospec` 说“帮我打开 Stitch / Checkpoint 插件”，应理解为“先检查是否已全局安装；未安装才安装；然后在当前项目启用”
 - 插件安装是全局共享的，插件启用是项目级的
 - 一旦插件已经全局安装，后续在其他项目里应直接复用并执行启用，不要重复下载
 - 执行 `ospec plugins install <plugin>` 时，插件包自己的 npm 依赖也会一起装好

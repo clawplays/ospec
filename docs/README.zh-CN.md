@@ -72,7 +72,7 @@ OSpec，初始化这个项目。
 Claude / Codex Skill 方式：
 
 ```text
-$ospec 初始化这个项目。
+/ospec 初始化这个项目。
 ```
 
 <details>
@@ -115,7 +115,7 @@ OSpec，为这个需求创建并推进一个 change。
 Claude / Codex Skill 方式：
 
 ```text
-$ospec-change 为这个需求创建并推进一个 change。
+/ospec-change 为这个需求创建并推进一个 change。
 ```
 
 <details>
@@ -142,7 +142,7 @@ OSpec，归档这个已验收通过的 change。
 Claude / Codex Skill 方式：
 
 ```text
-$ospec 归档这个已验收通过的 change。
+/ospec 归档这个已验收通过的 change。
 ```
 
 <details>

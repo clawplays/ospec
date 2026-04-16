@@ -1,5 +1,7 @@
 # Usage
 
+If you primarily use OSpec through AI, start with a short `/ospec` or `/ospec-change` prompt first. Use the CLI commands on this page as fallback or explicit automation.
+
 ## Common Commands
 
 ```bash
@@ -30,7 +32,14 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## Plugin Quick Start
 
-AI / `$ospec`:
+Recommended prompt:
+
+```text
+/ospec open Stitch for this project.
+/ospec open Checkpoint for this project.
+```
+
+AI / `/ospec`:
 
 - asking to "open Stitch" should first check whether Stitch is already installed globally, install it only when missing, then enable it in the current project
 - asking to "open Checkpoint" should first check whether Checkpoint is already installed globally, install it only when missing, then enable it in the current project
@@ -57,6 +66,14 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## Recommended Flow
 
+Recommended prompts:
+
+```text
+/ospec initialize this project.
+/ospec-change create and advance a change for this requirement.
+/ospec archive this accepted change.
+```
+
 For a fresh directory:
 
 ```bash
@@ -72,6 +89,12 @@ CLI commands still accept shorthand such as `changes/active/<change>`, but the p
 If you want to convert an older classic project to the new layout, run `ospec layout migrate --to nested`.
 
 ## Upgrading An Existing Project
+
+Recommended prompt:
+
+```text
+/ospec refresh or repair the project knowledge layer for this directory. Do not create a change yet.
+```
 
 ```bash
 npm install -g @clawplays/ospec-cli@1.0.2
@@ -98,6 +121,12 @@ It does not install brand-new plugins automatically, and it does not enable plug
 
 ## Updating All Installed Plugins
 
+Recommended prompt:
+
+```text
+/ospec update all installed plugins on this machine.
+```
+
 Use this only when you explicitly want a machine-wide plugin update, not a project-scoped refresh:
 
 ```bash
@@ -113,4 +142,4 @@ ospec plugins update --all --check
 
 `ospec plugins update --all` checks every globally installed plugin recorded by OSpec and upgrades each one when a newer compatible version is available.
 If a recorded installed plugin package was manually deleted, this command also attempts to restore it before upgrading.
-AI / `$ospec` flows should only run `ospec plugins update --all` when the user explicitly asks to update all installed plugins.
+AI / `/ospec` flows should only run `ospec plugins update --all` when the user explicitly asks to update all installed plugins.

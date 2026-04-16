@@ -25,7 +25,7 @@ OSpec 应该在内部自动展开检查、初始化、知识层维护和 change 
 Claude / Codex Skill 方式：
 
 ```text
-使用 $ospec 初始化这个项目。
+使用 /ospec 初始化这个项目。
 ```
 
 等价命令行：
@@ -54,7 +54,7 @@ ospec init . --architecture "单体 Web 应用 + API + 统一鉴权" --document-
 Claude / Codex Skill 方式：
 
 ```text
-使用 $ospec-change 为这个需求创建并推进一个 change。
+使用 /ospec-change 为这个需求创建并推进一个 change。
 ```
 
 等价命令行：
@@ -76,7 +76,7 @@ ospec new update-billing-copy .
 Claude / Codex Skill 方式：
 
 ```text
-使用 $ospec 归档这个已验收通过的 change。
+使用 /ospec 归档这个已验收通过的 change。
 ```
 
 等价命令行：
