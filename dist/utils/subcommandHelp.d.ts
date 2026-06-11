@@ -8,3 +8,5 @@ export declare function getBatchHelpText(): string;
 export declare function getChangesHelpText(): string;
 export declare function getQueueHelpText(): string;
 export declare function getRunHelpText(): string;
+export declare function getExecuteHelpText(): string;
+export declare function getSessionHelpText(): string;

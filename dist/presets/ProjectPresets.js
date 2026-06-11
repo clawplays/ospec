@@ -17,7 +17,7 @@ const buildOfficialSiteSuggestion = (language, projectName) => {
                 acceptanceCriteria: [
                     '首页可导航到 docs、blog、admin、login',
                     'docs/blog/admin 页面具备清晰的占位结构与模块说明',
-                    'proposal/tasks/verification 明确覆盖官网 MVP 范围',
+                    'proposal/design/implementation-plan/task-graph/tasks/review-artifacts/worker-status/verification 明确覆盖官网 MVP 范围',
                 ],
                 affects: ['web', 'docs', 'content', 'admin', 'auth'],
                 flags: ['multi_file_change'],
@@ -36,7 +36,7 @@ const buildOfficialSiteSuggestion = (language, projectName) => {
                 acceptanceCriteria: [
                     'ホームから docs、blog、admin、login へ遷移できる',
                     'docs / blog / admin ページにプレースホルダー構造とモジュール意図がある',
-                    'proposal / tasks / verification が公式サイト MVP 範囲を明確にカバーする',
+                    'proposal / design / implementation-plan / task-graph / tasks / review-artifacts / worker-status / verification が公式サイト MVP 範囲を明確にカバーする',
                 ],
                 affects: ['web', 'docs', 'content', 'admin', 'auth'],
                 flags: ['multi_file_change'],
@@ -55,7 +55,7 @@ const buildOfficialSiteSuggestion = (language, projectName) => {
                 acceptanceCriteria: [
                     'يمكن التنقل من الصفحة الرئيسية إلى docs والمدونة والإدارة وتسجيل الدخول',
                     'تحتوي صفحات docs والمدونة والإدارة على هياكل مؤقتة واضحة ونية وحدات مفهومة',
-                    'تغطي proposal وtasks وverification نطاق MVP الموقع الرسمي بوضوح',
+                    'تغطي proposal وdesign وimplementation-plan وtask-graph وtasks وreview-artifacts وworker-status وverification نطاق MVP الموقع الرسمي بوضوح',
                 ],
                 affects: ['web', 'docs', 'content', 'admin', 'auth'],
                 flags: ['multi_file_change'],
@@ -74,7 +74,7 @@ const buildOfficialSiteSuggestion = (language, projectName) => {
                 acceptanceCriteria: [
                     'Homepage navigation reaches docs, blog, admin, and login',
                     'docs/blog/admin pages expose clear placeholder structures and module intent',
-                    'proposal/tasks/verification cover the official-site MVP slice',
+                    'proposal/design/implementation-plan/task-graph/tasks/review-artifacts/worker-status/verification cover the official-site MVP slice',
                 ],
                 affects: ['web', 'docs', 'content', 'admin', 'auth'],
                 flags: ['multi_file_change'],

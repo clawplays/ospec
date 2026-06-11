@@ -50,11 +50,23 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
             this.logger.info(`Verifying change at ${targetPath}`);
             const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
             const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);
+            const designPath = path.join(targetPath, constants_1.FILE_NAMES.DESIGN);
+            const implementationPlanPath = path.join(targetPath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN);
+            const taskGraphPath = path.join(targetPath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+            const specComplianceReviewPath = path.join(targetPath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
+            const codeQualityReviewPath = path.join(targetPath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
+            const agentWorkerStatusPath = path.join(targetPath, 'artifacts', 'agents', constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
             const tasksPath = path.join(targetPath, constants_1.FILE_NAMES.TASKS);
             const verificationPath = path.join(targetPath, constants_1.FILE_NAMES.VERIFICATION);
-            const [stateExists, proposalExists, tasksExists, verificationExists] = await Promise.all([
+            const [stateExists, proposalExists, designExists, implementationPlanExists, taskGraphExists, specComplianceReviewExists, codeQualityReviewExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
                 services_1.services.fileService.exists(statePath),
                 services_1.services.fileService.exists(proposalPath),
+                services_1.services.fileService.exists(designPath),
+                services_1.services.fileService.exists(implementationPlanPath),
+                services_1.services.fileService.exists(taskGraphPath),
+                services_1.services.fileService.exists(specComplianceReviewPath),
+                services_1.services.fileService.exists(codeQualityReviewPath),
+                services_1.services.fileService.exists(agentWorkerStatusPath),
                 services_1.services.fileService.exists(tasksPath),
                 services_1.services.fileService.exists(verificationPath),
             ]);
@@ -70,6 +82,36 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                     name: 'proposal.md',
                     status: proposalExists ? 'pass' : 'fail',
                     message: proposalExists ? 'Proposal file exists' : 'proposal.md is missing',
+                },
+                {
+                    name: 'design.md',
+                    status: designExists ? 'pass' : 'fail',
+                    message: designExists ? 'Design file exists' : 'design.md is missing',
+                },
+                {
+                    name: 'implementation-plan.md',
+                    status: implementationPlanExists ? 'pass' : 'fail',
+                    message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing',
+                },
+                {
+                    name: 'artifacts/agents/task-graph.json',
+                    status: taskGraphExists ? 'pass' : 'fail',
+                    message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing',
+                },
+                {
+                    name: 'artifacts/reviews/spec-compliance.md',
+                    status: specComplianceReviewExists ? 'pass' : 'fail',
+                    message: specComplianceReviewExists ? 'Spec compliance review artifact exists' : 'artifacts/reviews/spec-compliance.md is missing',
+                },
+                {
+                    name: 'artifacts/reviews/code-quality.md',
+                    status: codeQualityReviewExists ? 'pass' : 'fail',
+                    message: codeQualityReviewExists ? 'Code quality review artifact exists' : 'artifacts/reviews/code-quality.md is missing',
+                },
+                {
+                    name: 'artifacts/agents/worker-status.md',
+                    status: agentWorkerStatusExists ? 'pass' : 'fail',
+                    message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing',
                 },
                 {
                     name: 'tasks.md',
@@ -96,6 +138,30 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                         ? `Activated optional steps: ${activatedSteps.join(', ')}`
                         : 'No optional steps activated',
                 });
+            }
+            if (designExists) {
+                const designAnalysis = await services_1.services.projectService.analyzeChecklistDocument(designPath, 'design.md', activatedSteps);
+                checks.push(...designAnalysis.checks);
+            }
+            if (implementationPlanExists) {
+                const implementationPlanAnalysis = await services_1.services.projectService.analyzeChecklistDocument(implementationPlanPath, 'implementation-plan.md', activatedSteps);
+                checks.push(...implementationPlanAnalysis.checks);
+            }
+            if (taskGraphExists) {
+                const taskGraphAnalysis = await services_1.services.projectService.analyzeTaskGraphDocument(taskGraphPath, activatedSteps);
+                checks.push(...taskGraphAnalysis.checks);
+            }
+            if (specComplianceReviewExists) {
+                const specComplianceReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps);
+                checks.push(...specComplianceReviewAnalysis.checks);
+            }
+            if (codeQualityReviewExists) {
+                const codeQualityReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps);
+                checks.push(...codeQualityReviewAnalysis.checks);
+            }
+            if (agentWorkerStatusExists) {
+                const agentWorkerStatusAnalysis = await services_1.services.projectService.analyzeAgentWorkerStatusDocument(agentWorkerStatusPath);
+                checks.push(...agentWorkerStatusAnalysis.checks);
             }
             if (tasksExists) {
                 const tasksAnalysis = await services_1.services.projectService.analyzeChecklistDocument(tasksPath, 'tasks.md', activatedSteps);

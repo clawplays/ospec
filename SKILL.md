@@ -163,11 +163,35 @@ This CLI now covers:
 Treat these as the source of truth for active delivery work:
 
 - `.skillrc`
+- `.ospec/session-brief.md`
 - `docs/project/overview.md`
 - `docs/project/tech-stack.md`
 - `docs/project/architecture.md`
 - `changes/active/<change>/proposal.md`
+- `changes/active/<change>/design.md`
+- `changes/active/<change>/implementation-plan.md`
+- `changes/active/<change>/artifacts/agents/task-graph.json`
+- `changes/active/<change>/artifacts/agents/bootstrap.md`
+- `changes/active/<change>/artifacts/agents/handoff.md`
+- `changes/active/<change>/artifacts/agents/document-review-dispatches/`
+- `changes/active/<change>/artifacts/agents/workspace-status.md`
+- `changes/active/<change>/artifacts/agents/worktree-plan.md`
+- `changes/active/<change>/artifacts/agents/finish-plan.md`
+- `changes/active/<change>/artifacts/agents/launch-plan.md`
+- `changes/active/<change>/artifacts/agents/worker-runs/`
+- `changes/active/<change>/artifacts/agents/review-runs/`
+- `changes/active/<change>/artifacts/agents/retries/`
+- `changes/active/<change>/artifacts/agents/blockers/`
+- `changes/active/<change>/artifacts/agents/review-feedback-plan.md`
 - `changes/active/<change>/tasks.md`
+- `changes/active/<change>/artifacts/reviews/design-review.md`
+- `changes/active/<change>/artifacts/reviews/implementation-plan-review.md`
+- `changes/active/<change>/artifacts/reviews/spec-compliance.md`
+- `changes/active/<change>/artifacts/reviews/code-quality.md`
+- `changes/active/<change>/artifacts/agents/worker-status.md`
+- `changes/active/<change>/artifacts/agents/debug-evidence.json`
+- `changes/active/<change>/artifacts/agents/tdd-evidence.json`
+- `changes/active/<change>/artifacts/agents/verification-evidence.json`
 - `changes/active/<change>/state.json`
 - `changes/active/<change>/verification.md`
 
@@ -176,6 +200,38 @@ Treat these as the source of truth for active delivery work:
 Before advancing an active change:
 
 - read `.skillrc.plugins` to detect enabled blocking plugins
+- use `ospec session [path]` when entering an existing OSpec project to write `.ospec/session-brief.json` and `.ospec/session-brief.md`; it records active changes, queued changes, queue run state, safe next commands, and a cache fingerprint for session re-entry, and does not launch workers, run tests, inspect git, archive, or edit source files
+- use `ospec session hook [path]` only to write opt-in harness startup hook artifacts under `.ospec/hooks/`; it refreshes session context only and must not launch workers, run tests, inspect git, archive, or edit source files
+- use `ospec brainstorm [path] --topic "..." [--visual]` only for optional pre-change exploration artifacts under `.ospec/brainstorms/`; it does not create a change
+- use `ospec plan [path] --change changes/active/<change> [--apply]` only for optional plan drafts under `.ospec/plans/`; `--apply` is required to update `implementation-plan.md`
+- treat activated built-in quality policy steps such as `tdd_cycle`, `root_cause_debug`, and `verification_evidence` as archive-gated `optional_steps`; cover them in `tasks.md`, `verification.md`, and the matching evidence artifacts before closeout
+- keep `changes/active/<change>/artifacts/agents/task-graph.json` aligned with `implementation-plan.md` and `tasks.md`
+- do not archive while `artifacts/agents/task-graph.json` has unresolved task statuses, invalid dependencies, missing target files, or missing verification commands
+- use `ospec execute bootstrap [changes/active/<change>]` when starting or resuming a single active change to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md`; it summarizes current stage, project session brief snapshot, and next safe action, including `ospec execute launch ... --task ...` when an active dispatch is waiting, without launching workers, syncing worker status, running tests, inspecting git, or editing source files
+- use `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|shell|generic]` when moving a change between agents, tools, worktrees, shells, or human operators; it writes `artifacts/agents/handoff.json` and `artifacts/agents/handoff.md` with the project session brief snapshot, target tool mapping, and safety rules, but does not launch workers, sync worker status, run tests, inspect git, or edit source files
+- use `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` before deriving or dispatching implementation tasks to create document reviewer packets with the project session brief snapshot under `artifacts/agents/document-review-dispatches/`; design review must be approved before implementation plan review, and the command does not launch reviewers, run shell commands, sync worker status, or edit source files
+- use `ospec execute workspace [changes/active/<change>]` before worker handoff to record git workspace safety; if status is `needs_isolation`, defer parallel dispatch until the workspace is clean or moved into an isolated git worktree
+- use `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` to write an isolated worktree preparation plan without running git
+- use `ospec execute worktree [changes/active/<change>] --create [--branch name] [--path path] [--base ref]` only when explicitly asked to run `git worktree add`; it records stdout/stderr/status under `artifacts/agents/worktree-runs/`
+- use `ospec execute worktree [changes/active/<change>] --cleanup [--path path]` only when explicitly asked to run `git worktree remove`; it does not delete branches, push, merge, archive, run tests, or edit project source files
+- use `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` to write an artifact-only closeout readiness plan before finalize, archive, push, PR, merge, or worktree cleanup; review blockers and commands manually
+- use `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` to create a parallel-safe worker packet batch and `artifacts/agents/execution-session.json`; each packet includes the project session brief snapshot and a worker profile with capability tier, recommended target, target tool mapping, rationale, and required behavior; use `--task` for one explicit task, use `--limit` to cap dispatch batch size, and use `ospec execute complete <task-id> ...` to record worker results; a terminal worker result opens task-level review gates, so run `ospec execute review [changes/active/<change>] --task <task-id> --stage spec`, then `--stage quality`, before dispatching dependent work
+- use `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] [--dry-run]` after dispatch to write `artifacts/agents/launch-plan.json` and `artifacts/agents/launch-plan.md`; this is the native agent launch artifact and tells the controlling AI how to use the current harness native agent mechanism (`spawn_agent`/`wait_agent`/`close_agent` for Codex/GPT, Task for Claude Code, `@generalist` for Gemini, and `@mention` for OpenCode). It requires an active dispatch and ready workspace status, and does not start workers, run shell commands, or edit source files by itself
+- default to current-harness native subagents for multi-worker execution: create parallel-safe packets with `ospec execute dispatch`, inspect `launch-plan.md`, then dispatch one native agent per safe packet in the current AI session; only use `ospec execute orchestrate [changes/active/<change>] --command "..." [--target codex|gpt|claude|gemini|opencode|shell|generic] [--limit N] [--max-rounds N] [--timeout-ms N]` as the final CLI fallback when the current AI harness cannot dispatch native subagents. The fallback reads or creates parallel-safe dispatches, renders the explicit command template, runs worker commands concurrently, records `artifacts/agents/orchestration-runs/`, captures worker runs, and collects results into the task graph unless `--no-collect` is passed
+- use `--run --command` with `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] --run --command "..." [--timeout-ms N]` only as single-worker CLI fallback when native subagents are unavailable or explicitly bypassed; it captures stdout, stderr, exit code, timeout metadata, and run metadata under `artifacts/agents/worker-runs/`, then `ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id]` records the task result
+- use `ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--force]` after a blocked, needs-context, or failed run has been corrected; it writes `artifacts/agents/retries/`, reopens the task, and creates a fresh dispatch packet. Completed tasks require explicit `--force`
+- keep `dispatch`, `launch`, `orchestrate`, `collect`, `retry`, and `complete` artifact-controlled: native subagent dispatch is performed by the current AI harness, while shell commands run only for explicit fallback `launch --run --command` or `orchestrate` with a command template; none of these commands edits project source files directly; when `complete` or `collect` records `NEEDS_CONTEXT` or `BLOCKED`, OSpec writes blocker escalation under `artifacts/agents/blockers/`
+- complete `changes/active/<change>/artifacts/reviews/spec-compliance.md` before `changes/active/<change>/artifacts/reviews/code-quality.md`
+- use `ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality]` to create durable task-level or final reviewer handoff packets with the project session brief snapshot; with `--task`, review one completed task and write `artifacts/reviews/tasks/<task-id>/...`; without `--task`, run the final whole-change review after the task graph is completed; do not dispatch quality review before the matching spec review is approved
+- use `ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality] --run --command "..."` only when explicitly asked to run a local reviewer command; it captures review stdout/stderr under `artifacts/agents/review-runs/` and can update the matching task-level or final review artifact when `--decision` is provided
+- use `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` after a review artifact has a non-`PENDING` decision to write `artifacts/agents/review-feedback-plan.json` and `artifacts/agents/review-feedback-plan.md`; this records how to accept, revise, clarify, or unblock review feedback and does not edit source files or launch workers
+- do not archive while any task-level review or final review decision is `PENDING`, `NEEDS_CHANGES`, or `BLOCKED`
+- update `changes/active/<change>/artifacts/agents/worker-status.md` during implementation and review
+- use `ospec execute debug [changes/active/<change>] --symptom "..." --root-cause "..." --status FIXED` when debugging was part of the change to record systematic debugging evidence; this command records evidence only and does not run shell commands
+- use `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` after focused test runs to record TDD cycle evidence; this command records evidence only and does not run shell commands
+- use `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` after running fresh project checks to record verification evidence; this command records evidence only and does not run shell commands
+- use `ospec execute sync [changes/active/<change>]` after manual task graph, execution-session, review artifact, or verification checklist edits to rebuild worker status
+- do not claim completion while worker status is `PENDING`, `NEEDS_CONTEXT`, or `BLOCKED`; `controller_status` must be `DONE` before archive
 - if the current change activates `stitch_design_review`, inspect `changes/active/<change>/artifacts/stitch/approval.json`
 - when Stitch approval is missing or `status != approved`, treat the change as blocked and do not claim it is ready to continue or archive
 
@@ -185,10 +241,14 @@ Do not fall back to the old `features/...` layout unless the target repository r
 
 ```bash
 ospec status [path]
+ospec session [path]
+ospec session hook [path]
 ospec init [path]
 ospec init [path] --document-language zh-CN
 ospec init [path] --summary "..." --tech-stack node,react
 ospec docs generate [path]
+ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
+ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
 ospec docs status [path]
 ospec skills status [path]
@@ -201,6 +261,31 @@ ospec run status [path]
 ospec run step [path]
 ospec run resume [path]
 ospec run stop [path]
+ospec execute status [changes/active/<change>]
+ospec execute bootstrap [changes/active/<change>]
+ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|shell|generic]
+ospec execute doc-review [changes/active/<change>] [--stage design|plan]
+ospec execute next [changes/active/<change>]
+ospec execute workspace [changes/active/<change>]
+ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]
+ospec execute worktree [changes/active/<change>] --create [--branch name] [--path path] [--base ref]
+ospec execute worktree [changes/active/<change>] --cleanup [--path path]
+ospec execute finish [changes/active/<change>] [--target main] [--remote origin]
+ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]
+ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] [--dry-run]
+ospec execute orchestrate [changes/active/<change>] --command "..." [--target codex|gpt|claude|gemini|opencode|shell|generic] [--limit N] [--max-rounds N] [--timeout-ms N] # fallback only
+ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] --run --command "..." [--timeout-ms N] # fallback only
+ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
+ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--summary "..."] [--force]
+ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
+ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality]
+ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
+ospec execute feedback [changes/active/<change>] [--stage spec|quality] [--summary "..."]
+ospec execute debug [changes/active/<change>] --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
+ospec execute tdd [changes/active/<change>] --phase red --command "npm test -- focused" --status FAILED --exit-code 1 --summary "..."
+ospec execute tdd [changes/active/<change>] --phase green --command "npm test -- focused" --status PASSED --exit-code 0 --summary "..."
+ospec execute verify [changes/active/<change>] --command "npm test" --status PASSED --exit-code 0 --summary "..."
+ospec execute sync [changes/active/<change>]
 ospec plugins available
 ospec plugins info <plugin>
 ospec plugins install <plugin>
@@ -249,7 +334,7 @@ ospec finalize [changes/active/<change>]
 
 Use `ospec docs generate [path]` later when you need a docs-only maintenance pass.
 
-Use `ospec status [path]` separately when you want an explicit troubleshooting snapshot.
+Use `ospec session [path]` when entering an existing OSpec project and you need a durable project-level brief with active change, queued change, queue-run, safe next command context, and a cache fingerprint. Use `ospec session hook [path]` only to write opt-in startup hook artifacts for a harness. Use `ospec status [path]` separately when you want an explicit troubleshooting snapshot.
 
 For completed changes, archive before commit. Use `ospec archive [changes/active/<change>]` to execute the archive and `--check` only when you want a readiness preview without moving files.
 

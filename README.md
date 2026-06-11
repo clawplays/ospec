@@ -37,10 +37,10 @@ The official OSpec CLI package is `@clawplays/ospec-cli`, and the official comma
 
 AI coding assistants are powerful, but requirements that live only in chat history are hard to inspect, review, and close out cleanly. OSpec adds a lightweight workflow layer so the repository can hold the change context before code is written and after the work ships.
 
-- Align before code — keep proposal, tasks, state, verification, and review visible in the repo
+- Align before code — keep proposal, design, implementation plan, tasks, state, verification, and review visible in the repo
 - Keep each requirement explicit — the default path moves one requirement through one active change
 - Stay lightweight — keep the normal flow short with `init -> change -> verify/finalize`
-- Use the assistants you already have — OSpec is built for Codex, Claude Code, and direct CLI workflows
+- Use the assistants you already have — OSpec is built for Codex/GPT, Claude Code, Gemini, OpenCode, and direct CLI fallback workflows
 
 ## Install With npm
 
@@ -128,6 +128,25 @@ ospec new update-billing-copy .
 
 </details>
 
+### One-Change Agent Execution
+
+The normal AI-assisted path still starts with one active change. OSpec keeps the controller state in repo artifacts, and the current AI harness starts native worker agents when available.
+
+```bash
+ospec session .
+ospec execute bootstrap changes/active/<change-name>
+ospec execute workspace changes/active/<change-name>
+ospec execute status changes/active/<change-name>
+ospec execute dispatch changes/active/<change-name> --limit 2
+ospec execute launch changes/active/<change-name> --task <task-id> --target codex
+ospec execute complete <task-id> changes/active/<change-name> --status DONE --summary "..."
+ospec execute review changes/active/<change-name> --task <task-id> --stage spec
+ospec execute review changes/active/<change-name> --task <task-id> --stage quality
+ospec execute verify changes/active/<change-name> --command "npm test" --status PASSED --exit-code 0
+```
+
+`launch` writes `artifacts/agents/launch-plan.md`; it does not start workers by itself. Codex/GPT use `spawn_agent` / `wait_agent` / `close_agent`, Claude Code uses Task, Gemini uses `@generalist`, and OpenCode uses `@mention`. Use `launch --run --command` or `orchestrate --command` only when the current harness cannot start native subagents.
+
 ### 3. Archive After Acceptance
 
 After the requirement has passed deployment, testing, QA, or other acceptance checks, archive the validated change.
@@ -203,7 +222,19 @@ If you want to convert an older classic project to the new layout, run `ospec la
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. EXECUTION                                                  │
 │     ospec new <change-name>                                    │
+│     ospec brainstorm / plan (optional pre-change aids)         │
+│     ospec session                                              │
+│     ospec session hook                                         │
 │     ospec progress                                             │
+│     ospec execute bootstrap / handoff / doc-review / status    │
+│     ospec execute next                                         │
+│     ospec execute workspace / worktree / worktree --create     │
+│     ospec execute worktree --cleanup / finish                  │
+│     ospec execute dispatch / launch / collect / retry / review │
+│     ospec execute debug                                        │
+│     ospec execute tdd                                          │
+│     ospec execute verify                                       │
+│     ospec execute sync                                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -227,7 +258,7 @@ If you want to convert an older classic project to the new layout, run `ospec la
 |---------|---------------|
 | **Protocol Shell** | The minimum collaboration skeleton: root `.skillrc` and `README.md`, plus managed OSpec files under `.ospec/` for change state, SKILL docs, index state, `for-ai/` guidance, and project docs. |
 | **Project Knowledge Layer** | Explicit project context such as `docs/project/*`, layered skill files, and index state that AI can read consistently. |
-| **Active Change** | A dedicated execution container for one requirement, usually with `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. |
+| **Active Change** | A dedicated execution container for one requirement, usually with `proposal.md`, `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `tasks.md`, handoff artifacts, document-review artifacts, launch-plan artifacts, worker-run artifacts, reviewer-run artifacts, retry artifacts, review artifacts, `artifacts/agents/worker-status.md`, `state.json`, `verification.md`, and `review.md`. |
 
 ## Features
 
@@ -235,7 +266,10 @@ If you want to convert an older classic project to the new layout, run `ospec la
 - **Guided initialization**: AI-assisted init can ask once for missing summary or tech stack; direct CLI init falls back to placeholder docs when context is missing.
 - **Stable project language**: the chosen document language is stored in `.skillrc` so later guidance and generated change docs stay consistent unless you explicitly change it.
 - **Docs maintenance**: `ospec docs generate` refreshes or repairs project knowledge docs when you need it later.
-- **Tracked requirement execution**: each change can keep proposal, tasks, state, verification, and review files aligned.
+- **Tracked requirement execution**: each change can keep proposal, design, implementation plan, task graph, tasks, handoff artifacts, document-review artifacts, launch-plan artifacts, worker-run artifacts, reviewer-run artifacts, retry artifacts, worker status, state, verification, and review files aligned.
+- **Optional pre-change aids**: `ospec brainstorm` writes durable exploration artifacts under `.ospec/brainstorms/`, with an optional static visual companion; `ospec plan` writes plan drafts under `.ospec/plans/` and only updates `implementation-plan.md` when `--apply` is passed. The default one-change flow still starts with `ospec new`.
+- **Session brief**: `ospec session` writes `.ospec/session-brief.json` and `.ospec/session-brief.md` so agents or humans entering an existing project can see active changes, queued changes, queue-run state, a cache fingerprint, and the next safe command before touching a change; `ospec session hook` writes opt-in harness startup hook artifacts under `.ospec/hooks/`.
+- **Task graph controller**: `ospec execute bootstrap` writes a one-change startup/resume snapshot with the project session brief snapshot and next safe action; `handoff` writes a cross-tool worker handoff guide with the project session brief snapshot; `doc-review` creates design and implementation-plan reviewer packets before task execution; `status` and `next` report controller state and safe next task candidates; `workspace` records git workspace safety before worker handoff; `worktree` records an isolated-worktree preparation plan by default, while explicit `--create` or `--cleanup` runs the matching git worktree command and captures `artifacts/agents/worktree-runs/`; `finish` records closeout readiness before finalize, archive, push, merge, or worktree cleanup; `dispatch` and `complete` create parallel-safe worker packets with worker profiles and target tool mapping, then record task results as OSpec artifacts; `review --task` creates per-task spec and quality review packets that block dependent tasks until approved, while final `review` creates whole-change reviewer packets; `launch` writes the native agent launch plan for the current AI harness, including Codex/GPT `spawn_agent`, Claude Code Task, Gemini `@generalist`, and OpenCode `@mention` guidance; `orchestrate` is the final CLI fallback for harnesses without native subagents and runs explicit command templates only; `launch --run --command` is the single-worker CLI fallback; `collect` turns a fallback worker run into task completion state; `retry` reopens blocked, needs-context, or failed task work; explicit review `--run --command` captures `artifacts/agents/review-runs/`; `debug`, `tdd`, and `verify` record durable evidence; `sync` rebuilds `worker-status.md` from execution and review artifacts.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.
 - **Plugin workflow gates**: plugin commands support Stitch design review and Checkpoint automation through npm-installed official plugins.
 - **Skill management**: install and inspect OSpec skills for Codex and Claude Code.

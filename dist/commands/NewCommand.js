@@ -84,6 +84,28 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 projectRoot: targetDir,
                 documentPath: path.join(featureDir, constants_1.FILE_NAMES.PROPOSAL),
             }));
+            await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.DESIGN), services_1.services.templateEngine.generateDesignTemplate({
+                feature: featureName,
+                mode: config.mode,
+                placement,
+                projectContext,
+                flags,
+                optionalSteps: activatedSteps,
+                documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(featureDir, constants_1.FILE_NAMES.DESIGN),
+            }));
+            await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN), services_1.services.templateEngine.generateImplementationPlanTemplate({
+                feature: featureName,
+                mode: config.mode,
+                placement,
+                projectContext,
+                flags,
+                optionalSteps: activatedSteps,
+                documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(featureDir, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN),
+            }));
             await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.TASKS), services_1.services.templateEngine.generateTasksTemplate({
                 feature: featureName,
                 mode: config.mode,
@@ -105,6 +127,54 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 documentLanguage,
                 projectRoot: targetDir,
                 documentPath: path.join(featureDir, constants_1.FILE_NAMES.VERIFICATION),
+            }));
+            const reviewArtifactsDir = path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS);
+            await services_1.services.fileService.ensureDir(reviewArtifactsDir);
+            await services_1.services.fileService.writeFile(path.join(reviewArtifactsDir, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW), services_1.services.templateEngine.generateSpecComplianceReviewTemplate({
+                feature: featureName,
+                mode: config.mode,
+                placement,
+                projectContext,
+                flags,
+                optionalSteps: activatedSteps,
+                documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(reviewArtifactsDir, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW),
+            }));
+            await services_1.services.fileService.writeFile(path.join(reviewArtifactsDir, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW), services_1.services.templateEngine.generateCodeQualityReviewTemplate({
+                feature: featureName,
+                mode: config.mode,
+                placement,
+                projectContext,
+                flags,
+                optionalSteps: activatedSteps,
+                documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(reviewArtifactsDir, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW),
+            }));
+            const agentArtifactsDir = path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS);
+            await services_1.services.fileService.ensureDir(agentArtifactsDir);
+            await services_1.services.fileService.writeFile(path.join(agentArtifactsDir, constants_1.FILE_NAMES.TASK_GRAPH), services_1.services.templateEngine.generateTaskGraphTemplate({
+                feature: featureName,
+                mode: config.mode,
+                placement,
+                projectContext,
+                flags,
+                optionalSteps: activatedSteps,
+                documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(agentArtifactsDir, constants_1.FILE_NAMES.TASK_GRAPH),
+            }));
+            await services_1.services.fileService.writeFile(path.join(agentArtifactsDir, constants_1.FILE_NAMES.AGENT_WORKER_STATUS), services_1.services.templateEngine.generateAgentWorkerStatusTemplate({
+                feature: featureName,
+                mode: config.mode,
+                placement,
+                projectContext,
+                flags,
+                optionalSteps: activatedSteps,
+                documentLanguage,
+                projectRoot: targetDir,
+                documentPath: path.join(agentArtifactsDir, constants_1.FILE_NAMES.AGENT_WORKER_STATUS),
             }));
             await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.REVIEW), services_1.services.templateEngine.generateReviewTemplate({
                 feature: featureName,

@@ -38,7 +38,7 @@
 
 مساعدات البرمجة بالذكاء الاصطناعي قوية، لكن عندما تعيش المتطلبات داخل سجل الدردشة فقط يصبح من الصعب فحصها ومراجعتها وإغلاقها بشكل واضح. يضيف OSpec طبقة سير عمل خفيفة حتى يحتفظ المستودع بسياق التغيير قبل كتابة الكود وبعد شحنه.
 
-- اتفق قبل كتابة الكود: اجعل proposal و tasks و state و verification و review ظاهرة داخل المستودع
+- اتفق قبل كتابة الكود: اجعل proposal و design و implementation plan و tasks و handoff artifacts و document-review artifacts و worker status و state و verification و review ظاهرة داخل المستودع
 - اجعل كل متطلب صريحا: المسار الافتراضي ينقل متطلبا واحدا عبر active change واحد
 - ابق خفيفا: يحافظ التدفق اليومي على مسار قصير `init -> change -> verify/finalize`
 - استخدم المساعدات التي لديك بالفعل: OSpec مصمم لـ Codex و Claude Code وسير عمل CLI المباشر

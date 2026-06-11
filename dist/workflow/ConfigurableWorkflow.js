@@ -11,7 +11,7 @@ exports.ConfigurableWorkflow = exports.WORKFLOW_PRESETS = void 0;
  */
 exports.WORKFLOW_PRESETS = {
     lite: {
-        core_required: ['proposal', 'tasks', 'state', 'verification', 'skill_update', 'index_regenerated'],
+        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'spec_compliance_review', 'code_quality_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
         optional_steps: {
             code_review: { enabled: true, when: ['high_risk', 'multi_file_change'] },
             design_doc: { enabled: false, when: [] },
@@ -20,6 +20,9 @@ exports.WORKFLOW_PRESETS = {
             adr: { enabled: false, when: [] },
             db_change_doc: { enabled: false, when: [] },
             api_change_doc: { enabled: false, when: [] },
+            tdd_cycle: { enabled: false, when: [] },
+            root_cause_debug: { enabled: false, when: [] },
+            verification_evidence: { enabled: true, when: ['high_risk', 'multi_file_change'] },
         },
         archive_gate: {
             require_verification: true,
@@ -32,7 +35,7 @@ exports.WORKFLOW_PRESETS = {
         },
     },
     standard: {
-        core_required: ['proposal', 'tasks', 'state', 'verification', 'skill_update', 'index_regenerated'],
+        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'spec_compliance_review', 'code_quality_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
         optional_steps: {
             code_review: { enabled: true, when: ['high_risk', 'multi_file_change'] },
             design_doc: { enabled: true, when: ['cross_module', 'complex_feature'] },
@@ -41,6 +44,9 @@ exports.WORKFLOW_PRESETS = {
             adr: { enabled: false, when: [] },
             db_change_doc: { enabled: false, when: [] },
             api_change_doc: { enabled: true, when: ['public_api_change'] },
+            tdd_cycle: { enabled: true, when: ['high_risk', 'complex_feature', 'multi_file_change', 'public_api_change'] },
+            root_cause_debug: { enabled: true, when: ['bug_fix', 'regression', 'flaky_test'] },
+            verification_evidence: { enabled: true, when: ['high_risk', 'multi_file_change', 'public_api_change', 'external_api', 'payment'] },
         },
         archive_gate: {
             require_verification: true,
@@ -52,11 +58,12 @@ exports.WORKFLOW_PRESETS = {
             supported: [
                 'cross_module', 'complex_feature', 'large_feature', 'multi_phase',
                 'high_risk', 'multi_file_change', 'security_related', 'auth', 'payment', 'public_api_change',
+                'bug_fix', 'regression', 'flaky_test',
             ],
         },
     },
     full: {
-        core_required: ['proposal', 'tasks', 'state', 'verification', 'skill_update', 'index_regenerated'],
+        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'spec_compliance_review', 'code_quality_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
         optional_steps: {
             code_review: { enabled: true, when: ['high_risk', 'cross_module', 'multi_file_change'] },
             design_doc: { enabled: true, when: ['cross_module', 'complex_feature', 'architecture_change'] },
@@ -65,6 +72,9 @@ exports.WORKFLOW_PRESETS = {
             adr: { enabled: true, when: ['architecture_change', 'important_decision'] },
             db_change_doc: { enabled: true, when: ['db_schema_change'] },
             api_change_doc: { enabled: true, when: ['public_api_change'] },
+            tdd_cycle: { enabled: true, when: ['high_risk', 'complex_feature', 'multi_file_change', 'public_api_change', 'external_api', 'payment'] },
+            root_cause_debug: { enabled: true, when: ['bug_fix', 'regression', 'flaky_test', 'complex_feature'] },
+            verification_evidence: { enabled: true, when: ['high_risk', 'multi_file_change', 'public_api_change', 'external_api', 'payment', 'architecture_change'] },
         },
         archive_gate: {
             require_verification: true,
@@ -78,6 +88,7 @@ exports.WORKFLOW_PRESETS = {
                 'architecture_change', 'important_decision', 'multi_file_change',
                 'security_related', 'auth', 'payment', 'external_api',
                 'db_schema_change', 'public_api_change', 'high_risk',
+                'bug_fix', 'regression', 'flaky_test',
             ],
         },
     },
@@ -145,6 +156,9 @@ class ConfigurableWorkflow {
             adr: ['proposal'],
             db_change_doc: ['verify'],
             api_change_doc: ['verify'],
+            tdd_cycle: ['implementation_plan'],
+            root_cause_debug: ['implementation_plan'],
+            verification_evidence: ['verify'],
         };
         return dependencies[step] || [];
     }

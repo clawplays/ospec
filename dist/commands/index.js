@@ -3,13 +3,17 @@
  * Command entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LayoutCommand = exports.UpdateCommand = exports.RunCommand = exports.QueueCommand = exports.IndexCommand = exports.PluginsCommand = exports.SkillsCommand = exports.SkillCommand = exports.DocsCommand = exports.WorkflowCommand = exports.BatchCommand = exports.StatusCommand = exports.FinalizeCommand = exports.ArchiveCommand = exports.ProgressCommand = exports.VerifyCommand = exports.NewCommand = exports.InitCommand = exports.BaseCommand = void 0;
+exports.LayoutCommand = exports.UpdateCommand = exports.SessionCommand = exports.ExecuteCommand = exports.RunCommand = exports.QueueCommand = exports.IndexCommand = exports.PluginsCommand = exports.SkillsCommand = exports.SkillCommand = exports.DocsCommand = exports.WorkflowCommand = exports.BatchCommand = exports.StatusCommand = exports.FinalizeCommand = exports.ArchiveCommand = exports.ProgressCommand = exports.VerifyCommand = exports.PlanCommand = exports.BrainstormCommand = exports.NewCommand = exports.InitCommand = exports.BaseCommand = void 0;
 var BaseCommand_1 = require("./BaseCommand");
 Object.defineProperty(exports, "BaseCommand", { enumerable: true, get: function () { return BaseCommand_1.BaseCommand; } });
 var InitCommand_1 = require("./InitCommand");
 Object.defineProperty(exports, "InitCommand", { enumerable: true, get: function () { return InitCommand_1.InitCommand; } });
 var NewCommand_1 = require("./NewCommand");
 Object.defineProperty(exports, "NewCommand", { enumerable: true, get: function () { return NewCommand_1.NewCommand; } });
+var BrainstormCommand_1 = require("./BrainstormCommand");
+Object.defineProperty(exports, "BrainstormCommand", { enumerable: true, get: function () { return BrainstormCommand_1.BrainstormCommand; } });
+var PlanCommand_1 = require("./PlanCommand");
+Object.defineProperty(exports, "PlanCommand", { enumerable: true, get: function () { return PlanCommand_1.PlanCommand; } });
 var VerifyCommand_1 = require("./VerifyCommand");
 Object.defineProperty(exports, "VerifyCommand", { enumerable: true, get: function () { return VerifyCommand_1.VerifyCommand; } });
 var ProgressCommand_1 = require("./ProgressCommand");
@@ -38,6 +42,10 @@ var QueueCommand_1 = require("./QueueCommand");
 Object.defineProperty(exports, "QueueCommand", { enumerable: true, get: function () { return QueueCommand_1.QueueCommand; } });
 var RunCommand_1 = require("./RunCommand");
 Object.defineProperty(exports, "RunCommand", { enumerable: true, get: function () { return RunCommand_1.RunCommand; } });
+var ExecuteCommand_1 = require("./ExecuteCommand");
+Object.defineProperty(exports, "ExecuteCommand", { enumerable: true, get: function () { return ExecuteCommand_1.ExecuteCommand; } });
+var SessionCommand_1 = require("./SessionCommand");
+Object.defineProperty(exports, "SessionCommand", { enumerable: true, get: function () { return SessionCommand_1.SessionCommand; } });
 var UpdateCommand_1 = require("./UpdateCommand");
 Object.defineProperty(exports, "UpdateCommand", { enumerable: true, get: function () { return UpdateCommand_1.UpdateCommand; } });
 var LayoutCommand_1 = require("./LayoutCommand");

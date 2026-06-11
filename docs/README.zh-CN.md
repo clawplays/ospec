@@ -38,7 +38,7 @@ OSpec 的官方 CLI 包是 `@clawplays/ospec-cli`，官方命令是 `ospec`。OS
 
 AI 编码助手很强，但如果需求只留在聊天记录里，就很难检查、评审和稳定收口。OSpec 增加了一层轻量工作流，让仓库在写代码之前和上线之后都能保留这次 change 的上下文。
 
-- 先对齐再写代码：把 proposal、tasks、state、verification、review 都留在仓库里
+- 先对齐再写代码：把 proposal、design、implementation plan、tasks、handoff artifacts、document-review artifacts、worker status、state、verification、review 都留在仓库里
 - 让每个需求显式可见：默认路径是一条需求对应一个 active change
 - 保持轻量：日常流程尽量收敛在 `init -> change -> verify/finalize`
 - 继续使用你已有的助手：OSpec 面向 Codex、Claude Code 和直接 CLI 工作流

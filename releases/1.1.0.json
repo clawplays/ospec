@@ -1,0 +1,25 @@
+{
+  "title_suffix": "One-change native-agent execution platform",
+  "summary": "This release upgrades OSpec from a document-driven change workflow into a one-change native-agent execution platform with task graphs, native harness launch plans, task-level reviews, evidence gates, and hardened release safety.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.0.2...1.1.0",
+  "new": [
+    "Added first-class one-change task graph execution with dispatch, launch planning, completion collection, retry, blocker escalation, and controller status commands.",
+    "Added native harness launch metadata for Codex/GPT, Claude Code, Gemini, and OpenCode so current-harness subagents are the default worker path.",
+    "Added task-level spec and quality review gates before dependent work can dispatch, plus final whole-change review gates.",
+    "Added durable TDD, debugging, and verification evidence artifacts that can be archive-gated by workflow flags.",
+    "Added project session, bootstrap, handoff, workspace, worktree, finish, brainstorm, and plan helper commands for safer AI-assisted change execution."
+  ],
+  "improved": [
+    "Kept one active change as the normal entry point while supporting parallel-safe worker batches and stronger controller guidance.",
+    "Improved execute status and next output so the next worker, review, verification, or blocker action is visible without reading raw artifacts.",
+    "Improved generated AI guidance, packaged skills, project conventions, and public usage docs for the new one-change agent workflow."
+  ],
+  "fixed": [
+    "Fixed release smoke coverage so generated smoke changes satisfy task graph, review, worker status, and verification evidence archive gates.",
+    "Clarified that CLI worker command execution is fallback-only when native harness subagents are unavailable or explicitly bypassed."
+  ],
+  "docs": [
+    "Documented the one-change native-agent execution flow in the README and usage guides.",
+    "Added release metadata for GitHub Release notes and local release-note preview."
+  ]
+}

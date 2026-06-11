@@ -120,6 +120,211 @@ function toPosixRelative(from, to) {
   return path.relative(from, to).replace(/\\/g, '/');
 }
 
+const smokeCreatedDate = '2026-06-11';
+
+async function ensureDir(targetPath) {
+  await fsp.mkdir(targetPath, { recursive: true });
+}
+
+function reviewArtifactContent({
+  feature,
+  reviewerRole,
+  title,
+  taskId = null,
+}) {
+  const taskFrontmatter = taskId ? [`task_id: ${taskId}`] : [];
+
+  return [
+    '---',
+    `feature: ${feature}`,
+    ...taskFrontmatter,
+    `created: ${smokeCreatedDate}`,
+    'status: reviewed',
+    `reviewer_role: ${reviewerRole}`,
+    'decision: APPROVED',
+    'optional_steps: []',
+    '---',
+    '',
+    `# ${title}`,
+    '',
+    '## Checklist',
+    '- [x] Acceptance criteria are checked against the completed work',
+    '- [x] Design and implementation boundaries are checked',
+    '- [x] Verification expectations are covered by recorded evidence',
+    '- [x] No unresolved blockers or required fixes remain',
+    '- [x] Final decision is written to frontmatter `decision`',
+    '',
+    '## Decision',
+    '',
+    'APPROVED for the release smoke fixture.',
+    '',
+  ].join('\n');
+}
+
+function workerStatusContent(feature) {
+  return [
+    '---',
+    `feature: ${feature}`,
+    `created: ${smokeCreatedDate}`,
+    'status: completed',
+    'implementer_status: DONE',
+    'spec_reviewer_status: DONE',
+    'quality_reviewer_status: DONE',
+    'controller_status: DONE',
+    '---',
+    '',
+    '# Agent Worker Status',
+    '',
+    '## Checklist',
+    '- [x] Implementer returned `DONE` or `DONE_WITH_CONCERNS`',
+    '- [x] Spec compliance review completed',
+    '- [x] Code quality review completed',
+    '- [x] Controller resolved concerns, context requests, or blockers',
+    '',
+  ].join('\n');
+}
+
+async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
+  const agentsDir = path.join(featureDir, 'artifacts', 'agents');
+  const finalReviewsDir = path.join(featureDir, 'artifacts', 'reviews');
+  const taskReviewsDir = path.join(finalReviewsDir, 'tasks', 'task-1');
+  const evidenceDir = path.join(agentsDir, 'verification-evidence');
+  const taskSpecArtifact = 'artifacts/reviews/tasks/task-1/spec-compliance.md';
+  const taskQualityArtifact = 'artifacts/reviews/tasks/task-1/code-quality.md';
+
+  await ensureDir(agentsDir);
+  await ensureDir(finalReviewsDir);
+  await ensureDir(taskReviewsDir);
+  await ensureDir(evidenceDir);
+
+  await fs.writeJson(
+    path.join(agentsDir, 'task-graph.json'),
+    {
+      version: '1.0',
+      feature,
+      status: 'completed',
+      optional_steps: [],
+      generated_from: [
+        'proposal.md',
+        'design.md',
+        'implementation-plan.md',
+        'tasks.md',
+      ],
+      tasks: [
+        {
+          id: 'task-1',
+          title: 'Implement the change',
+          status: 'DONE',
+          depends_on: [],
+          parallelizable: false,
+          conflicts_with: [],
+          target_files: ['.ospec/docs/project/overview.md'],
+          verification_commands: [
+            'node dist/cli.js verify .ospec/changes/active/release-smoke',
+          ],
+          expected_result: 'Release smoke change verifies and archives cleanly',
+          worker_role: 'implementer',
+          review: {
+            spec: 'APPROVED',
+            quality: 'APPROVED',
+            spec_artifact: taskSpecArtifact,
+            quality_artifact: taskQualityArtifact,
+          },
+        },
+      ],
+    },
+    { spaces: 2 },
+  );
+
+  await fs.writeFile(
+    path.join(taskReviewsDir, 'spec-compliance.md'),
+    reviewArtifactContent({
+      feature,
+      reviewerRole: 'spec_compliance_reviewer',
+      title: 'Task Spec Compliance Review',
+      taskId: 'task-1',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(taskReviewsDir, 'code-quality.md'),
+    reviewArtifactContent({
+      feature,
+      reviewerRole: 'code_quality_reviewer',
+      title: 'Task Code Quality Review',
+      taskId: 'task-1',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(finalReviewsDir, 'spec-compliance.md'),
+    reviewArtifactContent({
+      feature,
+      reviewerRole: 'spec_compliance_reviewer',
+      title: 'Final Spec Compliance Review',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(finalReviewsDir, 'code-quality.md'),
+    reviewArtifactContent({
+      feature,
+      reviewerRole: 'code_quality_reviewer',
+      title: 'Final Code Quality Review',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(agentsDir, 'worker-status.md'),
+    workerStatusContent(feature),
+    'utf8',
+  );
+
+  const verifiedAt = new Date().toISOString();
+  const verificationRecord = {
+    id: 'verification-1',
+    command: 'node dist/cli.js verify .ospec/changes/active/release-smoke',
+    status: 'PASSED',
+    exitCode: 0,
+    recordedAt: verifiedAt,
+    recordPath: 'artifacts/agents/verification-evidence/verification-1.json',
+    reportPath: 'artifacts/agents/verification-evidence/verification-1.md',
+    summary: 'Release smoke fixture verification passed.',
+  };
+
+  await fs.writeJson(
+    path.join(agentsDir, 'verification-evidence.json'),
+    {
+      version: '1.0',
+      feature,
+      status: 'passed',
+      updatedAt: verifiedAt,
+      records: [verificationRecord],
+    },
+    { spaces: 2 },
+  );
+  await fs.writeJson(
+    path.join(evidenceDir, 'verification-1.json'),
+    verificationRecord,
+    { spaces: 2 },
+  );
+  await fs.writeFile(
+    path.join(evidenceDir, 'verification-1.md'),
+    [
+      '# Verification Evidence: verification-1',
+      '',
+      `- Command: \`${verificationRecord.command}\``,
+      '- Status: PASSED',
+      '- Exit code: 0',
+      `- Recorded at: ${verifiedAt}`,
+      '',
+      'Release smoke fixture verification passed.',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
 async function findArchivedChangeDir(archivedRoot, changeName) {
   if (!(await fs.pathExists(archivedRoot))) {
     return null;
@@ -419,6 +624,13 @@ async function main() {
 
     const proposalPath = path.join(featureDir, 'proposal.md');
 
+    const designPath = path.join(featureDir, 'design.md');
+
+    const implementationPlanPath = path.join(
+      featureDir,
+      'implementation-plan.md',
+    );
+
     const tasksPath = path.join(featureDir, 'tasks.md');
 
     const verificationPath = path.join(featureDir, 'verification.md');
@@ -497,6 +709,21 @@ async function main() {
     );
 
     await fs.writeFile(
+      designPath,
+      (await fs.readFile(designPath, 'utf8')).replace(/- \[ \]/g, '- [x]'),
+      'utf8',
+    );
+
+    await fs.writeFile(
+      implementationPlanPath,
+      (await fs.readFile(implementationPlanPath, 'utf8')).replace(
+        /- \[ \]/g,
+        '- [x]',
+      ),
+      'utf8',
+    );
+
+    await fs.writeFile(
       verificationPath,
       (await fs.readFile(verificationPath, 'utf8')).replace(
         /- \[ \]/g,
@@ -504,6 +731,8 @@ async function main() {
       ),
       'utf8',
     );
+
+    await writeCompletedReleaseSmokeArtifacts(featureDir, 'release-smoke');
 
     output = run('node', [cliPath, 'finalize', featureDir]);
 

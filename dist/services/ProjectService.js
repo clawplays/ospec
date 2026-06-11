@@ -13,6 +13,52 @@ const ConfigurableWorkflow_1 = require("../workflow/ConfigurableWorkflow");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const helpers_1 = require("../utils/helpers");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
+const AGENT_WORKER_ALLOWED_STATUSES = [
+    'DONE',
+    'DONE_WITH_CONCERNS',
+    'NEEDS_CONTEXT',
+    'BLOCKED',
+    'PENDING',
+];
+const TASK_GRAPH_ALLOWED_STATUSES = [
+    'DONE',
+    'DONE_WITH_CONCERNS',
+    'IN_PROGRESS',
+    'NEEDS_CONTEXT',
+    'BLOCKED',
+    'PENDING',
+];
+const AGENT_WORKER_STATUS_FIELDS = [
+    'implementer_status',
+    'spec_reviewer_status',
+    'quality_reviewer_status',
+    'controller_status',
+];
+const AGENT_WORKER_TERMINAL_STATUSES = [
+    'DONE',
+    'DONE_WITH_CONCERNS',
+];
+const TASK_GRAPH_TERMINAL_STATUSES = [
+    'DONE',
+    'DONE_WITH_CONCERNS',
+];
+const AGENT_WORKER_ALLOWED_STATUS_SET = new Set(AGENT_WORKER_ALLOWED_STATUSES);
+const AGENT_WORKER_TERMINAL_STATUS_SET = new Set(AGENT_WORKER_TERMINAL_STATUSES);
+const TASK_GRAPH_ALLOWED_STATUS_SET = new Set(TASK_GRAPH_ALLOWED_STATUSES);
+const TASK_GRAPH_TERMINAL_STATUS_SET = new Set(TASK_GRAPH_TERMINAL_STATUSES);
+const REVIEW_ARTIFACT_ALLOWED_DECISIONS = [
+    'APPROVED',
+    'APPROVED_WITH_CONCERNS',
+    'NEEDS_CHANGES',
+    'BLOCKED',
+    'PENDING',
+];
+const REVIEW_ARTIFACT_TERMINAL_DECISIONS = [
+    'APPROVED',
+    'APPROVED_WITH_CONCERNS',
+];
+const REVIEW_ARTIFACT_ALLOWED_DECISION_SET = new Set(REVIEW_ARTIFACT_ALLOWED_DECISIONS);
+const REVIEW_ARTIFACT_TERMINAL_DECISION_SET = new Set(REVIEW_ARTIFACT_TERMINAL_DECISIONS);
 class ProjectService {
     constructor(fileService, configManager, templateEngine, indexBuilder, skillParser, projectAssetService, projectScaffoldService, projectScaffoldCommandService) {
         this.fileService = fileService;
@@ -651,7 +697,12 @@ class ProjectService {
         const nextRoot = path_1.default.resolve(nextChangePath);
         const markdownFiles = [
             constants_1.FILE_NAMES.PROPOSAL,
+            constants_1.FILE_NAMES.DESIGN,
+            constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
             constants_1.FILE_NAMES.TASKS,
+            path_1.default.join(constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW),
+            path_1.default.join(constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW),
+            path_1.default.join(constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS),
             constants_1.FILE_NAMES.VERIFICATION,
             constants_1.FILE_NAMES.REVIEW,
         ];
@@ -2212,11 +2263,23 @@ ${formatSuggestion()}
             return null;
         }
         const proposalPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.PROPOSAL);
+        const designPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.DESIGN);
+        const implementationPlanPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN);
+        const taskGraphPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
+        const specComplianceReviewPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
+        const codeQualityReviewPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
+        const agentWorkerStatusPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
         const tasksPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.TASKS);
         const verificationPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.VERIFICATION);
-        const [state, proposalExists, tasksExists, verificationExists] = await Promise.all([
+        const [state, proposalExists, designExists, implementationPlanExists, taskGraphExists, specComplianceReviewExists, codeQualityReviewExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
             this.fileService.readJSON(statePath),
             this.fileService.exists(proposalPath),
+            this.fileService.exists(designPath),
+            this.fileService.exists(implementationPlanPath),
+            this.fileService.exists(taskGraphPath),
+            this.fileService.exists(specComplianceReviewPath),
+            this.fileService.exists(codeQualityReviewPath),
+            this.fileService.exists(agentWorkerStatusPath),
             this.fileService.exists(tasksPath),
             this.fileService.exists(verificationPath),
         ]);
@@ -2228,6 +2291,36 @@ ${formatSuggestion()}
                 name: 'proposal.md',
                 status: proposalExists ? 'pass' : 'fail',
                 message: proposalExists ? 'Proposal file exists' : 'proposal.md is missing',
+            },
+            {
+                name: 'design.md',
+                status: designExists ? 'pass' : 'fail',
+                message: designExists ? 'Design file exists' : 'design.md is missing',
+            },
+            {
+                name: 'implementation-plan.md',
+                status: implementationPlanExists ? 'pass' : 'fail',
+                message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing',
+            },
+            {
+                name: 'artifacts/agents/task-graph.json',
+                status: taskGraphExists ? 'pass' : 'fail',
+                message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing',
+            },
+            {
+                name: 'artifacts/reviews/spec-compliance.md',
+                status: specComplianceReviewExists ? 'pass' : 'fail',
+                message: specComplianceReviewExists ? 'Spec compliance review artifact exists' : 'artifacts/reviews/spec-compliance.md is missing',
+            },
+            {
+                name: 'artifacts/reviews/code-quality.md',
+                status: codeQualityReviewExists ? 'pass' : 'fail',
+                message: codeQualityReviewExists ? 'Code quality review artifact exists' : 'artifacts/reviews/code-quality.md is missing',
+            },
+            {
+                name: 'artifacts/agents/worker-status.md',
+                status: agentWorkerStatusExists ? 'pass' : 'fail',
+                message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing',
             },
             {
                 name: 'tasks.md',
@@ -2262,6 +2355,42 @@ ${formatSuggestion()}
                     message: `Unsupported flags: ${validation.unsupported.join(', ')}`,
                 });
             }
+        }
+        const designAnalysis = designExists
+            ? await this.analyzeChecklistDocument(designPath, 'design.md', activatedSteps)
+            : null;
+        if (designAnalysis) {
+            checks.push(...designAnalysis.checks);
+        }
+        const implementationPlanAnalysis = implementationPlanExists
+            ? await this.analyzeChecklistDocument(implementationPlanPath, 'implementation-plan.md', activatedSteps)
+            : null;
+        if (implementationPlanAnalysis) {
+            checks.push(...implementationPlanAnalysis.checks);
+        }
+        const taskGraphAnalysis = taskGraphExists
+            ? await this.analyzeTaskGraphDocument(taskGraphPath, activatedSteps)
+            : null;
+        if (taskGraphAnalysis) {
+            checks.push(...taskGraphAnalysis.checks);
+        }
+        const specComplianceReviewAnalysis = specComplianceReviewExists
+            ? await this.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps)
+            : null;
+        if (specComplianceReviewAnalysis) {
+            checks.push(...specComplianceReviewAnalysis.checks);
+        }
+        const codeQualityReviewAnalysis = codeQualityReviewExists
+            ? await this.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps)
+            : null;
+        if (codeQualityReviewAnalysis) {
+            checks.push(...codeQualityReviewAnalysis.checks);
+        }
+        const agentWorkerStatusAnalysis = agentWorkerStatusExists
+            ? await this.analyzeAgentWorkerStatusDocument(agentWorkerStatusPath)
+            : null;
+        if (agentWorkerStatusAnalysis) {
+            checks.push(...agentWorkerStatusAnalysis.checks);
         }
         const tasksAnalysis = tasksExists
             ? await this.analyzeChecklistDocument(tasksPath, 'tasks.md', activatedSteps)
@@ -2316,7 +2445,7 @@ ${formatSuggestion()}
             summaryStatus: failCount > 0 ? 'fail' : warnCount > 0 ? 'warn' : 'pass',
             failCount,
             warnCount,
-            archiveReady: archiveResult.canArchive,
+            archiveReady: archiveResult.canArchive && (taskGraphAnalysis?.archiveReady ?? false),
             checks,
         };
     }
@@ -2421,6 +2550,572 @@ ${formatSuggestion()}
             ],
         };
     }
+    async analyzeTaskGraphDocument(filePath, activatedSteps) {
+        const name = 'artifacts/agents/task-graph.json';
+        const content = await this.fileService.readFile(filePath);
+        let parsed = null;
+        let parseError = null;
+        try {
+            parsed = JSON.parse(content);
+        }
+        catch (error) {
+            parseError = error;
+        }
+        const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+        const optionalStepsFieldValid = Array.isArray(data.optional_steps);
+        const optionalSteps = optionalStepsFieldValid ? data.optional_steps : [];
+        const tasksFieldValid = Array.isArray(data.tasks);
+        const tasks = tasksFieldValid ? data.tasks : [];
+        const missingRequiredFields = [];
+        if (typeof data.version !== 'string' || data.version.trim().length === 0) {
+            missingRequiredFields.push('version');
+        }
+        if (typeof data.feature !== 'string' || data.feature.trim().length === 0) {
+            missingRequiredFields.push('feature');
+        }
+        if (typeof data.status !== 'string' || data.status.trim().length === 0) {
+            missingRequiredFields.push('status');
+        }
+        if (!optionalStepsFieldValid) {
+            missingRequiredFields.push('optional_steps');
+        }
+        if (!tasksFieldValid) {
+            missingRequiredFields.push('tasks');
+        }
+        const missingActivatedSteps = optionalStepsFieldValid
+            ? activatedSteps.filter(step => !optionalSteps.includes(step))
+            : [...activatedSteps];
+        const taskSchemaIssues = [];
+        const dependencyIssues = [];
+        const invalidStatuses = [];
+        const unresolvedStatuses = [];
+        const concernStatuses = [];
+        const executionDetailIssues = [];
+        const statuses = {};
+        const taskIds = new Set();
+        const duplicateTaskIds = new Set();
+        if (tasksFieldValid && tasks.length === 0) {
+            taskSchemaIssues.push('tasks must contain at least one task');
+        }
+        for (const [index, task] of tasks.entries()) {
+            const taskLabel = `tasks[${index}]`;
+            if (!task || typeof task !== 'object' || Array.isArray(task)) {
+                taskSchemaIssues.push(`${taskLabel} must be an object`);
+                continue;
+            }
+            const taskId = typeof task.id === 'string' ? task.id.trim() : '';
+            if (!taskId) {
+                taskSchemaIssues.push(`${taskLabel}.id must be a non-empty string`);
+            }
+            else if (taskIds.has(taskId)) {
+                duplicateTaskIds.add(taskId);
+            }
+            else {
+                taskIds.add(taskId);
+            }
+            if (typeof task.title !== 'string' || task.title.trim().length === 0) {
+                taskSchemaIssues.push(`${taskLabel}.title must be a non-empty string`);
+            }
+            if (typeof task.status !== 'string' || task.status.trim().length === 0) {
+                taskSchemaIssues.push(`${taskLabel}.status must be a non-empty string`);
+            }
+            if (!Array.isArray(task.depends_on)) {
+                taskSchemaIssues.push(`${taskLabel}.depends_on must be an array`);
+            }
+            if (typeof task.parallelizable !== 'boolean') {
+                taskSchemaIssues.push(`${taskLabel}.parallelizable must be a boolean`);
+            }
+            if (!Array.isArray(task.conflicts_with)) {
+                taskSchemaIssues.push(`${taskLabel}.conflicts_with must be an array`);
+            }
+            if (!Array.isArray(task.target_files)) {
+                taskSchemaIssues.push(`${taskLabel}.target_files must be an array`);
+            }
+            if (!Array.isArray(task.verification_commands)) {
+                taskSchemaIssues.push(`${taskLabel}.verification_commands must be an array`);
+            }
+            if (typeof task.expected_result !== 'string' || task.expected_result.trim().length === 0) {
+                taskSchemaIssues.push(`${taskLabel}.expected_result must be a non-empty string`);
+            }
+            if (typeof task.worker_role !== 'string' || task.worker_role.trim().length === 0) {
+                taskSchemaIssues.push(`${taskLabel}.worker_role must be a non-empty string`);
+            }
+            if (taskId) {
+                const status = typeof task.status === 'string' ? task.status.trim().toUpperCase() : '';
+                statuses[taskId] = status;
+                if (!TASK_GRAPH_ALLOWED_STATUS_SET.has(status)) {
+                    invalidStatuses.push(`${taskId}=${status || '(missing)'}`);
+                }
+                else if (!TASK_GRAPH_TERMINAL_STATUS_SET.has(status)) {
+                    unresolvedStatuses.push(`${taskId}=${status}`);
+                }
+                else if (status === 'DONE_WITH_CONCERNS') {
+                    concernStatuses.push(taskId);
+                }
+                if (TASK_GRAPH_TERMINAL_STATUS_SET.has(status) && task.review && typeof task.review === 'object' && !Array.isArray(task.review)) {
+                    const specReview = typeof task.review.spec === 'string' ? task.review.spec.trim().toUpperCase() : 'PENDING';
+                    const qualityReview = typeof task.review.quality === 'string' ? task.review.quality.trim().toUpperCase() : 'PENDING';
+                    if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(specReview)) {
+                        unresolvedStatuses.push(`${taskId}.review.spec=${specReview || 'PENDING'}`);
+                    }
+                    if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(qualityReview)) {
+                        unresolvedStatuses.push(`${taskId}.review.quality=${qualityReview || 'PENDING'}`);
+                    }
+                }
+                if (!Array.isArray(task.target_files) || task.target_files.filter((value) => typeof value === 'string' && value.trim().length > 0).length === 0) {
+                    executionDetailIssues.push(`${taskId}.target_files`);
+                }
+                if (!Array.isArray(task.verification_commands) || task.verification_commands.filter((value) => typeof value === 'string' && value.trim().length > 0).length === 0) {
+                    executionDetailIssues.push(`${taskId}.verification_commands`);
+                }
+                const expectedResult = typeof task.expected_result === 'string' ? task.expected_result.trim() : '';
+                if (!expectedResult || expectedResult.toUpperCase() === 'TBD') {
+                    executionDetailIssues.push(`${taskId}.expected_result`);
+                }
+            }
+        }
+        for (const duplicateId of duplicateTaskIds) {
+            taskSchemaIssues.push(`duplicate task id: ${duplicateId}`);
+        }
+        if (tasksFieldValid && taskSchemaIssues.length === 0) {
+            const dependenciesByTask = new Map();
+            for (const task of tasks) {
+                const taskId = task.id.trim();
+                const dependencies = task.depends_on.filter((value) => typeof value === 'string' && value.trim().length > 0);
+                dependenciesByTask.set(taskId, dependencies);
+                for (const dependency of dependencies) {
+                    if (dependency === taskId) {
+                        dependencyIssues.push(`${taskId} cannot depend on itself`);
+                    }
+                    else if (!taskIds.has(dependency)) {
+                        dependencyIssues.push(`${taskId} depends on unknown task ${dependency}`);
+                    }
+                }
+            }
+            const visiting = new Set();
+            const visited = new Set();
+            const visit = (taskId, chain) => {
+                if (visited.has(taskId)) {
+                    return;
+                }
+                if (visiting.has(taskId)) {
+                    dependencyIssues.push(`dependency cycle detected: ${[...chain, taskId].join(' -> ')}`);
+                    return;
+                }
+                visiting.add(taskId);
+                for (const dependency of dependenciesByTask.get(taskId) ?? []) {
+                    if (taskIds.has(dependency)) {
+                        visit(dependency, [...chain, taskId]);
+                    }
+                }
+                visiting.delete(taskId);
+                visited.add(taskId);
+            };
+            for (const taskId of taskIds) {
+                visit(taskId, []);
+            }
+        }
+        const graphCompleted = data.status === 'completed';
+        let jsonMessage = `${name} JSON parsed successfully`;
+        if (parseError) {
+            jsonMessage = `${name} JSON cannot be parsed: ${parseError.message}`;
+        }
+        let requiredFieldsMessage = `${name} has all required fields`;
+        if (parseError) {
+            requiredFieldsMessage = `Cannot validate required fields in ${name} because JSON is invalid`;
+        }
+        else if (missingRequiredFields.length > 0) {
+            requiredFieldsMessage = `Missing or invalid required fields in ${name}: ${missingRequiredFields.join(', ')}`;
+        }
+        let optionalStepsMessage = `All activated optional steps are present in ${name}`;
+        if (!optionalStepsFieldValid) {
+            optionalStepsMessage = `${name} field optional_steps must be an array`;
+        }
+        else if (missingActivatedSteps.length > 0) {
+            optionalStepsMessage = `Missing optional steps in ${name}: ${missingActivatedSteps.join(', ')}`;
+        }
+        const taskSchemaMessage = taskSchemaIssues.length > 0
+            ? `Invalid task graph schema in ${name}: ${taskSchemaIssues.join(', ')}`
+            : `${name} task schema is valid`;
+        const dependenciesMessage = dependencyIssues.length > 0
+            ? `Invalid task dependencies in ${name}: ${dependencyIssues.join(', ')}`
+            : `${name} dependencies are valid`;
+        let statusMessage = `${name} task statuses are archive-ready`;
+        let statusCheckStatus = 'pass';
+        if (invalidStatuses.length > 0) {
+            statusCheckStatus = 'fail';
+            statusMessage = `Invalid task statuses in ${name}: ${invalidStatuses.join(', ')}`;
+        }
+        else if (unresolvedStatuses.length > 0) {
+            statusCheckStatus = 'fail';
+            statusMessage = `Unresolved task statuses in ${name}: ${unresolvedStatuses.join(', ')}`;
+        }
+        else if (!graphCompleted) {
+            statusCheckStatus = 'fail';
+            statusMessage = `${name} status must be completed before archiving`;
+        }
+        else if (concernStatuses.length > 0) {
+            statusCheckStatus = 'warn';
+            statusMessage = `${name} tasks completed with concerns: ${concernStatuses.join(', ')}`;
+        }
+        const executionDetailsMessage = executionDetailIssues.length > 0
+            ? `Incomplete task execution details in ${name}: ${executionDetailIssues.join(', ')}`
+            : `${name} task execution details are complete`;
+        const archiveReady = parseError === null &&
+            missingRequiredFields.length === 0 &&
+            missingActivatedSteps.length === 0 &&
+            taskSchemaIssues.length === 0 &&
+            dependencyIssues.length === 0 &&
+            invalidStatuses.length === 0 &&
+            unresolvedStatuses.length === 0 &&
+            graphCompleted &&
+            executionDetailIssues.length === 0;
+        return {
+            optionalSteps,
+            taskCount: tasks.length,
+            statuses,
+            archiveReady,
+            blockers: [
+                ...(parseError ? [`${name} JSON must be valid`] : []),
+                ...(missingRequiredFields.length > 0 ? [`Missing or invalid required fields in ${name}: ${missingRequiredFields.join(', ')}`] : []),
+                ...(missingActivatedSteps.length > 0 ? [`Activated optional steps missing from ${name}: ${missingActivatedSteps.join(', ')}`] : []),
+                ...(taskSchemaIssues.length > 0 ? [`Invalid task graph schema in ${name}: ${taskSchemaIssues.join(', ')}`] : []),
+                ...(dependencyIssues.length > 0 ? [`Invalid task dependencies in ${name}: ${dependencyIssues.join(', ')}`] : []),
+                ...(invalidStatuses.length > 0 ? [`Invalid task statuses in ${name}: ${invalidStatuses.join(', ')}`] : []),
+                ...(unresolvedStatuses.length > 0 ? [`Unresolved task statuses in ${name}: ${unresolvedStatuses.join(', ')}`] : []),
+                ...(!graphCompleted ? [`${name} status must be completed before archiving`] : []),
+                ...(executionDetailIssues.length > 0 ? [`Incomplete task execution details in ${name}: ${executionDetailIssues.join(', ')}`] : []),
+            ],
+            checks: [
+                {
+                    name: `${name}.json`,
+                    status: parseError === null ? 'pass' : 'fail',
+                    message: jsonMessage,
+                },
+                {
+                    name: `${name}.required_fields`,
+                    status: parseError === null && missingRequiredFields.length === 0 ? 'pass' : 'fail',
+                    message: requiredFieldsMessage,
+                },
+                {
+                    name: `${name}.optional_steps`,
+                    status: optionalStepsFieldValid && missingActivatedSteps.length === 0 ? 'pass' : 'fail',
+                    message: optionalStepsMessage,
+                },
+                {
+                    name: `${name}.task_schema`,
+                    status: taskSchemaIssues.length === 0 ? 'pass' : 'fail',
+                    message: taskSchemaMessage,
+                },
+                {
+                    name: `${name}.dependencies`,
+                    status: dependencyIssues.length === 0 ? 'pass' : 'fail',
+                    message: dependenciesMessage,
+                },
+                {
+                    name: `${name}.task_statuses`,
+                    status: statusCheckStatus,
+                    message: statusMessage,
+                },
+                {
+                    name: `${name}.execution_details`,
+                    status: executionDetailIssues.length === 0 ? 'pass' : 'fail',
+                    message: executionDetailsMessage,
+                },
+            ],
+        };
+    }
+    async analyzeReviewArtifactDocument(filePath, name, expectedReviewerRole, activatedSteps) {
+        const content = await this.fileService.readFile(filePath);
+        const hasFrontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
+        let parsed = null;
+        let parseError = null;
+        if (hasFrontmatter) {
+            try {
+                parsed = (0, helpers_1.parseFrontmatterDocument)(content);
+            }
+            catch (error) {
+                parseError = error;
+            }
+        }
+        const data = parsed?.data ?? {};
+        const optionalStepsFieldValid = Array.isArray(data.optional_steps);
+        const optionalSteps = optionalStepsFieldValid ? data.optional_steps : [];
+        const createdFieldValid = (typeof data.created === 'string' && data.created.trim().length > 0) ||
+            (data.created instanceof Date && !Number.isNaN(data.created.getTime()));
+        const reviewerRoleValid = data.reviewer_role === expectedReviewerRole;
+        const rawDecision = typeof data.decision === 'string' ? data.decision.trim().toUpperCase() : '';
+        const missingRequiredFields = [];
+        if (typeof data.feature !== 'string' || data.feature.trim().length === 0) {
+            missingRequiredFields.push('feature');
+        }
+        if (!createdFieldValid) {
+            missingRequiredFields.push('created');
+        }
+        if (typeof data.status !== 'string' || data.status.trim().length === 0) {
+            missingRequiredFields.push('status');
+        }
+        if (!reviewerRoleValid) {
+            missingRequiredFields.push('reviewer_role');
+        }
+        if (typeof data.decision !== 'string' || data.decision.trim().length === 0) {
+            missingRequiredFields.push('decision');
+        }
+        if (!optionalStepsFieldValid) {
+            missingRequiredFields.push('optional_steps');
+        }
+        const missingActivatedSteps = optionalStepsFieldValid
+            ? activatedSteps.filter(step => !optionalSteps.includes(step))
+            : [...activatedSteps];
+        const invalidDecision = rawDecision.length > 0 && !REVIEW_ARTIFACT_ALLOWED_DECISION_SET.has(rawDecision);
+        const unresolvedDecision = !REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(rawDecision);
+        const concernDecision = rawDecision === 'APPROVED_WITH_CONCERNS';
+        const checklistItems = parsed?.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
+        const uncheckedItems = parsed?.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
+        const checklistStructureValid = checklistItems.length > 0;
+        const checklistComplete = hasFrontmatter &&
+            parseError === null &&
+            missingRequiredFields.length === 0 &&
+            missingActivatedSteps.length === 0 &&
+            !invalidDecision &&
+            !unresolvedDecision &&
+            checklistStructureValid &&
+            uncheckedItems.length === 0;
+        let frontmatterMessage = `${name} frontmatter parsed successfully`;
+        if (!hasFrontmatter) {
+            frontmatterMessage = `${name} is missing a valid frontmatter block`;
+        }
+        else if (parseError) {
+            frontmatterMessage = `${name} frontmatter cannot be parsed: ${parseError.message}`;
+        }
+        let requiredFieldsMessage = `${name} has all required frontmatter fields`;
+        if (!hasFrontmatter || parseError) {
+            requiredFieldsMessage = `Cannot validate required fields in ${name} because frontmatter is invalid`;
+        }
+        else if (missingRequiredFields.length > 0) {
+            requiredFieldsMessage = `Missing or invalid required fields in ${name}: ${missingRequiredFields.join(', ')}`;
+        }
+        let optionalStepsMessage = `All activated optional steps are present in ${name}`;
+        if (!optionalStepsFieldValid) {
+            optionalStepsMessage = `${name} frontmatter field optional_steps must be an array`;
+        }
+        else if (missingActivatedSteps.length > 0) {
+            optionalStepsMessage = `Missing optional steps in ${name}: ${missingActivatedSteps.join(', ')}`;
+        }
+        let decisionMessage = `${name} decision is archive-ready`;
+        let decisionStatus = 'pass';
+        if (!hasFrontmatter || parseError) {
+            decisionStatus = 'fail';
+            decisionMessage = `Cannot validate decision in ${name} because frontmatter is invalid`;
+        }
+        else if (invalidDecision) {
+            decisionStatus = 'fail';
+            decisionMessage = `Invalid review decision in ${name}: ${rawDecision}`;
+        }
+        else if (unresolvedDecision) {
+            decisionStatus = 'fail';
+            decisionMessage = `Unresolved review decision in ${name}: ${rawDecision || '(missing)'}`;
+        }
+        else if (concernDecision) {
+            decisionStatus = 'warn';
+            decisionMessage = `${name} approved with concerns`;
+        }
+        let checklistStatus = 'pass';
+        let checklistMessage = `${name} checklist is complete`;
+        if (!hasFrontmatter || parseError) {
+            checklistStatus = 'fail';
+            checklistMessage = `${name} checklist cannot be validated because frontmatter is invalid`;
+        }
+        else if (!checklistStructureValid) {
+            checklistStatus = 'fail';
+            checklistMessage = `${name} must contain at least one Markdown checklist item`;
+        }
+        else if (uncheckedItems.length > 0) {
+            checklistStatus = 'warn';
+            checklistMessage = `${name} still has unchecked items`;
+        }
+        return {
+            optionalSteps,
+            decision: rawDecision,
+            checklistComplete,
+            archiveReady: checklistComplete,
+            blockers: [
+                ...(!hasFrontmatter || parseError ? [`${name} frontmatter must be valid`] : []),
+                ...(missingRequiredFields.length > 0 ? [`Missing or invalid required fields in ${name}: ${missingRequiredFields.join(', ')}`] : []),
+                ...(missingActivatedSteps.length > 0 ? [`Activated optional steps missing from ${name}: ${missingActivatedSteps.join(', ')}`] : []),
+                ...(invalidDecision ? [`Invalid review decision in ${name}: ${rawDecision}`] : []),
+                ...(unresolvedDecision ? [`Unresolved review decision in ${name}: ${rawDecision || '(missing)'}`] : []),
+                ...(!checklistStructureValid ? [`${name} must contain at least one checklist item`] : []),
+                ...(uncheckedItems.length > 0 ? [`${name} checklist must be complete before archiving`] : []),
+            ],
+            checks: [
+                {
+                    name: `${name}.frontmatter`,
+                    status: hasFrontmatter && parseError === null ? 'pass' : 'fail',
+                    message: frontmatterMessage,
+                },
+                {
+                    name: `${name}.required_fields`,
+                    status: hasFrontmatter && parseError === null && missingRequiredFields.length === 0 ? 'pass' : 'fail',
+                    message: requiredFieldsMessage,
+                },
+                {
+                    name: `${name}.optional_steps`,
+                    status: optionalStepsFieldValid && missingActivatedSteps.length === 0 ? 'pass' : 'fail',
+                    message: optionalStepsMessage,
+                },
+                {
+                    name: `${name}.decision`,
+                    status: decisionStatus,
+                    message: decisionMessage,
+                },
+                {
+                    name: `${name}.checklist`,
+                    status: checklistStatus,
+                    message: checklistMessage,
+                },
+            ],
+        };
+    }
+    async analyzeAgentWorkerStatusDocument(filePath) {
+        const content = await this.fileService.readFile(filePath);
+        const hasFrontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
+        let parsed = null;
+        let parseError = null;
+        if (hasFrontmatter) {
+            try {
+                parsed = (0, helpers_1.parseFrontmatterDocument)(content);
+            }
+            catch (error) {
+                parseError = error;
+            }
+        }
+        const data = parsed?.data ?? {};
+        const createdFieldValid = (typeof data.created === 'string' && data.created.trim().length > 0) ||
+            (data.created instanceof Date && !Number.isNaN(data.created.getTime()));
+        const missingRequiredFields = [];
+        if (typeof data.feature !== 'string' || data.feature.trim().length === 0) {
+            missingRequiredFields.push('feature');
+        }
+        if (!createdFieldValid) {
+            missingRequiredFields.push('created');
+        }
+        if (typeof data.status !== 'string' || data.status.trim().length === 0) {
+            missingRequiredFields.push('status');
+        }
+        for (const field of AGENT_WORKER_STATUS_FIELDS) {
+            if (typeof data[field] !== 'string' || data[field].trim().length === 0) {
+                missingRequiredFields.push(field);
+            }
+        }
+        const statuses = AGENT_WORKER_STATUS_FIELDS.reduce((accumulator, field) => {
+            accumulator[field] = typeof data[field] === 'string' ? data[field].trim().toUpperCase() : '';
+            return accumulator;
+        }, {});
+        const invalidStatuses = Object.entries(statuses)
+            .filter(([, status]) => !AGENT_WORKER_ALLOWED_STATUS_SET.has(status))
+            .map(([field, status]) => `${field}=${status || '(missing)'}`);
+        const unresolvedStatuses = [
+            ...AGENT_WORKER_STATUS_FIELDS.filter(field => field !== 'controller_status')
+                .filter(field => !AGENT_WORKER_TERMINAL_STATUS_SET.has(statuses[field]))
+                .map(field => `${field}=${statuses[field] || '(missing)'}`),
+            ...(statuses.controller_status === 'DONE' ? [] : [`controller_status=${statuses.controller_status || '(missing)'}`]),
+        ];
+        const concernStatuses = Object.entries(statuses)
+            .filter(([, status]) => status === 'DONE_WITH_CONCERNS')
+            .map(([field]) => field);
+        const checklistItems = parsed?.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
+        const uncheckedItems = parsed?.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
+        const checklistStructureValid = checklistItems.length > 0;
+        const checklistComplete = hasFrontmatter &&
+            parseError === null &&
+            missingRequiredFields.length === 0 &&
+            invalidStatuses.length === 0 &&
+            unresolvedStatuses.length === 0 &&
+            checklistStructureValid &&
+            uncheckedItems.length === 0;
+        let frontmatterMessage = 'artifacts/agents/worker-status.md frontmatter parsed successfully';
+        if (!hasFrontmatter) {
+            frontmatterMessage = 'artifacts/agents/worker-status.md is missing a valid frontmatter block';
+        }
+        else if (parseError) {
+            frontmatterMessage = `artifacts/agents/worker-status.md frontmatter cannot be parsed: ${parseError.message}`;
+        }
+        let requiredFieldsMessage = 'artifacts/agents/worker-status.md has all required frontmatter fields';
+        if (!hasFrontmatter || parseError) {
+            requiredFieldsMessage = 'Cannot validate required fields in artifacts/agents/worker-status.md because frontmatter is invalid';
+        }
+        else if (missingRequiredFields.length > 0) {
+            requiredFieldsMessage = `Missing or invalid required fields in artifacts/agents/worker-status.md: ${missingRequiredFields.join(', ')}`;
+        }
+        let statusMessage = 'Agent worker statuses are archive-ready';
+        let statusCheckStatus = 'pass';
+        if (!hasFrontmatter || parseError) {
+            statusCheckStatus = 'fail';
+            statusMessage = 'Cannot validate agent worker statuses because frontmatter is invalid';
+        }
+        else if (invalidStatuses.length > 0) {
+            statusCheckStatus = 'fail';
+            statusMessage = `Invalid agent worker statuses: ${invalidStatuses.join(', ')}`;
+        }
+        else if (unresolvedStatuses.length > 0) {
+            statusCheckStatus = 'fail';
+            statusMessage = `Unresolved agent worker statuses: ${unresolvedStatuses.join(', ')}`;
+        }
+        else if (concernStatuses.length > 0) {
+            statusCheckStatus = 'warn';
+            statusMessage = `Agent workers completed with concerns: ${concernStatuses.join(', ')}`;
+        }
+        let checklistStatus = 'pass';
+        let checklistMessage = 'artifacts/agents/worker-status.md checklist is complete';
+        if (!hasFrontmatter || parseError) {
+            checklistStatus = 'fail';
+            checklistMessage = 'artifacts/agents/worker-status.md checklist cannot be validated because frontmatter is invalid';
+        }
+        else if (!checklistStructureValid) {
+            checklistStatus = 'fail';
+            checklistMessage = 'artifacts/agents/worker-status.md must contain at least one Markdown checklist item';
+        }
+        else if (uncheckedItems.length > 0) {
+            checklistStatus = 'warn';
+            checklistMessage = 'artifacts/agents/worker-status.md still has unchecked items';
+        }
+        return {
+            statuses,
+            checklistComplete,
+            archiveReady: checklistComplete,
+            blockers: [
+                ...(!hasFrontmatter || parseError ? ['artifacts/agents/worker-status.md frontmatter must be valid'] : []),
+                ...(missingRequiredFields.length > 0 ? [`Missing or invalid required fields in artifacts/agents/worker-status.md: ${missingRequiredFields.join(', ')}`] : []),
+                ...(invalidStatuses.length > 0 ? [`Invalid agent worker statuses: ${invalidStatuses.join(', ')}`] : []),
+                ...(unresolvedStatuses.length > 0 ? [`Unresolved agent worker statuses: ${unresolvedStatuses.join(', ')}`] : []),
+                ...(!checklistStructureValid ? ['artifacts/agents/worker-status.md must contain at least one checklist item'] : []),
+                ...(uncheckedItems.length > 0 ? ['artifacts/agents/worker-status.md checklist must be complete before archiving'] : []),
+            ],
+            checks: [
+                {
+                    name: 'artifacts/agents/worker-status.md.frontmatter',
+                    status: hasFrontmatter && parseError === null ? 'pass' : 'fail',
+                    message: frontmatterMessage,
+                },
+                {
+                    name: 'artifacts/agents/worker-status.md.required_fields',
+                    status: hasFrontmatter && parseError === null && missingRequiredFields.length === 0 ? 'pass' : 'fail',
+                    message: requiredFieldsMessage,
+                },
+                {
+                    name: 'artifacts/agents/worker-status.md.worker_statuses',
+                    status: statusCheckStatus,
+                    message: statusMessage,
+                },
+                {
+                    name: 'artifacts/agents/worker-status.md.checklist',
+                    status: checklistStatus,
+                    message: checklistMessage,
+                },
+            ],
+        };
+    }
     async analyzeVerificationDocument(filePath, activatedSteps) {
         const content = await this.fileService.readFile(filePath);
         const hasFrontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
@@ -2503,6 +3198,9 @@ ${formatSuggestion()}
             checklistStatus = 'warn';
             checklistMessage = 'verification.md still has unchecked items';
         }
+        const debugEvidenceCheck = await this.analyzeDebugEvidenceForVerificationDocument(filePath);
+        const tddEvidenceCheck = await this.analyzeTddEvidenceForVerificationDocument(filePath);
+        const evidenceCheck = await this.analyzeVerificationEvidenceForVerificationDocument(filePath);
         return {
             optionalSteps,
             passedOptionalSteps,
@@ -2528,8 +3226,276 @@ ${formatSuggestion()}
                     status: checklistStatus,
                     message: checklistMessage,
                 },
+                ...(debugEvidenceCheck ? [debugEvidenceCheck] : []),
+                tddEvidenceCheck,
+                evidenceCheck,
             ],
         };
+    }
+    async analyzeVerificationEvidenceForVerificationDocument(filePath) {
+        const changePath = path_1.default.dirname(filePath);
+        const evidencePath = path_1.default.join(changePath, 'artifacts', 'agents', 'verification-evidence.json');
+        if (!(await this.fileService.exists(evidencePath))) {
+            return {
+                name: 'verification.md.evidence',
+                status: 'warn',
+                message: 'No verification evidence recorded at artifacts/agents/verification-evidence.json',
+            };
+        }
+        try {
+            const evidence = await this.fileService.readJSON(evidencePath);
+            const records = Array.isArray(evidence?.records) ? evidence.records : [];
+            const latest = records[records.length - 1];
+            if (!latest || typeof latest.status !== 'string' || typeof latest.recordedAt !== 'string') {
+                return {
+                    name: 'verification.md.evidence',
+                    status: 'warn',
+                    message: 'verification-evidence.json has no usable verification records',
+                };
+            }
+            const normalizedStatus = latest.status.trim().toUpperCase();
+            if (normalizedStatus === 'FAILED' || normalizedStatus === 'BLOCKED') {
+                return {
+                    name: 'verification.md.evidence',
+                    status: 'fail',
+                    message: `Latest verification evidence is ${normalizedStatus}`,
+                };
+            }
+            if (normalizedStatus !== 'PASSED') {
+                return {
+                    name: 'verification.md.evidence',
+                    status: 'warn',
+                    message: `Latest verification evidence is ${normalizedStatus}`,
+                };
+            }
+            const latestReviewOrGraphUpdate = await this.getLatestUpdatedAt([
+                path_1.default.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
+                path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW),
+                path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW),
+            ]);
+            const recordedAt = new Date(latest.recordedAt).getTime();
+            const sourceUpdatedAt = latestReviewOrGraphUpdate
+                ? new Date(latestReviewOrGraphUpdate).getTime()
+                : 0;
+            if (Number.isFinite(recordedAt) && sourceUpdatedAt > recordedAt) {
+                return {
+                    name: 'verification.md.evidence',
+                    status: 'warn',
+                    message: `Latest passing verification evidence is older than task graph or review artifact updates (${latest.recordedAt})`,
+                };
+            }
+            return {
+                name: 'verification.md.evidence',
+                status: 'pass',
+                message: `Latest verification evidence passed: ${latest.command || latest.id || 'recorded command'}`,
+            };
+        }
+        catch (error) {
+            return {
+                name: 'verification.md.evidence',
+                status: 'fail',
+                message: `verification-evidence.json cannot be parsed: ${error.message}`,
+            };
+        }
+    }
+    async analyzeTddEvidenceForVerificationDocument(filePath) {
+        const changePath = path_1.default.dirname(filePath);
+        const evidencePath = path_1.default.join(changePath, 'artifacts', 'agents', 'tdd-evidence.json');
+        if (!(await this.fileService.exists(evidencePath))) {
+            return {
+                name: 'verification.md.tdd_evidence',
+                status: 'warn',
+                message: 'No TDD evidence recorded at artifacts/agents/tdd-evidence.json',
+            };
+        }
+        try {
+            const evidence = await this.fileService.readJSON(evidencePath);
+            const records = Array.isArray(evidence?.records)
+                ? evidence.records.filter((record) => typeof record?.phase === 'string' &&
+                    typeof record?.status === 'string' &&
+                    typeof record?.recordedAt === 'string')
+                : [];
+            const latest = records[records.length - 1];
+            if (!latest) {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'warn',
+                    message: 'tdd-evidence.json has no usable TDD records',
+                };
+            }
+            const normalizedPhase = latest.phase.trim().toLowerCase();
+            const normalizedStatus = latest.status.trim().toUpperCase();
+            if (normalizedStatus === 'BLOCKED') {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'fail',
+                    message: `Latest TDD evidence is BLOCKED in ${normalizedPhase} phase`,
+                };
+            }
+            if ((normalizedPhase === 'green' || normalizedPhase === 'refactor') &&
+                (normalizedStatus === 'FAILED' || normalizedStatus === 'BLOCKED')) {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'fail',
+                    message: `Latest ${normalizedPhase} TDD evidence is ${normalizedStatus}`,
+                };
+            }
+            if (normalizedPhase === 'red') {
+                if (normalizedStatus === 'PASSED') {
+                    return {
+                        name: 'verification.md.tdd_evidence',
+                        status: 'fail',
+                        message: 'Latest red TDD evidence passed; red phase should prove the new test can fail before implementation',
+                    };
+                }
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'warn',
+                    message: `Latest TDD evidence is red/${normalizedStatus}; record later passing green or refactor evidence`,
+                };
+            }
+            if (normalizedStatus === 'SKIPPED') {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'warn',
+                    message: 'Latest TDD evidence is SKIPPED; keep a concrete reason in verification.md',
+                };
+            }
+            if (normalizedStatus !== 'PASSED') {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'warn',
+                    message: `Latest TDD evidence is ${normalizedPhase}/${normalizedStatus}`,
+                };
+            }
+            const latestIndex = records.length - 1;
+            const hasEarlierRedFailure = records
+                .slice(0, latestIndex)
+                .some((record) => record.phase.trim().toLowerCase() === 'red' &&
+                record.status.trim().toUpperCase() === 'FAILED');
+            const latestTaskUpdate = await this.getLatestUpdatedAt([
+                path_1.default.join(changePath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN),
+                path_1.default.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
+                path_1.default.join(changePath, constants_1.FILE_NAMES.TASKS),
+            ]);
+            const recordedAt = new Date(latest.recordedAt).getTime();
+            const sourceUpdatedAt = latestTaskUpdate
+                ? new Date(latestTaskUpdate).getTime()
+                : 0;
+            if (Number.isFinite(recordedAt) && sourceUpdatedAt > recordedAt) {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'warn',
+                    message: `Latest passing TDD evidence is older than task planning artifacts (${latest.recordedAt})`,
+                };
+            }
+            if (!hasEarlierRedFailure) {
+                return {
+                    name: 'verification.md.tdd_evidence',
+                    status: 'warn',
+                    message: `Latest ${normalizedPhase} TDD evidence passed, but no earlier red failure was recorded`,
+                };
+            }
+            return {
+                name: 'verification.md.tdd_evidence',
+                status: 'pass',
+                message: `TDD evidence completed through ${normalizedPhase}: ${latest.command || latest.id || 'recorded command'}`,
+            };
+        }
+        catch (error) {
+            return {
+                name: 'verification.md.tdd_evidence',
+                status: 'fail',
+                message: `tdd-evidence.json cannot be parsed: ${error.message}`,
+            };
+        }
+    }
+    async analyzeDebugEvidenceForVerificationDocument(filePath) {
+        const changePath = path_1.default.dirname(filePath);
+        const evidencePath = path_1.default.join(changePath, 'artifacts', 'agents', 'debug-evidence.json');
+        if (!(await this.fileService.exists(evidencePath))) {
+            return null;
+        }
+        try {
+            const evidence = await this.fileService.readJSON(evidencePath);
+            const records = Array.isArray(evidence?.records)
+                ? evidence.records.filter((record) => typeof record?.symptom === 'string' &&
+                    typeof record?.status === 'string' &&
+                    typeof record?.recordedAt === 'string')
+                : [];
+            const latest = records[records.length - 1];
+            if (!latest) {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'warn',
+                    message: 'debug-evidence.json has no usable debug records',
+                };
+            }
+            const normalizedStatus = latest.status.trim().toUpperCase();
+            if (normalizedStatus === 'BLOCKED') {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'fail',
+                    message: 'Latest debug evidence is BLOCKED',
+                };
+            }
+            if (normalizedStatus === 'CONFIRMED') {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'warn',
+                    message: 'Latest debug evidence confirmed a root cause but does not record a verified fix',
+                };
+            }
+            if (normalizedStatus === 'SKIPPED') {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'warn',
+                    message: 'Latest debug evidence is SKIPPED; keep a concrete reason in verification.md',
+                };
+            }
+            if (normalizedStatus !== 'FIXED') {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'fail',
+                    message: `Latest debug evidence has unsupported status ${normalizedStatus || '(missing)'}`,
+                };
+            }
+            if (typeof latest.rootCause !== 'string' || latest.rootCause.trim().length === 0) {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'fail',
+                    message: 'Latest fixed debug evidence is missing rootCause',
+                };
+            }
+            const latestTaskUpdate = await this.getLatestUpdatedAt([
+                path_1.default.join(changePath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN),
+                path_1.default.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
+                path_1.default.join(changePath, constants_1.FILE_NAMES.TASKS),
+            ]);
+            const recordedAt = new Date(latest.recordedAt).getTime();
+            const sourceUpdatedAt = latestTaskUpdate
+                ? new Date(latestTaskUpdate).getTime()
+                : 0;
+            if (Number.isFinite(recordedAt) && sourceUpdatedAt > recordedAt) {
+                return {
+                    name: 'verification.md.debug_evidence',
+                    status: 'warn',
+                    message: `Latest fixed debug evidence is older than task planning artifacts (${latest.recordedAt})`,
+                };
+            }
+            return {
+                name: 'verification.md.debug_evidence',
+                status: 'pass',
+                message: `Debug evidence fixed root cause: ${latest.rootCause}`,
+            };
+        }
+        catch (error) {
+            return {
+                name: 'verification.md.debug_evidence',
+                status: 'fail',
+                message: `debug-evidence.json cannot be parsed: ${error.message}`,
+            };
+        }
     }
     maxUpdatedAt(values) {
         const timestamps = values.filter((value) => Boolean(value));

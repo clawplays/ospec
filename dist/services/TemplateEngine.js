@@ -38,11 +38,29 @@ class TemplateEngine {
     generateProposalTemplate(input) {
         return this.executionBuilder.generateProposalTemplate(input);
     }
+    generateDesignTemplate(input) {
+        return this.executionBuilder.generateDesignTemplate(input);
+    }
+    generateImplementationPlanTemplate(input) {
+        return this.executionBuilder.generateImplementationPlanTemplate(input);
+    }
     generateTasksTemplate(input) {
         return this.executionBuilder.generateTasksTemplate(input);
     }
     generateVerificationTemplate(input) {
         return this.executionBuilder.generateVerificationTemplate(input);
+    }
+    generateSpecComplianceReviewTemplate(input) {
+        return this.executionBuilder.generateSpecComplianceReviewTemplate(input);
+    }
+    generateCodeQualityReviewTemplate(input) {
+        return this.executionBuilder.generateCodeQualityReviewTemplate(input);
+    }
+    generateTaskGraphTemplate(input) {
+        return this.executionBuilder.generateTaskGraphTemplate(input);
+    }
+    generateAgentWorkerStatusTemplate(input) {
+        return this.executionBuilder.generateAgentWorkerStatusTemplate(input);
     }
     generateReviewTemplate(input) {
         return this.executionBuilder.generateReviewTemplate(input);

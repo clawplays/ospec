@@ -8,5 +8,6 @@ export declare class RunCommand extends BaseCommand {
     private stop;
     private logs;
     private printReport;
+    private printTaskGraphSnapshot;
     private parseStartArgs;
 }

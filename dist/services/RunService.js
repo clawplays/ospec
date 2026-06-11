@@ -8,6 +8,7 @@ exports.createRunService = createRunService;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
+const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const RUN_PROFILES = {
     'manual-safe': {
@@ -18,10 +19,11 @@ const RUN_PROFILES = {
     },
 };
 class RunService {
-    constructor(fileService, projectService, queueService) {
+    constructor(fileService, projectService, queueService, taskGraphExecutionService) {
         this.fileService = fileService;
         this.projectService = projectService;
         this.queueService = queueService;
+        this.taskGraphExecutionService = taskGraphExecutionService ?? new TaskGraphExecutionService_1.TaskGraphExecutionService(fileService);
     }
     async start(rootDir, options = {}) {
         const resolvedRootDir = path_1.default.resolve(rootDir);
@@ -158,20 +160,85 @@ class RunService {
             this.queueService.getQueuedChanges(rootDir),
             run ? this.readLogTail(rootDir, run.logPath, 20) : Promise.resolve([]),
         ]);
-        const activeChange = activeNames.length === 1
-            ? {
-                name: activeNames[0],
-                path: (0, ProjectLayout_1.toManagedRelativePath)(`changes/active/${activeNames[0]}`, config),
-                status: (await this.fileService.readJSON((0, ProjectLayout_1.resolveManagedPath)(rootDir, `changes/active/${activeNames[0]}/${constants_1.FILE_NAMES.STATE}`, config))).status,
-            }
-            : null;
+        let activeChange = null;
+        let taskGraph = null;
+        if (activeNames.length === 1) {
+            const activeName = activeNames[0];
+            const activeRelativePath = (0, ProjectLayout_1.toManagedRelativePath)(`changes/active/${activeName}`, config);
+            const activePath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, `changes/active/${activeName}`, config);
+            activeChange = {
+                name: activeName,
+                path: activeRelativePath,
+                status: (await this.fileService.readJSON(path_1.default.join(activePath, constants_1.FILE_NAMES.STATE))).status,
+            };
+            taskGraph = await this.buildTaskGraphSnapshot(activePath, activeRelativePath);
+        }
         return {
             currentRun: run,
             stage: this.describeRunStage(run),
             activeChange,
+            taskGraph,
             queuedChanges,
             logTail,
             nextInstruction: run?.lastInstruction ?? this.getIdleInstruction(queuedChanges.length),
+        };
+    }
+    async buildTaskGraphSnapshot(changePath, changeRelativePath) {
+        const normalizedChangeRelativePath = changeRelativePath.replace(/\\/g, '/');
+        const graphRelativePath = path_1.default.posix.join(normalizedChangeRelativePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        const graphPath = path_1.default.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        if (!(await this.fileService.exists(graphPath))) {
+            return this.createEmptyTaskGraphSnapshot({
+                exists: false,
+                path: graphRelativePath,
+                status: 'missing',
+                nextInstruction: `Create ${graphRelativePath} from implementation-plan.md before dispatch.`,
+            });
+        }
+        try {
+            const report = await this.taskGraphExecutionService.getReport(changePath);
+            return {
+                exists: true,
+                path: graphRelativePath,
+                status: report.graphStatus,
+                taskCount: report.taskCount,
+                readyCount: report.readyTasks.length,
+                dispatchableCount: report.dispatchableTasks.length,
+                runningCount: report.runningTasks.length,
+                completedCount: report.completedTasks.length,
+                concernCount: report.concernTasks.length,
+                blockedCount: report.blockedTasks.length,
+                invalidCount: report.invalidTasks.length,
+                issueCount: report.issues.length,
+                nextInstruction: report.nextInstruction,
+            };
+        }
+        catch (error) {
+            const message = error?.message ? String(error.message) : String(error);
+            return this.createEmptyTaskGraphSnapshot({
+                exists: true,
+                path: graphRelativePath,
+                status: 'invalid',
+                issueCount: 1,
+                nextInstruction: `Fix ${graphRelativePath}: ${message}`,
+            });
+        }
+    }
+    createEmptyTaskGraphSnapshot(input) {
+        return {
+            exists: input.exists,
+            path: input.path,
+            status: input.status,
+            taskCount: 0,
+            readyCount: 0,
+            dispatchableCount: 0,
+            runningCount: 0,
+            completedCount: 0,
+            concernCount: 0,
+            blockedCount: 0,
+            invalidCount: 0,
+            issueCount: input.issueCount ?? 0,
+            nextInstruction: input.nextInstruction,
         };
     }
     async synchronizeRun(rootDir, run, options) {
@@ -243,7 +310,7 @@ class RunService {
             }
         }
         else if (run.status === 'running') {
-            run.lastInstruction = this.buildActiveInstruction(run.currentChangePath, run.profileId);
+            run.lastInstruction = await this.buildActiveInstruction(rootDir, run.currentChangePath, run.profileId);
         }
         return {
             run: this.touchRun(run),
@@ -436,19 +503,48 @@ class RunService {
             return null;
         }
     }
-    buildActiveInstruction(changePath, profileId) {
+    async buildActiveInstruction(rootDir, changePath, profileId) {
+        const resolvedChangePath = this.resolveRunFilePath(rootDir, changePath);
+        const taskGraph = await this.buildTaskGraphSnapshot(resolvedChangePath, changePath);
+        const taskGraphInstruction = this.buildTaskGraphRunInstruction(changePath, taskGraph);
         if (profileId === 'archive-chain') {
             return [
                 `Archive-chain is attached to ${changePath}.`,
                 'Complete the change manually and keep the protocol docs current.',
+                taskGraphInstruction,
                 'Run "ospec run step" when it becomes archive-ready and ospec will finalize/archive it on that explicit step.',
-            ].join(' ');
+            ].filter(Boolean).join(' ');
         }
         return [
             `Manual-safe is attached to ${changePath}.`,
             'Complete the change manually.',
+            taskGraphInstruction,
             'Run "ospec run step" when you want ospec to re-check queue progress.',
-        ].join(' ');
+        ].filter(Boolean).join(' ');
+    }
+    buildTaskGraphRunInstruction(changePath, taskGraph) {
+        if (!taskGraph.exists) {
+            return `Task graph is missing at ${taskGraph.path}; continue proposal, design, and implementation planning before worker dispatch.`;
+        }
+        if (taskGraph.status === 'invalid' || taskGraph.issueCount > 0 || taskGraph.invalidCount > 0) {
+            return `Task graph needs repair before dispatch: ${taskGraph.nextInstruction || `fix ${taskGraph.path}`}`;
+        }
+        if (taskGraph.dispatchableCount > 0) {
+            return `Task graph has ${taskGraph.dispatchableCount} dispatchable task(s). Run "ospec execute dispatch ${changePath}" to create worker packet(s).`;
+        }
+        if (taskGraph.runningCount > 0) {
+            return `Task graph has ${taskGraph.runningCount} task(s) in progress. Continue worker work, then record results with 'ospec execute complete <task-id> ${changePath} --status DONE --summary "..."'.`;
+        }
+        if (taskGraph.blockedCount > 0) {
+            return `Task graph has ${taskGraph.blockedCount} blocked task(s). Resolve blocker or missing context before dispatch.`;
+        }
+        if (taskGraph.taskCount > 0 && taskGraph.completedCount === taskGraph.taskCount) {
+            return `Task graph is complete. Continue with review, verification, and finish readiness.`;
+        }
+        if (taskGraph.nextInstruction) {
+            return `Task graph next: ${taskGraph.nextInstruction}`;
+        }
+        return '';
     }
     describeRunStage(run) {
         if (!run) {

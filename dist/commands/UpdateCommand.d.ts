@@ -7,6 +7,7 @@ export declare class UpdateCommand extends BaseCommand {
     private syncProjectTooling;
     private migrateLegacyKnowledgeLayout;
     private syncProjectCliVersionMetadata;
+    private readCurrentCliVersion;
     private detectProjectCliVersion;
     private isLegacyKnowledgeMigrationEligible;
     private isCliVersionAtLeast;

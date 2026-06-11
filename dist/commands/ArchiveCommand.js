@@ -58,6 +58,12 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             this.logger.info(`${checkOnly ? 'Checking archive readiness' : 'Archiving change'} at ${targetPath}`);
             const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
             const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);
+            const designPath = path.join(targetPath, constants_1.FILE_NAMES.DESIGN);
+            const implementationPlanPath = path.join(targetPath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN);
+            const taskGraphPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
+            const specComplianceReviewPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
+            const codeQualityReviewPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
+            const agentWorkerStatusPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
             const tasksPath = path.join(targetPath, constants_1.FILE_NAMES.TASKS);
             const verificationPath = path.join(targetPath, constants_1.FILE_NAMES.VERIFICATION);
             const expectedParent = (0, ProjectLayout_1.resolveManagedInputPath)(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, config);
@@ -95,6 +101,119 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 tasksComplete: !/- \[ \]/.test(tasks.content),
                 verificationComplete: !/- \[ \]/.test(verification.content),
             });
+            if (!(await services_1.services.fileService.exists(designPath))) {
+                result.blockers.push('design.md is required before archiving');
+            }
+            else {
+                try {
+                    const design = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(designPath));
+                    const designOptionalSteps = Array.isArray(design.data.optional_steps)
+                        ? design.data.optional_steps
+                        : null;
+                    const designCreatedValid = (typeof design.data.created === 'string' && design.data.created.trim().length > 0)
+                        || (design.data.created instanceof Date && !Number.isNaN(design.data.created.getTime()));
+                    const missingRequiredFields = [];
+                    if (typeof design.data.feature !== 'string' || design.data.feature.trim().length === 0) {
+                        missingRequiredFields.push('feature');
+                    }
+                    if (!designCreatedValid) {
+                        missingRequiredFields.push('created');
+                    }
+                    if (!designOptionalSteps) {
+                        missingRequiredFields.push('optional_steps');
+                    }
+                    if (missingRequiredFields.length > 0) {
+                        result.blockers.push(`Missing or invalid required fields in design.md: ${missingRequiredFields.join(', ')}`);
+                    }
+                    if (designOptionalSteps) {
+                        const missingDesignCoverage = activatedSteps.filter(step => !designOptionalSteps.includes(step));
+                        if (missingDesignCoverage.length > 0) {
+                            result.blockers.push(`Activated optional steps missing from design.md: ${missingDesignCoverage.join(', ')}`);
+                        }
+                    }
+                }
+                catch (error) {
+                    result.blockers.push(`design.md frontmatter cannot be parsed: ${error.message || error}`);
+                }
+            }
+            if (!(await services_1.services.fileService.exists(implementationPlanPath))) {
+                result.blockers.push('implementation-plan.md is required before archiving');
+            }
+            else {
+                try {
+                    const implementationPlan = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(implementationPlanPath));
+                    const planOptionalSteps = Array.isArray(implementationPlan.data.optional_steps)
+                        ? implementationPlan.data.optional_steps
+                        : null;
+                    const planCreatedValid = (typeof implementationPlan.data.created === 'string' && implementationPlan.data.created.trim().length > 0)
+                        || (implementationPlan.data.created instanceof Date && !Number.isNaN(implementationPlan.data.created.getTime()));
+                    const missingRequiredFields = [];
+                    if (typeof implementationPlan.data.feature !== 'string' || implementationPlan.data.feature.trim().length === 0) {
+                        missingRequiredFields.push('feature');
+                    }
+                    if (!planCreatedValid) {
+                        missingRequiredFields.push('created');
+                    }
+                    if (!planOptionalSteps) {
+                        missingRequiredFields.push('optional_steps');
+                    }
+                    if (missingRequiredFields.length > 0) {
+                        result.blockers.push(`Missing or invalid required fields in implementation-plan.md: ${missingRequiredFields.join(', ')}`);
+                    }
+                    if (planOptionalSteps) {
+                        const missingPlanCoverage = activatedSteps.filter(step => !planOptionalSteps.includes(step));
+                        if (missingPlanCoverage.length > 0) {
+                            result.blockers.push(`Activated optional steps missing from implementation-plan.md: ${missingPlanCoverage.join(', ')}`);
+                        }
+                    }
+                    if (!/- \[(?: |x|X)\]/.test(implementationPlan.content)) {
+                        result.blockers.push('implementation-plan.md must contain at least one checklist item');
+                    }
+                }
+                catch (error) {
+                    result.blockers.push(`implementation-plan.md frontmatter cannot be parsed: ${error.message || error}`);
+                }
+            }
+            if (!(await services_1.services.fileService.exists(taskGraphPath))) {
+                result.blockers.push('artifacts/agents/task-graph.json is required before archiving');
+            }
+            else {
+                const taskGraphAnalysis = await services_1.services.projectService.analyzeTaskGraphDocument(taskGraphPath, activatedSteps);
+                result.blockers.push(...taskGraphAnalysis.blockers);
+                result.warnings.push(...taskGraphAnalysis.checks
+                    .filter(check => check.status === 'warn')
+                    .map(check => check.message));
+            }
+            if (!(await services_1.services.fileService.exists(specComplianceReviewPath))) {
+                result.blockers.push('artifacts/reviews/spec-compliance.md is required before archiving');
+            }
+            else {
+                const specComplianceReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps);
+                result.blockers.push(...specComplianceReviewAnalysis.blockers);
+                result.warnings.push(...specComplianceReviewAnalysis.checks
+                    .filter(check => check.status === 'warn')
+                    .map(check => check.message));
+            }
+            if (!(await services_1.services.fileService.exists(codeQualityReviewPath))) {
+                result.blockers.push('artifacts/reviews/code-quality.md is required before archiving');
+            }
+            else {
+                const codeQualityReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps);
+                result.blockers.push(...codeQualityReviewAnalysis.blockers);
+                result.warnings.push(...codeQualityReviewAnalysis.checks
+                    .filter(check => check.status === 'warn')
+                    .map(check => check.message));
+            }
+            if (!(await services_1.services.fileService.exists(agentWorkerStatusPath))) {
+                result.blockers.push('artifacts/agents/worker-status.md is required before archiving');
+            }
+            else {
+                const agentWorkerStatusAnalysis = await services_1.services.projectService.analyzeAgentWorkerStatusDocument(agentWorkerStatusPath);
+                result.blockers.push(...agentWorkerStatusAnalysis.blockers);
+                result.warnings.push(...agentWorkerStatusAnalysis.checks
+                    .filter(check => check.status === 'warn')
+                    .map(check => check.message));
+            }
             if (activatedSteps.includes('stitch_design_review')) {
                 const approvalPath = path.join(targetPath, 'artifacts', 'stitch', 'approval.json');
                 const approvalExists = await services_1.services.fileService.exists(approvalPath);

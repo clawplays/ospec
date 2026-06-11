@@ -37,12 +37,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const process = __importStar(require("process"));
 const ArchiveCommand_1 = require("./commands/ArchiveCommand");
 const BatchCommand_1 = require("./commands/BatchCommand");
+const BrainstormCommand_1 = require("./commands/BrainstormCommand");
 const ChangesCommand_1 = require("./commands/ChangesCommand");
 const DocsCommand_1 = require("./commands/DocsCommand");
 const FinalizeCommand_1 = require("./commands/FinalizeCommand");
 const IndexCommand_1 = require("./commands/IndexCommand");
 const InitCommand_1 = require("./commands/InitCommand");
 const NewCommand_1 = require("./commands/NewCommand");
+const PlanCommand_1 = require("./commands/PlanCommand");
 const QueueCommand_1 = require("./commands/QueueCommand");
 const ProgressCommand_1 = require("./commands/ProgressCommand");
 const PluginsCommand_1 = require("./commands/PluginsCommand");
@@ -51,11 +53,13 @@ const SkillCommand_1 = require("./commands/SkillCommand");
 const SkillsCommand_1 = require("./commands/SkillsCommand");
 const StatusCommand_1 = require("./commands/StatusCommand");
 const RunCommand_1 = require("./commands/RunCommand");
+const ExecuteCommand_1 = require("./commands/ExecuteCommand");
+const SessionCommand_1 = require("./commands/SessionCommand");
 const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.0.2';
+const CLI_VERSION = '1.1.0';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -211,6 +215,16 @@ async function main() {
                 await newCmd.execute(featureName, rootDir, { flags });
                 break;
             }
+            case 'brainstorm': {
+                const brainstormCmd = new BrainstormCommand_1.BrainstormCommand();
+                await brainstormCmd.execute(...commandArgs);
+                break;
+            }
+            case 'plan': {
+                const planCmd = new PlanCommand_1.PlanCommand();
+                await planCmd.execute(...commandArgs);
+                break;
+            }
             case 'verify': {
                 const verifyCmd = new VerifyCommand_1.VerifyCommand();
                 await verifyCmd.execute(commandArgs[0]);
@@ -238,6 +252,11 @@ async function main() {
                 await statusCmd.execute(commandArgs[0]);
                 break;
             }
+            case 'session': {
+                const sessionCmd = new SessionCommand_1.SessionCommand();
+                await sessionCmd.execute(...commandArgs);
+                break;
+            }
             case 'batch': {
                 if (commandArgs.length === 0) {
                     console.error('Error: batch action is required');
@@ -261,6 +280,11 @@ async function main() {
             case 'run': {
                 const runCmd = new RunCommand_1.RunCommand();
                 await runCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+                break;
+            }
+            case 'execute': {
+                const executeCmd = new ExecuteCommand_1.ExecuteCommand();
+                await executeCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
                 break;
             }
             case 'docs': {
@@ -333,15 +357,19 @@ Usage: ospec <command> [options]
 Commands:
   init [root-dir]           Initialize OSpec to a change-ready state
   new <change-name> [root]  Create a new change (supports --flags)
+  brainstorm [path]         Write an optional pre-change brainstorm artifact
+  plan [path]               Write an optional implementation plan draft
   verify [path]             Verify change completion
   progress [path]           Show workflow progress
   archive [path] [--check]  Archive a ready change or only check readiness
   status [path]             Show project status
+  session [path]            Write a project session brief and safe next command
   finalize [path]           Verify a completed change and archive it before commit
   batch <action> [path]     Batch operations (export, stats)
   changes [action] [path]   Active change summaries (status)
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
+  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, orchestrate, complete)
   docs [action] [path]      Docs helpers (status, generate)
   skills [action] [path]    Skills status helpers (status)
   plugins [action] [path]   Plugin helpers (available, info, install, installed, update, list, status, enable, disable, approve, reject)
@@ -358,17 +386,37 @@ Examples:
   ospec init . --summary "Internal admin portal" --tech-stack node,react,postgres
   ospec new onboarding-flow
   ospec new landing-refresh . --flags ui_change,page_design
+  ospec brainstorm . --topic "Improve onboarding conversion" --change onboarding-flow
+  ospec brainstorm . --topic "Explore dashboard UX" --visual
+  ospec plan ./changes/active/onboarding-flow
+  ospec plan . --change ./changes/active/onboarding-flow --apply
   ospec verify ./changes/active/onboarding-flow
   ospec progress ./changes/active/onboarding-flow
   ospec archive ./changes/active/onboarding-flow
   ospec archive ./changes/active/onboarding-flow --check
   ospec finalize ./changes/active/onboarding-flow
   ospec status
+  ospec session
+  ospec session hook .
   ospec queue add login-refresh . --flags ui_change
   ospec queue status
   ospec queue next
   ospec run start . --profile manual-safe
   ospec run step
+  ospec execute status ./changes/active/onboarding-flow
+  ospec execute bootstrap ./changes/active/onboarding-flow
+  ospec execute handoff ./changes/active/onboarding-flow --target codex
+  ospec execute doc-review ./changes/active/onboarding-flow --stage design
+  ospec execute next ./changes/active/onboarding-flow
+  ospec execute workspace ./changes/active/onboarding-flow
+  ospec execute worktree ./changes/active/onboarding-flow --branch ospec/onboarding-flow
+  ospec execute worktree ./changes/active/onboarding-flow --create --branch ospec/onboarding-flow
+  ospec execute worktree ./changes/active/onboarding-flow --cleanup --path ../ospec-onboarding-flow
+  ospec execute finish ./changes/active/onboarding-flow --target main --remote origin
+  ospec execute dispatch ./changes/active/onboarding-flow --task task-1
+  ospec execute launch ./changes/active/onboarding-flow --target codex
+  ospec execute orchestrate ./changes/active/onboarding-flow --command "codex exec {{packet}}" --limit 2 --max-rounds 5  # fallback only
+  ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --summary "Implemented and verified"
   ospec docs status
   ospec docs generate
   ospec docs sync-protocol

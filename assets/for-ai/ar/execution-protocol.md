@@ -9,22 +9,54 @@ tags: [ai, protocol, ospec]
 ## اقرأ هذا أولاً في كل مرة تدخل فيها إلى مشروع
 
 1. `.skillrc`
-2. `SKILL.index.json`
-3. `docs/project/naming-conventions.md`
-4. `docs/project/skill-conventions.md`
-5. `docs/project/workflow-conventions.md`
-6. ملفات change الحالية: `proposal.md / tasks.md / state.json / verification.md`
-7. إذا وُجد `stitch_design_review` فاقرأ `artifacts/stitch/approval.json`
-8. إذا كنت تحتاج إلى تعديل إعدادات Stitch أو Checkpoint المتعلقة بـ provider أو MCP أو المصادقة أو التثبيت أو التفعيل، فاقرأ أولاً مواصفة الإضافة المحلية المطابقة للغة الوثائق المعتمدة للمشروع، ولا تنتقل إلى لغة أخرى إلا إذا كان الملف المطابق غير موجود
+2. اقرأ `.ospec/session-brief.md` إذا كان موجودا؛ وإلا شغّل `ospec session [path]` في المشاريع المهيأة لإنشائه
+3. `SKILL.index.json`
+4. `docs/project/naming-conventions.md`
+5. `docs/project/skill-conventions.md`
+6. `docs/project/workflow-conventions.md`
+7. ملفات change الحالية: `proposal.md / design.md / implementation-plan.md / artifacts/agents/task-graph.json / artifacts/agents/bootstrap.md / artifacts/agents/handoff.md / artifacts/agents/document-review-dispatches/ / artifacts/agents/launch-plan.md / artifacts/agents/review-feedback-plan.md / tasks.md / artifacts/reviews/design-review.md / artifacts/reviews/implementation-plan-review.md / artifacts/reviews/spec-compliance.md / artifacts/reviews/code-quality.md / artifacts/agents/worker-status.md / artifacts/agents/debug-evidence.json / state.json / verification.md`
+8. إذا وُجد `stitch_design_review` فاقرأ `artifacts/stitch/approval.json`
+9. إذا كنت تحتاج إلى تعديل إعدادات Stitch أو Checkpoint المتعلقة بـ provider أو MCP أو المصادقة أو التثبيت أو التفعيل، فاقرأ أولاً مواصفة الإضافة المحلية المطابقة للغة الوثائق المعتمدة للمشروع، ولا تنتقل إلى لغة أخرى إلا إذا كان الملف المطابق غير موجود
 
 ## القواعد الإلزامية
 
-- حافظ على `proposal.md` و`tasks.md` و`verification.md` و`review.md` باللغة المعتمدة للمشروع
+- حافظ على `proposal.md` و`design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` و`artifacts/agents/bootstrap.md` و`artifacts/agents/handoff.md` و`artifacts/agents/document-review-dispatches/` و`artifacts/agents/workspace-status.md` و`artifacts/agents/worktree-plan.md` و`artifacts/agents/finish-plan.md` و`artifacts/agents/launch-plan.md` و`artifacts/agents/worker-runs/` و`artifacts/agents/review-runs/` و`artifacts/agents/retries/` و`artifacts/agents/blockers/` و`artifacts/agents/review-feedback-plan.md` و`tasks.md` و`artifacts/reviews/design-review.md` و`artifacts/reviews/implementation-plan-review.md` و`artifacts/reviews/spec-compliance.md` و`artifacts/reviews/code-quality.md` و`artifacts/agents/worker-status.md` و`artifacts/agents/debug-evidence.json` و`artifacts/agents/tdd-evidence.json` و`artifacts/agents/verification-evidence.json` و`verification.md` و`review.md` باللغة المعتمدة للمشروع
 - لا تعِد كتابة وثائق change إلى الإنجليزية فقط لأن واجهة المنتج أو locale الموقع أو نص المتطلب يميل إلى الإنجليزية
 - إذا كانت وثائق change الحالية بالصينية بالفعل، فاستمر بالصينية ما لم تتطلب قواعد المشروع التحويل إلى الإنجليزية صراحةً
-- لا تتجاوز proposal/tasks وتنتقل مباشرة إلى التنفيذ
+- لا تتجاوز proposal/design/implementation-plan/task-graph/tasks/review-artifacts/worker-status وتدّعي الاكتمال مباشرة
+- عند الدخول إلى مشروع OSpec موجود، استخدم `ospec session [path]` لكتابة `.ospec/session-brief.json` و`.ospec/session-brief.md`؛ يسجل active changes وqueued changes وحالة queue-run وcache fingerprint والأوامر الآمنة التالية فقط، ولا يشغّل workers ولا tests ولا يفحص git ولا يؤرشف ولا يحرر source files
+- تعامل مع خطوات built-in quality policy المفعّلة مثل `tdd_cycle` و`root_cause_debug` و`verification_evidence` كـ `optional_steps` خاضعة لـ archive gate؛ غطّها في `tasks.md` و`verification.md` وملفات evidence المطابقة قبل closeout
+- أثناء تنفيذ change بمساعدة AI، أنشئ `design.md` أو حدّثه بعد `proposal.md` وقبل تعديل `implementation-plan.md` أو `tasks.md` أو الكود
+- لا تطرح إلا سؤال تصميم موجزاً واحداً عندما يغيّر القرار الناقص فعلياً البنية أو API أو البيانات أو UI أو المخاطر؛ وإلا فسجل الافتراضات في `design.md`
+- أنشئ `implementation-plan.md` أو حدّثه من `design.md`، مع الملفات المستهدفة والنتائج المتوقعة وأوامر التحقق والاعتماديات والعمل القابل للتوازي والتعارضات
+- اشتق `artifacts/agents/task-graph.json` من `implementation-plan.md`؛ ويجب أن تتضمن كل مهمة id والحالة والاعتماديات وسلامة التوازي والتعارضات والملفات المستهدفة وأوامر التحقق والنتيجة المتوقعة ودور worker
+- عند بدء أو استئناف active change واحد، استخدم `ospec execute bootstrap [changes/active/<change>]` لكتابة `artifacts/agents/bootstrap.json` و`artifacts/agents/bootstrap.md` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي المسجل فيه
+- عند نقل change بين agents أو tools أو worktrees أو shells أو operators بشريين، استخدم `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|shell|generic]` لكتابة `artifacts/agents/handoff.json` و`artifacts/agents/handoff.md`؛ يسجل هذا الأمر project session brief snapshot وtool mapping وقواعد السلامة فقط ولا يشغّل workers أو يعدّل source files
+- قبل اشتقاق implementation tasks أو dispatch لها، استخدم `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` لإنشاء document reviewer packets تتضمن project session brief snapshot تحت `artifacts/agents/document-review-dispatches/` وتجهيز `artifacts/reviews/design-review.md` أو `artifacts/reviews/implementation-plan-review.md`؛ يجب اعتماد design review قبل dispatch لمراجعة implementation plan. هذا الأمر يسجل artifacts فقط ولا يشغّل reviewers ولا أوامر shell ولا يزامن worker status ولا يعدّل source files
+- قبل توزيع عمل المهام، استخدم `ospec execute status [changes/active/<change>]` أو `ospec execute next [changes/active/<change>]` لفحص حالة controller والمهام التالية الآمنة
+- قبل handoff إلى worker استخدم `ospec execute workspace [changes/active/<change>]` لكتابة `artifacts/agents/workspace-status.json` و`artifacts/agents/workspace-status.md`؛ إذا كانت الحالة `needs_isolation`، نظّف workspace أو انقل العمل إلى git worktree معزول قبل parallel dispatch
+- قبل إنشاء git worktree معزول، استخدم `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` لكتابة `artifacts/agents/worktree-plan.json` و`artifacts/agents/worktree-plan.md`؛ هذا الأمر يسجل خطة تحضير فقط ولا يشغّل `git worktree add`
+- قبل الإغلاق النهائي، استخدم `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` لكتابة `artifacts/agents/finish-plan.json` و`artifacts/agents/finish-plan.md`؛ هذا الأمر يسجل الجاهزية ونص الأوامر فقط ولا يشغل finalize أو archive أو push أو merge أو حذف worktree
+- استخدم `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` لإنشاء batch آمن للتوازي من worker packets و`artifacts/agents/execution-session.json`؛ يتضمن كل packet project session brief snapshot وworker profile يوضح capability tier وrecommended target وtarget tool mapping وrationale وrequired behavior. استخدم `ospec execute complete <task-id> ...` لتسجيل نتائج worker. استخدم `--task` لمهمة واحدة صريحة و`--limit` لتحديد حجم dispatch batch. تزامن هذه الأوامر أيضا `artifacts/agents/worker-status.md`، وتحدّث OSpec artifacts فقط ولا تشغّل workers خارجيين؛ عندما تكون النتيجة `NEEDS_CONTEXT` أو `BLOCKED` يكتب `complete` ملفات blocker escalation تحت `artifacts/agents/blockers/`
+- بعد dispatch، استخدم `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] [--dry-run]` لكتابة native agent launch plan؛ يوجه controlling AI إلى آلية agent الأصلية في harness الحالي: Codex/GPT يستخدم `spawn_agent`/`wait_agent`/`close_agent`، وClaude Code يستخدم Task، وGemini يستخدم `@generalist`، وOpenCode يستخدم `@mention`. هذا الأمر لا يشغّل workers ولا أوامر shell بنفسه
+- default multi-worker execution هو current-harness native subagents: أنشئ safe packets عبر `ospec execute dispatch`، اقرأ `launch-plan.md`، ثم dispatch native worker agent لكل packet آمن، وسجل النتيجة عبر `ospec execute complete`
+- استخدم `ospec execute orchestrate [changes/active/<change>] --command "..."` فقط كـ final CLI fallback عندما لا يدعم harness الحالي native subagents؛ fallback mode يرندر explicit command template ويشغّل worker commands بالتوازي ويسجل `artifacts/agents/orchestration-runs/`
+- استخدم `--run --command` مع `ospec execute launch ... --run --command "..."` فقط كـ single-worker CLI fallback عندما لا تتوفر native subagents أو يتم تجاوزها صراحة؛ ثم استخدم `ospec execute collect ...` لتسجيل fallback task result. بعد إصلاح blocked أو needs-context أو failed work استخدم `ospec execute retry` لإعادة dispatch
+- بعد اكتمال كل worker task، استخدم `ospec execute review [changes/active/<change>] --task <task-id> --stage spec` ثم `--stage quality` لإنشاء task-level reviewer handoff packets. تحفظ قرارات task-level داخل `artifacts/reviews/tasks/<task-id>/` وتبقى المهام التابعة محجوبة حتى اعتماد المراجعتين
+- بعد اعتماد كل task-level reviews واكتمال task graph، استخدم `ospec execute review [changes/active/<change>] [--stage spec|quality]` من دون `--task` لإنشاء final whole-change reviewer handoff packets داخل `artifacts/agents/review-dispatches/`؛ لا توزّع final quality review قبل اعتماد final spec review
+- لا يشغّل OSpec local reviewer command إلا عند استخدام `ospec execute review ... --run --command "..."` صراحة؛ يسجل ذلك `artifacts/agents/review-runs/` ويمكنه كتابة review decision عند تمرير `--decision`
+- بعد أن يحتوي review artifact على قرار غير `PENDING`، استخدم `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` لكتابة `artifacts/agents/review-feedback-plan.json` و`artifacts/agents/review-feedback-plan.md`؛ حدد accept أو revise أو clarify أو blocked قبل dispatch عمل إضافي
+- عندما يكون debugging جزءا من change، استخدم `ospec execute debug [changes/active/<change>] --symptom "..." --root-cause "..." --status FIXED` لتسجيل `artifacts/agents/debug-evidence.json`؛ تعني `CONFIRMED` عزل root cause، وتعني `FIXED` إصلاحا متحققا، وتؤدي `BLOCKED` إلى فشل verify
+- بعد تشغيل focused tests، استخدم `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` لتسجيل `artifacts/agents/tdd-evidence.json`؛ عادة يسجل red الاختبار المتوقع فشله، بينما يجب أن تسجل green/refactor نتيجة ناجحة
+- بعد تشغيل project verification commands حديثة، استخدم `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` لتسجيل `artifacts/agents/verification-evidence.json`؛ لا تدّعِ الاكتمال بمجرد ملخص داخل المحادثة
+- بعد تعديل task graph أو execution session أو review artifacts أو debug evidence أو verification checklist يدويا، استخدم `ospec execute sync [changes/active/<change>]` لإعادة بناء `artifacts/agents/worker-status.md`
+- يجب اشتقاق `tasks.md` من `artifacts/agents/task-graph.json`؛ وإذا كانت المهام موجودة لكن وثائقها السابقة ما زالت قوالب، فحدّث الوثائق السابقة أولاً ثم وائم المهام معها
+- لا تؤرشف عندما يحتوي `artifacts/agents/task-graph.json` على حالات مهام غير محسومة أو اعتماديات غير صالحة أو تفاصيل تنفيذ ناقصة أو عندما لا يكون `status` العلوي `completed`
+- أكمل كل task-level spec review قبل quality review الخاصة بها، ثم أكمل final `artifacts/reviews/spec-compliance.md` قبل final `artifacts/reviews/code-quality.md`؛ قرارات task-level أو final review غير المحسومة تمنع الأرشفة
+- أثناء التنفيذ والمراجعة، حافظ على اتساق `artifacts/agents/worker-status.md` مع حالات implementer وspec reviewer وquality reviewer وcontroller
+- لا تعتبر change مكتملة ما دامت أي حالة worker هي `PENDING` أو `NEEDS_CONTEXT` أو `BLOCKED`؛ ويجب أن تكون `controller_status` هي `DONE` قبل الأرشفة
 - استخدم `state.json` كمصدر الحقيقة لحالة التنفيذ
-- يجب أن تظهر optional steps المفعلة في `tasks.md` و`verification.md`
+- يجب أن تظهر optional steps المفعلة في `artifacts/agents/task-graph.json` و`tasks.md` و`verification.md`
 - إذا كان `stitch_design_review` مفعلاً وكان `approval.json.preview_url` أو `submitted_at` فارغاً، فشغّل أولاً `ospec plugins run stitch <change-path>` لإرسال preview
 - يجب أن تفرض مراجعة تصميم Stitch تخطيطاً canonical واحداً لكل route، ويجب تصنيف الشاشات غير canonical على أنها `archive / old / exploration`
 - في متغيرات الثيم `light/dark` حافظ على التخطيط canonical نفسه وحوّل الثيم البصري فقط من دون إعادة ترتيب الوحدات أو نقل CTA أو تغيير البنية

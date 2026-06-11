@@ -15,6 +15,7 @@ export { ProjectScaffoldCommandService, createProjectScaffoldCommandService, } f
 export { ProjectService, createProjectService } from './ProjectService';
 export { QueueService, createQueueService } from './QueueService';
 export { RunService, createRunService } from './RunService';
+export { TaskGraphExecutionService, createTaskGraphExecutionService } from './TaskGraphExecutionService';
 import { FileService } from './FileService';
 import { ConfigManager } from './ConfigManager';
 import { StateManager } from './StateManager';
@@ -29,6 +30,7 @@ import { ProjectScaffoldCommandService } from './ProjectScaffoldCommandService';
 import { ProjectService } from './ProjectService';
 import { QueueService } from './QueueService';
 import { RunService } from './RunService';
+import { TaskGraphExecutionService } from './TaskGraphExecutionService';
 export declare class ServiceContainer {
     private static instance;
     readonly fileService: FileService;
@@ -45,6 +47,7 @@ export declare class ServiceContainer {
     readonly projectService: ProjectService;
     readonly queueService: QueueService;
     readonly runService: RunService;
+    readonly taskGraphExecutionService: TaskGraphExecutionService;
     private constructor();
     static getInstance(): ServiceContainer;
 }

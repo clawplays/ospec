@@ -7,7 +7,7 @@
 官方插件包的长期推荐方案是：
 
 1. 统一复用 `.github/workflows/publish-plugin.yml`
-2. 在 `clawplays/ospec-src` 仓库里配置一个可复用的 `NPM_TOKEN`
+2. 在发布 workflow 所在仓库配置一个可复用的 `NPM_TOKEN`
 3. 所有插件都通过同一个 workflow 发布
 
 这是新插件首发时唯一真正全自动的方案，因为 npm Trusted Publishing 是按“包”配置的，通常要在包已经存在后才能继续配置。
@@ -29,7 +29,7 @@ workflow 仍然保留了 `id-token: write`，这样已经存在的包后续如�
    - `bugs`
 4. 确保 workflow 变更已经合并到 `main`
 
-如果源仓库是 private，workflow 会自动去掉 `--provenance`，因为 npm provenance 目前要求 GitHub 源仓库必须是 public。
+如果当前发布配置无法使用 npm provenance，workflow 可以不带 `--provenance` 发布。
 
 ## 本地流程
 
@@ -68,5 +68,5 @@ workflow 仍然保留了 `id-token: write`，这样已经存在的包后续如�
 ## 主包边界
 
 - `@clawplays/ospec-cli` 保持现有主包发布流程
-- 插件源码目录仍然排除在 release-repo export 之外
-- 公开 release repo 现在会携带 `plugins/registry.json`，这样官方插件元数据可以独立于插件包发布进行刷新
+- 插件包使用独立于主 CLI 包的发布流程
+- 公开插件 registry 快照会保持同步，官方插件元数据可以独立于插件包发布进行刷新

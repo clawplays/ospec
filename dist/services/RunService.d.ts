@@ -2,11 +2,13 @@ import { QueueRunProfileId, QueueRunStatusReport } from '../core/types';
 import { FileService } from './FileService';
 import { ProjectService } from './ProjectService';
 import { QueueService } from './QueueService';
+import { TaskGraphExecutionService } from './TaskGraphExecutionService';
 export declare class RunService {
     private fileService;
     private projectService;
     private queueService;
-    constructor(fileService: FileService, projectService: ProjectService, queueService: QueueService);
+    private taskGraphExecutionService;
+    constructor(fileService: FileService, projectService: ProjectService, queueService: QueueService, taskGraphExecutionService?: TaskGraphExecutionService);
     start(rootDir: string, options?: {
         profileId?: QueueRunProfileId;
     }): Promise<QueueRunStatusReport>;
@@ -16,6 +18,8 @@ export declare class RunService {
     getStatusReport(rootDir: string): Promise<QueueRunStatusReport>;
     getLogTail(rootDir: string, lineCount?: number): Promise<string[]>;
     private buildStatusReport;
+    private buildTaskGraphSnapshot;
+    private createEmptyTaskGraphSnapshot;
     private synchronizeRun;
     private recordCompletedChange;
     private createRun;
@@ -34,6 +38,7 @@ export declare class RunService {
     private resolveRunFilePath;
     private getProjectConfig;
     private buildActiveInstruction;
+    private buildTaskGraphRunInstruction;
     private describeRunStage;
     private getIdleInstruction;
 }

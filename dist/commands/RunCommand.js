@@ -115,7 +115,12 @@ class RunCommand extends BaseCommand_1.BaseCommand {
         console.log(`Project: ${projectPath}`);
         if (!report.currentRun) {
             console.log('Run: idle');
+            if (report.activeChange) {
+                console.log(`Active change: ${report.activeChange.name} [${report.activeChange.status}]`);
+                console.log(`Active path: ${report.activeChange.path}`);
+            }
             console.log(`Queued changes: ${report.queuedChanges.length}`);
+            this.printTaskGraphSnapshot(report.taskGraph);
             if (report.nextInstruction) {
                 console.log(`Next: ${report.nextInstruction}`);
             }
@@ -140,6 +145,7 @@ class RunCommand extends BaseCommand_1.BaseCommand {
         else {
             console.log('Active change: none');
         }
+        this.printTaskGraphSnapshot(report.taskGraph);
         if (report.currentRun.failedChange) {
             console.log(`Failed marker: ${report.currentRun.failedChange.name}`);
             if (report.currentRun.failedChange.note) {
@@ -163,6 +169,27 @@ class RunCommand extends BaseCommand_1.BaseCommand {
             }
         }
         console.log('');
+    }
+    printTaskGraphSnapshot(taskGraph) {
+        if (!taskGraph) {
+            return;
+        }
+        console.log('\nTask graph:');
+        console.log(`  Path: ${taskGraph.path}`);
+        console.log(`  Status: ${taskGraph.status}${taskGraph.exists ? '' : ' (missing)'}`);
+        console.log([
+            `  Tasks: ${taskGraph.completedCount}/${taskGraph.taskCount} completed`,
+            `${taskGraph.runningCount} running`,
+            `${taskGraph.dispatchableCount} dispatchable`,
+            `${taskGraph.blockedCount} blocked`,
+            `${taskGraph.invalidCount} invalid`,
+        ].join(', '));
+        if (taskGraph.issueCount > 0) {
+            console.log(`  Issues: ${taskGraph.issueCount}`);
+        }
+        if (taskGraph.nextInstruction) {
+            console.log(`  Next: ${taskGraph.nextInstruction}`);
+        }
     }
     parseStartArgs(args) {
         let projectPath;

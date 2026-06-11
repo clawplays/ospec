@@ -3,7 +3,7 @@
  * Service layer entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.services = exports.ServiceContainer = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
+exports.services = exports.ServiceContainer = exports.createTaskGraphExecutionService = exports.TaskGraphExecutionService = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
 var FileService_1 = require("./FileService");
 Object.defineProperty(exports, "FileService", { enumerable: true, get: function () { return FileService_1.FileService; } });
 Object.defineProperty(exports, "fileService", { enumerable: true, get: function () { return FileService_1.fileService; } });
@@ -47,6 +47,9 @@ Object.defineProperty(exports, "createQueueService", { enumerable: true, get: fu
 var RunService_1 = require("./RunService");
 Object.defineProperty(exports, "RunService", { enumerable: true, get: function () { return RunService_1.RunService; } });
 Object.defineProperty(exports, "createRunService", { enumerable: true, get: function () { return RunService_1.createRunService; } });
+var TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
+Object.defineProperty(exports, "TaskGraphExecutionService", { enumerable: true, get: function () { return TaskGraphExecutionService_1.TaskGraphExecutionService; } });
+Object.defineProperty(exports, "createTaskGraphExecutionService", { enumerable: true, get: function () { return TaskGraphExecutionService_1.createTaskGraphExecutionService; } });
 // Service container
 const FileService_2 = require("./FileService");
 const ConfigManager_2 = require("./ConfigManager");
@@ -62,6 +65,7 @@ const ProjectScaffoldCommandService_2 = require("./ProjectScaffoldCommandService
 const ProjectService_2 = require("./ProjectService");
 const QueueService_2 = require("./QueueService");
 const RunService_2 = require("./RunService");
+const TaskGraphExecutionService_2 = require("./TaskGraphExecutionService");
 const PluginRegistryService_1 = require("./PluginRegistryService");
 class ServiceContainer {
     constructor() {
@@ -79,6 +83,7 @@ class ServiceContainer {
         this.projectService = (0, ProjectService_2.createProjectService)(FileService_2.fileService, this.configManager, TemplateEngine_2.templateEngine, this.indexBuilder, this.skillParser, this.projectAssetService, this.projectScaffoldService, this.projectScaffoldCommandService);
         this.queueService = (0, QueueService_2.createQueueService)(FileService_2.fileService, this.projectService);
         this.runService = (0, RunService_2.createRunService)(FileService_2.fileService, this.projectService, this.queueService);
+        this.taskGraphExecutionService = (0, TaskGraphExecutionService_2.createTaskGraphExecutionService)(FileService_2.fileService);
         Object.defineProperty(this, 'pluginRegistryService', {
             value: (0, PluginRegistryService_1.createPluginRegistryService)(FileService_2.fileService),
             enumerable: false,

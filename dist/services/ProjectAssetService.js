@@ -51,7 +51,10 @@ class ProjectAssetService {
         const skipped = [];
         const projectLayout = options.projectLayout || 'classic';
         const targetFilter = Array.isArray(options.targetRelativePaths)
-            ? new Set(this.normalizePaths(options.targetRelativePaths))
+            ? new Set(this.normalizePaths([
+                ...options.targetRelativePaths,
+                ...options.targetRelativePaths.map(targetRelativePath => (0, ProjectLayout_1.toManagedRelativePath)(targetRelativePath, projectLayout)),
+            ]))
             : null;
         for (const asset of this.getDirectCopyAssets()) {
             const targetRelativePath = (0, ProjectLayout_1.toManagedRelativePath)(asset.targetRelativePath, projectLayout);

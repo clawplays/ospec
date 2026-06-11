@@ -2,7 +2,7 @@ import { ProjectLayout, SkillrcConfig } from '../core/types';
 export declare class PathUtils {
     static getChangeDir(rootDir: string, bucket: string, featureName: string, layout?: ProjectLayout | Pick<SkillrcConfig, 'projectLayout'> | null): string;
     static getFeatureDir(rootDir: string, featureName: string, layout?: ProjectLayout | Pick<SkillrcConfig, 'projectLayout'> | null): string;
-    static getFeatureFile(featureDir: string, type: 'proposal' | 'tasks' | 'state' | 'verification'): string;
+    static getFeatureFile(featureDir: string, type: 'proposal' | 'design' | 'implementation_plan' | 'task_graph' | 'spec_compliance_review' | 'code_quality_review' | 'agent_worker_status' | 'tasks' | 'state' | 'verification'): string;
     static normalize(filePath: string): string;
     static isAbsolute(filePath: string): boolean;
     static getRelative(from: string, to: string): string;

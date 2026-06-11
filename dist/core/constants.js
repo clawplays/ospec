@@ -13,7 +13,13 @@ exports.STATE_TRANSITIONS = {
 };
 exports.CORE_REQUIRED_STEPS = [
     'proposal',
+    'design',
+    'implementation_plan',
+    'task_graph',
     'tasks',
+    'spec_compliance_review',
+    'code_quality_review',
+    'agent_worker_status',
     'state',
     'verification',
     'skill_update',
@@ -28,6 +34,12 @@ exports.FILE_NAMES = {
     AI_GUIDE: 'ai-guide.md',
     EXECUTION_PROTOCOL: 'execution-protocol.md',
     PROPOSAL: 'proposal.md',
+    DESIGN: 'design.md',
+    IMPLEMENTATION_PLAN: 'implementation-plan.md',
+    TASK_GRAPH: 'task-graph.json',
+    SPEC_COMPLIANCE_REVIEW: 'spec-compliance.md',
+    CODE_QUALITY_REVIEW: 'code-quality.md',
+    AGENT_WORKER_STATUS: 'worker-status.md',
     TASKS: 'tasks.md',
     VERIFICATION: 'verification.md',
     STATE: 'state.json',
@@ -54,6 +66,9 @@ exports.DIR_NAMES = {
     CORE: 'core',
     TESTS: 'tests',
     DIST: 'dist',
+    ARTIFACTS: 'artifacts',
+    AGENTS: 'agents',
+    REVIEWS: 'reviews',
 };
 exports.NAMING_RULES = {
     FEATURE_NAME: /^[a-z0-9]+(-[a-z0-9]+)*$/,

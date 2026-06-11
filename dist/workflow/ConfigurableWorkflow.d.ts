@@ -3,8 +3,8 @@
  * Implemented against the official OSpec specification.
  * Supports core steps, optional steps, and feature flags.
  */
-export type CoreStep = 'proposal' | 'tasks' | 'state' | 'verification' | 'skill_update' | 'index_regenerated';
-export type OptionalStep = 'code_review' | 'design_doc' | 'plan_doc' | 'security_review' | 'adr' | 'db_change_doc' | 'api_change_doc';
+export type CoreStep = 'proposal' | 'design' | 'implementation_plan' | 'task_graph' | 'tasks' | 'spec_compliance_review' | 'code_quality_review' | 'agent_worker_status' | 'state' | 'verification' | 'skill_update' | 'index_regenerated';
+export type OptionalStep = 'code_review' | 'design_doc' | 'plan_doc' | 'security_review' | 'adr' | 'db_change_doc' | 'api_change_doc' | 'tdd_cycle' | 'root_cause_debug' | 'verification_evidence';
 export interface OptionalStepConfig {
     enabled: boolean;
     when: string[];

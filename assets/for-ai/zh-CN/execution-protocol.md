@@ -9,22 +9,56 @@ tags: [ai, protocol, ospec]
 ## 每次进入项目时必须先读
 
 1. `.skillrc`
-2. `SKILL.index.json`
-3. `docs/project/naming-conventions.md`
-4. `docs/project/skill-conventions.md`
-5. `docs/project/workflow-conventions.md`
-6. 当前 change 的 `proposal.md / tasks.md / state.json / verification.md`
-7. 如存在 `stitch_design_review`，读取 `artifacts/stitch/approval.json`
-8. 如要处理 Stitch / Checkpoint 的 provider、MCP、认证、安装或启用配置，先读取与项目文档语言一致的仓库内本地化插件规范；只有该语言文件缺失时，才回退到其他语言版本
+2. 若 `.ospec/session-brief.md` 已存在则先读；否则在已初始化项目里运行 `ospec session [path]` 创建它
+3. `SKILL.index.json`
+4. `docs/project/naming-conventions.md`
+5. `docs/project/skill-conventions.md`
+6. `docs/project/workflow-conventions.md`
+7. 当前 change 的 `proposal.md / design.md / implementation-plan.md / artifacts/agents/task-graph.json / artifacts/agents/bootstrap.md / artifacts/agents/handoff.md / artifacts/agents/document-review-dispatches/ / artifacts/agents/launch-plan.md / artifacts/agents/review-feedback-plan.md / tasks.md / artifacts/reviews/design-review.md / artifacts/reviews/implementation-plan-review.md / artifacts/reviews/spec-compliance.md / artifacts/reviews/code-quality.md / artifacts/agents/worker-status.md / artifacts/agents/debug-evidence.json / state.json / verification.md`
+8. 如存在 `stitch_design_review`，读取 `artifacts/stitch/approval.json`
+9. 如要处理 Stitch / Checkpoint 的 provider、MCP、认证、安装或启用配置，先读取与项目文档语言一致的仓库内本地化插件规范；只有该语言文件缺失时，才回退到其他语言版本
 
 ## 强制规则
 
-- 项目 adopted protocol 为中文时，`proposal.md`、`tasks.md`、`verification.md`、`review.md` 必须保持中文
+- 项目 adopted protocol 为中文时，`proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json`、`artifacts/agents/verification-evidence.json`、`verification.md`、`review.md` 必须保持中文
 - 不得因为页面文案是英文、产品默认语言是英文或需求写有 “English-first” 就把 change 文档改写成英文
 - 若当前 change 文档已经是中文，后续续写、修订和补充必须继续使用中文，除非项目规则显式要求切换
-- 不得跳过 proposal/tasks 直接进入实现
+- 不得跳过 proposal/design/implementation-plan/task-graph/tasks/review-artifacts/worker-status 直接声称完成
+- 进入已有 OSpec 项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`；它只记录 active changes、queued changes、queue-run 状态、cache fingerprint 和安全下一步命令，不启动 worker、不运行测试、不检查 git、不归档、不编辑源码。只有需要接入 harness session-start 时，才用 `ospec session hook [path]` 写入 `.ospec/hooks/` 下的可选 hook artifacts
+- 只有需要 change 前探索记录时，才用 `ospec brainstorm [path] --topic "..."` 写入 `.ospec/brainstorms/`；`--visual` 会额外生成本地静态 HTML companion，且该命令不会创建 change
+- 用 `ospec plan [path] --change changes/active/<change>` 生成 `.ospec/plans/` 下的可选 plan draft；只有明确要更新该 change 的 `implementation-plan.md` 时才传 `--apply`
+- 将已激活的内建质量策略步骤（如 `tdd_cycle`、`root_cause_debug`、`verification_evidence`）视为受归档门禁约束的 `optional_steps`；收尾前必须在 `tasks.md`、`verification.md` 和对应 evidence artifacts 中覆盖
+- AI 辅助执行 change 时，必须在完成 `proposal.md` 后、编辑 `implementation-plan.md`、`tasks.md` 或代码前，先起草或更新 `design.md`
+- 只有缺失决策会实质影响架构、API、数据、UI 或风险时，才提出一个简短设计问题；否则把假设写入 `design.md`
+- 必须从 `design.md` 起草或更新 `implementation-plan.md`，明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突
+- 必须从 `implementation-plan.md` 推导 `artifacts/agents/task-graph.json`；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色
+- 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按其中的下一步安全动作继续
+- change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`；它只记录 project session brief snapshot、目标工具映射和安全规则，不会启动 worker 或编辑源码
+- 推导或派发实现任务前，用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 在 `artifacts/agents/document-review-dispatches/` 下生成带 project session brief snapshot 的文档 reviewer 交接包，并创建 `artifacts/reviews/design-review.md` 或 `artifacts/reviews/implementation-plan-review.md`；design review 通过后才能派发 implementation plan review。该命令只记录 artifacts，不会启动 reviewer、运行 shell 命令、同步 worker status 或编辑源码
+- 分派任务前，用 `ospec execute status [changes/active/<change>]` 或 `ospec execute next [changes/active/<change>]` 查看 controller 状态和下一批安全可分派任务
+- 派发 worker 前，用 `ospec execute workspace [changes/active/<change>]` 写入 `artifacts/agents/workspace-status.json` 和 `artifacts/agents/workspace-status.md`；如果状态为 `needs_isolation`，先清理当前工作区或转入隔离 git worktree，再进行并行派发
+- 创建隔离 worktree 前，用 `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` 写入 `artifacts/agents/worktree-plan.json` 和 `artifacts/agents/worktree-plan.md`；plan 模式只记录准备计划，不会运行 git。只有显式传 `--create` 时才运行 `git worktree add`，只有显式传 `--cleanup` 时才运行 `git worktree remove`；两者都会写入 `artifacts/agents/worktree-runs/`，cleanup 不删除分支
+- 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`；该命令只记录 readiness 和命令文本，不会 finalize、archive、push、merge 或删除 worktree
+- 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成并行安全的 worker 任务包批次和 `artifacts/agents/execution-session.json`；每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior。用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制派发批次大小。这些命令也会同步 `artifacts/agents/worker-status.md`，只更新 OSpec artifacts，不启动外部 worker；当结果是 `NEEDS_CONTEXT` 或 `BLOCKED` 时，`complete` 会在 `artifacts/agents/blockers/` 下写入 blocker escalation
+- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] [--dry-run]` 写入 native agent 启动计划；它告诉当前控制 AI 如何使用所在 harness 的原生 agent 机制：Codex/GPT 用 `spawn_agent`/`wait_agent`/`close_agent`，Claude Code 用 Task，Gemini 用 `@generalist`，OpenCode 用 `@mention`。这个命令自身不会启动 worker、运行 shell 命令或编辑源码
+- 默认多 worker 执行路径是当前 harness 的原生 subagent：用 `ospec execute dispatch` 创建安全 packet，查看 `launch-plan.md`，再由当前 AI 会话为每个安全 packet 启动一个原生 worker agent，并用 `ospec execute complete` 记录结果
+- 只有当前 AI harness 不支持原生 subagent 时，才用 `ospec execute orchestrate [changes/active/<change>] --command "..."` 作为最后 CLI fallback；fallback 模式会渲染显式 command template，并发运行 worker command，写入 `artifacts/agents/orchestration-runs/`，并 collect 结果
+- 只有原生 subagent 不可用或被明确绕过时，才用 `--run --command`（即 `ospec execute launch ... --run --command "..."`）作为单 worker CLI fallback；它会写入 `artifacts/agents/worker-runs/`，随后用 `ospec execute collect ...` 记录 fallback task result。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务默认不得 retry，除非显式 `--force`
+- worker 记录 `DONE` 或 `DONE_WITH_CONCERNS` 后，用 `ospec execute review [changes/active/<change>] --task <task-id> --stage spec`，再用 `--stage quality` 生成单任务 reviewer 交接包；单任务决策写入 `artifacts/reviews/tasks/<task-id>/`，依赖任务会等该任务 spec 与 quality review 都通过后才可派发
+- 所有单任务 review 通过且 task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>] [--stage spec|quality]` 在 `artifacts/agents/review-dispatches/` 下生成最终 whole-change reviewer 交接包；最终 spec review 通过前不得派发最终 quality review
+- 只有显式使用 `ospec execute review ... --run --command "..."` 时，OSpec 才会运行本地 reviewer 命令并写入 `artifacts/agents/review-runs/`；提供 `--decision` 时可写回单任务或最终 review decision
+- review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`；继续派发工作前，必须明确接受、修订、澄清或解除阻塞
+- 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --symptom "..." --root-cause "..." --status FIXED` 记录 `artifacts/agents/debug-evidence.json`；`CONFIRMED` 表示隔离根因，`FIXED` 表示修复已验证，`BLOCKED` 会让 verify 失败
+- 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 记录 `artifacts/agents/tdd-evidence.json`；red 通常记录预期失败的测试，green/refactor 应记录通过结果
+- 运行最新项目验证命令后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` 记录 `artifacts/agents/verification-evidence.json`；不得只用聊天摘要声称完成
+- 人工修改 task graph、execution session、review artifacts、debug evidence 或 verification checklist 后，用 `ospec execute sync [changes/active/<change>]` 重建 `artifacts/agents/worker-status.md`
+- `tasks.md` 必须从 `artifacts/agents/task-graph.json` 推导；如果任务已存在但上游文档仍是模板，先补上游文档，再对齐任务
+- `artifacts/agents/task-graph.json` 中存在未解决 task 状态、无效依赖、缺失执行细节，或顶层 `status` 不是 `completed` 时，不得 archive
+- 每个任务必须先完成该任务的 spec review，再完成该任务的 quality review；最终阶段必须先完成 `artifacts/reviews/spec-compliance.md`，再完成 `artifacts/reviews/code-quality.md`；未解决的单任务或最终 review decision 会阻止 archive
+- 实现和 review 阶段必须保持 `artifacts/agents/worker-status.md` 与 implementer、spec reviewer、quality reviewer 和 controller 状态一致
+- 任一 worker 状态仍为 `PENDING`、`NEEDS_CONTEXT` 或 `BLOCKED` 时，不得把 change 视为完成；归档前 `controller_status` 必须为 `DONE`
 - 必须以 `state.json` 作为执行状态依据
-- 被激活的可选步骤必须进入 `tasks.md` 和 `verification.md`
+- 被激活的可选步骤必须进入 `artifacts/agents/task-graph.json`、`tasks.md` 和 `verification.md`
 - 如果 `stitch_design_review` 已激活且 `approval.json.preview_url` 为空或 `submitted_at` 为空，先运行 `ospec plugins run stitch <change-path>` 提交设计预览
 - Stitch 设计评审必须遵守“一 route 一套 canonical layout”；同一路由下的非 canonical screen 必须明确标记为 `archive / old / exploration`
 - 如需 `light/dark` 主题变体，必须基于同一 canonical layout 做视觉主题转换；不得重排模块、改 section grouping、改 CTA placement、改 navigation structure

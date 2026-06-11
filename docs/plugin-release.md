@@ -7,7 +7,7 @@ Plugin packages are published through the plugin release workflow, separately fr
 For official plugin packages, the recommended long-term automation model is:
 
 1. Keep the shared plugin workflow in `.github/workflows/publish-plugin.yml`
-2. Configure one reusable `NPM_TOKEN` secret in `clawplays/ospec-src`
+2. Configure one reusable `NPM_TOKEN` secret in the publishing repository
 3. Publish every plugin through the same workflow
 
 This is the only fully automated path for brand-new plugin packages because npm Trusted Publishing is configured per package after the package already exists.
@@ -29,7 +29,7 @@ The workflow still keeps `id-token: write` enabled so existing packages may also
    - `bugs`
 4. Merge the workflow changes to `main`.
 
-When the source repository is private, the workflow automatically publishes without `--provenance` because npm provenance currently requires a public GitHub source repository.
+When provenance is unavailable for the publishing repository, the workflow can publish without `--provenance`.
 
 ## Local Flow
 
@@ -68,5 +68,5 @@ No workflow changes are required for a new plugin as long as it follows the same
 ## Main Package Boundary
 
 - `@clawplays/ospec-cli` keeps its existing package release flow
-- plugin package source trees stay excluded from the release-repo export
-- the public release repo now carries `plugins/registry.json` so official plugin metadata can be refreshed independently of plugin package publishing
+- plugin packages keep a separate publish flow from the main CLI package
+- the public plugin registry snapshot is kept in sync so official plugin metadata can refresh independently of plugin package publishing

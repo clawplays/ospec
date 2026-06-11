@@ -293,29 +293,60 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             return {
                 configSaved: false,
                 effectiveProjectCliVersion: null,
+                currentCliVersion: null,
             };
         }
         const detectedProjectCliVersion = await this.detectProjectCliVersion(rootDir, config);
-        if (typeof config.ospecCliVersion === 'string' && config.ospecCliVersion.trim().length > 0) {
+        const currentCliVersion = await this.readCurrentCliVersion();
+        const configuredProjectCliVersion = typeof config.ospecCliVersion === 'string' && config.ospecCliVersion.trim().length > 0
+            ? config.ospecCliVersion.trim()
+            : null;
+        if (configuredProjectCliVersion) {
+            if (currentCliVersion && configuredProjectCliVersion !== currentCliVersion) {
+                await services_1.services.configManager.saveConfig(rootDir, {
+                    ...config,
+                    ospecCliVersion: currentCliVersion,
+                });
+                return {
+                    configSaved: true,
+                    effectiveProjectCliVersion: configuredProjectCliVersion,
+                    currentCliVersion,
+                };
+            }
             return {
                 configSaved: false,
-                effectiveProjectCliVersion: config.ospecCliVersion.trim(),
+                effectiveProjectCliVersion: configuredProjectCliVersion,
+                currentCliVersion,
             };
         }
-        if (!detectedProjectCliVersion) {
+        const nextProjectCliVersion = currentCliVersion || detectedProjectCliVersion;
+        if (!nextProjectCliVersion) {
             return {
                 configSaved: false,
                 effectiveProjectCliVersion: null,
+                currentCliVersion,
             };
         }
         await services_1.services.configManager.saveConfig(rootDir, {
             ...config,
-            ospecCliVersion: detectedProjectCliVersion,
+            ospecCliVersion: nextProjectCliVersion,
         });
         return {
             configSaved: true,
-            effectiveProjectCliVersion: detectedProjectCliVersion,
+            effectiveProjectCliVersion: detectedProjectCliVersion || nextProjectCliVersion,
+            currentCliVersion,
         };
+    }
+    async readCurrentCliVersion() {
+        try {
+            const packageJson = JSON.parse(await fs_1.promises.readFile((0, path_1.join)(__dirname, '..', '..', 'package.json'), 'utf8'));
+            return typeof packageJson.version === 'string' && packageJson.version.trim().length > 0
+                ? packageJson.version.trim()
+                : null;
+        }
+        catch {
+            return null;
+        }
     }
     async detectProjectCliVersion(rootDir, config) {
         if (typeof config?.ospecCliVersion === 'string' && config.ospecCliVersion.trim().length > 0) {

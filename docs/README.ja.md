@@ -38,7 +38,7 @@ OSpec の公式 CLI パッケージは `@clawplays/ospec-cli`、公式コマン�
 
 AI コーディングアシスタントは強力ですが、要件がチャット履歴にしか残らないと、確認・レビュー・クローズアウトが難しくなります。OSpec は軽量なワークフローレイヤーを加えることで、コードを書く前とリリース後の両方で change の文脈をリポジトリに残します。
 
-- 実装前に合意できる: proposal、tasks、state、verification、review をリポジトリ内で追える
+- 実装前に合意できる: proposal、design、implementation plan、tasks、state、verification、review をリポジトリ内で追える
 - 要件ごとに明示できる: デフォルトでは 1 つの要件を 1 つの active change で進める
 - 軽量に保てる: 通常フローを `init -> change -> verify/finalize` に絞る
 - 既存のアシスタントを活かせる: Codex、Claude Code、CLI ワークフローを前提にしている
@@ -196,6 +196,14 @@ ospec update
 │  3. EXECUTION                                                  │
 │     ospec new <change-name>                                    │
 │     ospec progress                                             │
+│     ospec execute bootstrap / handoff / doc-review / status    │
+│     ospec execute next                                         │
+│     ospec execute workspace / worktree / finish                │
+│     ospec execute dispatch / review                            │
+│     ospec execute debug                                        │
+│     ospec execute tdd                                          │
+│     ospec execute verify                                       │
+│     ospec execute sync                                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -219,14 +227,15 @@ ospec update
 |------|------|
 | **Protocol Shell** | ルートの `.skillrc` と `README.md`、そして change 状態、`SKILL`、index、`for-ai`、project docs を含む `.ospec/` 配下の managed files から成る最小の協調骨格 |
 | **Project Knowledge Layer** | `docs/project/*`、レイヤード skill ファイル、index 状態など AI が継続的に参照するコンテキスト |
-| **Active Change** | 1 つの要件専用の実行コンテナ。通常 `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` を持つ |
+| **Active Change** | 1 つの要件専用の実行コンテナ。通常 `proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`tasks.md`、handoff artifacts、document-review artifacts、review artifacts、`artifacts/agents/worker-status.md`、`state.json`、`verification.md`、`review.md` を持つ |
 
 ## 主な機能
 
 - **change-ready 初期化**: `ospec init` が protocol shell と基礎ドキュメントを一度に生成
 - **ガイド付き初期化**: AI 支援時は不足している概要や技術スタックを 1 回だけ確認可能
 - **ドキュメント保守**: `ospec docs generate` で後から知識レイヤを更新・修復
-- **change 実行の追跡**: proposal、tasks、state、verification、review を継続的に揃える
+- **change 実行の追跡**: proposal、design、implementation plan、task graph、tasks、handoff artifacts、document-review artifacts、worker status、state、verification、review を継続的に揃える
+- **task graph controller**: `ospec execute bootstrap` で project session brief snapshot を含む one-change startup/resume snapshot と次の安全な action を記録し、`handoff` で project session brief snapshot を含む cross-tool worker handoff guide を外部 worker を起動せずに記録し、`doc-review` で project session brief snapshot を含む task 実行前の design / implementation-plan reviewer packet を作成し、`status` と `next` で controller 状態と安全な次 task 候補を表示し、`workspace` で worker handoff 前の git workspace safety を記録し、`worktree` で isolated-worktree preparation plan を記録し、`finish` で closeout readiness を記録し、`dispatch` と `complete` で project session brief snapshot、worker profile、target tool mapping 付きの parallel-safe な worker packet と task 結果を OSpec artifact として記録し、`NEEDS_CONTEXT` または `BLOCKED` には blocker escalation を書き、`--limit` で dispatch batch size を制限でき、`review` で project session brief snapshot を含む task 完了後の reviewer packet を順番に作成し、`debug` で symptom、hypothesis、root cause、fix evidence を記録し、`tdd` で red/green/refactor の test-cycle evidence を記録し、`verify` で fresh verification evidence を記録し、`sync` で execution と review artifacts から `worker-status.md` を再構築
 - **キュー支援**: `queue` と `run` で複数 change の明示的な実行を管理
 - **プラグインゲート**: Stitch のデザインレビューと Checkpoint の自動化チェックをサポート
 - **標準クローズアウト**: `finalize` が検証、インデックス再構築、アーカイブを行う

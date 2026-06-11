@@ -9,6 +9,12 @@ export declare const FILE_NAMES: {
     AI_GUIDE: string;
     EXECUTION_PROTOCOL: string;
     PROPOSAL: string;
+    DESIGN: string;
+    IMPLEMENTATION_PLAN: string;
+    TASK_GRAPH: string;
+    SPEC_COMPLIANCE_REVIEW: string;
+    CODE_QUALITY_REVIEW: string;
+    AGENT_WORKER_STATUS: string;
     TASKS: string;
     VERIFICATION: string;
     STATE: string;
@@ -31,6 +37,9 @@ export declare const DIR_NAMES: {
     CORE: string;
     TESTS: string;
     DIST: string;
+    ARTIFACTS: string;
+    AGENTS: string;
+    REVIEWS: string;
 };
 export declare const NAMING_RULES: {
     FEATURE_NAME: RegExp;

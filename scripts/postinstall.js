@@ -2,7 +2,9 @@
 
 const { SkillCommand } = require('../dist/commands/SkillCommand');
 const { FileService } = require('../dist/services/FileService');
-const { PostSyncMaintenanceService } = require('../dist/services/PostSyncMaintenanceService');
+const {
+  PostSyncMaintenanceService,
+} = require('../dist/services/PostSyncMaintenanceService');
 
 function isGlobalInstall() {
   const globalFlag = String(process.env.npm_config_global || '').toLowerCase();

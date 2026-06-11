@@ -7,7 +7,7 @@
 公式プラグインでは、長期的には次の形を推奨します。
 
 1. `.github/workflows/publish-plugin.yml` を共通で使う
-2. `clawplays/ospec-src` に再利用可能な `NPM_TOKEN` を 1 つ設定する
+2. 公開 workflow を置くリポジトリに再利用可能な `NPM_TOKEN` を 1 つ設定する
 3. すべてのプラグインを同じ workflow で公開する
 
 新しいプラグインの初回公開を完全自動化するには、この方式が最も現実的です。npm Trusted Publishing は通常、パッケージが存在した後にパッケージ単位で設定するためです。
@@ -29,7 +29,7 @@ workflow には `id-token: write` も残してあるので、既存パッケー�
    - `bugs`
 4. workflow の変更を `main` に反映する
 
-ソースリポジトリが private の場合、npm provenance は public GitHub repository を必要とするため、workflow は自動的に `--provenance` なしで公開します。
+現在の公開設定で npm provenance を利用できない場合、workflow は `--provenance` なしでも公開できます。
 
 ## ローカル手順
 
@@ -68,5 +68,5 @@ workflow には `id-token: write` も残してあるので、既存パッケー�
 ## メインパッケージ境界
 
 - `@clawplays/ospec-cli` は既存のメインパッケージ公開フローを維持する
-- プラグインのソースツリーは引き続き release-repo export の対象外とする
-- ただし公開 release repo には `plugins/registry.json` を含め、公式プラグインのメタデータを個別に更新できるようにする
+- プラグインパッケージはメイン CLI パッケージとは別の公開フローを使う
+- 公開 plugin registry snapshot を同期し、公式プラグインのメタデータを個別に更新できるようにする

@@ -363,6 +363,21 @@ export interface QueueRunRecord {
     logPath: string;
     lastInstruction: string | null;
 }
+export interface QueueRunTaskGraphSnapshot {
+    exists: boolean;
+    path: string;
+    status: string;
+    taskCount: number;
+    readyCount: number;
+    dispatchableCount: number;
+    runningCount: number;
+    completedCount: number;
+    concernCount: number;
+    blockedCount: number;
+    invalidCount: number;
+    issueCount: number;
+    nextInstruction: string | null;
+}
 export interface QueueRunStatusReport {
     currentRun: QueueRunRecord | null;
     stage: string | null;
@@ -371,6 +386,7 @@ export interface QueueRunStatusReport {
         path: string;
         status: FeatureState['status'];
     } | null;
+    taskGraph: QueueRunTaskGraphSnapshot | null;
     queuedChanges: QueuedChangeStatusItem[];
     logTail: string[];
     nextInstruction: string | null;

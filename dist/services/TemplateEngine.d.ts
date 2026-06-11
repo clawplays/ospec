@@ -13,8 +13,14 @@ export declare class TemplateEngine {
     normalizeFeatureTemplateInput(input: string | FeatureTemplateInput): NormalizedFeatureTemplateInput;
     normalizeProjectBootstrapInput(input: ProjectBootstrapInput | undefined, fallbackName: string, mode: ProjectMode, inferredDefaults?: Partial<ProjectBootstrapInput>, presetDefaults?: Partial<ProjectBootstrapInput>): NormalizedProjectBootstrapInput;
     generateProposalTemplate(input: string | FeatureTemplateInput): string;
+    generateDesignTemplate(input: string | FeatureTemplateInput): string;
+    generateImplementationPlanTemplate(input: string | FeatureTemplateInput): string;
     generateTasksTemplate(input: string | FeatureTemplateInput): string;
     generateVerificationTemplate(input: string | FeatureTemplateInput): string;
+    generateSpecComplianceReviewTemplate(input: string | FeatureTemplateInput): string;
+    generateCodeQualityReviewTemplate(input: string | FeatureTemplateInput): string;
+    generateTaskGraphTemplate(input: string | FeatureTemplateInput): string;
+    generateAgentWorkerStatusTemplate(input: string | FeatureTemplateInput): string;
     generateReviewTemplate(input: string | FeatureTemplateInput): string;
     generateProjectReadmeTemplate(fallbackName: string, mode: ProjectMode, input?: ProjectBootstrapInput): string;
     generateRootSkillTemplate(fallbackName: string, mode: ProjectMode, input?: ProjectBootstrapInput): string;

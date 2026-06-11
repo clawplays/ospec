@@ -4,6 +4,8 @@
 export { BaseCommand } from './BaseCommand';
 export { InitCommand } from './InitCommand';
 export { NewCommand } from './NewCommand';
+export { BrainstormCommand } from './BrainstormCommand';
+export { PlanCommand } from './PlanCommand';
 export { VerifyCommand } from './VerifyCommand';
 export { ProgressCommand } from './ProgressCommand';
 export { ArchiveCommand } from './ArchiveCommand';
@@ -18,5 +20,7 @@ export { PluginsCommand } from './PluginsCommand';
 export { IndexCommand } from './IndexCommand';
 export { QueueCommand } from './QueueCommand';
 export { RunCommand } from './RunCommand';
+export { ExecuteCommand } from './ExecuteCommand';
+export { SessionCommand } from './SessionCommand';
 export { UpdateCommand } from './UpdateCommand';
 export { LayoutCommand } from './LayoutCommand';

@@ -201,9 +201,21 @@ async function buildChangeSummary(rootDir, changeName, config) {
         return null;
     }
     const proposalPath = path.join(featureDir, 'proposal.md');
+    const designPath = path.join(featureDir, 'design.md');
+    const implementationPlanPath = path.join(featureDir, 'implementation-plan.md');
+    const taskGraphPath = path.join(featureDir, 'artifacts', 'agents', 'task-graph.json');
+    const specComplianceReviewPath = path.join(featureDir, 'artifacts', 'reviews', 'spec-compliance.md');
+    const codeQualityReviewPath = path.join(featureDir, 'artifacts', 'reviews', 'code-quality.md');
+    const agentWorkerStatusPath = path.join(featureDir, 'artifacts', 'agents', 'worker-status.md');
     const tasksPath = path.join(featureDir, 'tasks.md');
     const verificationPath = path.join(featureDir, 'verification.md');
     const proposalExists = await exists(proposalPath);
+    const designExists = await exists(designPath);
+    const implementationPlanExists = await exists(implementationPlanPath);
+    const taskGraphExists = await exists(taskGraphPath);
+    const specComplianceReviewExists = await exists(specComplianceReviewPath);
+    const codeQualityReviewExists = await exists(codeQualityReviewPath);
+    const agentWorkerStatusExists = await exists(agentWorkerStatusPath);
     const tasksExists = await exists(tasksPath);
     const verificationExists = await exists(verificationPath);
     const checks = [
@@ -211,6 +223,40 @@ async function buildChangeSummary(rootDir, changeName, config) {
             name: 'proposal.md',
             status: proposalExists ? 'pass' : 'fail',
             message: proposalExists ? 'Proposal file exists' : 'proposal.md is missing',
+        },
+        {
+            name: 'design.md',
+            status: designExists ? 'pass' : 'fail',
+            message: designExists ? 'Design file exists' : 'design.md is missing',
+        },
+        {
+            name: 'implementation-plan.md',
+            status: implementationPlanExists ? 'pass' : 'fail',
+            message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing',
+        },
+        {
+            name: 'artifacts/agents/task-graph.json',
+            status: taskGraphExists ? 'pass' : 'fail',
+            message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing',
+        },
+        {
+            name: 'artifacts/reviews/spec-compliance.md',
+            status: specComplianceReviewExists ? 'pass' : 'fail',
+            message: specComplianceReviewExists
+                ? 'Spec compliance review artifact exists'
+                : 'artifacts/reviews/spec-compliance.md is missing',
+        },
+        {
+            name: 'artifacts/reviews/code-quality.md',
+            status: codeQualityReviewExists ? 'pass' : 'fail',
+            message: codeQualityReviewExists
+                ? 'Code quality review artifact exists'
+                : 'artifacts/reviews/code-quality.md is missing',
+        },
+        {
+            name: 'artifacts/agents/worker-status.md',
+            status: agentWorkerStatusExists ? 'pass' : 'fail',
+            message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing',
         },
         {
             name: 'tasks.md',
@@ -244,6 +290,56 @@ async function buildChangeSummary(rootDir, changeName, config) {
                 message: `Unsupported flags: ${unsupportedFlags.join(', ')}`,
             });
         }
+    }
+    if (designExists) {
+        const design = analyzeWorkflowChecklistDocument(await fsp.readFile(designPath, 'utf8'), {
+            name: 'design.md',
+            activatedSteps,
+            requiredFields: [
+                ['feature', 'string'],
+                ['created', 'string_or_date'],
+                ['optional_steps', 'array'],
+            ],
+        });
+        checks.push(...design.checks);
+    }
+    if (implementationPlanExists) {
+        const implementationPlan = analyzeWorkflowChecklistDocument(await fsp.readFile(implementationPlanPath, 'utf8'), {
+            name: 'implementation-plan.md',
+            activatedSteps,
+            requiredFields: [
+                ['feature', 'string'],
+                ['created', 'string_or_date'],
+                ['optional_steps', 'array'],
+            ],
+        });
+        checks.push(...implementationPlan.checks);
+    }
+    if (taskGraphExists) {
+        const taskGraph = analyzeTaskGraphDocument(await fsp.readFile(taskGraphPath, 'utf8'), {
+            activatedSteps,
+        });
+        checks.push(...taskGraph.checks);
+    }
+    if (specComplianceReviewExists) {
+        const specComplianceReview = analyzeReviewArtifactDocument(await fsp.readFile(specComplianceReviewPath, 'utf8'), {
+            name: 'artifacts/reviews/spec-compliance.md',
+            expectedReviewerRole: 'spec_compliance_reviewer',
+            activatedSteps,
+        });
+        checks.push(...specComplianceReview.checks);
+    }
+    if (codeQualityReviewExists) {
+        const codeQualityReview = analyzeReviewArtifactDocument(await fsp.readFile(codeQualityReviewPath, 'utf8'), {
+            name: 'artifacts/reviews/code-quality.md',
+            expectedReviewerRole: 'code_quality_reviewer',
+            activatedSteps,
+        });
+        checks.push(...codeQualityReview.checks);
+    }
+    if (agentWorkerStatusExists) {
+        const agentWorkerStatus = analyzeAgentWorkerStatusDocument(await fsp.readFile(agentWorkerStatusPath, 'utf8'));
+        checks.push(...agentWorkerStatus.checks);
     }
     if (tasksExists) {
         const tasks = analyzeWorkflowChecklistDocument(await fsp.readFile(tasksPath, 'utf8'), {
@@ -480,6 +576,484 @@ function analyzeWorkflowChecklistDocument(content, options) {
             },
             {
                 name: `${options.name}.checklist`,
+                status: checklistStatus,
+                message: checklistMessage,
+            },
+        ],
+    };
+}
+const TASK_GRAPH_ALLOWED_STATUSES = [
+    'DONE',
+    'DONE_WITH_CONCERNS',
+    'IN_PROGRESS',
+    'NEEDS_CONTEXT',
+    'BLOCKED',
+    'PENDING',
+];
+const TASK_GRAPH_TERMINAL_STATUSES = ['DONE', 'DONE_WITH_CONCERNS'];
+function analyzeTaskGraphDocument(content, options) {
+    const name = 'artifacts/agents/task-graph.json';
+    let data = {};
+    let parseError = null;
+    try {
+        const parsed = JSON.parse(content);
+        data = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    }
+    catch (error) {
+        parseError = error;
+    }
+    const optionalStepsFieldValid = Array.isArray(data.optional_steps);
+    const optionalSteps = optionalStepsFieldValid ? ensureArray(data.optional_steps) : [];
+    const tasksFieldValid = Array.isArray(data.tasks);
+    const tasks = tasksFieldValid ? data.tasks : [];
+    const invalidRequiredFields = [
+        ['version', 'string'],
+        ['feature', 'string'],
+        ['status', 'string'],
+        ['optional_steps', 'array'],
+        ['tasks', 'array'],
+    ]
+        .filter(([fieldName, fieldType]) => !isValidFrontmatterField(data[fieldName], fieldType))
+        .map(([fieldName]) => fieldName);
+    const missingActivatedSteps = optionalStepsFieldValid
+        ? options.activatedSteps.filter(step => !optionalSteps.includes(step))
+        : [...options.activatedSteps];
+    const taskSchemaIssues = [];
+    const dependencyIssues = [];
+    const invalidStatuses = [];
+    const unresolvedStatuses = [];
+    const concernStatuses = [];
+    const executionDetailIssues = [];
+    const taskIds = new Set();
+    const duplicateTaskIds = new Set();
+    if (tasksFieldValid && tasks.length === 0) {
+        taskSchemaIssues.push('tasks must contain at least one task');
+    }
+    for (const [index, task] of tasks.entries()) {
+        const taskLabel = `tasks[${index}]`;
+        if (!task || typeof task !== 'object' || Array.isArray(task)) {
+            taskSchemaIssues.push(`${taskLabel} must be an object`);
+            continue;
+        }
+        const taskId = typeof task.id === 'string' ? task.id.trim() : '';
+        if (!taskId) {
+            taskSchemaIssues.push(`${taskLabel}.id must be a non-empty string`);
+        }
+        else if (taskIds.has(taskId)) {
+            duplicateTaskIds.add(taskId);
+        }
+        else {
+            taskIds.add(taskId);
+        }
+        if (typeof task.title !== 'string' || task.title.trim().length === 0) {
+            taskSchemaIssues.push(`${taskLabel}.title must be a non-empty string`);
+        }
+        if (typeof task.status !== 'string' || task.status.trim().length === 0) {
+            taskSchemaIssues.push(`${taskLabel}.status must be a non-empty string`);
+        }
+        if (!Array.isArray(task.depends_on)) {
+            taskSchemaIssues.push(`${taskLabel}.depends_on must be an array`);
+        }
+        if (typeof task.parallelizable !== 'boolean') {
+            taskSchemaIssues.push(`${taskLabel}.parallelizable must be a boolean`);
+        }
+        if (!Array.isArray(task.conflicts_with)) {
+            taskSchemaIssues.push(`${taskLabel}.conflicts_with must be an array`);
+        }
+        if (!Array.isArray(task.target_files)) {
+            taskSchemaIssues.push(`${taskLabel}.target_files must be an array`);
+        }
+        if (!Array.isArray(task.verification_commands)) {
+            taskSchemaIssues.push(`${taskLabel}.verification_commands must be an array`);
+        }
+        if (typeof task.expected_result !== 'string' || task.expected_result.trim().length === 0) {
+            taskSchemaIssues.push(`${taskLabel}.expected_result must be a non-empty string`);
+        }
+        if (typeof task.worker_role !== 'string' || task.worker_role.trim().length === 0) {
+            taskSchemaIssues.push(`${taskLabel}.worker_role must be a non-empty string`);
+        }
+        if (taskId) {
+            const status = typeof task.status === 'string' ? task.status.trim().toUpperCase() : '';
+            if (!TASK_GRAPH_ALLOWED_STATUSES.includes(status)) {
+                invalidStatuses.push(`${taskId}=${status || '(missing)'}`);
+            }
+            else if (!TASK_GRAPH_TERMINAL_STATUSES.includes(status)) {
+                unresolvedStatuses.push(`${taskId}=${status}`);
+            }
+            else if (status === 'DONE_WITH_CONCERNS') {
+                concernStatuses.push(taskId);
+            }
+            if (!Array.isArray(task.target_files) || task.target_files.filter((value) => typeof value === 'string' && value.trim().length > 0).length === 0) {
+                executionDetailIssues.push(`${taskId}.target_files`);
+            }
+            if (!Array.isArray(task.verification_commands) || task.verification_commands.filter((value) => typeof value === 'string' && value.trim().length > 0).length === 0) {
+                executionDetailIssues.push(`${taskId}.verification_commands`);
+            }
+            const expectedResult = typeof task.expected_result === 'string' ? task.expected_result.trim() : '';
+            if (!expectedResult || expectedResult.toUpperCase() === 'TBD') {
+                executionDetailIssues.push(`${taskId}.expected_result`);
+            }
+        }
+    }
+    for (const duplicateId of duplicateTaskIds) {
+        taskSchemaIssues.push(`duplicate task id: ${duplicateId}`);
+    }
+    if (tasksFieldValid && taskSchemaIssues.length === 0) {
+        const dependenciesByTask = new Map();
+        for (const task of tasks) {
+            const taskId = task.id.trim();
+            const dependencies = task.depends_on.filter((value) => typeof value === 'string' && value.trim().length > 0);
+            dependenciesByTask.set(taskId, dependencies);
+            for (const dependency of dependencies) {
+                if (dependency === taskId) {
+                    dependencyIssues.push(`${taskId} cannot depend on itself`);
+                }
+                else if (!taskIds.has(dependency)) {
+                    dependencyIssues.push(`${taskId} depends on unknown task ${dependency}`);
+                }
+            }
+        }
+        const visiting = new Set();
+        const visited = new Set();
+        const visit = (taskId, chain) => {
+            if (visited.has(taskId)) {
+                return;
+            }
+            if (visiting.has(taskId)) {
+                dependencyIssues.push(`dependency cycle detected: ${[...chain, taskId].join(' -> ')}`);
+                return;
+            }
+            visiting.add(taskId);
+            for (const dependency of dependenciesByTask.get(taskId) ?? []) {
+                if (taskIds.has(dependency)) {
+                    visit(dependency, [...chain, taskId]);
+                }
+            }
+            visiting.delete(taskId);
+            visited.add(taskId);
+        };
+        for (const taskId of taskIds) {
+            visit(taskId, []);
+        }
+    }
+    const graphCompleted = data.status === 'completed';
+    let statusMessage = `${name} task statuses are archive-ready`;
+    let statusCheckStatus = 'pass';
+    if (invalidStatuses.length > 0) {
+        statusCheckStatus = 'fail';
+        statusMessage = `Invalid task statuses in ${name}: ${invalidStatuses.join(', ')}`;
+    }
+    else if (unresolvedStatuses.length > 0) {
+        statusCheckStatus = 'fail';
+        statusMessage = `Unresolved task statuses in ${name}: ${unresolvedStatuses.join(', ')}`;
+    }
+    else if (!graphCompleted) {
+        statusCheckStatus = 'fail';
+        statusMessage = `${name} status must be completed before archiving`;
+    }
+    else if (concernStatuses.length > 0) {
+        statusCheckStatus = 'warn';
+        statusMessage = `${name} tasks completed with concerns: ${concernStatuses.join(', ')}`;
+    }
+    return {
+        checks: [
+            {
+                name: `${name}.json`,
+                status: parseError === null ? 'pass' : 'fail',
+                message: parseError ? `${name} JSON cannot be parsed: ${parseError.message}` : `${name} JSON parsed successfully`,
+            },
+            {
+                name: `${name}.required_fields`,
+                status: parseError === null && invalidRequiredFields.length === 0 ? 'pass' : 'fail',
+                message: parseError
+                    ? `Cannot validate required fields in ${name} because JSON is invalid`
+                    : invalidRequiredFields.length > 0
+                        ? `Missing or invalid required fields in ${name}: ${invalidRequiredFields.join(', ')}`
+                        : `${name} has all required fields`,
+            },
+            {
+                name: `${name}.optional_steps`,
+                status: optionalStepsFieldValid && missingActivatedSteps.length === 0 ? 'pass' : 'fail',
+                message: !optionalStepsFieldValid
+                    ? `${name} field optional_steps must be an array`
+                    : missingActivatedSteps.length > 0
+                        ? `Missing optional steps in ${name}: ${missingActivatedSteps.join(', ')}`
+                        : `All activated optional steps are present in ${name}`,
+            },
+            {
+                name: `${name}.task_schema`,
+                status: taskSchemaIssues.length === 0 ? 'pass' : 'fail',
+                message: taskSchemaIssues.length > 0
+                    ? `Invalid task graph schema in ${name}: ${taskSchemaIssues.join(', ')}`
+                    : `${name} task schema is valid`,
+            },
+            {
+                name: `${name}.dependencies`,
+                status: dependencyIssues.length === 0 ? 'pass' : 'fail',
+                message: dependencyIssues.length > 0
+                    ? `Invalid task dependencies in ${name}: ${dependencyIssues.join(', ')}`
+                    : `${name} dependencies are valid`,
+            },
+            {
+                name: `${name}.task_statuses`,
+                status: statusCheckStatus,
+                message: statusMessage,
+            },
+            {
+                name: `${name}.execution_details`,
+                status: executionDetailIssues.length === 0 ? 'pass' : 'fail',
+                message: executionDetailIssues.length > 0
+                    ? `Incomplete task execution details in ${name}: ${executionDetailIssues.join(', ')}`
+                    : `${name} task execution details are complete`,
+            },
+        ],
+    };
+}
+const REVIEW_ARTIFACT_ALLOWED_DECISIONS = [
+    'APPROVED',
+    'APPROVED_WITH_CONCERNS',
+    'NEEDS_CHANGES',
+    'BLOCKED',
+    'PENDING',
+];
+const REVIEW_ARTIFACT_TERMINAL_DECISIONS = ['APPROVED', 'APPROVED_WITH_CONCERNS'];
+function analyzeReviewArtifactDocument(content, options) {
+    const hasFrontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
+    let parsed = null;
+    let parseError = null;
+    if (hasFrontmatter) {
+        try {
+            parsed = parseFrontmatter(content, { strict: true });
+        }
+        catch (error) {
+            parseError = error;
+        }
+    }
+    const data = parsed?.data ?? {};
+    const optionalStepsFieldValid = Array.isArray(data.optional_steps);
+    const optionalSteps = optionalStepsFieldValid ? ensureArray(data.optional_steps) : [];
+    const invalidRequiredFields = [
+        ['feature', 'string'],
+        ['created', 'string_or_date'],
+        ['status', 'string'],
+        ['reviewer_role', 'string'],
+        ['decision', 'string'],
+        ['optional_steps', 'array'],
+    ]
+        .filter(([fieldName, fieldType]) => !isValidFrontmatterField(data[fieldName], fieldType))
+        .map(([fieldName]) => fieldName);
+    if (data.reviewer_role !== options.expectedReviewerRole && !invalidRequiredFields.includes('reviewer_role')) {
+        invalidRequiredFields.push('reviewer_role');
+    }
+    const missingActivatedSteps = optionalStepsFieldValid
+        ? options.activatedSteps.filter(step => !optionalSteps.includes(step))
+        : [...options.activatedSteps];
+    const decision = typeof data.decision === 'string' ? data.decision.trim().toUpperCase() : '';
+    const invalidDecision = decision.length > 0 && !REVIEW_ARTIFACT_ALLOWED_DECISIONS.includes(decision);
+    const unresolvedDecision = !REVIEW_ARTIFACT_TERMINAL_DECISIONS.includes(decision);
+    const concernDecision = decision === 'APPROVED_WITH_CONCERNS';
+    const checklistItems = parsed?.body.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
+    const uncheckedItems = parsed?.body.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
+    const checklistStructureValid = checklistItems.length > 0;
+    let frontmatterMessage = `${options.name} frontmatter parsed successfully`;
+    if (!hasFrontmatter) {
+        frontmatterMessage = `${options.name} is missing a valid frontmatter block`;
+    }
+    else if (parseError) {
+        frontmatterMessage = `${options.name} frontmatter cannot be parsed: ${parseError.message}`;
+    }
+    let requiredFieldsMessage = `${options.name} has all required frontmatter fields`;
+    if (!hasFrontmatter || parseError) {
+        requiredFieldsMessage = `Cannot validate required fields in ${options.name} because frontmatter is invalid`;
+    }
+    else if (invalidRequiredFields.length > 0) {
+        requiredFieldsMessage = `Missing or invalid required fields in ${options.name}: ${invalidRequiredFields.join(', ')}`;
+    }
+    let optionalStepsMessage = `All activated optional steps are present in ${options.name}`;
+    if (!optionalStepsFieldValid) {
+        optionalStepsMessage = `${options.name} frontmatter field optional_steps must be an array`;
+    }
+    else if (missingActivatedSteps.length > 0) {
+        optionalStepsMessage = `Missing optional steps in ${options.name}: ${missingActivatedSteps.join(', ')}`;
+    }
+    let decisionMessage = `${options.name} decision is archive-ready`;
+    let decisionStatus = 'pass';
+    if (!hasFrontmatter || parseError) {
+        decisionStatus = 'fail';
+        decisionMessage = `Cannot validate decision in ${options.name} because frontmatter is invalid`;
+    }
+    else if (invalidDecision) {
+        decisionStatus = 'fail';
+        decisionMessage = `Invalid review decision in ${options.name}: ${decision}`;
+    }
+    else if (unresolvedDecision) {
+        decisionStatus = 'fail';
+        decisionMessage = `Unresolved review decision in ${options.name}: ${decision || '(missing)'}`;
+    }
+    else if (concernDecision) {
+        decisionStatus = 'warn';
+        decisionMessage = `${options.name} approved with concerns`;
+    }
+    let checklistStatus = 'pass';
+    let checklistMessage = `${options.name} checklist is complete`;
+    if (!hasFrontmatter || parseError) {
+        checklistStatus = 'fail';
+        checklistMessage = `${options.name} checklist cannot be validated because frontmatter is invalid`;
+    }
+    else if (!checklistStructureValid) {
+        checklistStatus = 'fail';
+        checklistMessage = `${options.name} must contain at least one Markdown checklist item`;
+    }
+    else if (uncheckedItems.length > 0) {
+        checklistStatus = 'warn';
+        checklistMessage = `${options.name} still has unchecked items`;
+    }
+    return {
+        checks: [
+            {
+                name: `${options.name}.frontmatter`,
+                status: hasFrontmatter && parseError === null ? 'pass' : 'fail',
+                message: frontmatterMessage,
+            },
+            {
+                name: `${options.name}.required_fields`,
+                status: hasFrontmatter && parseError === null && invalidRequiredFields.length === 0 ? 'pass' : 'fail',
+                message: requiredFieldsMessage,
+            },
+            {
+                name: `${options.name}.optional_steps`,
+                status: optionalStepsFieldValid && missingActivatedSteps.length === 0 ? 'pass' : 'fail',
+                message: optionalStepsMessage,
+            },
+            {
+                name: `${options.name}.decision`,
+                status: decisionStatus,
+                message: decisionMessage,
+            },
+            {
+                name: `${options.name}.checklist`,
+                status: checklistStatus,
+                message: checklistMessage,
+            },
+        ],
+    };
+}
+const AGENT_WORKER_ALLOWED_STATUSES = [
+    'DONE',
+    'DONE_WITH_CONCERNS',
+    'NEEDS_CONTEXT',
+    'BLOCKED',
+    'PENDING',
+];
+const AGENT_WORKER_TERMINAL_STATUSES = ['DONE', 'DONE_WITH_CONCERNS'];
+function analyzeAgentWorkerStatusDocument(content) {
+    const hasFrontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.test(content);
+    let parsed = null;
+    let parseError = null;
+    if (hasFrontmatter) {
+        try {
+            parsed = parseFrontmatter(content, { strict: true });
+        }
+        catch (error) {
+            parseError = error;
+        }
+    }
+    const data = parsed?.data ?? {};
+    const statusFields = [
+        'implementer_status',
+        'spec_reviewer_status',
+        'quality_reviewer_status',
+        'controller_status',
+    ];
+    const invalidRequiredFields = [
+        ['feature', 'string'],
+        ['created', 'string_or_date'],
+        ['status', 'string'],
+        ...statusFields.map(field => [field, 'string']),
+    ]
+        .filter(([fieldName, fieldType]) => !isValidFrontmatterField(data[fieldName], fieldType))
+        .map(([fieldName]) => fieldName);
+    const statuses = Object.fromEntries(statusFields.map(field => [field, typeof data[field] === 'string' ? data[field].trim().toUpperCase() : '']));
+    const invalidStatuses = Object.entries(statuses)
+        .filter(([, status]) => !AGENT_WORKER_ALLOWED_STATUSES.includes(status))
+        .map(([field, status]) => `${field}=${status || '(missing)'}`);
+    const unresolvedStatuses = [
+        ...['implementer_status', 'spec_reviewer_status', 'quality_reviewer_status']
+            .filter(field => !AGENT_WORKER_TERMINAL_STATUSES.includes(statuses[field]))
+            .map(field => `${field}=${statuses[field] || '(missing)'}`),
+        ...(statuses.controller_status === 'DONE' ? [] : [`controller_status=${statuses.controller_status || '(missing)'}`]),
+    ];
+    const concernStatuses = Object.entries(statuses)
+        .filter(([, status]) => status === 'DONE_WITH_CONCERNS')
+        .map(([field]) => field);
+    const checklistItems = parsed?.body.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
+    const uncheckedItems = parsed?.body.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
+    const checklistStructureValid = checklistItems.length > 0;
+    let frontmatterMessage = 'artifacts/agents/worker-status.md frontmatter parsed successfully';
+    if (!hasFrontmatter) {
+        frontmatterMessage = 'artifacts/agents/worker-status.md is missing a valid frontmatter block';
+    }
+    else if (parseError) {
+        frontmatterMessage = `artifacts/agents/worker-status.md frontmatter cannot be parsed: ${parseError.message}`;
+    }
+    let requiredFieldsMessage = 'artifacts/agents/worker-status.md has all required frontmatter fields';
+    if (!hasFrontmatter || parseError) {
+        requiredFieldsMessage = 'Cannot validate required fields in artifacts/agents/worker-status.md because frontmatter is invalid';
+    }
+    else if (invalidRequiredFields.length > 0) {
+        requiredFieldsMessage = `Missing or invalid required fields in artifacts/agents/worker-status.md: ${invalidRequiredFields.join(', ')}`;
+    }
+    let statusMessage = 'Agent worker statuses are archive-ready';
+    let statusCheckStatus = 'pass';
+    if (!hasFrontmatter || parseError) {
+        statusCheckStatus = 'fail';
+        statusMessage = 'Cannot validate agent worker statuses because frontmatter is invalid';
+    }
+    else if (invalidStatuses.length > 0) {
+        statusCheckStatus = 'fail';
+        statusMessage = `Invalid agent worker statuses: ${invalidStatuses.join(', ')}`;
+    }
+    else if (unresolvedStatuses.length > 0) {
+        statusCheckStatus = 'fail';
+        statusMessage = `Unresolved agent worker statuses: ${unresolvedStatuses.join(', ')}`;
+    }
+    else if (concernStatuses.length > 0) {
+        statusCheckStatus = 'warn';
+        statusMessage = `Agent workers completed with concerns: ${concernStatuses.join(', ')}`;
+    }
+    let checklistStatus = 'pass';
+    let checklistMessage = 'artifacts/agents/worker-status.md checklist is complete';
+    if (!hasFrontmatter || parseError) {
+        checklistStatus = 'fail';
+        checklistMessage = 'artifacts/agents/worker-status.md checklist cannot be validated because frontmatter is invalid';
+    }
+    else if (!checklistStructureValid) {
+        checklistStatus = 'fail';
+        checklistMessage = 'artifacts/agents/worker-status.md must contain at least one Markdown checklist item';
+    }
+    else if (uncheckedItems.length > 0) {
+        checklistStatus = 'warn';
+        checklistMessage = 'artifacts/agents/worker-status.md still has unchecked items';
+    }
+    return {
+        checks: [
+            {
+                name: 'artifacts/agents/worker-status.md.frontmatter',
+                status: hasFrontmatter && parseError === null ? 'pass' : 'fail',
+                message: frontmatterMessage,
+            },
+            {
+                name: 'artifacts/agents/worker-status.md.required_fields',
+                status: hasFrontmatter && parseError === null && invalidRequiredFields.length === 0 ? 'pass' : 'fail',
+                message: requiredFieldsMessage,
+            },
+            {
+                name: 'artifacts/agents/worker-status.md.worker_statuses',
+                status: statusCheckStatus,
+                message: statusMessage,
+            },
+            {
+                name: 'artifacts/agents/worker-status.md.checklist',
                 status: checklistStatus,
                 message: checklistMessage,
             },

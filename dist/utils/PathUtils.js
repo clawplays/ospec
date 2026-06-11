@@ -45,8 +45,22 @@ class PathUtils {
         return this.getChangeDir(rootDir, constants_1.DIR_NAMES.ACTIVE, featureName, layout);
     }
     static getFeatureFile(featureDir, type) {
+        if (type === 'task_graph') {
+            return path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
+        }
+        if (type === 'spec_compliance_review') {
+            return path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
+        }
+        if (type === 'code_quality_review') {
+            return path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
+        }
+        if (type === 'agent_worker_status') {
+            return path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
+        }
         const fileNames = {
             proposal: constants_1.FILE_NAMES.PROPOSAL,
+            design: constants_1.FILE_NAMES.DESIGN,
+            implementation_plan: constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
             tasks: constants_1.FILE_NAMES.TASKS,
             state: constants_1.FILE_NAMES.STATE,
             verification: constants_1.FILE_NAMES.VERIFICATION,
