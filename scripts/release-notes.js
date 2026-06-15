@@ -390,6 +390,16 @@ function normalizeStructuredDraft(input, fallbackDraft) {
     return null;
   }
 
+  const hasStructuredFields =
+    (typeof input.title_suffix === 'string' &&
+      input.title_suffix.trim().length > 0) ||
+    (typeof input.summary === 'string' && input.summary.trim().length > 0) ||
+    SECTION_ORDER.some((key) => Array.isArray(input[key]));
+
+  if (!hasStructuredFields) {
+    return null;
+  }
+
   const normalized = {
     titleSuffix:
       typeof input.title_suffix === 'string' &&
@@ -477,30 +487,11 @@ function loadReleaseOverride(tag, previousTag, repositoryUrl, fallbackDraft) {
 
   const raw = fs.readFileSync(overridePath, 'utf8');
   const parsed = JSON.parse(raw);
-
-  if (
-    typeof parsed.name === 'string' &&
-    parsed.name.trim().length > 0 &&
-    typeof parsed.body === 'string' &&
-    parsed.body.trim().length > 0
-  ) {
-    return {
-      source: 'override',
-      name: parsed.name.trim(),
-      body: `${parsed.body.trim()}\n`,
-      compareUrl:
-        typeof parsed.compareUrl === 'string' &&
-        parsed.compareUrl.trim().length > 0
-          ? parsed.compareUrl.trim()
-          : buildCompareUrl(previousTag, tag, repositoryUrl),
-      summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
-      sections: {},
-    };
-  }
-
   const normalized = normalizeStructuredDraft(parsed, fallbackDraft);
   if (!normalized) {
-    return null;
+    throw new Error(
+      `Local release metadata must use structured fields "title_suffix", "summary", and release sections: ${overridePath}`,
+    );
   }
 
   return {

@@ -118,6 +118,21 @@ function getReleaseMetadataPath(tag) {
   return path.join(RELEASE_OVERRIDE_DIR, `${tag}.json`);
 }
 
+function hasStructuredReleaseMetadata(input) {
+  if (!input || typeof input !== 'object') {
+    return false;
+  }
+
+  return (
+    (typeof input.title_suffix === 'string' &&
+      input.title_suffix.trim().length > 0) ||
+    (typeof input.summary === 'string' && input.summary.trim().length > 0) ||
+    ['new', 'improved', 'fixed', 'docs'].some((key) =>
+      Array.isArray(input[key]),
+    )
+  );
+}
+
 async function readReleaseMetadata(tag) {
   const metadataPath = getReleaseMetadataPath(tag);
   if (!fs.existsSync(metadataPath)) {
@@ -125,15 +140,11 @@ async function readReleaseMetadata(tag) {
   }
 
   const parsed = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-  const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-  const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
 
-  if (name && body) {
-    return {
-      metadataPath,
-      name,
-      body,
-    };
+  if (!hasStructuredReleaseMetadata(parsed)) {
+    throw new Error(
+      `Local release metadata must use structured fields "title_suffix", "summary", and release sections: ${metadataPath}`,
+    );
   }
 
   const {
@@ -165,13 +176,13 @@ async function readReleaseMetadata(tag) {
   };
 }
 
-function ensureRemoteTagExists(tag) {
-  const output = tryRun('git', ['ls-remote', '--tags', 'origin', tag], {
+function ensureRemoteTagExists(tag, repositoryUrl = resolveRepositoryUrl()) {
+  const output = tryRun('git', ['ls-remote', '--tags', repositoryUrl, tag], {
     cwd: rootDir,
   });
   if (!output) {
     throw new Error(
-      `Remote tag ${tag} was not found on origin. Push the tag before uploading release notes.`,
+      `Remote tag ${tag} was not found on ${repositoryUrl}. Push the tag before uploading release notes.`,
     );
   }
 }
@@ -252,7 +263,7 @@ async function uploadReleaseNotes(options) {
   const repositoryUrl = resolveRepositoryUrl();
   const repository = parseGitHubRepository(repositoryUrl);
   const metadata = await readReleaseMetadata(tag);
-  ensureRemoteTagExists(tag);
+  ensureRemoteTagExists(tag, repositoryUrl);
   const prerelease = tag.includes('-');
   const payload = {
     tag_name: tag,
@@ -357,6 +368,8 @@ if (require.main === module) {
 
 module.exports = {
   getReleaseMetadataPath,
+  hasStructuredReleaseMetadata,
+  ensureRemoteTagExists,
   parseGitHubRepository,
   readReleaseMetadata,
   resolveRepositoryUrl,
