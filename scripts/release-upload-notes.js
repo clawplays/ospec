@@ -118,7 +118,7 @@ function getReleaseMetadataPath(tag) {
   return path.join(RELEASE_OVERRIDE_DIR, `${tag}.json`);
 }
 
-function readReleaseMetadata(tag) {
+async function readReleaseMetadata(tag) {
   const metadataPath = getReleaseMetadataPath(tag);
   if (!fs.existsSync(metadataPath)) {
     throw new Error(`Local release metadata not found: ${metadataPath}`);
@@ -128,16 +128,40 @@ function readReleaseMetadata(tag) {
   const name = typeof parsed.name === 'string' ? parsed.name.trim() : '';
   const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
 
-  if (!name || !body) {
+  if (name && body) {
+    return {
+      metadataPath,
+      name,
+      body,
+    };
+  }
+
+  const {
+    createReleaseMetadata,
+    getCommitEntries,
+    resolvePreviousTag,
+    resolveRepositoryUrl: resolveReleaseNotesRepositoryUrl,
+  } = require('./release-notes');
+  const previousTag = resolvePreviousTag(tag);
+  const commits = getCommitEntries(previousTag);
+  const repositoryUrl = resolveReleaseNotesRepositoryUrl();
+  const rendered = await createReleaseMetadata({
+    tag,
+    previousTag,
+    commits,
+    repositoryUrl,
+  });
+
+  if (!rendered.name || !rendered.body) {
     throw new Error(
-      `Local release metadata must include non-empty "name" and "body": ${metadataPath}`,
+      `Local release metadata could not be rendered into non-empty "name" and "body": ${metadataPath}`,
     );
   }
 
   return {
     metadataPath,
-    name,
-    body,
+    name: rendered.name,
+    body: rendered.body,
   };
 }
 
@@ -227,7 +251,7 @@ async function uploadReleaseNotes(options) {
   const tag = resolveTag(options.args || {});
   const repositoryUrl = resolveRepositoryUrl();
   const repository = parseGitHubRepository(repositoryUrl);
-  const metadata = readReleaseMetadata(tag);
+  const metadata = await readReleaseMetadata(tag);
   ensureRemoteTagExists(tag);
   const prerelease = tag.includes('-');
   const payload = {
