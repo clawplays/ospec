@@ -348,6 +348,8 @@ For completed changes, archive before commit. Use `ospec archive [changes/active
 
 For the normal closeout path, prefer `ospec finalize [changes/active/<change>]`. It should verify completeness, rebuild the index, archive the change, and leave Git commit as a separate manual step.
 
+During full change closeout, do not stop after a passing `ospec archive [changes/active/<change>] --check`; continue with `ospec finalize [changes/active/<change>]` unless the user explicitly requested preview-only output or a gate reports blockers.
+
 ## Project-Type Rules
 
 If the repository type is unclear:

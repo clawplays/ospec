@@ -1087,6 +1087,7 @@ export interface TaskReviewRunResult {
 }
 export declare class TaskGraphExecutionService {
     private fileService;
+    private reportDocumentLanguageCache;
     constructor(fileService: FileService);
     getReport(changePath: string): Promise<TaskGraphExecutionReport>;
     dispatch(changePath: string, options?: {
@@ -1286,6 +1287,19 @@ export declare class TaskGraphExecutionService {
     private writeBlockerEscalation;
     private readLatestBlockerEscalation;
     private isBlockerEscalationRecord;
+    private writeLocalizedReportFile;
+    private localizeReportMarkdown;
+    private resolveReportDocumentLanguage;
+    private readReportLanguageFromSkillrc;
+    private readReportLanguageFromAssetManifest;
+    private readReportLanguageFromProjectGuide;
+    private normalizeReportDocumentLanguage;
+    private detectReportDocumentLanguageFromText;
+    private localizeZhReportMarkdown;
+    private localizeZhReportLine;
+    private zhReportLabel;
+    private localizeZhReportValue;
+    private localizeZhBoundarySentence;
     private findProjectRoot;
     private findProjectRootForOptionalSession;
     private inferProjectRootFromChangePath;

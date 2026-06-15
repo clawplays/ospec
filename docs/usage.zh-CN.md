@@ -139,7 +139,7 @@ ospec finalize [changes/active/<change>]
 - 创建隔离 worktree 前，用 `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` 写入 `artifacts/agents/worktree-plan.json` 和 `artifacts/agents/worktree-plan.md`。plan 模式只记录推荐 branch、path、base ref、生命周期步骤、cleanup 指南、branch retention 指南和命令文本，不会运行 git。
 - 只有明确希望 OSpec 执行 `git worktree add` 时，才用 `ospec execute worktree [changes/active/<change>] --create ...`；结果会写入 `artifacts/agents/worktree-runs/`。
 - 只有明确希望 OSpec 执行 `git worktree remove` 时，才用 `ospec execute worktree [changes/active/<change>] --cleanup [--path path]`；cleanup 只移除 worktree，不删除分支、不 push、不 merge、不归档、不运行测试。
-- 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`。它会检查 task graph、review、verification evidence、worker status 和 git 清洁度，只记录建议命令，以及 PR、merge、branch retention、worktree cleanup 的决策提示，不会执行。
+- 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`。它会检查 task graph、review、verification evidence、worker status 和 git 清洁度，只记录建议命令，以及 PR、merge、branch retention、worktree cleanup 的决策提示，不会执行。当 finish plan 已 ready 且没有 required pending decision 时，继续执行 `ospec finalize [changes/active/<change>]`；`ospec archive ... --check` 只是可选 dry-run 预览。
 - 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成一批并行安全的 `artifacts/agents/dispatches/*` worker 任务包和 `artifacts/agents/execution-session.json`。每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior，方便把复杂任务交给更强的 worker，把简单任务保持轻量，并明确不同目标工具如何读取上下文、编辑文件、运行验证和记录完成。再用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制批次大小。required pending user decision 会阻止 dispatch。这两个命令也会同步 `artifacts/agents/worker-status.md`；当 completion 记录 `NEEDS_CONTEXT` 或 `BLOCKED` 时，OSpec 会写入 `artifacts/agents/blockers/` 升级记录，供 controller 跟进。
 - dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]` 写入 native agent 启动计划。它会记录当前控制 AI 应该如何使用所在 harness 的原生 agent 机制：Codex/GPT 用 `spawn_agent` / `wait_agent` / `close_agent`，Claude Code 用 Task，Gemini 用 `@generalist`，OpenCode 用 `@mention`，Cursor 用 Agent/task chat，Copilot 用 CLI/coding-agent task。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在一个 active dispatch 且 workspace 状态为 ready，但不会自己启动 worker 或运行 shell 命令。
 - 默认多 worker 执行路径是当前 harness 的原生 subagent：先用 `ospec execute dispatch` 生成并行安全 batch，查看 `launch-plan.md`，再由当前 AI 会话为每个安全 packet 启动一个原生 worker agent。每个结果都用 `ospec execute complete` 记录。
@@ -190,7 +190,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.0
+npm install -g @clawplays/ospec-cli@1.2.1
 ospec update [path]
 ```
 

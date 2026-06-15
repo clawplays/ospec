@@ -138,7 +138,7 @@ ospec finalize [changes/active/<change>]
 - قبل إنشاء git worktree معزول، استخدم `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` لتسجيل `artifacts/agents/worktree-plan.json` و`artifacts/agents/worktree-plan.md`. يسجل plan mode branch وpath وbase ref ونص الأوامر المقترحة فقط ولا يشغّل git.
 - استخدم `ospec execute worktree [changes/active/<change>] --create ...` فقط عندما تريد صراحة أن يشغّل OSpec `git worktree add`. تسجل النتيجة تحت `artifacts/agents/worktree-runs/`.
 - استخدم `ospec execute worktree [changes/active/<change>] --cleanup [--path path]` فقط عندما تريد صراحة أن يشغّل OSpec `git worktree remove`. لا يحذف cleanup الفروع ولا يعمل push أو merge أو archive أو tests.
-- قبل الإغلاق النهائي، استخدم `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` لتسجيل `artifacts/agents/finish-plan.json` و`artifacts/agents/finish-plan.md`. يفحص task graph وreviews وverification evidence وworker status ونظافة git، ثم يسجل الأوامر المقترحة فقط ولا ينفذها.
+- قبل الإغلاق النهائي، استخدم `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` لتسجيل `artifacts/agents/finish-plan.json` و`artifacts/agents/finish-plan.md`. يفحص task graph وreviews وverification evidence وworker status ونظافة git، ثم يسجل الأوامر المقترحة فقط ولا ينفذها. عندما تكون finish plan جاهزة ولا توجد required pending decision، تابع بتنفيذ `ospec finalize [changes/active/<change>]`؛ `ospec archive ... --check` هو معاينة dry-run اختيارية فقط.
 - استخدم `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` لإنشاء batch آمن للتوازي من worker packets داخل `artifacts/agents/dispatches/*` و`artifacts/agents/execution-session.json`. يتضمن كل packet project session brief snapshot وworker profile يوضح capability tier وrecommended target وtarget tool mapping وrationale وrequired behavior لتوجيه المهام المعقدة إلى worker أقوى والمهام البسيطة إلى worker أخف. ثم استخدم `ospec execute complete <task-id> ...` لتسجيل نتيجة worker. استخدم `--task` لمهمة واحدة صريحة و`--limit` لتحديد حجم batch. يقوم الأمران أيضا بمزامنة `artifacts/agents/worker-status.md`؛ وعندما تسجل completion الحالة `NEEDS_CONTEXT` أو `BLOCKED` يكتب OSpec ملفات escalation تحت `artifacts/agents/blockers/` لمتابعة controller.
 - بعد dispatch، استخدم `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]` لكتابة native agent launch plan. يوجه controlling AI إلى آلية agent الأصلية في harness الحالي: Codex/GPT يستخدم `spawn_agent`/`wait_agent`/`close_agent`، وClaude Code يستخدم Task، وGemini يستخدم `@generalist`، وOpenCode يستخدم `@mention`، وCursor يستخدم Agent/task chat، وCopilot يستخدم CLI/coding-agent task. هذا الأمر لا يشغّل workers ولا أوامر shell بنفسه.
 - default multi-worker execution هو current-harness native subagents: أنشئ safe packets عبر `ospec execute dispatch`، اقرأ `launch-plan.md`، ثم dispatch native worker agent لكل packet آمن، وسجل النتيجة عبر `ospec execute complete`.
@@ -189,7 +189,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.0
+npm install -g @clawplays/ospec-cli@1.2.1
 ospec update [path]
 ```
 

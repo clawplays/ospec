@@ -1,0 +1,16 @@
+{
+  "title_suffix": "Localized execution reports and finalize closeout guidance",
+  "summary": "This patch release moves the latest localization and closeout behavior fixes onto the 1.2.1 patch line so 1.2.0 remains the base decision-gated workflow release.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.2.0...1.2.1",
+  "new": [],
+  "improved": [
+    "Improved finish-plan, AI guidance, packaged change skills, project conventions, and public usage docs so archive-ready changes recommend finalize as the executable closeout step and keep archive --check as preview-only."
+  ],
+  "fixed": [
+    "Fixed closeout guidance that could let an AI stop after a passing archive dry run instead of finalizing the completed change.",
+    "Fixed generated execution-layer Markdown artifacts so Chinese projects receive localized agent, review, workspace, route, and evidence reports instead of mixed English documents."
+  ],
+  "docs": [
+    "Documented that full closeout should continue to ospec finalize after readiness is confirmed, while ospec archive --check remains a dry-run preview."
+  ]
+}

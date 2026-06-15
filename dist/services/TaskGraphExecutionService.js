@@ -389,6 +389,7 @@ function taskPathModuleKey(filePath) {
 class TaskGraphExecutionService {
     constructor(fileService) {
         this.fileService = fileService;
+        this.reportDocumentLanguageCache = new Map();
     }
     async getReport(changePath) {
         const resolvedChangePath = path.resolve(changePath);
@@ -567,7 +568,7 @@ class TaskGraphExecutionService {
                 summary: null,
             };
             await this.fileService.writeJSON(recordPath, record);
-            await this.fileService.writeFile(packetPath, this.buildDispatchPacket(report, task, record));
+            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDispatchPacket(report, task, record));
             this.updateRawTaskStatus(rawGraph, task.id, 'IN_PROGRESS');
             session.dispatches.push(record);
             createdDispatches.push(record);
@@ -753,7 +754,7 @@ class TaskGraphExecutionService {
             nextInstruction,
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildWorkerLaunchPlanReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorkerLaunchPlanReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -895,7 +896,7 @@ class TaskGraphExecutionService {
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
         };
         await this.fileService.writeJSON(recordPath, retryRecord);
-        await this.fileService.writeFile(reportPath, this.buildWorkerRetryReport(retryRecord));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorkerRetryReport(retryRecord));
         const dispatch = await this.dispatch(resolvedChangePath, { taskId });
         return {
             changePath: resolvedChangePath,
@@ -1070,7 +1071,7 @@ class TaskGraphExecutionService {
             nextInstruction,
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildOrchestrationRunReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildOrchestrationRunReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -1288,7 +1289,7 @@ class TaskGraphExecutionService {
             debugEvidence,
             latestBlockerEscalation,
         });
-        await this.fileService.writeFile(workerStatusPath, (0, helpers_1.stringifyFrontmatter)(nextBody, nextData));
+        await this.writeLocalizedReportFile(resolvedChangePath, workerStatusPath, (0, helpers_1.stringifyFrontmatter)(nextBody, nextData));
         return {
             changePath: resolvedChangePath,
             sessionPath,
@@ -1364,7 +1365,7 @@ class TaskGraphExecutionService {
             reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath),
         };
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(packetPath, this.buildReviewDispatchPacket(report, record));
+        await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
         const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
@@ -1430,7 +1431,7 @@ class TaskGraphExecutionService {
                 : this.buildReviewFeedbackNextInstruction(stage, decision, action),
         };
         await this.fileService.writeJSON(artifactPath, plan);
-        await this.fileService.writeFile(reportPath, this.buildReviewFeedbackPlanReport(plan));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildReviewFeedbackPlanReport(plan));
         return {
             changePath: resolvedChangePath,
             artifactPath,
@@ -1505,7 +1506,7 @@ class TaskGraphExecutionService {
         };
         record.nextInstruction = this.getUserDecisionNextInstruction(resolvedChangePath, projectRoot, record);
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(reportPath, this.buildUserDecisionReport(record));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildUserDecisionReport(record));
         const snapshot = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
         await this.writeUserDecisionIndex(resolvedChangePath, feature, snapshot);
         return {
@@ -1543,7 +1544,7 @@ class TaskGraphExecutionService {
         }
         const reviewArtifactPath = this.getDocumentReviewArtifactPath(resolvedChangePath, stage);
         if (!(await this.fileService.exists(reviewArtifactPath))) {
-            await this.fileService.writeFile(reviewArtifactPath, this.buildDocumentReviewArtifact(feature, target));
+            await this.writeLocalizedReportFile(resolvedChangePath, reviewArtifactPath, this.buildDocumentReviewArtifact(feature, target));
         }
         const now = new Date().toISOString();
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
@@ -1565,7 +1566,7 @@ class TaskGraphExecutionService {
             documentReadiness: documentStatus.readiness,
         };
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
+        await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
         return {
             changePath: resolvedChangePath,
             dispatch: record,
@@ -1604,7 +1605,7 @@ class TaskGraphExecutionService {
         evidence.status = this.deriveVerificationEvidenceStatus(evidence.records);
         evidence.updatedAt = now;
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(reportPath, this.buildVerificationEvidenceReport(report, record));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildVerificationEvidenceReport(report, record));
         await this.fileService.writeJSON(evidencePath, evidence);
         const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
         return {
@@ -1653,7 +1654,7 @@ class TaskGraphExecutionService {
         evidence.status = this.deriveTddEvidenceStatus(evidence.records);
         evidence.updatedAt = now;
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(reportPath, this.buildTddEvidenceReport(report, record));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildTddEvidenceReport(report, record));
         await this.fileService.writeJSON(evidencePath, evidence);
         const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
         return {
@@ -1707,7 +1708,7 @@ class TaskGraphExecutionService {
         evidence.phases = this.buildDebugEvidencePhaseSnapshots(evidence.records);
         evidence.updatedAt = now;
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(reportPath, this.buildDebugEvidenceReport(report, record));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildDebugEvidenceReport(report, record));
         await this.fileService.writeJSON(evidencePath, evidence);
         const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
         return {
@@ -1804,7 +1805,7 @@ class TaskGraphExecutionService {
             };
         }
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildWorkspaceStatusReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorkspaceStatusReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -1922,7 +1923,7 @@ class TaskGraphExecutionService {
             nextInstruction: this.getWorktreePlanNextInstruction(status),
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildWorktreePlanReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorktreePlanReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -2021,7 +2022,7 @@ class TaskGraphExecutionService {
             nextInstruction,
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildWorktreeRunReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorktreeRunReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -2193,6 +2194,8 @@ class TaskGraphExecutionService {
             currentWorktree,
             worktrees,
         });
+        const finalizeCommand = commands.find(command => command.startsWith('ospec finalize '))
+            || `ospec finalize ${this.quoteShellArg(this.toProjectRelativeChangePath(projectRoot, resolvedChangePath))}`;
         const decisionPrompts = this.buildFinishDecisionPrompts({
             changePath: resolvedChangePath,
             projectRoot,
@@ -2244,10 +2247,10 @@ class TaskGraphExecutionService {
             },
             blockers,
             warnings,
-            nextInstruction: this.getFinishPlanNextInstruction(status),
+            nextInstruction: this.getFinishPlanNextInstruction(status, finalizeCommand),
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildFinishPlanReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildFinishPlanReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -2297,7 +2300,7 @@ class TaskGraphExecutionService {
             nextInstruction,
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildWorkflowRouteReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorkflowRouteReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -2461,7 +2464,7 @@ class TaskGraphExecutionService {
             nextInstruction: decision.nextInstruction,
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildBootstrapReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildBootstrapReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -2547,7 +2550,7 @@ class TaskGraphExecutionService {
             nextInstruction,
         };
         await this.fileService.writeJSON(artifactPath, artifact);
-        await this.fileService.writeFile(reportPath, this.buildHandoffReport(artifact));
+        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildHandoffReport(artifact));
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -2991,7 +2994,7 @@ class TaskGraphExecutionService {
             nextInstruction: snapshot.nextInstruction,
         };
         await this.fileService.writeJSON(this.getUserDecisionIndexPath(changePath), artifact);
-        await this.fileService.writeFile(this.getUserDecisionIndexReportPath(changePath), this.buildUserDecisionIndexReport(artifact));
+        await this.writeLocalizedReportFile(changePath, this.getUserDecisionIndexReportPath(changePath), this.buildUserDecisionIndexReport(artifact));
     }
     normalizeUserDecisionRecord(raw, recordPath) {
         const id = this.toFileSafeId(typeof raw?.id === 'string' ? raw.id : path.basename(recordPath, '.json'));
@@ -3572,7 +3575,7 @@ class TaskGraphExecutionService {
                 ],
         };
         await this.fileService.writeJSON(recordPath, record);
-        await this.fileService.writeFile(reportPath, this.buildBlockerEscalationReport(input.report, record));
+        await this.writeLocalizedReportFile(input.report.changePath, reportPath, this.buildBlockerEscalationReport(input.report, record));
         return record;
     }
     async readLatestBlockerEscalation(changePath) {
@@ -3601,6 +3604,354 @@ class TaskGraphExecutionService {
             && typeof value?.recordPath === 'string'
             && typeof value?.reportPath === 'string'
             && Array.isArray(value?.nextActions);
+    }
+    async writeLocalizedReportFile(changePath, reportPath, content) {
+        await this.fileService.writeFile(reportPath, await this.localizeReportMarkdown(changePath, content));
+    }
+    async localizeReportMarkdown(changePath, content) {
+        const language = await this.resolveReportDocumentLanguage(changePath);
+        if (language !== 'zh-CN') {
+            return content;
+        }
+        return this.localizeZhReportMarkdown(content);
+    }
+    async resolveReportDocumentLanguage(changePath) {
+        const projectRoot = await this.findProjectRootForOptionalSession(changePath);
+        const cacheKey = path.resolve(projectRoot);
+        const cached = this.reportDocumentLanguageCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+        const language = await this.readReportLanguageFromSkillrc(projectRoot)
+            || await this.readReportLanguageFromAssetManifest(projectRoot)
+            || await this.readReportLanguageFromProjectGuide(projectRoot)
+            || 'en-US';
+        this.reportDocumentLanguageCache.set(cacheKey, language);
+        return language;
+    }
+    async readReportLanguageFromSkillrc(projectRoot) {
+        try {
+            const config = await this.fileService.readJSON(path.join(projectRoot, constants_1.FILE_NAMES.SKILLRC));
+            return this.normalizeReportDocumentLanguage(config?.documentLanguage);
+        }
+        catch {
+            return null;
+        }
+    }
+    async readReportLanguageFromAssetManifest(projectRoot) {
+        try {
+            const manifest = await this.fileService.readJSON(path.join(projectRoot, '.ospec', 'asset-sources.json'));
+            const manifestLanguage = this.normalizeReportDocumentLanguage(manifest?.documentLanguage);
+            if (manifestLanguage) {
+                return manifestLanguage;
+            }
+            const assets = Array.isArray(manifest?.assets) ? manifest.assets : [];
+            for (const asset of assets) {
+                const sourceRelativePath = typeof asset?.sourceRelativePath === 'string' ? asset.sourceRelativePath : '';
+                if (sourceRelativePath.includes('/zh-CN/')) {
+                    return 'zh-CN';
+                }
+                if (sourceRelativePath.includes('/ja-JP/')) {
+                    return 'ja-JP';
+                }
+                if (sourceRelativePath.includes('/ar/')) {
+                    return 'ar';
+                }
+                if (sourceRelativePath.includes('/en-US/')) {
+                    return 'en-US';
+                }
+            }
+        }
+        catch {
+            return null;
+        }
+        return null;
+    }
+    async readReportLanguageFromProjectGuide(projectRoot) {
+        for (const relativePath of [
+            path.join('.ospec', 'for-ai', 'ai-guide.md'),
+            path.join('for-ai', 'ai-guide.md'),
+            path.join('.ospec', 'for-ai', 'execution-protocol.md'),
+            path.join('for-ai', 'execution-protocol.md'),
+        ]) {
+            const guidePath = path.join(projectRoot, relativePath);
+            if (!(await this.fileService.exists(guidePath))) {
+                continue;
+            }
+            try {
+                const detected = this.detectReportDocumentLanguageFromText(await this.fileService.readFile(guidePath));
+                if (detected) {
+                    return detected;
+                }
+            }
+            catch {
+                continue;
+            }
+        }
+        return null;
+    }
+    normalizeReportDocumentLanguage(input) {
+        return input === 'zh-CN' || input === 'en-US' || input === 'ja-JP' || input === 'ar'
+            ? input
+            : null;
+    }
+    detectReportDocumentLanguageFromText(content) {
+        if (typeof content !== 'string' || content.trim().length === 0) {
+            return null;
+        }
+        if (/[\u0600-\u06FF]/u.test(content)) {
+            return 'ar';
+        }
+        if (/[\u3040-\u30FF]/u.test(content)) {
+            return 'ja-JP';
+        }
+        if (/[\u4E00-\u9FFF]/u.test(content)) {
+            return 'zh-CN';
+        }
+        if (/[A-Za-z]/u.test(content)) {
+            return 'en-US';
+        }
+        return null;
+    }
+    localizeZhReportMarkdown(content) {
+        let inFence = false;
+        return content.split(/\r?\n/g)
+            .map(line => {
+            if (line.trim().startsWith('```')) {
+                inFence = !inFence;
+                return line;
+            }
+            if (inFence) {
+                return line;
+            }
+            return this.localizeZhReportLine(line);
+        })
+            .join('\n');
+    }
+    localizeZhReportLine(line) {
+        let localized = line;
+        const replacements = [
+            [/^# Change Bootstrap: /u, '# 变更启动快照：'],
+            [/^# Worker Handoff: /u, '# Worker 交接：'],
+            [/^# Native Agent Launch Plan: /u, '# 原生 Agent 启动计划：'],
+            [/^# Workspace Safety: /u, '# 工作区安全检查：'],
+            [/^# Worktree Plan: /u, '# Worktree 计划：'],
+            [/^# Worktree Run: /u, '# Worktree 执行：'],
+            [/^# Finish Plan: /u, '# 收尾计划：'],
+            [/^# Workflow Route: /u, '# 工作流路由：'],
+            [/^# User Decision Index: /u, '# 用户决策索引：'],
+            [/^# User Decision: /u, '# 用户决策：'],
+            [/^# Document Review Dispatch: /u, '# 文档评审派发：'],
+            [/^# Review Feedback Plan: /u, '# 评审反馈计划：'],
+            [/^# Verification Evidence: /u, '# 验证证据：'],
+            [/^# TDD Evidence: /u, '# TDD 证据：'],
+            [/^# Debug Evidence: /u, '# 调试证据：'],
+            [/^# Worker Run: /u, '# Worker 运行：'],
+            [/^# Worker Retry: /u, '# Worker 重试：'],
+            [/^# Blocker Escalation: /u, '# 阻塞升级：'],
+            [/^# Orchestration Run: /u, '# 编排运行：'],
+            [/^# Task Review Dispatch: /u, '# 任务评审派发：'],
+            [/^## Core Documents$/u, '## 核心文档'],
+            [/^## Task Graph$/u, '## 任务图'],
+            [/^## Project Session Brief$/u, '## 项目会话简报'],
+            [/^## Execution State$/u, '## 执行状态'],
+            [/^## Reviews And Evidence$/u, '## 评审与证据'],
+            [/^## Debug Phase Evidence$/u, '## 调试阶段证据'],
+            [/^## Checkpoint Evidence$/u, '## Checkpoint 证据'],
+            [/^## User Decisions$/u, '## 用户决策'],
+            [/^## Recent Dispatch Results$/u, '## 最近派发结果'],
+            [/^## Active Dispatches$/u, '## 活跃派发'],
+            [/^## Blockers$/u, '## 阻塞项'],
+            [/^## Warnings$/u, '## 警告'],
+            [/^## Next Instruction$/u, '## 下一步指令'],
+            [/^## Safety Notes$/u, '## 安全说明'],
+            [/^## Artifact Boundary$/u, '## Artifact 边界'],
+            [/^## Changed Files$/u, '## 变更文件'],
+            [/^## Commands$/u, '## 命令'],
+            [/^## Lifecycle$/u, '## 生命周期'],
+            [/^## Recommendations$/u, '## 建议'],
+            [/^## Required Context$/u, '## 必需上下文'],
+            [/^## Review Output$/u, '## 评审输出'],
+            [/^## Completion$/u, '## 完成方式'],
+            [/^## Selected Dispatch$/u, '## 选中的派发'],
+            [/^## Target Tool Mapping$/u, '## 目标工具映射'],
+            [/^## Native Agent Dispatch$/u, '## 原生 Agent 派发'],
+            [/^## Harness Adapter Packet$/u, '## Harness 适配器包'],
+            [/^## CLI Fallback Commands$/u, '## CLI 兜底命令'],
+            [/^## Launch Prompt$/u, '## 启动提示词'],
+            [/^## Agent Artifacts$/u, '## Agent Artifacts'],
+            [/^## Worker Profiles$/u, '## Worker 配置'],
+            [/^## Tool Mapping$/u, '## 工具映射'],
+            [/^## Command Sequence$/u, '## 命令序列'],
+            [/^## Safety Rules$/u, '## 安全规则'],
+            [/^## Decision Values$/u, '## 决策取值'],
+            [/^## Findings$/u, '## 发现'],
+            [/^## Checklist$/u, '## 清单'],
+            [/^## Question$/u, '## 问题'],
+            [/^## Options$/u, '## 选项'],
+            [/^## Chat Prompt$/u, '## 对话提示'],
+            [/^## Summary$/u, '## 摘要'],
+            [/^## Git$/u, '## Git'],
+        ];
+        for (const [pattern, replacement] of replacements) {
+            localized = localized.replace(pattern, replacement);
+        }
+        const bulletMatch = localized.match(/^(\s*-\s+)([^:]+):\s*(.*)$/u);
+        if (bulletMatch) {
+            const label = this.zhReportLabel(bulletMatch[2]);
+            if (label) {
+                return `${bulletMatch[1]}${label}: ${this.localizeZhReportValue(bulletMatch[3])}`;
+            }
+            return `${bulletMatch[1]}${bulletMatch[2]}: ${this.localizeZhReportValue(bulletMatch[3])}`;
+        }
+        return this.localizeZhBoundarySentence(localized);
+    }
+    zhReportLabel(label) {
+        const labels = {
+            Status: '状态',
+            Target: '目标',
+            'Dry run': 'Dry run',
+            'Generated at': '生成时间',
+            'Created at': '创建时间',
+            'Updated at': '更新时间',
+            'Selected at': '选择时间',
+            'Project root': '项目根目录',
+            'Change path': '变更路径',
+            Change: '变更',
+            Feature: '变更',
+            Exists: '存在',
+            JSON: 'JSON',
+            Markdown: 'Markdown',
+            'Cache status': '缓存状态',
+            'Cache key': '缓存键',
+            'Active changes': '活跃变更数',
+            'Queued changes': '排队变更数',
+            Next: '下一步',
+            Session: '会话',
+            'Dispatch count': '派发数量',
+            Workspace: '工作区',
+            'Worktree plan': 'Worktree 计划',
+            'Finish plan': '收尾计划',
+            'Required pending decisions': '待处理必选决策',
+            'Optional pending decisions': '待处理可选决策',
+            'Decision index': '决策索引',
+            Implementer: '实现者',
+            'Spec reviewer': '规格评审者',
+            'Quality reviewer': '质量评审者',
+            Controller: '控制器',
+            'Spec review': '规格评审',
+            'Quality review': '质量评审',
+            'Verification checklist complete': '验证清单完成',
+            'Verification evidence': '验证证据',
+            'TDD evidence': 'TDD 证据',
+            'Debug evidence': '调试证据',
+            'Checkpoint evidence': 'Checkpoint 证据',
+            'Task graph status': '任务图状态',
+            'Task status': '任务状态',
+            'Workspace status': '工作区状态',
+            Tasks: '任务数',
+            Dispatchable: '可派发',
+            Running: '运行中',
+            Completed: '已完成',
+            Blocked: '阻塞',
+            Invalid: '无效',
+            Branch: '分支',
+            Head: 'HEAD',
+            Dirty: '有未提交变更',
+            Repository: '仓库',
+            Available: '可用',
+            'Current worktree': '当前 worktree',
+            'Recommended branch': '建议分支',
+            'Recommended path': '建议路径',
+            'Base ref': '基准引用',
+            Remote: '远端',
+            'Target branch': '目标分支',
+            Required: '必选',
+            Question: '问题',
+            'Recommended option': '推荐选项',
+            'Selected option': '已选选项',
+            Total: '总数',
+            Selected: '已选择',
+            Skipped: '已跳过',
+            Reason: '原因',
+            Command: '命令',
+            'Dispatch ID': '派发 ID',
+            'Reviewer role': '评审角色',
+            Document: '文档',
+            'Document readiness': '文档就绪状态',
+            'Review artifact': '评审 artifact',
+            Record: '记录',
+            'Record path': '记录路径',
+            'Packet path': '包路径',
+            'Completion command': '完成命令',
+            Summary: '摘要',
+            'Read context': '读取上下文',
+            'Edit files': '编辑文件',
+            'Run commands': '运行命令',
+            'Track plan': '跟踪计划',
+            'Dispatch workers': '派发 workers',
+            'Record completion': '记录完成',
+            'Capability tier': '能力层级',
+            'Recommended target': '推荐目标',
+            Role: '角色',
+        };
+        return labels[label] || null;
+    }
+    localizeZhReportValue(value) {
+        const trimmed = value.trim();
+        const exactValues = {
+            yes: '是',
+            no: '否',
+            present: '存在',
+            missing: '缺失',
+            'not recorded': '未记录',
+            None: '无',
+            none: '无',
+            ready: '就绪',
+            draft: '草稿',
+            empty: '空',
+            unknown: '未知',
+            complete: '完成',
+            incomplete: '未完成',
+            true: 'true',
+            false: 'false',
+        };
+        if (exactValues[trimmed]) {
+            return exactValues[trimmed];
+        }
+        return value
+            .replace(/\byes\b/gu, '是')
+            .replace(/\bno\b/gu, '否')
+            .replace(/\bpresent\b/gu, '存在')
+            .replace(/\bmissing\b/gu, '缺失')
+            .replace(/\bnot recorded\b/gu, '未记录')
+            .replace(/\bNone\b/gu, '无')
+            .replace(/\bchecklist complete\b/gu, '清单已完成')
+            .replace(/\bchecklist incomplete\b/gu, '清单未完成')
+            .replace(/\brecord\(s\)\b/gu, '条记录')
+            .replace(/\brequired\b/gu, '必选')
+            .replace(/\boptional\b/gu, '可选')
+            .replace(/\bselected\b/gu, '已选择')
+            .replace(/\bskipped\b/gu, '已跳过');
+    }
+    localizeZhBoundarySentence(line) {
+        const sentences = {
+            '- This command writes a bootstrap snapshot only.': '- 此命令只写入启动快照。',
+            '- It does not launch workers, sync worker status, run tests, inspect git, finalize, archive, push, merge, or edit project source files.': '- 它不会启动 worker、同步 worker 状态、运行测试、检查 git、finalize、archive、push、merge 或编辑项目源码。',
+            '- Use it when starting or resuming one active change so the next safe action is explicit.': '- 在开始或恢复一个活跃变更时使用它，让下一步安全动作保持明确。',
+            '- This route writes workflow recommendation artifacts only.': '- 此路由只写入工作流建议 artifacts。',
+            '- It does not edit project source files, dispatch workers, run tests, merge branches, or delete worktrees.': '- 它不会编辑项目源码、派发 worker、运行测试、合并分支或删除 worktree。',
+            '- If the top recommendation is a user decision, present the decision prompt before continuing.': '- 如果首要建议是用户决策，继续前先展示决策提示。',
+            '- This command writes a launch preparation plan only.': '- 此命令只写入启动准备计划。',
+            '- Record worker completion with `ospec execute complete`; do not rely on chat history as the durable state.': '- 使用 `ospec execute complete` 记录 worker 完成状态；不要把聊天历史当成持久状态。',
+            '- This command writes a handoff guide only.': '- 此命令只写入交接指南。',
+            '- Use it when a change moves between agents, tools, shells, worktrees, or human operators.': '- 当变更需要在 agent、工具、shell、worktree 或人工操作者之间移交时使用它。',
+            '- This artifact records a user-facing decision gate only.': '- 此 artifact 只记录面向用户的决策门。',
+            '- It does not edit project source files, dispatch workers, run tests, or approve review artifacts.': '- 它不会编辑项目源码、派发 worker、运行测试或批准评审 artifacts。',
+            '- Required pending decisions block worker dispatch and finish readiness until selected or skipped.': '- 待处理的必选决策会阻止 worker 派发和 finish 就绪，直到被选择或跳过。',
+            '- This index summarizes user decision artifacts only.': '- 此索引只汇总用户决策 artifacts。',
+        };
+        return sentences[line] || line;
     }
     async findProjectRoot(startPath) {
         let currentPath = path.resolve(startPath);
@@ -4284,9 +4635,9 @@ class TaskGraphExecutionService {
         }
         return 'Worktree removal completed. Confirm branch and remote cleanup manually if needed; OSpec did not delete branches.';
     }
-    getFinishPlanNextInstruction(status) {
+    getFinishPlanNextInstruction(status, finalizeCommand) {
         if (status === 'ready') {
-            return 'Review the generated finish commands, run fresh verification manually, then finalize/archive and handle git push, PR, merge, or worktree cleanup outside OSpec.';
+            return `Run ${finalizeCommand} to verify and archive the completed change. Use ospec archive --check only when you need a dry-run preview; do not stop after a passing dry run unless the user requested preview-only.`;
         }
         if (status === 'blocked') {
             return 'Resolve the listed blockers, rerun verification, and regenerate this finish plan before final closeout.';
@@ -5474,7 +5825,7 @@ class TaskGraphExecutionService {
             completionStatus: null,
         };
         await this.writeWorkerRunRecord(input.changePath, record);
-        await this.fileService.writeFile(reportPath, this.buildWorkerRunReport(record));
+        await this.writeLocalizedReportFile(input.changePath, reportPath, this.buildWorkerRunReport(record));
         return {
             changePath: input.changePath,
             recordPath,
@@ -5551,7 +5902,7 @@ class TaskGraphExecutionService {
     }
     async writeWorkerRunRecord(changePath, record) {
         await this.fileService.writeJSON(path.join(changePath, record.recordPath), record);
-        await this.fileService.writeFile(path.join(changePath, record.reportPath), this.buildWorkerRunReport(record));
+        await this.writeLocalizedReportFile(changePath, path.join(changePath, record.reportPath), this.buildWorkerRunReport(record));
     }
     async findWorkerRunRecord(changePath, options = {}) {
         const runDir = path.join(changePath, 'artifacts', 'agents', WORKER_RUNS_DIR);
@@ -7122,6 +7473,7 @@ class TaskGraphExecutionService {
             '',
             '- This command writes a finish preparation plan only.',
             '- It does not run verification, finalize, archive, git push, git merge, git checkout, or git worktree remove.',
+            '- When status is ready, run the suggested `ospec finalize ...` command; `ospec archive ... --check` is a dry-run preview only and does not close the change.',
             '- Treat generated git commands as review prompts; run them manually only after verifying the blockers and warnings.',
             '',
         ].join('\n');
