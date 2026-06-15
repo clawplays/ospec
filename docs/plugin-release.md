@@ -52,6 +52,16 @@ You can also run the workflow manually with `workflow_dispatch` and pass:
 - `expected_version` (optional)
 - `ref` (optional)
 
+## Evidence-Gated Plugin Checklist
+
+For Checkpoint or any plugin that contributes archive gates, release readiness must include runtime evidence checks, not only package metadata:
+
+1. Run `npm run plugins:check -- --plugin <id>`.
+2. For Checkpoint changes, run `ospec plugins doctor checkpoint [path]` and fix `routes.yaml` / `flows.yaml` diagnostics before publishing.
+3. Confirm the plugin records evidence coverage for screenshots, traces, visual diffs, routes, flows, assertions, console events, network events, and accessibility checks when those steps are active.
+4. Confirm missing baselines or missing runtime evidence produce actionable repair guidance instead of a generic pass/fail message.
+5. Run a project-level `ospec verify [changes/active/<change>]` and `ospec archive [changes/active/<change>] --check` against a Checkpoint-enabled sample change before release when the plugin changes gate behavior.
+
 ## Adding a New Official Plugin
 
 1. Create `plugins/<id>/package.json`.

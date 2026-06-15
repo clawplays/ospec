@@ -247,14 +247,36 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                             ? 'Checkpoint gate passed'
                             : `Checkpoint gate status is ${gate.status || '(missing)'}`,
                     });
+                    const evidenceStatus = gate.evidence?.status || 'missing';
+                    const evidenceMissing = Array.isArray(gate.evidence?.missing)
+                        ? gate.evidence.missing.map((item) => String(item || '').trim()).filter(Boolean)
+                        : [];
+                    checks.push({
+                        name: 'checkpoint.evidence.status',
+                        status: evidenceStatus === 'complete' ? 'pass' : 'fail',
+                        message: evidenceStatus === 'complete'
+                            ? 'Checkpoint evidence coverage is complete'
+                            : `Checkpoint evidence coverage is ${evidenceStatus}; missing ${evidenceMissing.length > 0 ? evidenceMissing.join(', ') : 'coverage metadata'}`,
+                    });
                     for (const stepName of activeCheckpointSteps) {
                         const stepStatus = gate.steps?.[stepName]?.status || 'missing';
+                        const stepEvidenceStatus = gate.evidence?.by_step?.[stepName]?.status || 'missing';
+                        const stepMissing = Array.isArray(gate.evidence?.by_step?.[stepName]?.missing)
+                            ? gate.evidence.by_step[stepName].missing.map((item) => String(item || '').trim()).filter(Boolean)
+                            : [];
                         checks.push({
                             name: `checkpoint.${stepName}`,
                             status: stepStatus === 'passed' ? 'pass' : 'fail',
                             message: stepStatus === 'passed'
                                 ? `${stepName} passed`
                                 : `${stepName} status is ${stepStatus}`,
+                        });
+                        checks.push({
+                            name: `checkpoint.${stepName}.evidence`,
+                            status: stepEvidenceStatus === 'complete' ? 'pass' : 'fail',
+                            message: stepEvidenceStatus === 'complete'
+                                ? `${stepName} evidence coverage is complete`
+                                : `${stepName} evidence coverage is ${stepEvidenceStatus}; missing ${stepMissing.length > 0 ? stepMissing.join(', ') : 'coverage metadata'}`,
                         });
                     }
                 }

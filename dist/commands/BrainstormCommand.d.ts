@@ -5,6 +5,7 @@ interface BrainstormArgs {
     changeName?: string;
     output?: string;
     visual: boolean;
+    decisionGates: boolean;
 }
 export declare class BrainstormCommand extends BaseCommand {
     execute(...args: string[]): Promise<void>;
@@ -17,5 +18,9 @@ export declare class BrainstormCommand extends BaseCommand {
     private toFileSafeId;
     private printResult;
     private printHelp;
+    private buildDecisionGates;
+    private resolveDecisionGateChangePath;
+    private writeDecisionGates;
+    private quoteCommandArg;
 }
 export {};

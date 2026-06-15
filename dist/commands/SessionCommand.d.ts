@@ -14,6 +14,8 @@ interface SessionHookResult {
     projectPath: string;
     artifactPath: string;
     reportPath: string;
+    usingOSpecPath: string;
+    usingOSpecReportPath: string;
     sessionCommand: string;
     nextInstruction: string;
 }
@@ -29,8 +31,10 @@ export declare class SessionCommand extends BaseCommand {
     private readPreviousSessionCacheKey;
     private hashSessionCacheInput;
     private buildRecommendedCommands;
+    private buildSessionHookHarnessTargets;
     private renderSessionBrief;
     private renderSessionHook;
+    private renderUsingOSpec;
     private quoteShellArg;
     private printSessionBrief;
     private printSessionHook;

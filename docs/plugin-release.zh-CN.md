@@ -52,6 +52,16 @@ workflow 仍然保留了 `id-token: write`，这样已经存在的包后续如�
 - `expected_version`（可选）
 - `ref`（可选）
 
+## Evidence Gate 插件发布清单
+
+对 Checkpoint 或任何会参与 archive gate 的插件，发布前不能只检查包元数据，还必须检查运行时证据：
+
+1. 运行 `npm run plugins:check -- --plugin <id>`
+2. 对 Checkpoint 相关变更，运行 `ospec plugins doctor checkpoint [path]`，并在发布前修复 `routes.yaml` / `flows.yaml` 诊断结果。
+3. 确认 active steps 下会记录 screenshots、traces、visual diffs、routes、flows、assertions、console events、network events 和 accessibility checks 的 evidence coverage。
+4. 确认 baseline 缺失或 runtime evidence 缺失时会输出可操作的修复建议，而不是只有泛化的 pass/fail 信息。
+5. 如果插件变更影响 gate 行为，用启用 Checkpoint 的 sample change 跑一遍 `ospec verify [changes/active/<change>]` 和 `ospec archive [changes/active/<change>] --check`。
+
 ## 新增官方插件
 
 1. 创建 `plugins/<id>/package.json`

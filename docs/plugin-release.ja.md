@@ -52,6 +52,16 @@ workflow には `id-token: write` も残してあるので、既存パッケー�
 - `expected_version`（任意）
 - `ref`（任意）
 
+## Evidence Gate 付きプラグイン公開チェック
+
+Checkpoint、または archive gate に関わるプラグインでは、公開前に package metadata だけでなく runtime evidence も確認します。
+
+1. `npm run plugins:check -- --plugin <id>` を実行する
+2. Checkpoint 関連の変更では `ospec plugins doctor checkpoint [path]` を実行し、公開前に `routes.yaml` / `flows.yaml` の診断を修正する
+3. active steps で screenshots、traces、visual diffs、routes、flows、assertions、console events、network events、accessibility checks の evidence coverage が記録されることを確認する
+4. baseline または runtime evidence が不足している場合、汎用的な pass/fail ではなく具体的な修復手順が出ることを確認する
+5. gate behavior を変える場合は、Checkpoint を有効化した sample change で `ospec verify [changes/active/<change>]` と `ospec archive [changes/active/<change>] --check` を実行する
+
 ## 新しい公式プラグインを追加する場合
 
 1. `plugins/<id>/package.json` を作成する

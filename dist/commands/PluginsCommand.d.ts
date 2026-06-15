@@ -25,6 +25,7 @@ export declare class PluginsCommand extends BaseCommand {
     private doctorPlugin;
     private doctorStitch;
     private doctorCheckpoint;
+    private inspectCheckpointYamlFile;
     private doctorExternalPlugin;
     private getExternalPluginHookConfig;
     private executeExternalPluginHook;
@@ -53,6 +54,10 @@ export declare class PluginsCommand extends BaseCommand {
     private loadOrCreateStitchApproval;
     private parseCheckpointRunnerOutput;
     private normalizeCheckpointRunnerResult;
+    private buildCheckpointEvidenceCoverage;
+    private buildCheckpointEvidenceSummaryMarkdown;
+    private buildCheckpointGateSummaryAppendix;
+    private appendCheckpointGateSummaryMarkdown;
     private buildCheckpointSummaryMarkdown;
     private writeCheckpointArtifacts;
     private syncCheckpointOptionalSteps;

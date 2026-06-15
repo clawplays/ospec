@@ -50,6 +50,8 @@ const WORKTREE_PLAN_REPORT_FILE = 'worktree-plan.md';
 const WORKTREE_RUNS_DIR = 'worktree-runs';
 const FINISH_PLAN_FILE = 'finish-plan.json';
 const FINISH_PLAN_REPORT_FILE = 'finish-plan.md';
+const WORKFLOW_ROUTE_FILE = 'workflow-route.json';
+const WORKFLOW_ROUTE_REPORT_FILE = 'workflow-route.md';
 const BOOTSTRAP_FILE = 'bootstrap.json';
 const BOOTSTRAP_REPORT_FILE = 'bootstrap.md';
 const HANDOFF_FILE = 'handoff.json';
@@ -60,6 +62,9 @@ const WORKER_RUNS_DIR = 'worker-runs';
 const REVIEW_RUNS_DIR = 'review-runs';
 const ORCHESTRATION_RUNS_DIR = 'orchestration-runs';
 const RETRIES_DIR = 'retries';
+const DECISIONS_DIR = 'decisions';
+const DECISIONS_INDEX_FILE = 'index.json';
+const DECISIONS_INDEX_REPORT_FILE = 'index.md';
 const TASK_REVIEWS_DIR = 'tasks';
 const REVIEW_FEEDBACK_PLAN_FILE = 'review-feedback-plan.json';
 const REVIEW_FEEDBACK_PLAN_REPORT_FILE = 'review-feedback-plan.md';
@@ -169,6 +174,24 @@ function buildWorkerTargetToolMapping(target) {
             trackPlan: 'Keep OpenCode task state secondary to OSpec artifacts.',
             dispatchWorkers: 'Default to OpenCode native @mention subagent dispatch. Dispatch independent packets in parallel when safe. Use CLI fallback only when the OpenCode agent mechanism is unavailable.',
             recordCompletion: 'Record each native agent result with ospec execute complete and sync worker status.',
+        },
+        cursor: {
+            target,
+            readContext: 'Load the OSpec change files, using-ospec hook artifact, and dispatch packet into Cursor Agent context before editing.',
+            editFiles: 'Use Cursor Agent or task/chat handoff for scoped edits; keep packet target files as the default write set.',
+            runCommands: 'Run only packet verification commands through the Cursor-controlled terminal or record why they could not run.',
+            trackPlan: 'Keep Cursor plan/chat state secondary to artifacts/agents/task-graph.json and worker-status.md.',
+            dispatchWorkers: 'Default to Cursor-native agent/task handoff when available. Use one worker context per dispatch packet and use CLI fallback only when Cursor cannot run a separate agent context.',
+            recordCompletion: 'Record Cursor worker results with ospec execute complete, and use NEEDS_CONTEXT or BLOCKED when the agent needs a user or environment decision.',
+        },
+        copilot: {
+            target,
+            readContext: 'Load the dispatch packet and core OSpec change artifacts into GitHub Copilot CLI or Copilot coding-agent context before editing.',
+            editFiles: 'Use Copilot coding-agent/task context for scoped edits; keep packet target files as the default write set.',
+            runCommands: 'Run packet verification commands only when the Copilot harness exposes an approved terminal or CI handoff.',
+            trackPlan: 'Keep Copilot task state secondary to OSpec artifacts and record every accepted result back into OSpec.',
+            dispatchWorkers: 'Default to Copilot-native task/agent handoff when available. Use CLI fallback only when the current Copilot surface lacks a native task mechanism.',
+            recordCompletion: 'Record Copilot results with ospec execute complete and keep review/verification evidence aligned.',
         },
         shell: {
             target,
@@ -312,6 +335,9 @@ function tasksConflict(left, right) {
     if (leftTargets.some(leftPath => rightTargets.some(rightPath => taskPathsOverlap(leftPath, rightPath)))) {
         return true;
     }
+    if (leftTargets.some(leftPath => rightTargets.some(rightPath => taskPathsShareModule(leftPath, rightPath)))) {
+        return true;
+    }
     const leftConflicts = left.conflictsWith.map(normalizeTaskPath).filter(Boolean);
     const rightConflicts = right.conflictsWith.map(normalizeTaskPath).filter(Boolean);
     if (leftConflicts.some(conflict => rightTargets.some(target => taskPathsOverlap(conflict, target)))) {
@@ -333,6 +359,32 @@ function taskPathsOverlap(leftPath, rightPath) {
     return leftPath === rightPath
         || leftPath.startsWith(`${rightPath}/`)
         || rightPath.startsWith(`${leftPath}/`);
+}
+function taskPathsShareModule(leftPath, rightPath) {
+    const leftKey = taskPathModuleKey(leftPath);
+    const rightKey = taskPathModuleKey(rightPath);
+    return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+function taskPathModuleKey(filePath) {
+    const normalized = normalizeTaskPath(filePath);
+    if (!normalized || normalized.endsWith('/')) {
+        return null;
+    }
+    const extension = path.posix.extname(normalized);
+    if (!extension) {
+        return null;
+    }
+    const parent = path.posix.dirname(normalized);
+    const baseName = path.posix.basename(normalized, extension)
+        .replace(/\.(test|spec|stories?|d)$/u, '')
+        .replace(/[-_.](test|spec|stories?)$/u, '');
+    if (!parent || parent === '.' || !baseName) {
+        return null;
+    }
+    const normalizedParent = parent
+        .replace(/^(src|dist)\//u, '')
+        .replace(/^(tests?|__tests__)\//u, '');
+    return `${normalizedParent}/${baseName}`;
 }
 class TaskGraphExecutionService {
     constructor(fileService) {
@@ -423,11 +475,16 @@ class TaskGraphExecutionService {
                 blockedTasks.push({ task, reasons });
             }
         }
-        const dispatchableTasks = this.selectDispatchableTasks(readyTasks, runningTasks);
+        const feature = typeof graph.feature === 'string' && graph.feature.trim().length > 0 ? graph.feature.trim() : path.basename(resolvedChangePath);
+        const decisions = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
+        const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
+        const dispatchableTasks = decisions.pendingRequired > 0 || decisions.blockers.length > 0
+            ? []
+            : this.selectDispatchableTasks(readyTasks, runningTasks);
         return {
             changePath: resolvedChangePath,
             graphPath,
-            feature: typeof graph.feature === 'string' && graph.feature.trim().length > 0 ? graph.feature.trim() : path.basename(resolvedChangePath),
+            feature,
             graphStatus: typeof graph.status === 'string' && graph.status.trim().length > 0 ? graph.status.trim() : 'unknown',
             taskCount: tasks.length,
             readyTasks,
@@ -437,10 +494,14 @@ class TaskGraphExecutionService {
             concernTasks,
             blockedTasks,
             invalidTasks,
+            decisions,
+            checkpointEvidence,
             issues,
             nextInstruction: this.getNextInstruction({
                 issues,
                 invalidTasks,
+                decisions,
+                checkpointEvidence,
                 dispatchableTasks,
                 runningTasks,
                 blockedTasks,
@@ -455,6 +516,12 @@ class TaskGraphExecutionService {
         const report = await this.getReport(resolvedChangePath);
         if (report.issues.length > 0 || report.invalidTasks.length > 0) {
             throw new Error('Cannot dispatch tasks until task graph issues and invalid tasks are resolved.');
+        }
+        if (report.decisions.pendingRequired > 0) {
+            throw new Error(`Cannot dispatch tasks while ${report.decisions.pendingRequired} required user decision(s) are pending. ${report.decisions.nextInstruction}`);
+        }
+        if (report.decisions.blockers.length > 0) {
+            throw new Error(`Cannot dispatch tasks while user decision artifacts need repair: ${report.decisions.blockers.join('; ')}`);
         }
         if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit <= 0)) {
             throw new Error('Dispatch limit must be a positive integer.');
@@ -965,10 +1032,16 @@ class TaskGraphExecutionService {
             : blockers.length > 0
                 ? rounds.length > 0 ? 'partial' : 'blocked'
                 : 'completed';
+        const failedTasks = this.buildOrchestrationFailedTasks({
+            changePath: resolvedChangePath,
+            projectRoot,
+            rounds,
+        });
         const nextInstruction = this.getOrchestrationNextInstruction(status, {
             changePath: resolvedChangePath,
             projectRoot,
             rounds,
+            failedTasks,
             blockers,
         });
         const artifact = {
@@ -991,6 +1064,7 @@ class TaskGraphExecutionService {
             commandSource: commandResolution.source,
             workspaceStatus,
             rounds,
+            failedTasks,
             blockers,
             warnings,
             nextInstruction,
@@ -1004,6 +1078,7 @@ class TaskGraphExecutionService {
             reportPath,
             status,
             rounds,
+            failedTasks,
             blockers,
             warnings,
             nextInstruction,
@@ -1325,6 +1400,16 @@ class TaskGraphExecutionService {
         const artifactPath = this.getReviewFeedbackPlanPath(resolvedChangePath);
         const reportPath = this.getReviewFeedbackPlanReportPath(resolvedChangePath);
         const reviewArtifactRelativePath = this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath);
+        const findings = this.extractReviewFindings(reviewDocument.content);
+        const userDecisionGate = await this.createReviewFeedbackDecisionGateIfNeeded({
+            changePath: resolvedChangePath,
+            stage,
+            decision,
+            action,
+            findings,
+            reviewArtifactPath: reviewArtifactRelativePath,
+            summary: options.summary,
+        });
         const plan = {
             version: '1.0',
             feature: report.feature,
@@ -1337,9 +1422,12 @@ class TaskGraphExecutionService {
             artifactPath: this.toChangeRelativePath(resolvedChangePath, artifactPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
             summary: options.summary?.trim() || null,
-            findings: this.extractReviewFindings(reviewDocument.content),
+            findings,
             recommendedActions: this.buildReviewFeedbackRecommendedActions(stage, decision, action),
-            nextInstruction: this.buildReviewFeedbackNextInstruction(stage, decision, action),
+            userDecisionGate,
+            nextInstruction: userDecisionGate.status === 'created' || userDecisionGate.status === 'pending'
+                ? userDecisionGate.nextInstruction || this.buildReviewFeedbackNextInstruction(stage, decision, action)
+                : this.buildReviewFeedbackNextInstruction(stage, decision, action),
         };
         await this.fileService.writeJSON(artifactPath, plan);
         await this.fileService.writeFile(reportPath, this.buildReviewFeedbackPlanReport(plan));
@@ -1350,7 +1438,84 @@ class TaskGraphExecutionService {
             stage,
             decision,
             action,
+            userDecisionGate,
             nextInstruction: plan.nextInstruction,
+        };
+    }
+    async recordUserDecision(changePath, options) {
+        const resolvedChangePath = path.resolve(changePath);
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const feature = await this.readFeatureName(resolvedChangePath);
+        const now = new Date().toISOString();
+        const question = options.question?.trim();
+        const selectedOptionId = options.selectOptionId?.trim();
+        const id = this.toFileSafeId(options.id || question || selectedOptionId || 'decision');
+        if (!id) {
+            throw new Error('Decision requires --id or --question.');
+        }
+        const recordPath = this.getUserDecisionRecordPath(resolvedChangePath, id);
+        const reportPath = this.getUserDecisionReportPath(resolvedChangePath, id);
+        const existing = await this.readUserDecisionRecord(recordPath);
+        if (!question && !existing) {
+            throw new Error('Decision creation requires --question. Selecting an existing decision requires --id.');
+        }
+        const nextOptions = options.options && options.options.length > 0
+            ? this.normalizeUserDecisionOptions(options.options)
+            : existing?.options || [];
+        if (question && nextOptions.length < 2) {
+            throw new Error('Decision creation requires at least two --option values.');
+        }
+        const recommendedOptionId = options.recommendedOptionId?.trim()
+            || existing?.recommendedOptionId
+            || null;
+        if (recommendedOptionId && nextOptions.length > 0 && !nextOptions.some(item => item.id === recommendedOptionId)) {
+            throw new Error(`Recommended decision option not found: ${recommendedOptionId}`);
+        }
+        if (selectedOptionId && nextOptions.length > 0 && !nextOptions.some(item => item.id === selectedOptionId)) {
+            throw new Error(`Selected decision option not found: ${selectedOptionId}`);
+        }
+        if (options.skip && selectedOptionId) {
+            throw new Error('Decision cannot combine --skip with --select.');
+        }
+        const required = options.required ?? existing?.required ?? true;
+        const status = selectedOptionId
+            ? 'SELECTED'
+            : options.skip
+                ? 'SKIPPED'
+                : existing?.status === 'SELECTED' && !question
+                    ? 'SELECTED'
+                    : 'PENDING';
+        const record = {
+            version: '1.0',
+            feature,
+            id,
+            status,
+            required,
+            question: question || existing?.question || '',
+            options: nextOptions,
+            recommendedOptionId,
+            selectedOptionId: options.skip ? null : selectedOptionId || existing?.selectedOptionId || null,
+            summary: options.summary?.trim() || existing?.summary || null,
+            createdAt: existing?.createdAt || now,
+            updatedAt: now,
+            selectedAt: selectedOptionId || options.skip ? now : existing?.selectedAt || null,
+            recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
+            reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
+            nextInstruction: '',
+        };
+        record.nextInstruction = this.getUserDecisionNextInstruction(resolvedChangePath, projectRoot, record);
+        await this.fileService.writeJSON(recordPath, record);
+        await this.fileService.writeFile(reportPath, this.buildUserDecisionReport(record));
+        const snapshot = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
+        await this.writeUserDecisionIndex(resolvedChangePath, feature, snapshot);
+        return {
+            changePath: resolvedChangePath,
+            projectRoot,
+            recordPath,
+            reportPath,
+            decision: record,
+            snapshot,
+            nextInstruction: record.nextInstruction,
         };
     }
     async reviewDocument(changePath, options = {}) {
@@ -1464,6 +1629,11 @@ class TaskGraphExecutionService {
         const now = new Date().toISOString();
         const evidencePath = this.getTddEvidencePath(resolvedChangePath);
         const evidence = await this.readTddEvidence(evidencePath, report.feature);
+        this.validateTddEvidenceTransition(evidence.records, {
+            phase,
+            status,
+            summary: options.summary,
+        });
         const evidenceId = `tdd-${this.toFileSafeTimestamp(now)}-${phase}-${this.toFileSafeId(status.toLowerCase())}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', TDD_EVIDENCE_DIR, `${evidenceId}.json`);
         const reportPath = path.join(resolvedChangePath, 'artifacts', 'agents', TDD_EVIDENCE_DIR, `${evidenceId}.md`);
@@ -1502,18 +1672,26 @@ class TaskGraphExecutionService {
             throw new Error('Debug evidence requires a non-empty symptom.');
         }
         const status = this.normalizeDebugEvidenceStatus(options.status);
+        const phase = this.normalizeDebugEvidencePhase(options.phase, status, options);
         const rootCause = options.rootCause?.trim() || null;
-        if ((status === 'CONFIRMED' || status === 'FIXED') && !rootCause) {
+        if ((status === 'CONFIRMED' || status === 'FIXED') && (phase === 'isolate' || phase === 'fix' || phase === 'verify') && !rootCause) {
             throw new Error(`Debug evidence status ${status} requires --root-cause.`);
         }
+        this.validateDebugEvidencePhase({
+            phase,
+            status,
+            hypothesis: options.hypothesis,
+            rootCause,
+        });
         const now = new Date().toISOString();
         const evidencePath = this.getDebugEvidencePath(resolvedChangePath);
         const evidence = await this.readDebugEvidence(evidencePath, report.feature);
-        const evidenceId = `debug-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(status.toLowerCase())}`;
+        const evidenceId = `debug-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(phase)}-${this.toFileSafeId(status.toLowerCase())}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DEBUG_EVIDENCE_DIR, `${evidenceId}.json`);
         const reportPath = path.join(resolvedChangePath, 'artifacts', 'agents', DEBUG_EVIDENCE_DIR, `${evidenceId}.md`);
         const record = {
             id: evidenceId,
+            phase,
             symptom,
             hypothesis: options.hypothesis?.trim() || null,
             rootCause,
@@ -1526,6 +1704,7 @@ class TaskGraphExecutionService {
         };
         evidence.records.push(record);
         evidence.status = this.deriveDebugEvidenceStatus(evidence.records);
+        evidence.phases = this.buildDebugEvidencePhaseSnapshots(evidence.records);
         evidence.updatedAt = now;
         await this.fileService.writeJSON(recordPath, record);
         await this.fileService.writeFile(reportPath, this.buildDebugEvidenceReport(report, record));
@@ -1699,6 +1878,15 @@ class TaskGraphExecutionService {
             changePath: resolvedChangePath,
             projectRoot,
         });
+        const lifecycle = this.buildWorktreeLifecycle({
+            statusEntries,
+            worktrees,
+            recommendedBranch,
+            recommendedPath,
+            baseRef,
+            changePath: resolvedChangePath,
+            projectRoot,
+        });
         const status = !gitRepository
             ? 'unknown'
             : blockers.length > 0
@@ -1715,6 +1903,7 @@ class TaskGraphExecutionService {
             recommendedPath,
             baseRef,
             commands,
+            lifecycle,
             git: {
                 available: gitAvailable,
                 repository: gitRepository,
@@ -1931,6 +2120,13 @@ class TaskGraphExecutionService {
         const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), feature);
         const debugEvidence = await this.readDebugEvidence(this.getDebugEvidencePath(resolvedChangePath), feature);
+        const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
+        const userDecisions = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
+        if (userDecisions.pendingRequired > 0) {
+            blockers.push(`${userDecisions.pendingRequired} required user decision(s) are pending.`);
+        }
+        blockers.push(...userDecisions.blockers);
+        warnings.push(...userDecisions.warnings);
         if (verificationEvidence.status !== 'passed') {
             blockers.push(`Latest verification evidence is not passing (current: ${verificationEvidence.status}).`);
         }
@@ -1948,6 +2144,11 @@ class TaskGraphExecutionService {
         }
         else if (debugEvidence.status === 'skipped') {
             warnings.push('Debug evidence is skipped; confirm debugging was not applicable.');
+        }
+        if (checkpointEvidence.active && checkpointEvidence.status !== 'complete') {
+            blockers.push(`Checkpoint evidence coverage is not complete (current: ${checkpointEvidence.status}).`);
+            blockers.push(...checkpointEvidence.missing.map(item => `Checkpoint missing evidence: ${item}`));
+            warnings.push(...checkpointEvidence.nextActions);
         }
         const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
         let gitRoot = null;
@@ -1992,6 +2193,14 @@ class TaskGraphExecutionService {
             currentWorktree,
             worktrees,
         });
+        const decisionPrompts = this.buildFinishDecisionPrompts({
+            changePath: resolvedChangePath,
+            projectRoot,
+            currentBranch: branch,
+            targetBranch,
+            remote,
+            currentWorktree,
+        });
         const status = !gitRepository
             ? 'unknown'
             : blockers.length > 0
@@ -2007,17 +2216,21 @@ class TaskGraphExecutionService {
             targetBranch,
             remote,
             commands,
+            decisionPrompts,
             readiness: {
                 taskGraph: graphStatus,
                 implementer: implementerStatus,
                 specReview: specDecision,
                 qualityReview: qualityDecision,
                 controller: controllerStatus,
+                pendingRequiredDecisions: userDecisions.pendingRequired,
                 verificationChecklistComplete,
                 verificationEvidence: verificationEvidence.status,
                 tddEvidence: tddEvidence.status,
                 debugEvidence: debugEvidence.status,
+                checkpointEvidence: checkpointEvidence.status,
             },
+            checkpointEvidence,
             git: {
                 available: gitAvailable,
                 repository: gitRepository,
@@ -2041,12 +2254,60 @@ class TaskGraphExecutionService {
             artifactPath,
             reportPath,
             status,
+            checkpointEvidence,
             targetBranch,
             remote,
             commands,
+            decisionPrompts,
             blockers,
             warnings,
             nextInstruction: artifact.nextInstruction,
+        };
+    }
+    async routeWorkflow(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const feature = await this.readFeatureName(resolvedChangePath);
+        const generatedAt = new Date().toISOString();
+        await this.bootstrap(resolvedChangePath);
+        const bootstrapArtifact = await this.fileService.readJSON(this.getBootstrapPath(resolvedChangePath));
+        const recommendations = this.buildWorkflowRouteRecommendations(bootstrapArtifact);
+        const blockers = [...bootstrapArtifact.blockers];
+        const warnings = [...bootstrapArtifact.warnings];
+        const status = blockers.length > 0
+            ? 'blocked'
+            : recommendations.length > 0
+                ? 'ready'
+                : 'unknown';
+        const nextInstruction = recommendations[0]?.command
+            ? `Run ${recommendations[0].command}`
+            : recommendations[0]?.reason || bootstrapArtifact.nextInstruction;
+        const artifactPath = this.getWorkflowRoutePath(resolvedChangePath);
+        const reportPath = this.getWorkflowRouteReportPath(resolvedChangePath);
+        const artifact = {
+            version: '1.0',
+            feature,
+            status,
+            generatedAt,
+            changePath: resolvedChangePath,
+            projectRoot,
+            recommendations,
+            blockers,
+            warnings,
+            nextInstruction,
+        };
+        await this.fileService.writeJSON(artifactPath, artifact);
+        await this.fileService.writeFile(reportPath, this.buildWorkflowRouteReport(artifact));
+        return {
+            changePath: resolvedChangePath,
+            projectRoot,
+            artifactPath,
+            reportPath,
+            status,
+            recommendations,
+            blockers,
+            warnings,
+            nextInstruction,
         };
     }
     async bootstrap(changePath) {
@@ -2092,6 +2353,7 @@ class TaskGraphExecutionService {
         const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), feature);
         const debugEvidence = await this.readDebugEvidence(this.getDebugEvidencePath(resolvedChangePath), feature);
+        const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
         const implementerStatus = report
             ? this.deriveImplementerWorkerStatus(tasks, report)
             : 'PENDING';
@@ -2111,6 +2373,7 @@ class TaskGraphExecutionService {
         const worktree = await this.readBootstrapPlanSnapshot(this.getWorktreePlanPath(resolvedChangePath));
         const finish = await this.readBootstrapPlanSnapshot(this.getFinishPlanPath(resolvedChangePath));
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
+        const userDecisions = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
         const execution = {
             projectSession,
             taskGraph: {
@@ -2151,6 +2414,7 @@ class TaskGraphExecutionService {
             workspace,
             worktree,
             finish,
+            decisions: userDecisions,
             reviews: {
                 spec: specDecision,
                 quality: qualityDecision,
@@ -2162,6 +2426,8 @@ class TaskGraphExecutionService {
                 tddRecords: tddEvidence.records.length,
                 debug: debugEvidence.status,
                 debugRecords: debugEvidence.records.length,
+                debugPhases: debugEvidence.phases,
+                checkpoint: checkpointEvidence,
             },
             worker: {
                 implementer: implementerStatus,
@@ -2172,6 +2438,7 @@ class TaskGraphExecutionService {
             },
         };
         warnings.push(...projectSession.warnings);
+        warnings.push(...userDecisions.warnings);
         const decision = this.deriveBootstrapDecision({
             changePath: resolvedChangePath,
             projectRoot,
@@ -2201,6 +2468,7 @@ class TaskGraphExecutionService {
             artifactPath,
             reportPath,
             status: artifact.status,
+            checkpointEvidence,
             blockers,
             warnings,
             nextInstruction: artifact.nextInstruction,
@@ -2337,6 +2605,9 @@ class TaskGraphExecutionService {
         if (input.issues.length > 0 || input.invalidTasks.length > 0) {
             return 'Fix task graph schema and execution details before dispatch.';
         }
+        if (input.decisions.pendingRequired > 0 || input.decisions.blockers.length > 0) {
+            return input.decisions.nextInstruction;
+        }
         if (input.dispatchableTasks.length > 0) {
             return `Dispatch next task(s): ${input.dispatchableTasks.map(task => task.id).join(', ')}`;
         }
@@ -2348,12 +2619,194 @@ class TaskGraphExecutionService {
             return taskReviewInstruction;
         }
         if (input.completedTasks.length === input.taskCount && input.taskCount > 0) {
+            if (input.checkpointEvidence.active && input.checkpointEvidence.status !== 'complete') {
+                return input.checkpointEvidence.nextActions[0] || 'Complete Checkpoint evidence coverage before finish or archive.';
+            }
             return 'Task graph is complete. Continue with review, verification, and archive gates.';
         }
         if (input.blockedTasks.length > 0) {
             return 'Resolve blocked tasks or missing context before dispatch.';
         }
         return 'No dispatchable tasks found.';
+    }
+    async readCheckpointEvidenceSnapshot(changePath) {
+        const gatePath = path.join(changePath, 'artifacts', 'checkpoint', 'gate.json');
+        const resultPath = path.join(changePath, 'artifacts', 'checkpoint', 'result.json');
+        const summaryPath = path.join(changePath, 'artifacts', 'checkpoint', 'summary.md');
+        const activeSteps = await this.readActiveCheckpointSteps(changePath);
+        const emptyCounts = {
+            screenshots: 0,
+            traces: 0,
+            visualDiffs: 0,
+            routes: 0,
+            flows: 0,
+            assertions: 0,
+            consoleEvents: 0,
+            networkEvents: 0,
+            accessibility: 0,
+        };
+        if (activeSteps.length === 0) {
+            return {
+                active: false,
+                status: 'not_active',
+                gatePath,
+                resultPath,
+                summaryPath,
+                activeSteps: [],
+                gateStatus: 'not_active',
+                evidenceStatus: 'not_active',
+                ...emptyCounts,
+                missing: [],
+                nextActions: [],
+                steps: [],
+            };
+        }
+        if (!(await this.fileService.exists(gatePath))) {
+            const missing = ['artifacts/checkpoint/gate.json'];
+            return {
+                active: true,
+                status: 'missing',
+                gatePath,
+                resultPath,
+                summaryPath,
+                activeSteps,
+                gateStatus: 'missing',
+                evidenceStatus: 'missing',
+                ...emptyCounts,
+                missing,
+                nextActions: this.buildCheckpointEvidenceNextActions(missing, activeSteps),
+                steps: activeSteps.map(step => ({
+                    step,
+                    gateStatus: 'missing',
+                    evidenceStatus: 'missing',
+                    ...emptyCounts,
+                    missing: ['gate artifact'],
+                })),
+            };
+        }
+        const gate = await this.fileService.readJSON(gatePath);
+        const evidence = gate?.evidence && typeof gate.evidence === 'object' && !Array.isArray(gate.evidence)
+            ? gate.evidence
+            : {};
+        const toNumber = (value) => {
+            const numeric = Number(value);
+            return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+        };
+        const readStep = (step) => {
+            const stepGateStatus = typeof gate?.steps?.[step]?.status === 'string' ? gate.steps[step].status : 'missing';
+            const stepEvidence = evidence?.by_step?.[step] && typeof evidence.by_step[step] === 'object'
+                ? evidence.by_step[step]
+                : {};
+            return {
+                step,
+                gateStatus: stepGateStatus,
+                evidenceStatus: typeof stepEvidence.status === 'string' ? stepEvidence.status : 'missing',
+                screenshots: toNumber(stepEvidence.screenshots),
+                traces: toNumber(stepEvidence.traces),
+                visualDiffs: toNumber(stepEvidence.visual_diffs ?? stepEvidence.visualDiffs),
+                routes: toNumber(stepEvidence.routes),
+                flows: toNumber(stepEvidence.flows),
+                assertions: toNumber(stepEvidence.assertions),
+                consoleEvents: toNumber(stepEvidence.console_events ?? stepEvidence.consoleEvents),
+                networkEvents: toNumber(stepEvidence.network_events ?? stepEvidence.networkEvents),
+                accessibility: toNumber(stepEvidence.accessibility),
+                missing: Array.isArray(stepEvidence.missing)
+                    ? stepEvidence.missing.map(item => String(item || '').trim()).filter(Boolean)
+                    : [],
+            };
+        };
+        const steps = activeSteps.map(readStep);
+        const missing = Array.from(new Set([
+            ...(Array.isArray(evidence.missing) ? evidence.missing.map(item => String(item || '').trim()).filter(Boolean) : []),
+            ...steps.flatMap(step => step.missing.map(item => `${step.step}: ${item}`)),
+            ...(gate.status === 'passed' ? [] : [`gate status ${gate.status || 'missing'}`]),
+            ...(String(evidence.status || '') === 'complete' ? [] : [`evidence status ${evidence.status || 'missing'}`]),
+        ]));
+        const status = gate.status !== 'passed'
+            ? 'failed'
+            : String(evidence.status || '') === 'complete' && steps.every(step => step.evidenceStatus === 'complete')
+                ? 'complete'
+                : 'incomplete';
+        return {
+            active: true,
+            status,
+            gatePath,
+            resultPath,
+            summaryPath,
+            activeSteps,
+            gateStatus: typeof gate.status === 'string' ? gate.status : 'missing',
+            evidenceStatus: typeof evidence.status === 'string' ? evidence.status : 'missing',
+            screenshots: toNumber(evidence.screenshots),
+            traces: toNumber(evidence.traces),
+            visualDiffs: toNumber(evidence.visual_diffs ?? evidence.visualDiffs),
+            routes: toNumber(evidence.routes),
+            flows: toNumber(evidence.flows),
+            assertions: toNumber(evidence.assertions),
+            consoleEvents: toNumber(evidence.console_events ?? evidence.consoleEvents),
+            networkEvents: toNumber(evidence.network_events ?? evidence.networkEvents),
+            accessibility: toNumber(evidence.accessibility),
+            missing,
+            nextActions: this.buildCheckpointEvidenceNextActions(missing, activeSteps),
+            steps,
+        };
+    }
+    async readActiveCheckpointSteps(changePath) {
+        const verificationPath = path.join(changePath, constants_1.FILE_NAMES.VERIFICATION);
+        if (!(await this.fileService.exists(verificationPath))) {
+            return [];
+        }
+        try {
+            const verification = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(verificationPath));
+            const optionalSteps = Array.isArray(verification.data.optional_steps)
+                ? verification.data.optional_steps
+                : [];
+            return optionalSteps
+                .map(step => String(step || '').trim())
+                .filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
+        }
+        catch {
+            return [];
+        }
+    }
+    buildCheckpointEvidenceNextActions(missing, activeSteps) {
+        const normalized = missing.map(item => item.toLowerCase());
+        const actions = [];
+        const add = (action) => {
+            if (!actions.includes(action)) {
+                actions.push(action);
+            }
+        };
+        if (normalized.some(item => item.includes('gate'))) {
+            add('Run `ospec plugins run checkpoint <change-path>` to create artifacts/checkpoint/gate.json, result.json, and summary.md.');
+        }
+        if (activeSteps.includes('checkpoint_ui_review') && normalized.some(item => item.includes('route'))) {
+            add('Add changed pages to `.ospec/plugins/checkpoint/routes.yaml` with required selectors and viewport coverage.');
+        }
+        if (activeSteps.includes('checkpoint_flow_check') && normalized.some(item => item.includes('flow'))) {
+            add('Add critical user paths to `.ospec/plugins/checkpoint/flows.yaml` with screenshots and assertions.');
+        }
+        if (normalized.some(item => item.includes('visual') || item.includes('baseline'))) {
+            add('Add or refresh visual baselines under `.ospec/plugins/checkpoint/baselines/`, then rerun Checkpoint.');
+        }
+        if (normalized.some(item => item.includes('screenshot'))) {
+            add('Configure route screenshots or flow `screenshot` steps, then rerun Checkpoint.');
+        }
+        if (normalized.some(item => item.includes('trace'))) {
+            add('Rerun Checkpoint with the Playwright adapter so trace artifacts are written under `artifacts/checkpoint/traces/`.');
+        }
+        if (normalized.some(item => item.includes('assertion'))) {
+            add('Add flow assertions such as `assert_text`, `assert_url`, `api_assertions`, or `assert_command`.');
+        }
+        if (normalized.some(item => item.includes('console') || item.includes('network'))) {
+            add('Enable console/network capture in Checkpoint evidence and rerun the gate.');
+        }
+        if (normalized.some(item => item.includes('accessibility') || item.includes('landmark') || item.includes('focus') || item.includes('keyboard'))) {
+            add('Add accessibility expectations such as landmarks, visible names, focus, keyboard reachability, or contrast checks.');
+        }
+        if (actions.length === 0 && activeSteps.length > 0) {
+            add('Inspect `artifacts/checkpoint/summary.md`, complete missing runtime evidence, then rerun Checkpoint.');
+        }
+        return actions;
     }
     getSessionPath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', EXECUTION_SESSION_FILE);
@@ -2397,6 +2850,12 @@ class TaskGraphExecutionService {
     getFinishPlanReportPath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', FINISH_PLAN_REPORT_FILE);
     }
+    getWorkflowRoutePath(changePath) {
+        return path.join(changePath, 'artifacts', 'agents', WORKFLOW_ROUTE_FILE);
+    }
+    getWorkflowRouteReportPath(changePath) {
+        return path.join(changePath, 'artifacts', 'agents', WORKFLOW_ROUTE_REPORT_FILE);
+    }
     getBootstrapPath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', BOOTSTRAP_FILE);
     }
@@ -2420,6 +2879,177 @@ class TaskGraphExecutionService {
     }
     getReviewFeedbackPlanReportPath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', REVIEW_FEEDBACK_PLAN_REPORT_FILE);
+    }
+    getUserDecisionDir(changePath) {
+        return path.join(changePath, 'artifacts', 'agents', DECISIONS_DIR);
+    }
+    getUserDecisionRecordPath(changePath, id) {
+        return path.join(this.getUserDecisionDir(changePath), `${this.toFileSafeId(id)}.json`);
+    }
+    getUserDecisionReportPath(changePath, id) {
+        return path.join(this.getUserDecisionDir(changePath), `${this.toFileSafeId(id)}.md`);
+    }
+    getUserDecisionIndexPath(changePath) {
+        return path.join(this.getUserDecisionDir(changePath), DECISIONS_INDEX_FILE);
+    }
+    getUserDecisionIndexReportPath(changePath) {
+        return path.join(this.getUserDecisionDir(changePath), DECISIONS_INDEX_REPORT_FILE);
+    }
+    async readUserDecisionRecord(recordPath) {
+        if (!(await this.fileService.exists(recordPath))) {
+            return null;
+        }
+        const raw = await this.fileService.readJSON(recordPath);
+        return this.normalizeUserDecisionRecord(raw, recordPath);
+    }
+    async readUserDecisionSnapshot(changePath, feature) {
+        const dirPath = this.getUserDecisionDir(changePath);
+        const indexPath = this.getUserDecisionIndexPath(changePath);
+        const indexReportPath = this.getUserDecisionIndexReportPath(changePath);
+        const exists = await this.fileService.exists(dirPath);
+        const decisions = [];
+        const blockers = [];
+        const warnings = [];
+        if (exists) {
+            const entries = await this.fileService.readDir(dirPath);
+            for (const entry of entries.filter(item => item.endsWith('.json') && item !== DECISIONS_INDEX_FILE).sort()) {
+                const recordPath = path.join(dirPath, entry);
+                try {
+                    const record = await this.readUserDecisionRecord(recordPath);
+                    if (!record) {
+                        continue;
+                    }
+                    decisions.push({
+                        id: record.id,
+                        status: record.status,
+                        required: record.required,
+                        question: record.question,
+                        recommendedOptionId: record.recommendedOptionId,
+                        selectedOptionId: record.selectedOptionId,
+                        reportPath: record.reportPath || this.toChangeRelativePath(changePath, this.getUserDecisionReportPath(changePath, record.id)),
+                    });
+                }
+                catch (error) {
+                    blockers.push(`Decision artifact ${entry} could not be read: ${error?.message || error}`);
+                    decisions.push({
+                        id: entry.replace(/\.json$/u, ''),
+                        status: 'INVALID',
+                        required: true,
+                        question: 'Invalid decision artifact',
+                        recommendedOptionId: null,
+                        selectedOptionId: null,
+                        reportPath: this.toChangeRelativePath(changePath, recordPath),
+                    });
+                }
+            }
+        }
+        const pendingRequired = decisions.filter(item => item.status === 'PENDING' && item.required).length;
+        const pendingOptional = decisions.filter(item => item.status === 'PENDING' && !item.required).length;
+        const selected = decisions.filter(item => item.status === 'SELECTED').length;
+        const skipped = decisions.filter(item => item.status === 'SKIPPED').length;
+        if (pendingOptional > 0) {
+            warnings.push(`${pendingOptional} optional user decision(s) are still pending.`);
+        }
+        const pendingIds = decisions
+            .filter(item => item.status === 'PENDING' && item.required)
+            .map(item => item.id);
+        const nextInstruction = pendingRequired > 0
+            ? `Ask the user to choose required decision(s): ${pendingIds.join(', ')}. Record the answer with ospec execute decision [change-path] --id <id> --select <option-id>.`
+            : decisions.length > 0
+                ? 'No required user decisions are pending. Continue with bootstrap, workspace, dispatch, review, or verification as appropriate.'
+                : 'No user decisions are recorded for this change.';
+        return {
+            exists,
+            dirPath,
+            indexPath: this.toChangeRelativePath(changePath, indexPath),
+            indexReportPath: this.toChangeRelativePath(changePath, indexReportPath),
+            total: decisions.length,
+            pendingRequired,
+            pendingOptional,
+            selected,
+            skipped,
+            decisions,
+            blockers,
+            warnings,
+            nextInstruction,
+        };
+    }
+    async writeUserDecisionIndex(changePath, feature, snapshot) {
+        const artifact = {
+            version: '1.0',
+            feature,
+            generatedAt: new Date().toISOString(),
+            changePath,
+            total: snapshot.total,
+            pendingRequired: snapshot.pendingRequired,
+            pendingOptional: snapshot.pendingOptional,
+            selected: snapshot.selected,
+            skipped: snapshot.skipped,
+            decisions: snapshot.decisions,
+            blockers: snapshot.blockers,
+            warnings: snapshot.warnings,
+            nextInstruction: snapshot.nextInstruction,
+        };
+        await this.fileService.writeJSON(this.getUserDecisionIndexPath(changePath), artifact);
+        await this.fileService.writeFile(this.getUserDecisionIndexReportPath(changePath), this.buildUserDecisionIndexReport(artifact));
+    }
+    normalizeUserDecisionRecord(raw, recordPath) {
+        const id = this.toFileSafeId(typeof raw?.id === 'string' ? raw.id : path.basename(recordPath, '.json'));
+        const statusValue = String(raw?.status || 'PENDING').toUpperCase();
+        const status = statusValue === 'SELECTED'
+            ? 'SELECTED'
+            : statusValue === 'SKIPPED'
+                ? 'SKIPPED'
+                : 'PENDING';
+        return {
+            version: typeof raw?.version === 'string' ? raw.version : '1.0',
+            feature: typeof raw?.feature === 'string' ? raw.feature : '',
+            id,
+            status,
+            required: raw?.required !== false,
+            question: typeof raw?.question === 'string' ? raw.question.trim() : '',
+            options: this.normalizeUserDecisionOptions(Array.isArray(raw?.options) ? raw.options : []),
+            recommendedOptionId: typeof raw?.recommendedOptionId === 'string' && raw.recommendedOptionId.trim()
+                ? raw.recommendedOptionId.trim()
+                : null,
+            selectedOptionId: typeof raw?.selectedOptionId === 'string' && raw.selectedOptionId.trim()
+                ? raw.selectedOptionId.trim()
+                : null,
+            summary: typeof raw?.summary === 'string' && raw.summary.trim() ? raw.summary.trim() : null,
+            createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
+            updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
+            selectedAt: typeof raw?.selectedAt === 'string' && raw.selectedAt.trim() ? raw.selectedAt.trim() : null,
+            recordPath: typeof raw?.recordPath === 'string' ? raw.recordPath : recordPath,
+            reportPath: typeof raw?.reportPath === 'string' ? raw.reportPath : recordPath.replace(/\.json$/u, '.md'),
+            nextInstruction: typeof raw?.nextInstruction === 'string' ? raw.nextInstruction : '',
+        };
+    }
+    normalizeUserDecisionOptions(options) {
+        const seen = new Set();
+        const normalized = [];
+        for (const option of options) {
+            const id = this.toFileSafeId(option.id || option.label);
+            if (!id || seen.has(id)) {
+                continue;
+            }
+            seen.add(id);
+            normalized.push({
+                id,
+                label: String(option.label || id).trim(),
+                description: String(option.description || '').trim(),
+            });
+        }
+        return normalized;
+    }
+    getUserDecisionNextInstruction(changePath, projectRoot, record) {
+        const relativeChangePath = this.toProjectRelativeChangePath(projectRoot, changePath);
+        if (record.status === 'PENDING') {
+            const optionText = record.options.length > 0
+                ? ` Choose one of: ${record.options.map(option => option.id).join(', ')}.`
+                : '';
+            return `Ask the user to decide "${record.question}".${optionText} Then run ospec execute decision ${this.quoteShellArg(relativeChangePath)} --id ${this.quoteShellArg(record.id)} --select <option-id>.`;
+        }
+        return `Decision ${record.id} is ${record.status}. Run ospec execute bootstrap ${this.quoteShellArg(relativeChangePath)} to continue with the next safe action.`;
     }
     async readVerificationEvidence(evidencePath, feature) {
         if (!(await this.fileService.exists(evidencePath))) {
@@ -2474,7 +3104,7 @@ class TaskGraphExecutionService {
         return {
             version: typeof evidence.version === 'string' ? evidence.version : '1.0',
             feature: typeof evidence.feature === 'string' && evidence.feature.trim() ? evidence.feature : feature,
-            status: this.isTddEvidenceSessionStatus(evidence.status) ? evidence.status : this.deriveTddEvidenceStatus(records),
+            status: this.deriveTddEvidenceStatus(records),
             updatedAt: typeof evidence.updatedAt === 'string' ? evidence.updatedAt : new Date().toISOString(),
             records,
         };
@@ -2500,25 +3130,37 @@ class TaskGraphExecutionService {
     isTddEvidencePhase(phase) {
         return phase === 'red' || phase === 'green' || phase === 'refactor';
     }
+    isDebugEvidencePhase(phase) {
+        return phase === 'reproduce'
+            || phase === 'isolate'
+            || phase === 'hypothesize'
+            || phase === 'fix'
+            || phase === 'verify';
+    }
     async readDebugEvidence(evidencePath, feature) {
         if (!(await this.fileService.exists(evidencePath))) {
+            const records = [];
             return {
                 version: '1.0',
                 feature,
                 status: 'pending',
                 updatedAt: new Date().toISOString(),
+                phases: this.buildDebugEvidencePhaseSnapshots(records),
                 records: [],
             };
         }
         const evidence = await this.fileService.readJSON(evidencePath);
         const records = Array.isArray(evidence.records)
-            ? evidence.records.filter(record => this.isDebugEvidenceRecord(record))
+            ? evidence.records
+                .filter(record => this.isDebugEvidenceRecord(record))
+                .map(record => this.normalizeDebugEvidenceRecord(record))
             : [];
         return {
             version: typeof evidence.version === 'string' ? evidence.version : '1.0',
             feature: typeof evidence.feature === 'string' && evidence.feature.trim() ? evidence.feature : feature,
             status: this.isDebugEvidenceSessionStatus(evidence.status) ? evidence.status : this.deriveDebugEvidenceStatus(records),
             updatedAt: typeof evidence.updatedAt === 'string' ? evidence.updatedAt : new Date().toISOString(),
+            phases: this.buildDebugEvidencePhaseSnapshots(records),
             records,
         };
     }
@@ -2536,6 +3178,31 @@ class TaskGraphExecutionService {
             && typeof value?.recordedAt === 'string'
             && typeof value?.recordPath === 'string'
             && typeof value?.reportPath === 'string';
+    }
+    normalizeDebugEvidenceRecord(value) {
+        const status = this.isDebugEvidenceStatus(value.status)
+            ? value.status
+            : this.normalizeDebugEvidenceStatus(value.status);
+        const phase = this.isDebugEvidencePhase(value.phase)
+            ? value.phase
+            : this.deriveDebugEvidencePhase(status, {
+                hypothesis: typeof value.hypothesis === 'string' ? value.hypothesis : undefined,
+                rootCause: typeof value.rootCause === 'string' ? value.rootCause : null,
+                command: typeof value.command === 'string' ? value.command : undefined,
+            });
+        return {
+            id: value.id,
+            phase,
+            symptom: value.symptom,
+            hypothesis: typeof value.hypothesis === 'string' && value.hypothesis.trim() ? value.hypothesis : null,
+            rootCause: typeof value.rootCause === 'string' && value.rootCause.trim() ? value.rootCause : null,
+            command: typeof value.command === 'string' && value.command.trim() ? value.command : null,
+            status,
+            recordedAt: value.recordedAt,
+            recordPath: value.recordPath,
+            reportPath: value.reportPath,
+            summary: typeof value.summary === 'string' && value.summary.trim() ? value.summary : null,
+        };
     }
     isDebugEvidenceStatus(status) {
         return status === 'CONFIRMED' || status === 'FIXED' || status === 'BLOCKED' || status === 'SKIPPED';
@@ -3159,8 +3826,10 @@ class TaskGraphExecutionService {
             ['handoffMarkdown', this.getHandoffReportPath(changePath), true],
             ['taskGraph', path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH), false],
             ['reviewFeedbackPlan', this.getReviewFeedbackPlanPath(changePath), false],
+            ['decisions', this.getUserDecisionDir(changePath), false],
             ['workspaceStatus', this.getWorkspaceStatusPath(changePath), false],
             ['worktreePlan', this.getWorktreePlanPath(changePath), false],
+            ['workflowRoute', this.getWorkflowRoutePath(changePath), false],
             ['executionSession', this.getSessionPath(changePath), false],
             ['blockerEscalations', path.join(changePath, 'artifacts', 'agents', BLOCKERS_DIR), false],
             ['workerStatus', path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.AGENT_WORKER_STATUS), false],
@@ -3245,6 +3914,18 @@ class TaskGraphExecutionService {
                 blockers,
                 warnings,
                 nextInstruction: 'Fix task graph schema and missing execution details before dispatch.',
+            };
+        }
+        if (input.execution.decisions.pendingRequired > 0 || input.execution.decisions.blockers.length > 0) {
+            blockers.push(...input.execution.decisions.blockers);
+            if (input.execution.decisions.pendingRequired > 0) {
+                blockers.push(`${input.execution.decisions.pendingRequired} required user decision(s) are pending.`);
+            }
+            return {
+                status: 'needs_decision',
+                blockers,
+                warnings,
+                nextInstruction: input.execution.decisions.nextInstruction,
             };
         }
         const graphComplete = input.execution.taskGraph.taskCount > 0
@@ -3389,6 +4070,17 @@ class TaskGraphExecutionService {
                 blockers,
                 warnings,
                 nextInstruction: 'Resolve debug evidence blockers before closeout.',
+            };
+        }
+        if (input.execution.evidence.checkpoint.active && input.execution.evidence.checkpoint.status !== 'complete') {
+            blockers.push(`Checkpoint evidence coverage is not complete (current: ${input.execution.evidence.checkpoint.status}).`);
+            blockers.push(...input.execution.evidence.checkpoint.missing.map(item => `Checkpoint missing evidence: ${item}`));
+            warnings.push(...input.execution.evidence.checkpoint.nextActions);
+            return {
+                status: 'needs_verification',
+                blockers,
+                warnings,
+                nextInstruction: input.execution.evidence.checkpoint.nextActions[0] || 'Complete Checkpoint evidence coverage before finish.',
             };
         }
         return {
@@ -3601,6 +4293,84 @@ class TaskGraphExecutionService {
         }
         return 'Finish readiness is unknown. Inspect OSpec artifacts and git state manually before archive, push, merge, or worktree cleanup.';
     }
+    buildWorkflowRouteRecommendations(artifact) {
+        const changeArg = this.quoteShellArg(this.toProjectRelativeChangePath(artifact.projectRoot, artifact.changePath));
+        const recommendations = [];
+        const add = (action, command, reason) => {
+            recommendations.push({
+                priority: recommendations.length + 1,
+                action,
+                command,
+                reason,
+            });
+        };
+        const pendingDecision = artifact.execution.decisions.decisions.find(decision => decision.status === 'PENDING' && decision.required);
+        if (pendingDecision) {
+            add('ask user decision', `ospec execute decision ${changeArg} --id ${this.quoteShellArg(pendingDecision.id)} --select <option-id>`, `Required decision "${pendingDecision.id}" is pending.`);
+            return recommendations;
+        }
+        if (artifact.status === 'needs_proposal') {
+            add('complete proposal', null, 'proposal.md is missing, empty, or still draft.');
+            return recommendations;
+        }
+        if (artifact.status === 'needs_design') {
+            add('complete design', null, 'design.md must be completed from the requirement and proposal before implementation planning.');
+            return recommendations;
+        }
+        if (artifact.status === 'needs_plan') {
+            add('complete implementation plan', null, 'implementation-plan.md must be completed from design.md before task graph derivation.');
+            return recommendations;
+        }
+        if (artifact.status === 'needs_task_graph') {
+            add('derive task graph', null, 'artifacts/agents/task-graph.json must be derived from implementation-plan.md before dispatch.');
+            return recommendations;
+        }
+        if (artifact.execution.session.activeDispatches.length > 0) {
+            const active = artifact.execution.session.activeDispatches[0];
+            add('launch active dispatch', `ospec execute launch ${changeArg} --task ${this.quoteShellArg(active.taskId)}`, `Dispatch ${active.id} is waiting for launch through the current harness.`);
+            return recommendations;
+        }
+        if (!artifact.execution.workspace.exists) {
+            add('inspect workspace', `ospec execute workspace ${changeArg}`, 'Workspace safety has not been recorded for this change.');
+            return recommendations;
+        }
+        if (artifact.execution.workspace.status === 'needs_isolation') {
+            add('plan isolated worktree', `ospec execute worktree ${changeArg}`, 'Workspace needs isolation before worker dispatch.');
+            return recommendations;
+        }
+        if (artifact.execution.taskGraph.dispatchable > 0) {
+            add('dispatch worker packet', artifact.execution.taskGraph.dispatchable === 1
+                ? `ospec execute dispatch ${changeArg} --limit 1`
+                : `ospec execute dispatch ${changeArg} --limit ${artifact.execution.taskGraph.dispatchable}`, `${artifact.execution.taskGraph.dispatchable} task(s) are dispatchable.`);
+            return recommendations;
+        }
+        if (artifact.execution.taskGraph.running > 0) {
+            add('collect worker result', `ospec execute launch ${changeArg}`, `${artifact.execution.taskGraph.running} task(s) are in progress; launch or collect the active worker result.`);
+            return recommendations;
+        }
+        if (artifact.execution.taskGraph.completed > 0 && artifact.execution.taskGraph.completed === artifact.execution.taskGraph.taskCount) {
+            if (!APPROVED_REVIEW_DECISIONS.has(artifact.execution.reviews.spec)) {
+                add('dispatch final spec review', `ospec execute review ${changeArg} --stage spec`, `Final spec review is ${artifact.execution.reviews.spec}.`);
+                return recommendations;
+            }
+            if (!APPROVED_REVIEW_DECISIONS.has(artifact.execution.reviews.quality)) {
+                add('dispatch final quality review', `ospec execute review ${changeArg} --stage quality`, `Final quality review is ${artifact.execution.reviews.quality}.`);
+                return recommendations;
+            }
+        }
+        if (artifact.execution.evidence.verification !== 'passed') {
+            add('record verification evidence', `ospec execute verify ${changeArg} --command <command> --status PASSED`, `Verification evidence is ${artifact.execution.evidence.verification}.`);
+            return recommendations;
+        }
+        if (!artifact.execution.finish.exists || artifact.execution.finish.status !== 'ready') {
+            add('write finish plan', `ospec execute finish ${changeArg}`, artifact.execution.finish.exists
+                ? `Finish plan status is ${artifact.execution.finish.status}.`
+                : 'Finish plan has not been recorded yet.');
+            return recommendations;
+        }
+        add('finalize change', `ospec finalize ${changeArg}`, 'Core workflow artifacts are ready for final closeout.');
+        return recommendations;
+    }
     normalizeWorktreeBranch(branch, safeFeature) {
         const candidate = branch?.trim() || `ospec/${safeFeature}`;
         return candidate.replace(/\s+/g, '-').replace(/[^a-zA-Z0-9/_-]+/g, '-').replace(/^-+|-+$/g, '') || `ospec/${safeFeature}`;
@@ -3618,6 +4388,57 @@ class TaskGraphExecutionService {
             `cd ${this.quoteShellArg(input.recommendedPath)}`,
             `ospec execute workspace ${this.quoteShellArg(relativeChangePath)}`,
             `ospec execute dispatch ${this.quoteShellArg(relativeChangePath)} --limit 1`,
+        ];
+    }
+    buildWorktreeLifecycle(input) {
+        const relativeChangePath = path.relative(input.projectRoot, input.changePath).replace(/\\/g, '/') || '.';
+        const dirty = input.statusEntries.length > 0;
+        const targetRegistered = input.worktrees.some(worktree => this.normalizeFilesystemPath(worktree.path) === this.normalizeFilesystemPath(input.recommendedPath));
+        return [
+            {
+                step: 'plan',
+                status: dirty ? 'blocked' : 'ready',
+                command: `ospec execute worktree ${this.quoteShellArg(relativeChangePath)} --branch ${this.quoteShellArg(input.recommendedBranch)} --path ${this.quoteShellArg(input.recommendedPath)} --base ${this.quoteShellArg(input.baseRef)}`,
+                guidance: dirty
+                    ? 'Commit, stash, or intentionally isolate current changes before creating a new worktree.'
+                    : 'Review the plan and generated command before creating the worktree.',
+            },
+            {
+                step: 'create',
+                status: dirty || targetRegistered ? 'blocked' : 'manual',
+                command: `ospec execute worktree ${this.quoteShellArg(relativeChangePath)} --create --branch ${this.quoteShellArg(input.recommendedBranch)} --path ${this.quoteShellArg(input.recommendedPath)} --base ${this.quoteShellArg(input.baseRef)}`,
+                guidance: 'Creation is explicit and limited to git worktree add; it does not dispatch workers.',
+            },
+            {
+                step: 'inspect',
+                status: 'pending',
+                command: `cd ${this.quoteShellArg(input.recommendedPath)} && ospec execute workspace ${this.quoteShellArg(relativeChangePath)}`,
+                guidance: 'Inspect the isolated worktree before dispatching worker packets from it.',
+            },
+            {
+                step: 'dispatch',
+                status: 'pending',
+                command: `ospec execute dispatch ${this.quoteShellArg(relativeChangePath)} --limit 1`,
+                guidance: 'Dispatch only after workspace inspection is ready and task graph state is dispatchable.',
+            },
+            {
+                step: 'finish',
+                status: 'pending',
+                command: `ospec execute finish ${this.quoteShellArg(relativeChangePath)}`,
+                guidance: 'Use finish planning before final verification, archive, PR, merge, or cleanup.',
+            },
+            {
+                step: 'cleanup',
+                status: 'manual',
+                command: `ospec execute worktree ${this.quoteShellArg(relativeChangePath)} --cleanup --path ${this.quoteShellArg(input.recommendedPath)}`,
+                guidance: 'Cleanup removes the worktree only after the change is merged or intentionally abandoned.',
+            },
+            {
+                step: 'branch-retention',
+                status: 'manual',
+                command: null,
+                guidance: 'Decide whether to retain, delete, or tag the branch after closeout; OSpec records the decision but does not delete branches automatically.',
+            },
         ];
     }
     buildFinishPlanCommands(input) {
@@ -3639,6 +4460,69 @@ class TaskGraphExecutionService {
         }
         return commands;
     }
+    buildFinishDecisionPrompts(input) {
+        const relativeChangePath = path.relative(input.projectRoot, input.changePath).replace(/\\/g, '/') || '.';
+        const changeArg = this.quoteShellArg(relativeChangePath);
+        const currentBranch = input.currentBranch || 'current branch';
+        const worktreePath = input.currentWorktree?.path || 'current worktree';
+        const prompts = [
+            {
+                id: 'finish-pr-strategy',
+                required: true,
+                question: `How should ${currentBranch} be prepared for review before closeout?`,
+                recommendedOptionId: 'open-pr',
+                options: [
+                    { id: 'open-pr', label: 'Open PR', description: `Push ${currentBranch} to ${input.remote} and open a PR against ${input.targetBranch}.` },
+                    { id: 'direct-closeout', label: 'Direct closeout', description: 'Skip PR only if the repository policy allows direct merge or local-only archive.' },
+                    { id: 'hold', label: 'Hold', description: 'Do not push or request review until a human explicitly revisits this finish plan.' },
+                ],
+            },
+            {
+                id: 'finish-merge-strategy',
+                required: true,
+                question: `After review, how should ${currentBranch} be integrated into ${input.targetBranch}?`,
+                recommendedOptionId: 'fast-forward',
+                options: [
+                    { id: 'fast-forward', label: 'Fast-forward', description: 'Use a fast-forward merge when history allows it.' },
+                    { id: 'squash', label: 'Squash merge', description: 'Squash the branch if the project prefers one commit per change.' },
+                    { id: 'manual', label: 'Manual merge', description: 'Let a maintainer choose the merge method outside OSpec.' },
+                ],
+            },
+            {
+                id: 'finish-branch-retention',
+                required: false,
+                question: `What should happen to branch ${currentBranch} after the change is archived?`,
+                recommendedOptionId: 'delete-after-merge',
+                options: [
+                    { id: 'delete-after-merge', label: 'Delete after merge', description: 'Delete the local and remote branch after merge and backup are confirmed.' },
+                    { id: 'retain', label: 'Retain branch', description: 'Keep the branch for audit, follow-up work, or release stabilization.' },
+                    { id: 'tag-then-delete', label: 'Tag then delete', description: 'Create a tag or release marker before deleting the branch.' },
+                ],
+            },
+            {
+                id: 'finish-worktree-cleanup',
+                required: false,
+                question: `When should ${worktreePath} be removed?`,
+                recommendedOptionId: 'after-archive',
+                options: [
+                    { id: 'after-archive', label: 'After archive', description: 'Remove the worktree after final verification, archive, merge, and backup checks.' },
+                    { id: 'keep-temporarily', label: 'Keep temporarily', description: 'Keep the worktree for manual smoke testing or release checks.' },
+                    { id: 'not-applicable', label: 'Not applicable', description: 'No isolated worktree is involved in this change.' },
+                ],
+            },
+        ];
+        return prompts.map(prompt => ({
+            ...prompt,
+            command: [
+                `ospec execute decision ${changeArg}`,
+                `--id ${this.quoteShellArg(prompt.id)}`,
+                `--question ${this.quoteShellArg(prompt.question)}`,
+                ...prompt.options.map(option => `--option ${this.quoteShellArg(`${option.id}:${option.label}:${option.description}`)}`),
+                `--recommended ${this.quoteShellArg(prompt.recommendedOptionId)}`,
+                prompt.required ? '--required' : '--optional',
+            ].join(' '),
+        }));
+    }
     quoteShellArg(value) {
         if (/^[a-zA-Z0-9_./:=@-]+$/.test(value)) {
             return value;
@@ -3647,14 +4531,14 @@ class TaskGraphExecutionService {
     }
     normalizeHandoffTarget(target) {
         const normalized = (target || 'generic').trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'claude' || normalized === 'shell' || normalized === 'generic') {
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported handoff target: ${target}`);
     }
     normalizeWorkerToolTarget(target) {
         const normalized = (target || 'generic').trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'claude' || normalized === 'shell' || normalized === 'generic') {
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported worker tool target: ${target}`);
@@ -3890,6 +4774,43 @@ class TaskGraphExecutionService {
         }
         return taskResult;
     }
+    buildOrchestrationFailedTasks(input) {
+        const relativeChangePath = this.toProjectRelativeChangePath(input.projectRoot, input.changePath);
+        const failedTasks = [];
+        for (const round of input.rounds) {
+            for (const task of round.tasks) {
+                if (!this.isOrchestrationTaskFailure(task)) {
+                    continue;
+                }
+                failedTasks.push({
+                    taskId: task.taskId,
+                    taskTitle: task.taskTitle,
+                    dispatchId: task.dispatchId,
+                    runId: task.runId,
+                    exitCode: task.exitCode,
+                    timedOut: task.timedOut,
+                    completionStatus: task.completionStatus,
+                    collected: task.collected,
+                    error: task.error,
+                    retryCommand: [
+                        'ospec execute retry',
+                        this.quoteShellArg(relativeChangePath),
+                        '--task',
+                        this.quoteShellArg(task.taskId),
+                        task.runId ? `--run ${this.quoteShellArg(task.runId)}` : '',
+                    ].filter(Boolean).join(' '),
+                });
+            }
+        }
+        return failedTasks;
+    }
+    isOrchestrationTaskFailure(task) {
+        return Boolean(task.error
+            || task.timedOut
+            || (task.exitCode !== null && task.exitCode !== 0)
+            || task.completionStatus === 'BLOCKED'
+            || task.completionStatus === 'NEEDS_CONTEXT');
+    }
     buildHarnessEnvironment(input) {
         return {
             OSPEC_TASK_ID: input.taskId,
@@ -3928,6 +4849,9 @@ class TaskGraphExecutionService {
             return 'Review the planned worker commands, then rerun without --dry-run when ready.';
         }
         if (status === 'blocked' || status === 'partial') {
+            if (input.failedTasks.length > 0) {
+                return `Resolve failed worker task(s), then rerun the first retry command: ${input.failedTasks[0].retryCommand}.`;
+            }
             return `Resolve orchestration blockers, inspect worker runs, then rerun ospec execute status ${this.quoteShellArg(relativeChangePath)}.`;
         }
         if (input.rounds.length === 0) {
@@ -3978,6 +4902,23 @@ class TaskGraphExecutionService {
                 if (task.error) {
                     lines.push(`  - Error: ${task.error}`);
                 }
+            }
+            lines.push('');
+        }
+        if (artifact.failedTasks.length > 0) {
+            lines.push('## Failed Tasks And Retry Guidance', '');
+            for (const task of artifact.failedTasks) {
+                lines.push(`- ${task.taskId}: ${task.taskTitle}`);
+                lines.push(`  - Dispatch: ${task.dispatchId}`);
+                lines.push(`  - Run: ${task.runId || 'not recorded'}`);
+                lines.push(`  - Exit code: ${task.exitCode ?? 'unknown'}`);
+                lines.push(`  - Timed out: ${task.timedOut ? 'yes' : 'no'}`);
+                lines.push(`  - Completion: ${task.completionStatus || 'not recorded'}`);
+                lines.push(`  - Collected: ${task.collected ? 'yes' : 'no'}`);
+                if (task.error) {
+                    lines.push(`  - Error: ${task.error}`);
+                }
+                lines.push(`  - Retry: \`${task.retryCommand.replace(/`/g, '\\`')}\``);
             }
             lines.push('');
         }
@@ -4039,6 +4980,13 @@ class TaskGraphExecutionService {
             'For single-worker fallback, use ospec execute launch ... --run --command "...".',
             'For multi-worker fallback, use ospec execute orchestrate ... --command "..." with an explicit command template or .ospec/harness.json.',
         ];
+        const adapterPacket = this.buildNativeAgentAdapterPacket({
+            relativeChangePath: input.relativeChangePath,
+            selected: input.selected,
+            target: input.target,
+            launchPrompt: input.launchPrompt,
+            completionCommand,
+        });
         if (input.target === 'codex' || input.target === 'gpt') {
             return {
                 target: input.target,
@@ -4069,6 +5017,7 @@ class TaskGraphExecutionService {
                     'Run ospec execute sync after manual artifact edits or after collecting multiple worker results.',
                 ],
                 fallbackInstructions,
+                adapterPacket,
             };
         }
         if (input.target === 'claude') {
@@ -4100,6 +5049,7 @@ class TaskGraphExecutionService {
                     'If the Task reports NEEDS_CONTEXT or BLOCKED, record that status and write the blocker trail instead of guessing.',
                 ],
                 fallbackInstructions,
+                adapterPacket,
             };
         }
         if (input.target === 'gemini') {
@@ -4130,6 +5080,7 @@ class TaskGraphExecutionService {
                     'Use ospec execute sync after recording multiple Gemini subagent results.',
                 ],
                 fallbackInstructions,
+                adapterPacket,
             };
         }
         if (input.target === 'opencode') {
@@ -4160,6 +5111,69 @@ class TaskGraphExecutionService {
                     'Sync worker status after recording results.',
                 ],
                 fallbackInstructions,
+                adapterPacket,
+            };
+        }
+        if (input.target === 'cursor') {
+            return {
+                target: input.target,
+                supported: true,
+                adapterId: 'cursor-agent-task-context',
+                agentPrimitive: 'Cursor Agent / task chat',
+                dispatchMode: 'native-agent-context',
+                requiresControllerAction: true,
+                promptTransport: 'Controller passes adapterPacket.prompt and adapterPacket.packetPath into a fresh Cursor Agent context.',
+                resultCollection: 'Controller reads Cursor Agent output and records the accepted result with ospec execute complete.',
+                fallbackOnly: false,
+                mechanism: 'Cursor native agent/task context with OSpec packet as the scoped source of truth',
+                defaultPath: true,
+                instructions: [
+                    `Start a fresh Cursor Agent context for task ${task}.`,
+                    `Attach or paste the dispatch packet path: ${packet}.`,
+                    'Use adapterPacket.prompt as the worker instruction and keep edits scoped to packet target files.',
+                    'Require the worker to report the OSpec worker status contract.',
+                ],
+                parallelInstructions: [
+                    'Run separate Cursor agent contexts for independent packets only when file ownership is disjoint.',
+                    'Keep dependent or conflicting packets sequential.',
+                ],
+                completionInstructions: [
+                    `Record the result with: ${completionCommand}`,
+                    'Use ospec execute sync after recording multiple Cursor worker results.',
+                ],
+                fallbackInstructions,
+                adapterPacket,
+            };
+        }
+        if (input.target === 'copilot') {
+            return {
+                target: input.target,
+                supported: true,
+                adapterId: 'copilot-cli-task-context',
+                agentPrimitive: 'Copilot CLI / coding agent task',
+                dispatchMode: 'native-agent-context',
+                requiresControllerAction: true,
+                promptTransport: 'Controller passes adapterPacket.prompt and the dispatch packet path into Copilot task context.',
+                resultCollection: 'Controller reads Copilot output and records the accepted result with ospec execute complete.',
+                fallbackOnly: false,
+                mechanism: 'GitHub Copilot CLI or coding-agent task handoff with OSpec packet context',
+                defaultPath: true,
+                instructions: [
+                    `Start a Copilot task/agent context for task ${task}.`,
+                    `Provide the dispatch packet path: ${packet}.`,
+                    'Use adapterPacket.prompt as the task instruction and require scoped edits plus verification evidence.',
+                    'Require DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED in the final result.',
+                ],
+                parallelInstructions: [
+                    'Use separate Copilot task contexts for independent packets when the host supports it.',
+                    'Keep conflicting packet work sequential.',
+                ],
+                completionInstructions: [
+                    `Record the result with: ${completionCommand}`,
+                    'Sync worker status after recording Copilot results.',
+                ],
+                fallbackInstructions,
+                adapterPacket,
             };
         }
         if (input.target === 'shell') {
@@ -4187,6 +5201,7 @@ class TaskGraphExecutionService {
                     `Record manual completion with: ${completionCommand}`,
                 ],
                 fallbackInstructions,
+                adapterPacket,
             };
         }
         return {
@@ -4216,7 +5231,135 @@ class TaskGraphExecutionService {
                 'Run ospec execute sync after recording results.',
             ],
             fallbackInstructions,
+            adapterPacket,
         };
+    }
+    buildNativeAgentAdapterPacket(input) {
+        return {
+            version: '1.0',
+            schemaVersion: 'ospec.native-agent.adapter-packet.v1',
+            adapterId: this.getNativeAgentAdapterId(input.target),
+            target: input.target,
+            targetCapabilities: {
+                capabilityTier: input.selected.workerProfile?.capabilityTier || 'unknown',
+                recommendedTarget: input.selected.workerProfile?.recommendedTarget || 'unknown',
+                workerRole: input.selected.workerRole,
+                canEditFiles: input.selected.targetToolMapping?.editFiles !== 'none',
+                canRunCommands: input.selected.targetToolMapping?.runCommands !== 'none',
+                canDispatchWorkers: input.selected.targetToolMapping?.dispatchWorkers !== 'none',
+            },
+            dispatchMode: this.getNativeAgentDispatchMode(input.target),
+            agentPrimitive: this.getNativeAgentPrimitive(input.target),
+            taskId: input.selected.taskId,
+            taskTitle: input.selected.taskTitle,
+            dispatchId: input.selected.id,
+            packetPath: input.selected.packetPath,
+            recordPath: input.selected.recordPath,
+            prompt: input.launchPrompt,
+            completionCommand: input.completionCommand,
+            resultStatusContract: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'],
+            completionContract: {
+                command: input.completionCommand,
+                allowedStatuses: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'],
+                requiresSummary: true,
+                updatesDurableState: true,
+            },
+            environment: {
+                OSPEC_TASK_ID: input.selected.taskId,
+                OSPEC_TASK_TITLE: input.selected.taskTitle,
+                OSPEC_DISPATCH_ID: input.selected.id,
+                OSPEC_TARGET: input.target,
+                OSPEC_PACKET_PATH: input.selected.packetPath,
+                OSPEC_RECORD_PATH: input.selected.recordPath,
+                OSPEC_CHANGE_PATH: input.relativeChangePath,
+            },
+            safetyRules: [
+                'Read the dispatch packet before editing.',
+                'Keep edits scoped to the task target files unless the packet explains otherwise.',
+                'Do not overwrite unrelated user changes.',
+                'Run only task-relevant verification commands.',
+                'Report blockers or missing context instead of guessing.',
+            ],
+            requiredInputs: [
+                'adapterPacket.prompt',
+                'adapterPacket.packetPath',
+                'adapterPacket.recordPath',
+                'adapterPacket.completionCommand',
+            ],
+            expectedOutputs: [
+                'A concise worker summary.',
+                'One completion status from completionContract.allowedStatuses.',
+                'Relevant verification notes or blocker details.',
+                'Durable completion recorded through completionContract.command.',
+            ],
+            controllerActions: [
+                'Start a fresh native worker context when the harness supports it.',
+                'Pass prompt and packetPath exactly; do not rely on unrelated chat history.',
+                'Wait for the worker result and map it to the resultStatusContract.',
+                'Run completionCommand with the accepted status and summary.',
+            ],
+            toolMapping: input.selected.targetToolMapping,
+        };
+    }
+    getNativeAgentAdapterId(target) {
+        if (target === 'codex' || target === 'gpt') {
+            return 'codex-gpt-native-subagent';
+        }
+        if (target === 'claude') {
+            return 'claude-code-task-subagent';
+        }
+        if (target === 'gemini') {
+            return 'gemini-generalist-subagent';
+        }
+        if (target === 'opencode') {
+            return 'opencode-mention-subagent';
+        }
+        if (target === 'cursor') {
+            return 'cursor-agent-task-context';
+        }
+        if (target === 'copilot') {
+            return 'copilot-cli-task-context';
+        }
+        if (target === 'shell') {
+            return 'shell-cli-fallback';
+        }
+        return 'generic-current-harness-subagent';
+    }
+    getNativeAgentPrimitive(target) {
+        if (target === 'codex' || target === 'gpt') {
+            return 'spawn_agent / wait_agent / close_agent';
+        }
+        if (target === 'claude') {
+            return 'Task';
+        }
+        if (target === 'gemini') {
+            return '@generalist';
+        }
+        if (target === 'opencode') {
+            return '@mention';
+        }
+        if (target === 'cursor') {
+            return 'Cursor Agent / task chat';
+        }
+        if (target === 'copilot') {
+            return 'Copilot CLI / coding agent task';
+        }
+        if (target === 'shell') {
+            return 'explicit local shell command';
+        }
+        return 'current harness Task/subagent/agent primitive';
+    }
+    getNativeAgentDispatchMode(target) {
+        if (target === 'shell') {
+            return 'fallback-only';
+        }
+        if (target === 'gemini' || target === 'opencode') {
+            return 'native-mention';
+        }
+        if (target === 'cursor' || target === 'copilot') {
+            return 'native-agent-context';
+        }
+        return 'native-subagent';
     }
     buildWorkerLaunchCommands(input) {
         const quotedChangePath = this.quoteShellArg(input.relativeChangePath);
@@ -4239,6 +5382,12 @@ class TaskGraphExecutionService {
         }
         else if (input.target === 'opencode') {
             commands.push(`# If OpenCode @mention agents are unavailable, run an explicit OpenCode worker command that consumes ${input.selected.packetPath}.`);
+        }
+        else if (input.target === 'cursor') {
+            commands.push(`# If Cursor Agent task context is unavailable, run an explicit worker command that consumes ${input.selected.packetPath}.`);
+        }
+        else if (input.target === 'copilot') {
+            commands.push(`# If Copilot task/coding-agent context is unavailable, run an explicit worker command that consumes ${input.selected.packetPath}.`);
         }
         else if (input.target === 'shell') {
             commands.push(`# Open ${input.selected.packetPath} and complete the task manually in this shell.`);
@@ -4599,12 +5748,71 @@ class TaskGraphExecutionService {
         }
         throw new Error(`Unsupported TDD evidence status: ${status}`);
     }
+    validateTddEvidenceTransition(records, next) {
+        const summary = next.summary?.trim() || '';
+        if (next.status === 'SKIPPED') {
+            if (!summary) {
+                throw new Error('Skipped TDD evidence requires --summary with the concrete reason.');
+            }
+            return;
+        }
+        if (next.phase === 'red') {
+            if (next.status === 'PASSED') {
+                throw new Error('Red TDD evidence must not be PASSED; record the expected failing test before implementation.');
+            }
+            return;
+        }
+        const relevant = records.filter(record => record.status !== 'SKIPPED');
+        const latest = relevant[relevant.length - 1];
+        if (next.phase === 'green') {
+            if (!latest || latest.phase !== 'red' || latest.status !== 'FAILED') {
+                throw new Error('Green TDD evidence requires a prior red FAILED evidence record for the same cycle.');
+            }
+            return;
+        }
+        if (next.phase === 'refactor' && (!latest || !((latest.phase === 'green' || latest.phase === 'refactor') && latest.status === 'PASSED'))) {
+            throw new Error('Refactor TDD evidence requires prior green or refactor PASSED evidence.');
+        }
+    }
     normalizeDebugEvidenceStatus(status) {
         const normalized = normalizeStatus(status || 'CONFIRMED');
         if (this.isDebugEvidenceStatus(normalized)) {
             return normalized;
         }
         throw new Error(`Unsupported debug evidence status: ${status}`);
+    }
+    normalizeDebugEvidencePhase(phase, status, options) {
+        if (phase) {
+            const normalized = phase.trim().toLowerCase();
+            if (this.isDebugEvidencePhase(normalized)) {
+                return normalized;
+            }
+            throw new Error(`Unsupported debug evidence phase: ${phase}`);
+        }
+        return this.deriveDebugEvidencePhase(status, options);
+    }
+    deriveDebugEvidencePhase(status, options) {
+        if (status === 'FIXED') {
+            return 'verify';
+        }
+        if (status === 'BLOCKED' && options.command?.trim()) {
+            return 'verify';
+        }
+        if (options.rootCause?.trim()) {
+            return 'isolate';
+        }
+        if (options.hypothesis?.trim()) {
+            return 'hypothesize';
+        }
+        return 'reproduce';
+    }
+    validateDebugEvidencePhase(input) {
+        if (input.phase === 'hypothesize' && !input.hypothesis?.trim()) {
+            throw new Error('Hypothesize debug evidence requires --hypothesis.');
+        }
+        if ((input.phase === 'isolate' || input.phase === 'fix' || input.phase === 'verify') && (input.status === 'CONFIRMED' || input.status === 'FIXED') && !input.rootCause) {
+            throw new Error(`Debug phase ${input.phase} requires --root-cause for ${input.status} evidence.`);
+        }
     }
     deriveVerificationEvidenceStatus(records) {
         const latest = records[records.length - 1];
@@ -4639,7 +5847,21 @@ class TaskGraphExecutionService {
         if (latest.status !== 'PASSED') {
             return 'failed';
         }
-        return latest.phase;
+        if (latest.phase === 'green') {
+            const hasEarlierRedFailure = records
+                .slice(0, -1)
+                .some(record => record.phase === 'red' && record.status === 'FAILED');
+            return hasEarlierRedFailure ? 'green' : 'failed';
+        }
+        if (latest.phase === 'refactor') {
+            const hasEarlierPassingGreen = records
+                .slice(0, -1)
+                .some(record => record.phase === 'green' && record.status === 'PASSED');
+            const hasEarlierRedFailure = records
+                .some(record => record.phase === 'red' && record.status === 'FAILED');
+            return hasEarlierPassingGreen && hasEarlierRedFailure ? 'refactor' : 'failed';
+        }
+        return 'failed';
     }
     deriveDebugEvidenceStatus(records) {
         const latest = records[records.length - 1];
@@ -4657,6 +5879,24 @@ class TaskGraphExecutionService {
         }
         return 'skipped';
     }
+    buildDebugEvidencePhaseSnapshots(records) {
+        const phases = ['reproduce', 'isolate', 'hypothesize', 'fix', 'verify'];
+        return phases.map(phase => {
+            const latest = [...records].reverse().find(record => record.phase === phase) || null;
+            return {
+                phase,
+                status: latest
+                    ? latest.status === 'BLOCKED'
+                        ? 'blocked'
+                        : latest.status === 'SKIPPED'
+                            ? 'skipped'
+                            : 'recorded'
+                    : 'missing',
+                latestRecordId: latest?.id || null,
+                latestStatus: latest?.status || null,
+            };
+        });
+    }
     getTddEvidenceNextInstruction(record) {
         if (record.phase === 'red' && record.status === 'FAILED') {
             return 'Red TDD evidence is recorded. Implement the minimal fix and record green evidence next.';
@@ -4670,14 +5910,32 @@ class TaskGraphExecutionService {
         return 'TDD evidence is recorded with a non-ready status. Resolve the issue and record later passing green or refactor evidence.';
     }
     getDebugEvidenceNextInstruction(record) {
+        if (record.status === 'SKIPPED') {
+            return 'Debug evidence is recorded as skipped. Keep the reason in verification.md if debugging was not applicable.';
+        }
+        if (record.status === 'BLOCKED') {
+            return 'Debug evidence is blocked. Resolve the blocker or gather missing reproduction/root-cause context before claiming completion.';
+        }
+        if (record.phase === 'reproduce') {
+            return 'Reproduction evidence is recorded. Isolate the root cause or record the leading hypothesis next.';
+        }
+        if (record.phase === 'hypothesize') {
+            return 'Debug hypothesis is recorded. Isolate the root cause and record an isolate phase entry next.';
+        }
+        if (record.phase === 'isolate') {
+            return 'Root cause isolation is recorded. Apply the fix and record a fix phase entry next.';
+        }
+        if (record.phase === 'fix') {
+            return 'Fix evidence is recorded. Verify the fix with a concrete command or observation and record verify phase evidence next.';
+        }
+        if (record.phase === 'verify' && record.status === 'FIXED') {
+            return 'Verified debug evidence is recorded. Continue with focused tests and final verification evidence.';
+        }
         if (record.status === 'FIXED') {
             return 'Debug evidence is recorded as fixed. Continue with focused tests and final verification evidence.';
         }
         if (record.status === 'CONFIRMED') {
             return 'Root cause is recorded. Apply the fix, verify it, and record a later FIXED debug evidence entry.';
-        }
-        if (record.status === 'SKIPPED') {
-            return 'Debug evidence is recorded as skipped. Keep the reason in verification.md if debugging was not applicable.';
         }
         return 'Debug evidence is blocked. Resolve the blocker or gather missing reproduction/root-cause context before claiming completion.';
     }
@@ -5039,6 +6297,91 @@ class TaskGraphExecutionService {
             .filter(line => !/^(-\s*)?TBD\.?$/i.test(line));
         return lines.slice(0, 20);
     }
+    async createReviewFeedbackDecisionGateIfNeeded(input) {
+        const reason = this.getReviewFeedbackDecisionGateReason(input);
+        if (!reason) {
+            return {
+                status: 'not_needed',
+                id: null,
+                question: null,
+                recommendedOptionId: null,
+                recordPath: null,
+                reportPath: null,
+                reason: null,
+                nextInstruction: null,
+            };
+        }
+        const id = `review-feedback-${input.stage}`;
+        const recordPath = this.getUserDecisionRecordPath(input.changePath, id);
+        const existing = await this.readUserDecisionRecord(recordPath);
+        if (existing?.status === 'SELECTED' || existing?.status === 'SKIPPED') {
+            return {
+                status: 'already_selected',
+                id,
+                question: existing.question,
+                recommendedOptionId: existing.recommendedOptionId,
+                recordPath: existing.recordPath,
+                reportPath: existing.reportPath,
+                reason,
+                nextInstruction: `Decision ${id} is already ${existing.status}; continue with review feedback handling.`,
+            };
+        }
+        const recommendedOptionId = input.action === 'blocked' ? 'clarify-first' : 'revise-plan-first';
+        const question = `How should this change handle ${input.stage} review feedback that may affect scope, direction, API, UI, or risk?`;
+        const decision = await this.recordUserDecision(input.changePath, {
+            id,
+            question,
+            options: [
+                {
+                    id: 'revise-plan-first',
+                    label: 'Revise plan first',
+                    description: 'Update design, implementation plan, task graph, or tasks before editing more source files.',
+                },
+                {
+                    id: 'accept-nonblocking',
+                    label: 'Accept nonblocking',
+                    description: 'Treat the concern as accepted risk and record why it does not block this change.',
+                },
+                {
+                    id: 'clarify-first',
+                    label: 'Clarify first',
+                    description: 'Pause implementation and ask for reviewer or user clarification before more work.',
+                },
+            ],
+            recommendedOptionId,
+            required: true,
+            summary: [
+                `Review decision: ${input.decision}.`,
+                `Review artifact: ${input.reviewArtifactPath}.`,
+                reason,
+                input.summary?.trim() ? `Controller summary: ${input.summary.trim()}.` : '',
+            ].filter(Boolean).join(' '),
+        });
+        return {
+            status: existing ? 'pending' : 'created',
+            id,
+            question,
+            recommendedOptionId,
+            recordPath: decision.decision.recordPath,
+            reportPath: decision.decision.reportPath,
+            reason,
+            nextInstruction: decision.nextInstruction,
+        };
+    }
+    getReviewFeedbackDecisionGateReason(input) {
+        const findingText = input.findings.join('\n').toLowerCase();
+        const decisionSignal = /\b(scope|architecture|api|ui|ux|risk|security|breaking|tradeoff|decision|choose|clarify|requirement|design|contract)\b/u.test(findingText);
+        if (input.action === 'blocked') {
+            return 'Review feedback is blocked and needs a concrete direction before more implementation work.';
+        }
+        if (input.action === 'revise' && decisionSignal) {
+            return 'Review findings appear to affect scope, direction, API, UI, risk, or accepted design tradeoffs.';
+        }
+        if (input.decision === 'APPROVED_WITH_CONCERNS' && decisionSignal) {
+            return 'Approved-with-concerns review findings include design or scope signals that should be accepted or revised explicitly.';
+        }
+        return null;
+    }
     buildReviewFeedbackRecommendedActions(stage, decision, action) {
         if (action === 'accept') {
             if (stage === 'spec') {
@@ -5119,6 +6462,18 @@ class TaskGraphExecutionService {
             ? plan.findings.map(item => `- ${item}`).join('\n')
             : '- No concrete findings were found in the review artifact body. Update the review artifact before acting if the decision requires changes.';
         const actions = plan.recommendedActions.map(action => `- ${action}`).join('\n');
+        const userDecisionGate = plan.userDecisionGate.status === 'not_needed'
+            ? '- No user decision gate needed for this feedback plan.'
+            : [
+                `- Status: ${plan.userDecisionGate.status}`,
+                `- Decision ID: ${plan.userDecisionGate.id || 'none'}`,
+                `- Question: ${plan.userDecisionGate.question || 'none'}`,
+                `- Recommended option: ${plan.userDecisionGate.recommendedOptionId || 'none'}`,
+                `- Record: ${plan.userDecisionGate.recordPath || 'none'}`,
+                `- Report: ${plan.userDecisionGate.reportPath || 'none'}`,
+                `- Reason: ${plan.userDecisionGate.reason || 'none'}`,
+                `- Next: ${plan.userDecisionGate.nextInstruction || 'none'}`,
+            ].join('\n');
         return [
             `# Review Feedback Plan: ${plan.stage}`,
             '',
@@ -5142,10 +6497,15 @@ class TaskGraphExecutionService {
             '',
             actions,
             '',
+            '## User Decision Gate',
+            '',
+            userDecisionGate,
+            '',
             '## Controller Contract',
             '',
             '- Do not blindly accept reviewer suggestions; verify each finding against the accepted proposal, design, and implementation plan.',
             '- If a finding changes scope, update upstream change documents and task graph before editing source files.',
+            '- If this plan created a required user decision gate, ask the user to select an option before dispatching more work.',
             '- If fixes are needed, keep them targeted and require fresh verification evidence before accepting the review loop.',
             '',
             '## Next Instruction',
@@ -5304,6 +6664,7 @@ class TaskGraphExecutionService {
             `# Debug Evidence: ${record.id}`,
             '',
             `- Change: ${report.feature}`,
+            `- Phase: ${record.phase}`,
             `- Status: ${record.status}`,
             `- Recorded at: ${record.recordedAt}`,
             `- Symptom: ${record.symptom}`,
@@ -5317,15 +6678,17 @@ class TaskGraphExecutionService {
             '',
             '## Debugging Discipline',
             '',
-            '- Reproduce or characterize the symptom before changing code.',
-            '- Record the hypothesis before applying a fix when practical.',
-            '- Record the root cause for `CONFIRMED` or `FIXED` statuses.',
-            '- Use `FIXED` only after the fix is verified with a concrete command or observation.',
+            '- `reproduce`: characterize the symptom before changing code.',
+            '- `hypothesize`: record the leading explanation before applying a fix when practical.',
+            '- `isolate`: record the root cause before declaring the issue confirmed.',
+            '- `fix`: record the concrete fix evidence before final verification.',
+            '- `verify`: use `FIXED` only after the fix is verified with a command or observation.',
             '',
             '## Required Follow-up',
             '',
             '- Keep `verification.md` aligned with this debug evidence when debugging was part of the change.',
-            '- If status is `CONFIRMED`, apply and verify the fix, then record a later `FIXED` debug evidence entry.',
+            '- Complete the staged sequence when it applies: reproduce, isolate, hypothesize, fix, verify.',
+            '- If status is `CONFIRMED`, apply and verify the fix, then record later fix and verify evidence entries.',
             '- If status is `BLOCKED`, resolve the blocker before claiming the change is complete.',
             '',
         ].join('\n');
@@ -5394,6 +6757,17 @@ class TaskGraphExecutionService {
             ? artifact.warnings.map(warning => `- ${warning}`).join('\n')
             : '- None';
         const commands = artifact.commands.map(command => `- \`${command}\``).join('\n');
+        const lifecycle = artifact.lifecycle.length > 0
+            ? artifact.lifecycle
+                .map(step => [
+                `### ${step.step}`,
+                '',
+                `- Status: ${step.status}`,
+                `- Command: ${step.command ? `\`${step.command}\`` : 'manual decision only'}`,
+                `- Guidance: ${step.guidance}`,
+            ].join('\n'))
+                .join('\n\n')
+            : '- No lifecycle steps recorded.';
         const changedFiles = artifact.git.statusEntries.length > 0
             ? artifact.git.statusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
             : '- None';
@@ -5428,6 +6802,10 @@ class TaskGraphExecutionService {
             '## Generated Commands',
             '',
             commands,
+            '',
+            '## Lifecycle',
+            '',
+            lifecycle,
             '',
             '## Changed Files',
             '',
@@ -5523,6 +6901,128 @@ class TaskGraphExecutionService {
             '',
         ].join('\n');
     }
+    buildUserDecisionReport(record) {
+        const options = record.options.length > 0
+            ? record.options
+                .map(option => {
+                const markers = [
+                    option.id === record.recommendedOptionId ? 'recommended' : '',
+                    option.id === record.selectedOptionId ? 'selected' : '',
+                ].filter(Boolean);
+                return `- ${option.id}: ${option.label}${markers.length > 0 ? ` (${markers.join(', ')})` : ''}${option.description ? ` - ${option.description}` : ''}`;
+            })
+                .join('\n')
+            : '- No structured options recorded.';
+        const chatOptions = record.options.length > 0
+            ? record.options
+                .map(option => `- ${option.id}: ${option.label}${option.description ? ` - ${option.description}` : ''}${option.id === record.recommendedOptionId ? ' (recommended)' : ''}`)
+                .join('\n')
+            : '- No structured options recorded.';
+        const chatPrompt = [
+            `Decision required: ${record.id}`,
+            '',
+            record.question || 'No question recorded.',
+            '',
+            'Options:',
+            chatOptions,
+            '',
+            record.recommendedOptionId
+                ? `Recommended option: ${record.recommendedOptionId}`
+                : 'No recommended option is recorded.',
+            `Reply with one option id. Record the answer with: ospec execute decision [change-path] --id ${this.quoteShellArg(record.id)} --select <option-id>`,
+        ].join('\n');
+        return [
+            `# User Decision: ${record.id}`,
+            '',
+            `- Status: ${record.status}`,
+            `- Required: ${record.required ? 'yes' : 'no'}`,
+            `- Feature: ${record.feature}`,
+            `- Created at: ${record.createdAt}`,
+            `- Updated at: ${record.updatedAt}`,
+            `- Selected at: ${record.selectedAt || 'not selected'}`,
+            `- Recommended option: ${record.recommendedOptionId || 'none'}`,
+            `- Selected option: ${record.selectedOptionId || 'none'}`,
+            '',
+            '## Question',
+            '',
+            record.question || 'No question recorded.',
+            '',
+            '## Options',
+            '',
+            options,
+            '',
+            '## Chat Prompt',
+            '',
+            '```text',
+            chatPrompt,
+            '```',
+            '',
+            '## Summary',
+            '',
+            record.summary || 'No summary recorded.',
+            '',
+            '## Next Instruction',
+            '',
+            record.nextInstruction,
+            '',
+            '## Artifact Boundary',
+            '',
+            '- This artifact records a user-facing decision gate only.',
+            '- It does not edit project source files, dispatch workers, run tests, or approve review artifacts.',
+            '- Required pending decisions block worker dispatch and finish readiness until selected or skipped.',
+            '',
+        ].join('\n');
+    }
+    buildUserDecisionIndexReport(artifact) {
+        const decisions = artifact.decisions.length > 0
+            ? artifact.decisions
+                .map(decision => {
+                const selection = decision.selectedOptionId ? `, selected ${decision.selectedOptionId}` : '';
+                const recommendation = decision.recommendedOptionId ? `, recommended ${decision.recommendedOptionId}` : '';
+                return `- ${decision.id}: ${decision.status}${decision.required ? ', required' : ', optional'}${selection}${recommendation} (${decision.reportPath})`;
+            })
+                .join('\n')
+            : '- None';
+        const blockers = artifact.blockers.length > 0
+            ? artifact.blockers.map(blocker => `- ${blocker}`).join('\n')
+            : '- None';
+        const warnings = artifact.warnings.length > 0
+            ? artifact.warnings.map(warning => `- ${warning}`).join('\n')
+            : '- None';
+        return [
+            `# User Decision Index: ${artifact.feature}`,
+            '',
+            `- Generated at: ${artifact.generatedAt}`,
+            `- Change path: ${artifact.changePath}`,
+            `- Total decisions: ${artifact.total}`,
+            `- Pending required: ${artifact.pendingRequired}`,
+            `- Pending optional: ${artifact.pendingOptional}`,
+            `- Selected: ${artifact.selected}`,
+            `- Skipped: ${artifact.skipped}`,
+            '',
+            '## Decisions',
+            '',
+            decisions,
+            '',
+            '## Blockers',
+            '',
+            blockers,
+            '',
+            '## Warnings',
+            '',
+            warnings,
+            '',
+            '## Next Instruction',
+            '',
+            artifact.nextInstruction,
+            '',
+            '## Artifact Boundary',
+            '',
+            '- This index summarizes user decision artifacts only.',
+            '- It does not edit project source files, dispatch workers, run tests, or approve review artifacts.',
+            '',
+        ].join('\n');
+    }
     buildFinishPlanReport(artifact) {
         const blockers = artifact.blockers.length > 0
             ? artifact.blockers.map(blocker => `- ${blocker}`).join('\n')
@@ -5531,6 +7031,24 @@ class TaskGraphExecutionService {
             ? artifact.warnings.map(warning => `- ${warning}`).join('\n')
             : '- None';
         const commands = artifact.commands.map(command => `- \`${command}\``).join('\n');
+        const decisionPrompts = artifact.decisionPrompts.length > 0
+            ? artifact.decisionPrompts
+                .map(prompt => [
+                `### ${prompt.id}`,
+                '',
+                `- Required: ${prompt.required ? 'yes' : 'no'}`,
+                `- Question: ${prompt.question}`,
+                `- Recommended option: ${prompt.recommendedOptionId}`,
+                '',
+                'Options:',
+                ...prompt.options.map(option => `- ${option.id}: ${option.label} - ${option.description}`),
+                '',
+                'Record the decision gate:',
+                '',
+                `\`${prompt.command}\``,
+            ].join('\n'))
+                .join('\n\n')
+            : '- No closeout decision prompts recorded.';
         const changedFiles = artifact.git.statusEntries.length > 0
             ? artifact.git.statusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
             : '- None';
@@ -5539,6 +7057,7 @@ class TaskGraphExecutionService {
                 .map(worktree => `- ${worktree.path}${worktree.branch ? ` (${worktree.branch})` : worktree.detached ? ' (detached)' : ''}`)
                 .join('\n')
             : '- None detected';
+        const checkpointEvidence = this.buildCheckpointEvidenceReportLines(artifact.checkpointEvidence).join('\n');
         return [
             `# Finish Plan: ${artifact.feature}`,
             '',
@@ -5560,10 +7079,16 @@ class TaskGraphExecutionService {
             `- Spec review: ${artifact.readiness.specReview}`,
             `- Quality review: ${artifact.readiness.qualityReview}`,
             `- Controller: ${artifact.readiness.controller}`,
+            `- Pending required decisions: ${artifact.readiness.pendingRequiredDecisions}`,
             `- Verification checklist complete: ${artifact.readiness.verificationChecklistComplete ? 'yes' : 'no'}`,
             `- Verification evidence: ${artifact.readiness.verificationEvidence}`,
             `- TDD evidence: ${artifact.readiness.tddEvidence}`,
             `- Debug evidence: ${artifact.readiness.debugEvidence}`,
+            `- Checkpoint evidence: ${artifact.readiness.checkpointEvidence}`,
+            '',
+            '## Checkpoint Evidence',
+            '',
+            checkpointEvidence,
             '',
             '## Blockers',
             '',
@@ -5576,6 +7101,10 @@ class TaskGraphExecutionService {
             '## Suggested Commands',
             '',
             commands,
+            '',
+            '## Closeout Decision Prompts',
+            '',
+            decisionPrompts,
             '',
             '## Changed Files',
             '',
@@ -5596,6 +7125,88 @@ class TaskGraphExecutionService {
             '- Treat generated git commands as review prompts; run them manually only after verifying the blockers and warnings.',
             '',
         ].join('\n');
+    }
+    buildWorkflowRouteReport(artifact) {
+        const recommendations = artifact.recommendations.length > 0
+            ? artifact.recommendations
+                .map(item => [
+                `### ${item.priority}. ${item.action}`,
+                '',
+                `- Reason: ${item.reason}`,
+                `- Command: ${item.command ? `\`${item.command}\`` : 'manual document or source update'}`,
+            ].join('\n'))
+                .join('\n\n')
+            : '- No recommendations recorded.';
+        const blockers = artifact.blockers.length > 0
+            ? artifact.blockers.map(blocker => `- ${blocker}`).join('\n')
+            : '- None';
+        const warnings = artifact.warnings.length > 0
+            ? artifact.warnings.map(warning => `- ${warning}`).join('\n')
+            : '- None';
+        return [
+            `# Workflow Route: ${artifact.feature}`,
+            '',
+            `- Status: ${artifact.status}`,
+            `- Generated at: ${artifact.generatedAt}`,
+            `- Project root: ${artifact.projectRoot}`,
+            `- Change path: ${artifact.changePath}`,
+            '',
+            '## Recommendations',
+            '',
+            recommendations,
+            '',
+            '## Blockers',
+            '',
+            blockers,
+            '',
+            '## Warnings',
+            '',
+            warnings,
+            '',
+            '## Next Instruction',
+            '',
+            artifact.nextInstruction,
+            '',
+            '## Artifact Boundary',
+            '',
+            '- This route writes workflow recommendation artifacts only.',
+            '- It does not edit project source files, dispatch workers, run tests, merge branches, or delete worktrees.',
+            '- If the top recommendation is a user decision, present the decision prompt before continuing.',
+            '',
+        ].join('\n');
+    }
+    buildCheckpointEvidenceReportLines(evidence) {
+        if (!evidence.active) {
+            return ['- Not active for this change.'];
+        }
+        const missing = evidence.missing.length > 0
+            ? evidence.missing.map(item => `  - ${item}`)
+            : ['  - None'];
+        const actions = evidence.nextActions.length > 0
+            ? evidence.nextActions.map(item => `  - ${item}`)
+            : ['  - None'];
+        const steps = evidence.steps.length > 0
+            ? evidence.steps.flatMap(step => [
+                `- ${step.step}: ${step.evidenceStatus} (gate ${step.gateStatus})`,
+                `  - screenshots: ${step.screenshots}, traces: ${step.traces}, visual diffs: ${step.visualDiffs}, routes: ${step.routes}, flows: ${step.flows}, assertions: ${step.assertions}, console events: ${step.consoleEvents}, network events: ${step.networkEvents}, accessibility: ${step.accessibility}`,
+                ...(step.missing.length > 0 ? [`  - missing: ${step.missing.join(', ')}`] : []),
+            ])
+            : ['- No step evidence recorded.'];
+        return [
+            `- Status: ${evidence.status}`,
+            `- Gate status: ${evidence.gateStatus}`,
+            `- Evidence status: ${evidence.evidenceStatus}`,
+            `- Active steps: ${evidence.activeSteps.join(', ') || 'none'}`,
+            `- Counts: screenshots ${evidence.screenshots}, traces ${evidence.traces}, visual diffs ${evidence.visualDiffs}, routes ${evidence.routes}, flows ${evidence.flows}, assertions ${evidence.assertions}, console events ${evidence.consoleEvents}, network events ${evidence.networkEvents}, accessibility ${evidence.accessibility}`,
+            '- Missing evidence:',
+            ...missing,
+            '- Suggested next actions:',
+            ...actions,
+            '',
+            '### Step Evidence',
+            '',
+            ...steps,
+        ];
     }
     buildWorkerLaunchPlanReport(artifact) {
         const blockers = artifact.blockers.length > 0
@@ -5660,6 +7271,39 @@ class TaskGraphExecutionService {
                 `- Record completion: ${artifact.selectedDispatch.targetToolMapping.recordCompletion}`,
             ].join('\n')
             : '- Not available';
+        const adapterPacket = artifact.nativeAgent?.adapterPacket
+            ? [
+                `- Adapter: ${artifact.nativeAgent.adapterPacket.adapterId}`,
+                `- Schema: ${artifact.nativeAgent.adapterPacket.schemaVersion}`,
+                `- Target: ${artifact.nativeAgent.adapterPacket.target}`,
+                `- Capability tier: ${artifact.nativeAgent.adapterPacket.targetCapabilities.capabilityTier}`,
+                `- Agent primitive: ${artifact.nativeAgent.adapterPacket.agentPrimitive}`,
+                `- Dispatch mode: ${artifact.nativeAgent.adapterPacket.dispatchMode}`,
+                `- Task: ${artifact.nativeAgent.adapterPacket.taskId} - ${artifact.nativeAgent.adapterPacket.taskTitle}`,
+                `- Dispatch: ${artifact.nativeAgent.adapterPacket.dispatchId}`,
+                `- Packet path: ${artifact.nativeAgent.adapterPacket.packetPath}`,
+                `- Record path: ${artifact.nativeAgent.adapterPacket.recordPath}`,
+                `- Completion command: \`${artifact.nativeAgent.adapterPacket.completionCommand}\``,
+                `- Result statuses: ${artifact.nativeAgent.adapterPacket.resultStatusContract.join(', ')}`,
+                `- Environment: ${Object.entries(artifact.nativeAgent.adapterPacket.environment).map(([key, value]) => `${key}=${value}`).join('; ')}`,
+                '',
+                '### Safety Rules',
+                '',
+                ...artifact.nativeAgent.adapterPacket.safetyRules.map(item => `- ${item}`),
+                '',
+                '### Required Inputs',
+                '',
+                ...artifact.nativeAgent.adapterPacket.requiredInputs.map(item => `- ${item}`),
+                '',
+                '### Expected Outputs',
+                '',
+                ...artifact.nativeAgent.adapterPacket.expectedOutputs.map(item => `- ${item}`),
+                '',
+                '### Controller Actions',
+                '',
+                ...artifact.nativeAgent.adapterPacket.controllerActions.map(item => `- ${item}`),
+            ].join('\n')
+            : '- Not available';
         return [
             `# Native Agent Launch Plan: ${artifact.feature}`,
             '',
@@ -5687,6 +7331,10 @@ class TaskGraphExecutionService {
             '',
             nativeAgent,
             '',
+            '## Harness Adapter Packet',
+            '',
+            adapterPacket,
+            '',
             '## CLI Fallback Commands',
             '',
             commands,
@@ -5712,7 +7360,7 @@ class TaskGraphExecutionService {
             '## Artifact Boundary',
             '',
             '- This command writes a launch preparation plan only.',
-            '- It does not start Codex, GPT, Claude, Gemini, OpenCode, shell workers, tests, or other external processes by itself.',
+            '- It does not start Codex, GPT, Claude, Gemini, OpenCode, Cursor, Copilot, shell workers, tests, or other external processes by itself.',
             '- The default path is current-harness native agent dispatch from the controlling AI session.',
             '- Use the CLI fallback commands only when the current AI harness cannot dispatch native subagents.',
             '- Record worker completion with `ospec execute complete`; do not rely on chat history as the durable state.',
@@ -5839,6 +7487,17 @@ class TaskGraphExecutionService {
                 .map(dispatch => `- ${dispatch.taskId}: ${dispatch.status}, target ${dispatch.target}, packet ${dispatch.packetPath}`)
                 .join('\n')
             : '- None';
+        const decisions = artifact.execution.decisions.decisions.length > 0
+            ? artifact.execution.decisions.decisions
+                .map(decision => `- ${decision.id}: ${decision.status}${decision.required ? ', required' : ', optional'}${decision.selectedOptionId ? `, selected ${decision.selectedOptionId}` : ''} (${decision.reportPath})`)
+                .join('\n')
+            : '- None';
+        const debugPhases = artifact.execution.evidence.debugPhases.length > 0
+            ? artifact.execution.evidence.debugPhases
+                .map(phase => `- ${phase.phase}: ${phase.status}${phase.latestRecordId ? ` (${phase.latestRecordId}, ${phase.latestStatus})` : ''}`)
+                .join('\n')
+            : '- None';
+        const checkpointEvidence = this.buildCheckpointEvidenceReportLines(artifact.execution.evidence.checkpoint).join('\n');
         return [
             `# Change Bootstrap: ${artifact.feature}`,
             '',
@@ -5885,6 +7544,9 @@ class TaskGraphExecutionService {
             `- Workspace: ${artifact.execution.workspace.status}`,
             `- Worktree plan: ${artifact.execution.worktree.status}`,
             `- Finish plan: ${artifact.execution.finish.status}`,
+            `- Required pending decisions: ${artifact.execution.decisions.pendingRequired}`,
+            `- Optional pending decisions: ${artifact.execution.decisions.pendingOptional}`,
+            `- Decision index: ${artifact.execution.decisions.indexReportPath}`,
             `- Implementer: ${artifact.execution.worker.implementer}`,
             `- Spec reviewer: ${artifact.execution.worker.specReviewer}`,
             `- Quality reviewer: ${artifact.execution.worker.qualityReviewer}`,
@@ -5898,6 +7560,19 @@ class TaskGraphExecutionService {
             `- Verification evidence: ${artifact.execution.evidence.verification} (${artifact.execution.evidence.verificationRecords} record(s))`,
             `- TDD evidence: ${artifact.execution.evidence.tdd} (${artifact.execution.evidence.tddRecords} record(s))`,
             `- Debug evidence: ${artifact.execution.evidence.debug} (${artifact.execution.evidence.debugRecords} record(s))`,
+            `- Checkpoint evidence: ${artifact.execution.evidence.checkpoint.status}`,
+            '',
+            '## Debug Phase Evidence',
+            '',
+            debugPhases,
+            '',
+            '## Checkpoint Evidence',
+            '',
+            checkpointEvidence,
+            '',
+            '## User Decisions',
+            '',
+            decisions,
             '',
             '## Recent Dispatch Results',
             '',

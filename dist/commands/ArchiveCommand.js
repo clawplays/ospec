@@ -257,10 +257,18 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     if (gate.status !== 'passed') {
                         result.blockers.push(`Checkpoint gate must be passed before archiving (current: ${gate.status || 'missing'})`);
                     }
+                    const evidenceStatus = gate.evidence?.status || 'missing';
+                    if (evidenceStatus !== 'complete') {
+                        result.blockers.push(`Checkpoint evidence coverage must be complete before archiving (current: ${evidenceStatus})`);
+                    }
                     for (const stepName of activeCheckpointSteps) {
                         const stepStatus = gate.steps?.[stepName]?.status || 'missing';
                         if (stepStatus !== 'passed') {
                             result.blockers.push(`Checkpoint step ${stepName} must be passed before archiving (current: ${stepStatus})`);
+                        }
+                        const stepEvidenceStatus = gate.evidence?.by_step?.[stepName]?.status || 'missing';
+                        if (stepEvidenceStatus !== 'complete') {
+                            result.blockers.push(`Checkpoint evidence for ${stepName} must be complete before archiving (current: ${stepEvidenceStatus})`);
                         }
                     }
                 }

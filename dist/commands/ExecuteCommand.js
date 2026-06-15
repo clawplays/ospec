@@ -64,6 +64,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 case 'next':
                     await this.next(args[0]);
                     return;
+                case 'route':
+                    await this.route(args[0]);
+                    return;
                 case 'workspace':
                     await this.workspace(args[0]);
                     return;
@@ -99,6 +102,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                     return;
                 case 'feedback':
                     await this.feedback(args);
+                    return;
+                case 'decision':
+                    await this.decision(args);
                     return;
                 case 'debug':
                     await this.debug(args);
@@ -148,6 +154,11 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const changePath = await this.resolveChangePath(inputPath);
         const report = await services_1.services.taskGraphExecutionService.getReport(changePath);
         this.printNext(report);
+    }
+    async route(inputPath) {
+        const changePath = await this.resolveChangePath(inputPath);
+        const result = await services_1.services.taskGraphExecutionService.routeWorkflow(changePath);
+        this.printWorkflowRoute(result);
     }
     async workspace(inputPath) {
         const changePath = await this.resolveChangePath(inputPath);
@@ -211,6 +222,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             target: parsed.target,
             dryRun: parsed.dryRun,
         });
+        if (parsed.json) {
+            console.log(JSON.stringify(await services_1.services.fileService.readJSON(result.artifactPath), null, 2));
+            return;
+        }
         this.printLaunch(result);
     }
     async orchestrate(args) {
@@ -294,6 +309,21 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         });
         this.printReviewFeedback(result);
     }
+    async decision(args) {
+        const parsed = this.parseDecisionArgs(args);
+        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const result = await services_1.services.taskGraphExecutionService.recordUserDecision(changePath, {
+            id: parsed.id,
+            question: parsed.question,
+            options: parsed.options,
+            recommendedOptionId: parsed.recommendedOptionId,
+            required: parsed.required,
+            selectOptionId: parsed.selectOptionId,
+            skip: parsed.skip,
+            summary: parsed.summary,
+        });
+        this.printDecision(result);
+    }
     async verify(args) {
         const parsed = this.parseVerificationArgs(args);
         const changePath = await this.resolveChangePath(parsed.inputPath);
@@ -322,6 +352,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const parsed = this.parseDebugArgs(args);
         const changePath = await this.resolveChangePath(parsed.inputPath);
         const result = await services_1.services.taskGraphExecutionService.recordDebugEvidence(changePath, {
+            phase: parsed.phase,
             symptom: parsed.symptom,
             hypothesis: parsed.hypothesis,
             rootCause: parsed.rootCause,
@@ -366,6 +397,11 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Invalid: ${report.invalidTasks.length}`);
         console.log(`Completed: ${report.completedTasks.length}`);
         console.log(`Concerns: ${report.concernTasks.length}`);
+        if (report.decisions) {
+            console.log(`Pending required decisions: ${report.decisions.pendingRequired}`);
+            console.log(`Pending optional decisions: ${report.decisions.pendingOptional}`);
+        }
+        this.printCheckpointEvidenceSummary(report.checkpointEvidence);
         this.printControllerSummary(report);
         this.printTaskList('\nDispatchable next tasks:', report.dispatchableTasks);
         this.printTaskList('\nRunning tasks:', report.runningTasks);
@@ -381,6 +417,27 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`  ${report.nextInstruction}`);
         console.log('');
     }
+    printCheckpointEvidenceSummary(evidence) {
+        if (!evidence?.active) {
+            return;
+        }
+        console.log(`Checkpoint evidence: ${evidence.status}`);
+        console.log(`Checkpoint gate: ${evidence.gateStatus}`);
+        console.log(`Checkpoint active steps: ${evidence.activeSteps.join(', ')}`);
+        console.log(`Checkpoint counts: screenshots ${evidence.screenshots}, traces ${evidence.traces}, visual diffs ${evidence.visualDiffs}, routes ${evidence.routes}, flows ${evidence.flows}, assertions ${evidence.assertions}, console events ${evidence.consoleEvents}, network events ${evidence.networkEvents}, accessibility ${evidence.accessibility}`);
+        if (evidence.missing.length > 0) {
+            console.log('Checkpoint missing evidence:');
+            for (const item of evidence.missing) {
+                console.log(`  - ${item}`);
+            }
+        }
+        if (evidence.nextActions.length > 0) {
+            console.log('Checkpoint next actions:');
+            for (const action of evidence.nextActions) {
+                console.log(`  - ${action}`);
+            }
+        }
+    }
     printBootstrap(result) {
         console.log('\nChange Bootstrap Snapshot');
         console.log('=========================\n');
@@ -389,6 +446,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Status: ${result.status}`);
         console.log(`Artifact: ${result.artifactPath}`);
         console.log(`Report: ${result.reportPath}`);
+        this.printCheckpointEvidenceSummary(result.checkpointEvidence);
         if (result.blockers.length > 0) {
             console.log('\nBlockers:');
             for (const blocker of result.blockers) {
@@ -578,6 +636,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 }
             }
         }
+        if (result.failedTasks.length > 0) {
+            console.log('\nFailed tasks:');
+            for (const task of result.failedTasks) {
+                console.log(`  - ${task.taskId}: run=${task.runId || 'not recorded'} exit=${task.exitCode ?? 'unknown'} completion=${task.completionStatus || 'none'}`);
+                console.log(`    Retry: ${task.retryCommand}`);
+            }
+        }
         if (result.blockers.length > 0) {
             console.log('\nBlockers:');
             for (const blocker of result.blockers) {
@@ -748,6 +813,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Report: ${result.reportPath}`);
         console.log(`Target branch: ${result.targetBranch}`);
         console.log(`Remote: ${result.remote}`);
+        this.printCheckpointEvidenceSummary(result.checkpointEvidence);
         if (result.blockers.length > 0) {
             console.log('\nBlockers:');
             for (const blocker of result.blockers) {
@@ -763,6 +829,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('\nCommands:');
         for (const command of result.commands) {
             console.log(`  - ${command}`);
+        }
+        if (result.decisionPrompts.length > 0) {
+            console.log('\nDecision prompts:');
+            for (const prompt of result.decisionPrompts) {
+                console.log(`  - ${prompt.id}: ${prompt.question}`);
+                console.log(`    ${prompt.command}`);
+            }
         }
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
@@ -859,8 +932,40 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Stage: ${result.stage}`);
         console.log(`Decision: ${result.decision}`);
         console.log(`Action: ${result.action}`);
+        console.log(`User decision gate: ${result.userDecisionGate.status}`);
+        if (result.userDecisionGate.id) {
+            console.log(`Decision gate id: ${result.userDecisionGate.id}`);
+        }
+        if (result.userDecisionGate.reportPath) {
+            console.log(`Decision gate report: ${result.userDecisionGate.reportPath}`);
+        }
         console.log(`Artifact: ${result.artifactPath}`);
         console.log(`Report: ${result.reportPath}`);
+        console.log('\nNext instruction:');
+        console.log(`  ${result.nextInstruction}`);
+        console.log('');
+    }
+    printDecision(result) {
+        console.log('\nUser Decision Gate');
+        console.log('==================\n');
+        console.log(`Change path: ${result.changePath}`);
+        console.log(`Decision: ${result.decision.id}`);
+        console.log(`Status: ${result.decision.status}`);
+        console.log(`Required: ${result.decision.required ? 'yes' : 'no'}`);
+        console.log(`Question: ${result.decision.question}`);
+        if (result.decision.options.length > 0) {
+            console.log('\nOptions:');
+            for (const option of result.decision.options) {
+                const markers = [
+                    option.id === result.decision.recommendedOptionId ? 'recommended' : '',
+                    option.id === result.decision.selectedOptionId ? 'selected' : '',
+                ].filter(Boolean);
+                console.log(`  - ${option.id}: ${option.label}${markers.length > 0 ? ` (${markers.join(', ')})` : ''}${option.description ? ` - ${option.description}` : ''}`);
+            }
+        }
+        console.log(`\nRecord: ${result.recordPath}`);
+        console.log(`Report: ${result.reportPath}`);
+        console.log(`Pending required decisions: ${result.snapshot.pendingRequired}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -909,6 +1014,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Change path: ${result.changePath}`);
         console.log(`Evidence: ${result.evidencePath}`);
         console.log(`Worker status: ${result.workerStatusPath}`);
+        console.log(`Phase: ${result.record.phase}`);
         console.log(`Status: ${result.record.status}`);
         console.log(`Symptom: ${result.record.symptom}`);
         if (result.record.hypothesis) {
@@ -922,6 +1028,38 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         console.log(`Record: ${result.record.recordPath}`);
         console.log(`Report: ${result.record.reportPath}`);
+        console.log('\nNext instruction:');
+        console.log(`  ${result.nextInstruction}`);
+        console.log('');
+    }
+    printWorkflowRoute(result) {
+        console.log('\nWorkflow Route');
+        console.log('==============\n');
+        console.log(`Change path: ${result.changePath}`);
+        console.log(`Status: ${result.status}`);
+        console.log(`Artifact: ${result.artifactPath}`);
+        console.log(`Report: ${result.reportPath}`);
+        if (result.recommendations.length > 0) {
+            console.log('\nRecommendations:');
+            for (const item of result.recommendations) {
+                console.log(`  ${item.priority}. ${item.action}: ${item.reason}`);
+                if (item.command) {
+                    console.log(`     ${item.command}`);
+                }
+            }
+        }
+        if (result.blockers.length > 0) {
+            console.log('\nBlockers:');
+            for (const blocker of result.blockers) {
+                console.log(`  - ${blocker}`);
+            }
+        }
+        if (result.warnings.length > 0) {
+            console.log('\nWarnings:');
+            for (const warning of result.warnings) {
+                console.log(`  - ${warning}`);
+            }
+        }
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -944,6 +1082,17 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const changeArg = this.quoteCommandArg(report.changePath);
         const reviewActions = this.extractTaskReviewActions(report.blockedTasks, changeArg);
         const blockedFocus = this.summarizeBlockedFocus(report);
+        if (report.decisions?.pendingRequired > 0 || (report.decisions?.blockers?.length || 0) > 0) {
+            const pendingDecision = report.decisions.decisions.find(decision => decision.status === 'PENDING' && decision.required);
+            return {
+                nextAction: 'ask user decision',
+                suggestedCommand: pendingDecision
+                    ? `ospec execute decision ${changeArg} --id ${this.quoteCommandArg(pendingDecision.id)} --select <option-id>`
+                    : null,
+                reviewNeeded: reviewActions.map(action => action.label),
+                blockedFocus: [...report.decisions.blockers, ...blockedFocus].slice(0, 3),
+            };
+        }
         if (report.issues.length > 0 || report.invalidTasks.length > 0) {
             return {
                 nextAction: 'repair task graph',
@@ -1201,6 +1350,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let target;
         let dryRun = false;
         let run = false;
+        let json = false;
         let command;
         let timeoutMs;
         for (let index = 0; index < args.length; index += 1) {
@@ -1233,6 +1383,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             }
             if (arg === '--dry-run') {
                 dryRun = true;
+                continue;
+            }
+            if (arg === '--json') {
+                json = true;
                 continue;
             }
             if (arg === '--run') {
@@ -1277,7 +1431,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (run && !command?.trim()) {
             throw new Error('Execute launch --run requires --command.');
         }
-        return { inputPath, taskId, target, dryRun, run, command, timeoutMs };
+        if (run && json) {
+            throw new Error('Execute launch --json cannot be combined with --run.');
+        }
+        return { inputPath, taskId, target, dryRun, run, json, command, timeoutMs };
     }
     parseWorktreeArgs(args) {
         let inputPath;
@@ -1796,6 +1953,159 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         return { inputPath, stage, summary };
     }
+    parseDecisionArgs(args) {
+        let inputPath;
+        let id;
+        let question;
+        const decisionOptions = [];
+        let recommendedOptionId;
+        let required;
+        let selectOptionId;
+        let skip = false;
+        let summary;
+        for (let index = 0; index < args.length; index += 1) {
+            const arg = args[index];
+            if (arg === '--id') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --id.');
+                }
+                id = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--id=')) {
+                id = arg.slice('--id='.length);
+                continue;
+            }
+            if (arg === '--question') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --question.');
+                }
+                question = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--question=')) {
+                question = arg.slice('--question='.length);
+                continue;
+            }
+            if (arg === '--option') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --option.');
+                }
+                decisionOptions.push(this.parseDecisionOption(value));
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--option=')) {
+                decisionOptions.push(this.parseDecisionOption(arg.slice('--option='.length)));
+                continue;
+            }
+            if (arg === '--recommended') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --recommended.');
+                }
+                recommendedOptionId = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--recommended=')) {
+                recommendedOptionId = arg.slice('--recommended='.length);
+                continue;
+            }
+            if (arg === '--select') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --select.');
+                }
+                selectOptionId = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--select=')) {
+                selectOptionId = arg.slice('--select='.length);
+                continue;
+            }
+            if (arg === '--summary') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --summary.');
+                }
+                summary = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--summary=')) {
+                summary = arg.slice('--summary='.length);
+                continue;
+            }
+            if (arg === '--required') {
+                if (required === false) {
+                    throw new Error('Execute decision cannot combine --required with --optional.');
+                }
+                required = true;
+                continue;
+            }
+            if (arg === '--optional') {
+                if (required === true) {
+                    throw new Error('Execute decision cannot combine --required with --optional.');
+                }
+                required = false;
+                continue;
+            }
+            if (arg === '--skip') {
+                skip = true;
+                continue;
+            }
+            if (arg.startsWith('--')) {
+                throw new Error(`Unknown execute decision flag: ${arg}`);
+            }
+            if (!inputPath) {
+                inputPath = arg;
+                continue;
+            }
+            throw new Error(`Unexpected execute decision argument: ${arg}`);
+        }
+        if (skip && selectOptionId) {
+            throw new Error('Execute decision cannot combine --skip with --select.');
+        }
+        return {
+            inputPath,
+            id,
+            question,
+            options: decisionOptions,
+            recommendedOptionId,
+            required,
+            selectOptionId,
+            skip,
+            summary,
+        };
+    }
+    parseDecisionOption(value) {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            throw new Error('Execute decision --option cannot be empty.');
+        }
+        const parts = trimmed.split(':');
+        if (parts.length === 1) {
+            return {
+                id: trimmed,
+                label: trimmed,
+                description: '',
+            };
+        }
+        const id = (parts.shift() || '').trim();
+        const label = (parts.shift() || '').trim();
+        const description = parts.join(':').trim();
+        if (!id || !label) {
+            throw new Error('Execute decision --option must be "id:label[:description]" or "label".');
+        }
+        return { id, label, description };
+    }
     parseVerificationArgs(args) {
         let inputPath;
         let command;
@@ -1974,6 +2284,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     parseDebugArgs(args) {
         let inputPath;
+        let phase;
         let symptom;
         let hypothesis;
         let rootCause;
@@ -1982,6 +2293,19 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let summary;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
+            if (arg === '--phase') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute debug requires a value after --phase.');
+                }
+                phase = this.normalizeDebugEvidencePhase(value);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--phase=')) {
+                phase = this.normalizeDebugEvidencePhase(arg.slice('--phase='.length));
+                continue;
+            }
             if (arg === '--symptom') {
                 const value = args[index + 1];
                 if (!value || value.startsWith('--')) {
@@ -2072,7 +2396,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (!symptom?.trim()) {
             throw new Error('Execute debug requires --symptom.');
         }
-        return { inputPath, symptom, hypothesis, rootCause, command, status, summary };
+        return { inputPath, phase, symptom, hypothesis, rootCause, command, status, summary };
     }
     normalizeCompletionStatus(value) {
         const normalized = value.trim().toUpperCase();
@@ -2104,14 +2428,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     normalizeHandoffTarget(value) {
         const normalized = value.trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'shell' || normalized === 'generic') {
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported execute handoff target: ${value}`);
     }
     normalizeWorkerToolTarget(value) {
         const normalized = value.trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'shell' || normalized === 'generic') {
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported execute launch target: ${value}`);
@@ -2129,6 +2453,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             return normalized;
         }
         throw new Error(`Unsupported execute tdd phase: ${value}`);
+    }
+    normalizeDebugEvidencePhase(value) {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'reproduce' || normalized === 'isolate' || normalized === 'hypothesize' || normalized === 'fix' || normalized === 'verify') {
+            return normalized;
+        }
+        throw new Error(`Unsupported execute debug phase: ${value}`);
     }
     normalizeTddEvidenceStatus(value) {
         const normalized = value.trim().toUpperCase();

@@ -35,7 +35,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BrainstormCommand = void 0;
 const path = __importStar(require("path"));
+const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
 class BrainstormCommand extends BaseCommand_1.BaseCommand {
     async execute(...args) {
@@ -59,6 +61,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         let changeName;
         let output;
         let visual = false;
+        let decisionGates = false;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--topic') {
@@ -104,6 +107,10 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 visual = true;
                 continue;
             }
+            if (arg === '--decision-gates') {
+                decisionGates = true;
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown brainstorm flag: ${arg}`);
             }
@@ -122,6 +129,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             changeName,
             output,
             visual,
+            decisionGates,
         };
     }
     async writeBrainstorm(args) {
@@ -134,6 +142,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         const reportPath = path.join(artifactDir, 'brainstorm.md');
         const visualPath = args.visual ? path.join(artifactDir, 'companion.html') : null;
         await services_1.services.fileService.ensureDir(artifactDir);
+        const decisionGates = this.buildDecisionGates(args, null);
         const artifact = {
             version: '1.0',
             topic: args.topic,
@@ -150,10 +159,23 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 'risk and verification',
                 'parallel execution candidates',
             ],
+            decisionGates,
             nextInstruction: args.changeName
                 ? `Create the change with ospec new ${args.changeName} ${projectPath}, then fold this brainstorm into proposal.md and design.md.`
                 : 'Use this brainstorm to choose a change name, then run ospec new <change-name>.',
         };
+        let decisionGateReports = [];
+        if (args.decisionGates) {
+            const changePath = await this.resolveDecisionGateChangePath(projectPath, args.changeName);
+            artifact.decisionGates = this.buildDecisionGates(args, changePath);
+            if (changePath) {
+                decisionGateReports = await this.writeDecisionGates(changePath, artifact.decisionGates);
+                artifact.nextInstruction = `Decision gates were written. Present ${path.relative(projectPath, path.join(changePath, 'artifacts', 'agents', 'decisions', 'index.md')).replace(/\\/g, '/')} before dispatch.`;
+            }
+            else {
+                artifact.nextInstruction = 'Decision gate commands are recorded below. Create or select the change, then run the listed ospec execute decision commands before dispatch.';
+            }
+        }
         await services_1.services.fileService.writeJSON(artifactPath, artifact);
         await services_1.services.fileService.writeFile(reportPath, this.renderBrainstormReport(artifact));
         if (visualPath) {
@@ -164,6 +186,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             artifactPath,
             reportPath,
             visualPath,
+            decisionGateReports,
             nextInstruction: artifact.nextInstruction,
         };
     }
@@ -176,6 +199,23 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
     }
     renderBrainstormReport(artifact) {
         const axes = artifact.decisionAxes.map(axis => `- [ ] ${axis}`).join('\n');
+        const gates = artifact.decisionGates.length > 0
+            ? artifact.decisionGates.map(gate => [
+                `### ${gate.id}`,
+                '',
+                `- Required: ${gate.required ? 'yes' : 'no'}`,
+                `- Question: ${gate.question}`,
+                `- Recommended option: ${gate.recommendedOptionId}`,
+                `- Report: ${gate.reportPath || 'not written yet'}`,
+                '',
+                'Options:',
+                ...gate.options.map(option => `- ${option.id}: ${option.label} - ${option.description}`),
+                '',
+                'Command:',
+                '',
+                `\`${gate.command}\``,
+            ].join('\n')).join('\n\n')
+            : '- None';
         return [
             `# Brainstorm: ${artifact.topic}`,
             '',
@@ -202,6 +242,10 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             '- [ ] What is explicitly out of scope?',
             '- [ ] Which files, modules, APIs, or user journeys are likely affected?',
             '- [ ] What verification would prove the direction is correct?',
+            '',
+            '## Decision Gates',
+            '',
+            gates,
             '',
             '## Recommended OSpec Follow-Up',
             '',
@@ -262,6 +306,12 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         if (result.visualPath) {
             console.log(`Visual companion: ${result.visualPath}`);
         }
+        if (result.decisionGateReports.length > 0) {
+            console.log('Decision gates:');
+            for (const reportPath of result.decisionGateReports) {
+                console.log(`  - ${reportPath}`);
+            }
+        }
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -269,8 +319,94 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
     printHelp() {
         console.log(`
 Brainstorm Commands:
-  ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
+  ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual] [--decision-gates]
 `);
+    }
+    buildDecisionGates(args, changePath) {
+        const changeArg = changePath ? this.quoteCommandArg(changePath) : '[change-path]';
+        const gates = [
+            {
+                id: 'brainstorm-direction',
+                required: true,
+                question: `Which direction should the change pursue first for: ${args.topic}`,
+                recommendedOptionId: 'smallest-scope',
+                options: [
+                    { id: 'smallest-scope', label: 'Smallest scope', description: 'Choose the narrowest direction that proves user value.' },
+                    { id: 'architecture-first', label: 'Architecture first', description: 'Resolve architecture impact before task dispatch.' },
+                    { id: 'explore-alternatives', label: 'Explore alternatives', description: 'Hold implementation until competing directions are compared.' },
+                ],
+            },
+            {
+                id: 'brainstorm-scope',
+                required: true,
+                question: 'Which scope boundary should be enforced before implementation?',
+                recommendedOptionId: 'narrow',
+                options: [
+                    { id: 'narrow', label: 'Narrow', description: 'Implement only the core behavior required for this change.' },
+                    { id: 'expanded', label: 'Expanded', description: 'Include adjacent workflow polish if it is low risk.' },
+                    { id: 'split', label: 'Split', description: 'Split follow-up work into another change before dispatch.' },
+                ],
+            },
+            {
+                id: 'brainstorm-verification-risk',
+                required: false,
+                question: 'How should verification risk be handled for this brainstorm?',
+                recommendedOptionId: 'standard',
+                options: [
+                    { id: 'standard', label: 'Standard', description: 'Use the normal verification commands from implementation-plan.md.' },
+                    { id: 'extra-evidence', label: 'Extra evidence', description: 'Require additional debug, TDD, or checkpoint evidence before finish.' },
+                    { id: 'block-until-tooling', label: 'Block until tooling', description: 'Do not dispatch until missing verification tooling is available.' },
+                ],
+            },
+        ];
+        return gates.map(gate => ({
+            ...gate,
+            command: [
+                `ospec execute decision ${changeArg}`,
+                `--id ${this.quoteCommandArg(gate.id)}`,
+                `--question ${this.quoteCommandArg(gate.question)}`,
+                ...gate.options.map(option => `--option ${this.quoteCommandArg(`${option.id}:${option.label}:${option.description}`)}`),
+                `--recommended ${this.quoteCommandArg(gate.recommendedOptionId)}`,
+                gate.required ? '--required' : '--optional',
+            ].join(' '),
+            reportPath: null,
+        }));
+    }
+    async resolveDecisionGateChangePath(projectPath, changeName) {
+        const config = await services_1.services.configManager.loadConfig(projectPath).catch(() => null);
+        if (changeName) {
+            const changePath = (0, ProjectLayout_1.getChangeDir)(projectPath, constants_1.DIR_NAMES.ACTIVE, changeName, config);
+            return await services_1.services.fileService.exists(changePath) ? changePath : null;
+        }
+        const activeNames = await services_1.services.projectService.listActiveChangeNames(projectPath);
+        if (activeNames.length !== 1) {
+            return null;
+        }
+        const changePath = (0, ProjectLayout_1.getChangeDir)(projectPath, constants_1.DIR_NAMES.ACTIVE, activeNames[0], config);
+        return await services_1.services.fileService.exists(changePath) ? changePath : null;
+    }
+    async writeDecisionGates(changePath, gates) {
+        const reports = [];
+        for (const gate of gates) {
+            const result = await services_1.services.taskGraphExecutionService.recordUserDecision(changePath, {
+                id: gate.id,
+                question: gate.question,
+                options: gate.options,
+                recommendedOptionId: gate.recommendedOptionId,
+                required: gate.required,
+                summary: 'Created from brainstorm decision gates.',
+            });
+            gate.reportPath = result.reportPath;
+            gate.command = gate.command.replace('[change-path]', this.quoteCommandArg(changePath));
+            reports.push(result.reportPath);
+        }
+        return reports;
+    }
+    quoteCommandArg(value) {
+        if (/^[A-Za-z0-9_./:@\\-]+$/.test(value)) {
+            return value;
+        }
+        return `"${value.replace(/"/g, '\\"')}"`;
     }
 }
 exports.BrainstormCommand = BrainstormCommand;

@@ -3,6 +3,9 @@ export declare class SkillCommand extends BaseCommand {
     execute(action?: string, skillNameOrTargetDir?: string, targetDir?: string): Promise<void>;
     private resolveAction;
     private getInstallAction;
+    private printAuthoringGuide;
+    private checkAuthoredSkill;
+    private printSkillCheck;
     private resolveSkillSelection;
     private isKnownSkillName;
     private getAvailableSkillNames;

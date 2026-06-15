@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PluginsCommand = void 0;
 const child_process_1 = require("child_process");
 const path = require("path");
+const yaml = require("js-yaml");
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
@@ -1437,6 +1438,11 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 ? `Stitch integration is enabled${checkpointConfig?.stitch_integration?.auto_pass_stitch_review !== false ? ' with automatic Stitch approval sync' : ''}`
                 : 'Stitch integration is disabled',
         });
+        const checkpointWorkspaceRoot = path.join(projectPath, '.ospec', 'plugins', 'checkpoint');
+        const routesInspection = await this.inspectCheckpointYamlFile(path.join(checkpointWorkspaceRoot, 'routes.yaml'), 'routes');
+        checks.push(...routesInspection.checks);
+        const flowsInspection = await this.inspectCheckpointYamlFile(path.join(checkpointWorkspaceRoot, 'flows.yaml'), 'flows');
+        checks.push(...flowsInspection.checks);
         const failCount = checks.filter(check => check.status === 'fail').length;
         const warnCount = checks.filter(check => check.status === 'warn').length;
         console.log('\nPlugin Doctor');
@@ -1462,6 +1468,86 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             process.exit(1);
         }
         this.success(`Plugin doctor passed${warnCount > 0 ? ` with ${warnCount} warning(s)` : ''}`);
+    }
+    async inspectCheckpointYamlFile(filePath, kind) {
+        const checks = [];
+        const label = kind === 'routes' ? 'routes.yaml' : 'flows.yaml';
+        if (!(await services_1.services.fileService.exists(filePath))) {
+            return {
+                checks: [{
+                        name: `${kind}.yaml`,
+                        status: 'fail',
+                        message: `${label} is missing at ${filePath}`,
+                    }],
+            };
+        }
+        let parsed = null;
+        try {
+            parsed = yaml.load(await services_1.services.fileService.readFile(filePath));
+            checks.push({
+                name: `${kind}.yaml.parse`,
+                status: 'pass',
+                message: `${label} parses as YAML`,
+            });
+        }
+        catch (error) {
+            return {
+                checks: [{
+                        name: `${kind}.yaml.parse`,
+                        status: 'fail',
+                        message: `${label} cannot be parsed: ${error?.message || error}`,
+                    }],
+            };
+        }
+        if (kind === 'routes') {
+            const routes = Array.isArray(parsed?.routes) ? parsed.routes : [];
+            checks.push({
+                name: 'routes.yaml.routes',
+                status: routes.length > 0 ? 'pass' : 'fail',
+                message: routes.length > 0 ? `${routes.length} route(s) configured` : 'routes.yaml must define a non-empty routes array',
+            });
+            const baselineCount = routes.filter((route) => route?.baseline || parsed?.defaults?.baseline).length;
+            checks.push({
+                name: 'routes.yaml.baselines',
+                status: baselineCount > 0 ? 'pass' : 'warn',
+                message: baselineCount > 0
+                    ? `${baselineCount} route(s) have visual baseline coverage`
+                    : 'No route baselines configured. Add baselines under .ospec/plugins/checkpoint/baselines/ for visual evidence.',
+            });
+            const accessibilityCount = routes.filter((route) => route?.required_visible || route?.selectors?.required_visible || route?.contrast !== false || parsed?.defaults?.required_visible || parsed?.defaults?.selectors?.required_visible).length;
+            checks.push({
+                name: 'routes.yaml.accessibility',
+                status: accessibilityCount > 0 ? 'pass' : 'warn',
+                message: accessibilityCount > 0
+                    ? `${accessibilityCount} route(s) include accessibility-oriented expectations`
+                    : 'Add required_visible, selectors.required_visible, contrast, landmarks, or focus expectations for accessibility evidence.',
+            });
+        }
+        else {
+            const flows = Array.isArray(parsed?.flows) ? parsed.flows : [];
+            checks.push({
+                name: 'flows.yaml.flows',
+                status: flows.length > 0 ? 'pass' : 'fail',
+                message: flows.length > 0 ? `${flows.length} flow(s) configured` : 'flows.yaml must define a non-empty flows array',
+            });
+            const screenshotCount = flows.filter((flow) => Array.isArray(flow?.steps) && flow.steps.some((step) => String(step?.action || '').trim().toLowerCase() === 'screenshot')).length;
+            checks.push({
+                name: 'flows.yaml.screenshots',
+                status: screenshotCount > 0 ? 'pass' : 'warn',
+                message: screenshotCount > 0
+                    ? `${screenshotCount} flow(s) include screenshot steps`
+                    : 'Add screenshot steps to important flows so flow evidence is reviewable.',
+            });
+            const assertionCount = flows.filter((flow) => (Array.isArray(flow?.steps) && flow.steps.some((step) => String(step?.action || '').trim().toLowerCase().startsWith('assert_'))) || Array.isArray(flow?.api_assertions) || flow?.assert_command).length;
+            checks.push({
+                name: 'flows.yaml.assertions',
+                status: assertionCount > 0 ? 'pass' : 'warn',
+                message: assertionCount > 0
+                    ? `${assertionCount} flow(s) include assertion evidence`
+                    : 'Add assert_text, assert_url, api_assertions, or assert_command to important flows.',
+            });
+        }
+        return { checks };
     }
     async doctorExternalPlugin(pluginName, projectPath) {
         const config = await services_1.services.configManager.loadConfig(projectPath);
@@ -2776,6 +2862,341 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             artifacts: normalizeArtifacts(result?.artifacts || result?.files || result?.outputs),
         };
     }
+    buildCheckpointEvidenceCoverage(output, activeSteps) {
+        const firstString = (...values) => values.find(value => typeof value === 'string' && value.trim().length > 0)?.trim() || '';
+        const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+        const addArtifact = (artifacts, seen, artifact, fallbackType = '', fallbackLabel = '') => {
+            if (!isObject(artifact)) {
+                return;
+            }
+            const pathValue = firstString(artifact.path, artifact.screenshot_path, artifact.screenshotPath, artifact.baseline_path, artifact.baselinePath, artifact.diff_path, artifact.diffPath);
+            const urlValue = firstString(artifact.url);
+            const typeValue = firstString(artifact.type, fallbackType);
+            const labelValue = firstString(artifact.label, artifact.name, fallbackLabel);
+            if (!pathValue && !urlValue) {
+                return;
+            }
+            const key = [typeValue, pathValue, urlValue, pathValue || urlValue ? '' : labelValue].join('|').toLowerCase();
+            if (seen.has(key)) {
+                return;
+            }
+            seen.add(key);
+            artifacts.push({
+                ...(pathValue ? { path: pathValue } : {}),
+                ...(urlValue ? { url: urlValue } : {}),
+                ...(typeValue ? { type: typeValue } : {}),
+                ...(labelValue ? { label: labelValue } : {}),
+            });
+        };
+        const collectStepArtifacts = (stepOutput) => {
+            const artifacts = [];
+            const seen = new Set();
+            for (const artifact of Array.isArray(stepOutput?.artifacts) ? stepOutput.artifacts : []) {
+                addArtifact(artifacts, seen, artifact);
+            }
+            for (const route of Array.isArray(stepOutput?.routes) ? stepOutput.routes : []) {
+                addArtifact(artifacts, seen, {
+                    path: firstString(route?.screenshot_path, route?.screenshotPath, route?.screenshot),
+                    type: 'screenshot',
+                    label: firstString(route?.name) ? `${route.name} screenshot` : 'route screenshot',
+                });
+                const baselinePath = firstString(route?.baseline_path, route?.baselinePath, route?.baseline);
+                const diffPath = firstString(route?.diff_path, route?.diffPath, route?.diff);
+                const hasVisualDiffResult = route?.diff_ratio !== undefined && route?.diff_ratio !== null;
+                if (diffPath || (baselinePath && hasVisualDiffResult)) {
+                    addArtifact(artifacts, seen, {
+                        path: diffPath || baselinePath,
+                        type: 'visual_diff',
+                        label: firstString(route?.name) ? `${route.name} visual diff` : 'visual diff',
+                    });
+                }
+                for (const artifact of Array.isArray(route?.artifacts) ? route.artifacts : []) {
+                    addArtifact(artifacts, seen, artifact);
+                }
+            }
+            for (const flow of Array.isArray(stepOutput?.flows) ? stepOutput.flows : []) {
+                addArtifact(artifacts, seen, {
+                    path: firstString(flow?.screenshot_path, flow?.screenshotPath, flow?.screenshot),
+                    type: 'screenshot',
+                    label: firstString(flow?.name) ? `${flow.name} screenshot` : 'flow screenshot',
+                });
+                for (const artifact of Array.isArray(flow?.artifacts) ? flow.artifacts : []) {
+                    addArtifact(artifacts, seen, artifact);
+                }
+            }
+            return artifacts;
+        };
+        const collectGlobalArtifacts = () => {
+            const artifacts = [];
+            const seen = new Set();
+            for (const artifact of Array.isArray(output?.artifacts) ? output.artifacts : []) {
+                addArtifact(artifacts, seen, artifact);
+            }
+            return artifacts;
+        };
+        const artifactMatches = (artifact, terms, pathTerms = terms) => {
+            const typeAndLabel = `${artifact?.type || ''} ${artifact?.label || ''}`.toLowerCase();
+            const pathAndUrl = `${artifact?.path || ''} ${artifact?.url || ''}`.toLowerCase();
+            return terms.some(term => typeAndLabel.includes(term)) ||
+                pathTerms.some(term => pathAndUrl.includes(term));
+        };
+        const countArtifacts = (artifacts, terms, pathTerms = terms) => artifacts.filter(artifact => artifactMatches(artifact, terms, pathTerms)).length;
+        const countCoverage = (items) => {
+            const entries = Array.isArray(items) ? items : [];
+            return {
+                total: entries.length,
+                passed: entries.filter(entry => String(entry?.status || '').toLowerCase() === 'passed').length,
+                failed: entries.filter(entry => String(entry?.status || '').toLowerCase() === 'failed').length,
+            };
+        };
+        const countAssertionsFromMetadata = (metadata) => {
+            if (!isObject(metadata)) {
+                return 0;
+            }
+            const values = [
+                metadata.assertions,
+                metadata.assertion_count,
+                metadata.assertionCount,
+                metadata.api_assertions,
+                metadata.api_assertion_count,
+                metadata.apiAssertionCount,
+                metadata.flow_assertions,
+                metadata.flowAssertionCount,
+            ];
+            return values.reduce((maximum, value) => {
+                if (Array.isArray(value)) {
+                    return Math.max(maximum, value.length);
+                }
+                const numeric = Number(value);
+                return Number.isFinite(numeric) && numeric > 0 ? Math.max(maximum, Math.floor(numeric)) : maximum;
+            }, 0);
+        };
+        const countAssertionsFromFlow = (flow) => {
+            if (!isObject(flow)) {
+                return 0;
+            }
+            const metadataCount = countAssertionsFromMetadata(flow.metadata);
+            const apiAssertions = Array.isArray(flow.api_assertions) ? flow.api_assertions.length : 0;
+            const directAssertions = Array.isArray(flow.assertions) ? flow.assertions.length : 0;
+            const stepAssertions = Array.isArray(flow.steps)
+                ? flow.steps.filter(step => String(step?.action || '').trim().toLowerCase().startsWith('assert_')).length
+                : 0;
+            const assertCommand = firstString(flow.assert_command, flow.assertCommand) ? 1 : 0;
+            return Math.max(metadataCount, apiAssertions + directAssertions + stepAssertions + assertCommand);
+        };
+        const countAssertions = (stepOutput) => {
+            const metadataCount = countAssertionsFromMetadata(stepOutput?.metadata);
+            const directAssertions = Array.isArray(stepOutput?.assertions) ? stepOutput.assertions.length : 0;
+            const flowAssertions = (Array.isArray(stepOutput?.flows) ? stepOutput.flows : [])
+                .reduce((total, flow) => total + countAssertionsFromFlow(flow), 0);
+            return Math.max(metadataCount, directAssertions, flowAssertions);
+        };
+        const countMetadataMetric = (metadata, names) => {
+            if (!isObject(metadata)) {
+                return 0;
+            }
+            return names.reduce((maximum, name) => {
+                const value = metadata[name];
+                if (value === true) {
+                    return Math.max(maximum, 1);
+                }
+                if (Array.isArray(value)) {
+                    return Math.max(maximum, value.length);
+                }
+                const numeric = Number(value);
+                return Number.isFinite(numeric) && numeric > 0 ? Math.max(maximum, Math.floor(numeric)) : maximum;
+            }, 0);
+        };
+        const countStepMetric = (stepOutput, names) => {
+            const stepCount = countMetadataMetric(stepOutput?.metadata, names);
+            const routeCount = (Array.isArray(stepOutput?.routes) ? stepOutput.routes : [])
+                .reduce((total, route) => total + countMetadataMetric(route?.metadata, names), 0);
+            const flowCount = (Array.isArray(stepOutput?.flows) ? stepOutput.flows : [])
+                .reduce((total, flow) => total + countMetadataMetric(flow?.metadata, names), 0);
+            return Math.max(stepCount, routeCount + flowCount);
+        };
+        const globalArtifacts = collectGlobalArtifacts();
+        const byStep = {};
+        const totals = {
+            screenshots: 0,
+            traces: 0,
+            visual_diffs: 0,
+            routes: 0,
+            flows: 0,
+            assertions: 0,
+            console_events: 0,
+            network_events: 0,
+            accessibility: 0,
+            route_coverage: { total: 0, passed: 0, failed: 0 },
+            flow_coverage: { total: 0, passed: 0, failed: 0 },
+        };
+        for (const stepName of activeSteps) {
+            const stepOutput = output.steps?.[stepName] || {};
+            const routes = Array.isArray(stepOutput.routes) ? stepOutput.routes : [];
+            const flows = Array.isArray(stepOutput.flows) ? stepOutput.flows : [];
+            const stepArtifacts = collectStepArtifacts(stepOutput);
+            const artifacts = activeSteps.length === 1
+                ? [
+                    ...stepArtifacts,
+                    ...globalArtifacts,
+                ]
+                : stepArtifacts;
+            const routeCoverage = countCoverage(routes);
+            const flowCoverage = countCoverage(flows);
+            const screenshots = countArtifacts(artifacts, ['screenshot'], ['screenshot', 'screenshots']);
+            const traces = countArtifacts(artifacts, ['trace'], ['trace', 'traces']);
+            const visualDiffs = countArtifacts(artifacts, ['visual_diff', 'visual diff', 'diff'], ['diff', 'diffs', 'baseline', 'baselines']);
+            const assertions = countAssertions(stepOutput);
+            const consoleEvents = countStepMetric(stepOutput, ['console_events', 'consoleEvents', 'console_count', 'consoleCount']);
+            const networkEvents = countStepMetric(stepOutput, ['network_events', 'networkEvents', 'network_count', 'networkCount']);
+            const accessibility = countStepMetric(stepOutput, ['accessibility', 'accessibility_checks', 'accessibilityChecks', 'accessibility_evidence', 'accessibilityEvidence']);
+            const missing = [];
+            if (stepName === 'checkpoint_ui_review') {
+                if (routeCoverage.total === 0) {
+                    missing.push('route coverage');
+                }
+                if (screenshots === 0) {
+                    missing.push('screenshots');
+                }
+                if (traces === 0) {
+                    missing.push('trace');
+                }
+                if (visualDiffs === 0) {
+                    missing.push('visual diff baseline');
+                }
+                if (accessibility === 0) {
+                    missing.push('accessibility evidence');
+                }
+                if (consoleEvents + networkEvents === 0) {
+                    missing.push('console/network evidence');
+                }
+            }
+            if (stepName === 'checkpoint_flow_check') {
+                if (flowCoverage.total === 0) {
+                    missing.push('flow coverage');
+                }
+                if (screenshots === 0) {
+                    missing.push('screenshots');
+                }
+                if (traces === 0) {
+                    missing.push('trace');
+                }
+                if (assertions === 0) {
+                    missing.push('assertions');
+                }
+                if (consoleEvents + networkEvents === 0) {
+                    missing.push('console/network evidence');
+                }
+            }
+            byStep[stepName] = {
+                status: missing.length === 0 ? 'complete' : 'incomplete',
+                screenshots,
+                traces,
+                visual_diffs: visualDiffs,
+                routes: routeCoverage.total,
+                flows: flowCoverage.total,
+                assertions,
+                console_events: consoleEvents,
+                network_events: networkEvents,
+                accessibility,
+                route_coverage: routeCoverage,
+                flow_coverage: flowCoverage,
+                missing,
+            };
+            totals.screenshots += screenshots;
+            totals.traces += traces;
+            totals.visual_diffs += visualDiffs;
+            totals.routes += routeCoverage.total;
+            totals.flows += flowCoverage.total;
+            totals.assertions += assertions;
+            totals.console_events += consoleEvents;
+            totals.network_events += networkEvents;
+            totals.accessibility += accessibility;
+            totals.route_coverage.total += routeCoverage.total;
+            totals.route_coverage.passed += routeCoverage.passed;
+            totals.route_coverage.failed += routeCoverage.failed;
+            totals.flow_coverage.total += flowCoverage.total;
+            totals.flow_coverage.passed += flowCoverage.passed;
+            totals.flow_coverage.failed += flowCoverage.failed;
+        }
+        const missing = Object.entries(byStep).flatMap(([stepName, stepEvidence]) => (stepEvidence.missing || []).map(item => `${stepName}: ${item}`));
+        return {
+            status: missing.length === 0 ? 'complete' : 'incomplete',
+            ...totals,
+            missing,
+            by_step: byStep,
+        };
+    }
+    buildCheckpointEvidenceSummaryMarkdown(evidence) {
+        const lines = [
+            '## Evidence Coverage',
+            '',
+            `- Status: ${evidence?.status || 'missing'}`,
+            `- Screenshots: ${evidence?.screenshots || 0}`,
+            `- Traces: ${evidence?.traces || 0}`,
+            `- Visual diffs: ${evidence?.visual_diffs || 0}`,
+            `- Routes: ${evidence?.route_coverage?.passed || 0}/${evidence?.route_coverage?.total || 0} passed`,
+            `- Flows: ${evidence?.flow_coverage?.passed || 0}/${evidence?.flow_coverage?.total || 0} passed`,
+            `- Assertions: ${evidence?.assertions || 0}`,
+            `- Console events: ${evidence?.console_events || 0}`,
+            `- Network events: ${evidence?.network_events || 0}`,
+            `- Accessibility evidence: ${evidence?.accessibility || 0}`,
+        ];
+        const missing = Array.isArray(evidence?.missing) ? evidence.missing : [];
+        if (missing.length > 0) {
+            lines.push('- Missing evidence:');
+            missing.forEach(item => {
+                lines.push(`  - ${item}`);
+            });
+        }
+        const byStep = evidence?.by_step && typeof evidence.by_step === 'object' ? evidence.by_step : {};
+        for (const [stepName, stepEvidence] of Object.entries(byStep)) {
+            lines.push('');
+            lines.push(`### ${stepName}`);
+            lines.push('');
+            lines.push(`- Evidence status: ${stepEvidence.status || 'missing'}`);
+            lines.push(`- Screenshots: ${stepEvidence.screenshots || 0}`);
+            lines.push(`- Traces: ${stepEvidence.traces || 0}`);
+            lines.push(`- Visual diffs: ${stepEvidence.visual_diffs || 0}`);
+            lines.push(`- Routes: ${stepEvidence.route_coverage?.passed || 0}/${stepEvidence.route_coverage?.total || 0} passed`);
+            lines.push(`- Flows: ${stepEvidence.flow_coverage?.passed || 0}/${stepEvidence.flow_coverage?.total || 0} passed`);
+            lines.push(`- Assertions: ${stepEvidence.assertions || 0}`);
+            lines.push(`- Console events: ${stepEvidence.console_events || 0}`);
+            lines.push(`- Network events: ${stepEvidence.network_events || 0}`);
+            lines.push(`- Accessibility evidence: ${stepEvidence.accessibility || 0}`);
+        }
+        lines.push('');
+        return lines.join('\n');
+    }
+    buildCheckpointGateSummaryAppendix(gate, stitchSync) {
+        const lines = [
+            this.buildCheckpointEvidenceSummaryMarkdown(gate.evidence),
+        ];
+        const gateIssues = Array.isArray(gate.issues) ? gate.issues : [];
+        if (gateIssues.length > 0) {
+            lines.push('## Gate Issues');
+            lines.push('');
+            gateIssues.forEach(issue => {
+                lines.push(`- ${issue.message || issue}`);
+            });
+            lines.push('');
+        }
+        if (stitchSync?.attempted) {
+            lines.push('## Stitch Sync');
+            lines.push('');
+            lines.push(`- Status: ${stitchSync.status}`);
+            if (stitchSync.message) {
+                lines.push(`- Message: ${stitchSync.message}`);
+            }
+            lines.push('');
+        }
+        return lines.join('\n').trimEnd();
+    }
+    appendCheckpointGateSummaryMarkdown(summaryMarkdown, gate, stitchSync) {
+        const baseSummary = String(summaryMarkdown || '').trim();
+        const appendix = this.buildCheckpointGateSummaryAppendix(gate, stitchSync);
+        return [baseSummary, appendix].filter(Boolean).join('\n\n');
+    }
     buildCheckpointSummaryMarkdown(gate, output, stitchSync) {
         const lines = [
             '# Checkpoint Review Summary',
@@ -2785,6 +3206,7 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
             `- Blocking: ${gate.blocking ? 'yes' : 'no'}`,
             '',
         ];
+        lines.push(this.buildCheckpointEvidenceSummaryMarkdown(gate.evidence));
         for (const [stepName, stepState] of Object.entries(gate.steps || {})) {
             lines.push(`## ${stepName}`);
             lines.push('');
@@ -2830,24 +3252,61 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
         return lines.join('\n');
     }
     async writeCheckpointArtifacts(changePath, changeFiles, checkpointConfig, runner, command, args, cwd, timeoutMs, tokenEnv, extraEnv, output, stitchSync, activeSteps) {
-        const gate = {
-            plugin: 'checkpoint',
-            status: output.status,
-            blocking: checkpointConfig?.blocking !== false,
-            executed_at: output.executed_at,
-            steps: Object.fromEntries(activeSteps.map(stepName => [
+        const evidence = this.buildCheckpointEvidenceCoverage(output, activeSteps);
+        const evidenceIssues = [];
+        const steps = Object.fromEntries(activeSteps.map(stepName => {
+            const stepStatus = output.steps?.[stepName]?.status || 'failed';
+            const stepIssues = Array.isArray(output.steps?.[stepName]?.issues)
+                ? [...output.steps[stepName].issues]
+                : [];
+            const stepEvidence = evidence.by_step?.[stepName];
+            if (stepStatus === 'passed' && Array.isArray(stepEvidence?.missing) && stepEvidence.missing.length > 0) {
+                const issue = {
+                    message: `Checkpoint evidence coverage is incomplete for ${stepName}: missing ${stepEvidence.missing.join(', ')}.`,
+                    severity: 'error',
+                    code: 'checkpoint_evidence_missing',
+                    step: stepName,
+                };
+                stepIssues.push(issue);
+                evidenceIssues.push(issue);
+                return [
+                    stepName,
+                    {
+                        status: 'failed',
+                        issues: stepIssues,
+                    },
+                ];
+            }
+            return [
                 stepName,
                 {
-                    status: output.steps?.[stepName]?.status || 'failed',
-                    issues: output.steps?.[stepName]?.issues || [],
+                    status: stepStatus,
+                    issues: stepIssues,
                 },
-            ])),
+            ];
+        }));
+        const hasFailedStep = activeSteps.some(stepName => steps[stepName]?.status === 'failed');
+        const gateStatus = output.status === 'passed' && hasFailedStep
+            ? 'failed'
+            : hasFailedStep
+                ? 'failed'
+                : output.status;
+        const gate = {
+            plugin: 'checkpoint',
+            status: gateStatus,
+            blocking: checkpointConfig?.blocking !== false,
+            executed_at: output.executed_at,
+            steps,
+            evidence,
             stitch_sync: stitchSync,
-            issues: output.issues,
+            issues: [
+                ...(Array.isArray(output.issues) ? output.issues : []),
+                ...evidenceIssues,
+            ],
         };
         const resultArtifact = {
             plugin: 'checkpoint',
-            status: output.status,
+            status: gate.status,
             executed_at: output.executed_at,
             active_steps: activeSteps,
             runner: {
@@ -2860,9 +3319,12 @@ class PluginsCommand extends BaseCommand_1.BaseCommand {
                 extra_env_keys: Object.keys(extraEnv).sort((left, right) => left.localeCompare(right)),
             },
             output,
+            evidence,
             stitch_sync: stitchSync,
         };
-        const summaryMarkdown = output.summary_markdown || this.buildCheckpointSummaryMarkdown(gate, output, stitchSync);
+        const summaryMarkdown = output.summary_markdown
+            ? this.appendCheckpointGateSummaryMarkdown(output.summary_markdown, gate, stitchSync)
+            : this.buildCheckpointSummaryMarkdown(gate, output, stitchSync);
         await services_1.services.fileService.writeJSON(changeFiles.checkpointGatePath, gate);
         await services_1.services.fileService.writeJSON(changeFiles.checkpointResultPath, resultArtifact);
         await services_1.services.fileService.writeFile(changeFiles.checkpointSummaryPath, summaryMarkdown);

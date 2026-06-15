@@ -3392,7 +3392,7 @@ ${formatSuggestion()}
             if (!hasEarlierRedFailure) {
                 return {
                     name: 'verification.md.tdd_evidence',
-                    status: 'warn',
+                    status: 'fail',
                     message: `Latest ${normalizedPhase} TDD evidence passed, but no earlier red failure was recorded`,
                 };
             }

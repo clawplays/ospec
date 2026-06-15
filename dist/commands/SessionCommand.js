@@ -223,7 +223,41 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         const hookDir = path.join(targetPath, '.ospec', 'hooks');
         const artifactPath = path.join(hookDir, 'session-start.json');
         const reportPath = path.join(hookDir, 'session-start.md');
+        const usingOSpecPath = path.join(hookDir, 'using-ospec.json');
+        const usingOSpecReportPath = path.join(hookDir, 'using-ospec.md');
         const sessionCommand = (0, helpers_1.formatCliCommand)('ospec', 'session', targetPath);
+        const activeReport = await services_1.services.projectService.getActiveChangeStatusReport(targetPath);
+        const activeChange = activeReport.changes.length === 1 ? activeReport.changes[0] : null;
+        const bootstrap = {
+            projectEntryCommand: sessionCommand,
+            activeChangeBootstrapCommand: activeChange
+                ? (0, helpers_1.formatCliCommand)('ospec', 'execute', 'bootstrap', activeChange.path)
+                : null,
+            safeNextSource: '.ospec/session-brief.json recommendedCommands[0]',
+            decisionGateSource: 'active-change artifacts/agents/bootstrap.json execution.decisions and artifacts/agents/decisions/',
+            pluginGateSource: 'project .skillrc plugin configuration and active-change plugin artifacts',
+            requiredReads: [
+                '.ospec/session-brief.json',
+                '.ospec/session-brief.md',
+                activeChange
+                    ? path.relative(targetPath, path.join(activeChange.path, 'artifacts', 'agents', 'bootstrap.json')).replace(/\\/g, '/')
+                    : 'active-change artifacts/agents/bootstrap.json when exactly one active change exists',
+                activeChange
+                    ? path.relative(targetPath, path.join(activeChange.path, 'artifacts', 'agents', 'decisions')).replace(/\\/g, '/')
+                    : 'active-change artifacts/agents/decisions/ when decision gates exist',
+            ],
+        };
+        const injection = {
+            prompt: 'Use OSpec context before changing files: refresh the project session brief, follow the safe next command, and pause on required user decisions.',
+            afterSessionStart: [
+                `Run ${sessionCommand} or read the freshly written .ospec/session-brief.json.`,
+                activeChange
+                    ? `Run ${bootstrap.activeChangeBootstrapCommand} before dispatch, launch, review, verification, or finish.`
+                    : 'If one active change is present after the session brief, run ospec execute bootstrap for that change.',
+                'If bootstrap reports required pending user decisions, ask the user to choose and record the answer with ospec execute decision before dispatching work.',
+                'Treat plugin gates as project/change artifacts; do not approve, reject, dispatch, or run plugin work implicitly.',
+            ],
+        };
         const artifact = {
             version: '1.0',
             generatedAt,
@@ -232,7 +266,12 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             artifacts: {
                 sessionBriefJson: path.relative(targetPath, path.join(targetPath, '.ospec', 'session-brief.json')).replace(/\\/g, '/'),
                 sessionBriefMarkdown: path.relative(targetPath, path.join(targetPath, '.ospec', 'session-brief.md')).replace(/\\/g, '/'),
+                usingOSpecJson: path.relative(targetPath, usingOSpecPath).replace(/\\/g, '/'),
+                usingOSpecMarkdown: path.relative(targetPath, usingOSpecReportPath).replace(/\\/g, '/'),
             },
+            bootstrap,
+            injection,
+            harnessTargets: this.buildSessionHookHarnessTargets(),
             integration: {
                 shell: `cd ${this.quoteShellArg(targetPath)} && ${sessionCommand}`,
                 powershell: `Set-Location -LiteralPath ${JSON.stringify(targetPath)}; ${sessionCommand}`,
@@ -249,10 +288,23 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         await services_1.services.fileService.ensureDir(hookDir);
         await services_1.services.fileService.writeJSON(artifactPath, artifact);
         await services_1.services.fileService.writeFile(reportPath, this.renderSessionHook(artifact));
+        await services_1.services.fileService.writeJSON(usingOSpecPath, {
+            version: artifact.version,
+            generatedAt: artifact.generatedAt,
+            projectPath: artifact.projectPath,
+            bootstrap: artifact.bootstrap,
+            injection: artifact.injection,
+            harnessTargets: artifact.harnessTargets,
+            safetyRules: artifact.safetyRules,
+            nextInstruction: artifact.nextInstruction,
+        });
+        await services_1.services.fileService.writeFile(usingOSpecReportPath, this.renderUsingOSpec(artifact));
         return {
             projectPath: targetPath,
             artifactPath,
             reportPath,
+            usingOSpecPath,
+            usingOSpecReportPath,
             sessionCommand,
             nextInstruction: artifact.nextInstruction,
         };
@@ -352,6 +404,45 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         }
         return commands;
     }
+    buildSessionHookHarnessTargets() {
+        return [
+            {
+                target: 'codex',
+                startupUse: 'Read using-ospec.md, run ospec session, then run ospec execute bootstrap for the active change when present.',
+                nativeExecution: 'Use native subagents through the current Codex harness after ospec execute dispatch and launch-plan review.',
+            },
+            {
+                target: 'claude',
+                startupUse: 'Load using-ospec.md as project context before starting an active change task.',
+                nativeExecution: 'Use Claude Code Task only after dispatch artifacts and launch-plan.md are ready.',
+            },
+            {
+                target: 'gemini',
+                startupUse: 'Read using-ospec.md, refresh session context, and follow bootstrap nextInstruction.',
+                nativeExecution: 'Use @generalist workers only for dispatch packets marked ready.',
+            },
+            {
+                target: 'opencode',
+                startupUse: 'Load the session-start artifact and refresh .ospec/session-brief.json at session entry.',
+                nativeExecution: 'Use @mention worker routing from launch-plan.md after dispatch.',
+            },
+            {
+                target: 'cursor',
+                startupUse: 'Use using-ospec.md as the pinned session-start checklist before code edits.',
+                nativeExecution: 'Use Cursor-native task/chat handoff only after OSpec dispatch packets exist.',
+            },
+            {
+                target: 'copilot',
+                startupUse: 'Use using-ospec.md as repository instruction context and run the session command manually when needed.',
+                nativeExecution: 'Use Copilot task context from launch-plan.md; keep CLI worker runners as fallback only.',
+            },
+            {
+                target: 'generic',
+                startupUse: 'Run the session command, inspect recommendedCommands, then bootstrap the single active change if available.',
+                nativeExecution: 'Dispatch native agents only when the host harness has an equivalent safe worker mechanism.',
+            },
+        ];
+    }
     renderSessionBrief(brief) {
         const activeChanges = brief.activeChanges.length > 0
             ? brief.activeChanges
@@ -425,6 +516,10 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
     }
     renderSessionHook(artifact) {
         const safetyRules = artifact.safetyRules.map(rule => `- ${rule}`).join('\n');
+        const targets = artifact.harnessTargets
+            .map(target => `- ${target.target}: ${target.startupUse}`)
+            .join('\n');
+        const requiredReads = artifact.bootstrap.requiredReads.map(item => `- ${item}`).join('\n');
         return [
             '# OSpec Session Start Hook',
             '',
@@ -433,15 +528,85 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             `- Session command: \`${artifact.sessionCommand}\``,
             `- Session JSON: ${artifact.artifacts.sessionBriefJson}`,
             `- Session Markdown: ${artifact.artifacts.sessionBriefMarkdown}`,
+            `- Using OSpec JSON: ${artifact.artifacts.usingOSpecJson}`,
+            `- Using OSpec Markdown: ${artifact.artifacts.usingOSpecMarkdown}`,
             '',
             '## Purpose',
             '',
             artifact.integration.description,
             '',
+            '## Bootstrap Context',
+            '',
+            `- Project entry command: \`${artifact.bootstrap.projectEntryCommand}\``,
+            `- Active change bootstrap command: ${artifact.bootstrap.activeChangeBootstrapCommand ? `\`${artifact.bootstrap.activeChangeBootstrapCommand}\`` : 'none'}`,
+            `- Safe next source: ${artifact.bootstrap.safeNextSource}`,
+            `- Decision gate source: ${artifact.bootstrap.decisionGateSource}`,
+            `- Plugin gate source: ${artifact.bootstrap.pluginGateSource}`,
+            '',
+            '## Required Reads',
+            '',
+            requiredReads,
+            '',
+            '## Harness Targets',
+            '',
+            targets,
+            '',
             '## Integration Snippets',
             '',
             `- Shell: \`${artifact.integration.shell}\``,
             `- PowerShell: \`${artifact.integration.powershell}\``,
+            '',
+            '## Safety Rules',
+            '',
+            safetyRules,
+            '',
+            '## Next Instruction',
+            '',
+            artifact.nextInstruction,
+            '',
+        ].join('\n');
+    }
+    renderUsingOSpec(artifact) {
+        const reads = artifact.bootstrap.requiredReads.map(item => `- ${item}`).join('\n');
+        const steps = artifact.injection.afterSessionStart.map(item => `- ${item}`).join('\n');
+        const targets = artifact.harnessTargets
+            .map(target => [
+            `### ${target.target}`,
+            '',
+            `- Startup: ${target.startupUse}`,
+            `- Native execution: ${target.nativeExecution}`,
+        ].join('\n'))
+            .join('\n\n');
+        const safetyRules = artifact.safetyRules.map(rule => `- ${rule}`).join('\n');
+        return [
+            '# Using OSpec',
+            '',
+            `- Generated at: ${artifact.generatedAt}`,
+            `- Project path: ${artifact.projectPath}`,
+            '',
+            '## Session Start Prompt',
+            '',
+            artifact.injection.prompt,
+            '',
+            '## Bootstrap',
+            '',
+            `- Project entry command: \`${artifact.bootstrap.projectEntryCommand}\``,
+            `- Active change bootstrap command: ${artifact.bootstrap.activeChangeBootstrapCommand ? `\`${artifact.bootstrap.activeChangeBootstrapCommand}\`` : 'none'}`,
+            `- Safe next source: ${artifact.bootstrap.safeNextSource}`,
+            `- Decision gate source: ${artifact.bootstrap.decisionGateSource}`,
+            `- Plugin gate source: ${artifact.bootstrap.pluginGateSource}`,
+            '',
+            '## Required Reads',
+            '',
+            reads,
+            '',
+            '## Session Steps',
+            '',
+            steps,
+            '',
+            '## Harness Targets',
+            '',
+            targets,
             '',
             '## Safety Rules',
             '',
@@ -479,6 +644,8 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         console.log(`Session command: ${result.sessionCommand}`);
         console.log(`Artifact: ${result.artifactPath}`);
         console.log(`Report: ${result.reportPath}`);
+        console.log(`Using OSpec artifact: ${result.usingOSpecPath}`);
+        console.log(`Using OSpec report: ${result.usingOSpecReportPath}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');

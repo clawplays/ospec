@@ -372,7 +372,13 @@ async function main() {
   try {
     console.log(`[release:smoke] using temp dir: ${tempDir}`);
 
-    let output = run('node', [cliPath, '--help']);
+    let output = run('node', [
+      path.join(rootDir, 'scripts', 'release-content-scan.js'),
+    ]);
+
+    assertContains(output, '[release:scan] scanned', 'release scan output');
+
+    output = run('node', [cliPath, '--help']);
 
     assertContains(output, `OSpec CLI v${packageJson.version}`, 'root help');
 

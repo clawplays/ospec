@@ -42,6 +42,8 @@ Skill Package Commands:
   ospec skill install [skill-name] [dir]         - install one Codex OSpec skill; managed skills are ospec and ospec-change
   ospec skill status-claude [skill-name] [dir]   - inspect one Claude Code OSpec skill; managed skills are ospec and ospec-change
   ospec skill install-claude [skill-name] [dir]  - install one Claude Code OSpec skill; managed skills are ospec and ospec-change
+  ospec skill author [dir]                       - show OSpec-native skill authoring workflow guidance
+  ospec skill check [dir]                        - check a local skill package before install or publication
   ospec skill help                  - show skill command help
 `;
 }
@@ -127,19 +129,20 @@ function getExecuteHelpText() {
     return `
 Execute Commands:
   ospec execute bootstrap [change-path|project-path] - write a one-change startup/resume snapshot with project session brief context and next safe action
-  ospec execute handoff [change-path|project-path] [--target codex|gpt|claude|gemini|opencode|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
+  ospec execute handoff [change-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
   ospec execute doc-review [change-path|project-path] [--stage design|plan] - create a design or implementation-plan review packet with project session context
   ospec execute status [change-path|project-path] - show task graph controller state
   ospec execute next [change-path|project-path]   - show dispatchable next task(s)
+  ospec execute route [change-path|project-path]  - write a workflow-route artifact with the next recommended OSpec command
   ospec execute workspace [change-path|project-path] - inspect git workspace safety and write workspace-status artifacts
   ospec execute worktree [change-path|project-path] [--branch name] [--path path] [--base ref] - write an isolated worktree preparation plan without creating it
   ospec execute worktree [change-path|project-path] --create [--branch name] [--path path] [--base ref] - explicitly run git worktree add and record the result
   ospec execute worktree [change-path|project-path] --cleanup [--path path] - explicitly run git worktree remove for the planned or provided worktree path
   ospec execute finish [change-path|project-path] [--target main] [--remote origin] - write a closeout readiness plan without finalizing, merging, pushing, or deleting worktrees
   ospec execute dispatch [change-path|project-path] [--task task-id] [--limit N] - create parallel-safe worker dispatch packet(s) with session context, worker profiles, and target tool mapping
-  ospec execute launch [change-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] [--dry-run] - write the native agent launch plan for the current harness without starting workers
-  ospec execute orchestrate [change-path|project-path] --command "..." [--target codex|gpt|claude|gemini|opencode|shell|generic] [--limit N] [--max-rounds N] [--timeout-ms N] - fallback only: dispatch safe worker batches through an explicit CLI command template when native subagents are unavailable
-  ospec execute launch [change-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|shell|generic] --run --command "..." [--timeout-ms N] - fallback only: run one explicit local worker command and capture stdout/stderr under artifacts/agents/worker-runs/
+  ospec execute launch [change-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json] - write the native agent launch plan for the current harness without starting workers; --json prints the machine-readable launch artifact
+  ospec execute orchestrate [change-path|project-path] --command "..." [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--limit N] [--max-rounds N] [--timeout-ms N] - fallback only: dispatch safe worker batches through an explicit CLI command template when native subagents are unavailable, with failed-worker retry guidance
+  ospec execute launch [change-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] --run --command "..." [--timeout-ms N] - fallback only: run one explicit local worker command and capture stdout/stderr under artifacts/agents/worker-runs/
   ospec execute collect [change-path|project-path] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - collect a worker run into task completion state
   ospec execute retry [change-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
   ospec execute complete <task-id> [change-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - record a worker result; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
@@ -147,7 +150,9 @@ Execute Commands:
   ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] - create the next safe task-level or final review dispatch packet with project session context
   ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."] - run an explicit local reviewer command and optionally record the decision
   ospec execute feedback [change-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files
-  ospec execute debug [change-path|project-path] --symptom "..." --root-cause "..." [--status CONFIRMED|FIXED|BLOCKED|SKIPPED] [--hypothesis "..."] [--command "..."] [--summary "..."] - record systematic debugging evidence
+  ospec execute decision [change-path|project-path] --id id --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional] - record a durable user choice gate that can block dispatch until selected
+  ospec execute decision [change-path|project-path] --id id --select option-id [--summary "..."] - record the user's selected option and unblock required decision gates
+  ospec execute debug [change-path|project-path] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." [--status CONFIRMED|FIXED|BLOCKED|SKIPPED] [--hypothesis "..."] [--command "..."] [--summary "..."] - record staged debugging evidence
   ospec execute tdd [change-path|project-path] --phase red|green|refactor --command "npm test -- focused" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--exit-code 1] [--test "..."] [--summary "..."] - record TDD cycle evidence
   ospec execute verify [change-path|project-path] --command "npm test" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--exit-code 0] [--summary "..."] - record verification evidence
   ospec execute help                              - show execute command help
@@ -157,7 +162,7 @@ function getSessionHelpText() {
     return `
 Session Commands:
   ospec session [path]             - write .ospec/session-brief.json and .ospec/session-brief.md with active change, queue, cache fingerprint, and safe next command context
-  ospec session hook [path]        - write .ospec/hooks/session-start.json and .ospec/hooks/session-start.md for opt-in harness startup integration
+  ospec session hook [path]        - write session-start and using-ospec hook artifacts for opt-in harness startup integration
   ospec session [path] --hook      - same as ospec session hook [path]
 `;
 }

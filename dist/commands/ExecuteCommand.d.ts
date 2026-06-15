@@ -1,4 +1,4 @@
-import { TaskDocumentReviewStage, TaskHandoffTarget, TaskWorkerToolTarget } from '../services/TaskGraphExecutionService';
+import { TaskDocumentReviewStage, TaskHandoffTarget, TaskWorkerToolTarget, TaskUserDecisionOption } from '../services/TaskGraphExecutionService';
 import { BaseCommand } from './BaseCommand';
 export declare class ExecuteCommand extends BaseCommand {
     execute(action?: string, ...args: string[]): Promise<void>;
@@ -7,6 +7,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private handoff;
     private docReview;
     private next;
+    private route;
     private workspace;
     private worktree;
     private finish;
@@ -19,11 +20,13 @@ export declare class ExecuteCommand extends BaseCommand {
     private sync;
     private review;
     private feedback;
+    private decision;
     private verify;
     private tdd;
     private debug;
     private resolveChangePath;
     private printStatus;
+    private printCheckpointEvidenceSummary;
     private printBootstrap;
     private printHandoff;
     private printDocumentReview;
@@ -43,9 +46,11 @@ export declare class ExecuteCommand extends BaseCommand {
     private printReview;
     private printReviewRun;
     private printReviewFeedback;
+    private printDecision;
     private printVerificationEvidence;
     private printTddEvidence;
     private printDebugEvidence;
+    private printWorkflowRoute;
     private printControllerSummary;
     private buildControllerSummary;
     private extractTaskReviewActions;
@@ -61,6 +66,7 @@ export declare class ExecuteCommand extends BaseCommand {
         target?: TaskWorkerToolTarget;
         dryRun: boolean;
         run: boolean;
+        json: boolean;
         command?: string;
         timeoutMs?: number;
     };
@@ -80,6 +86,18 @@ export declare class ExecuteCommand extends BaseCommand {
     private parseRetryArgs;
     private parseReviewArgs;
     private parseReviewFeedbackArgs;
+    parseDecisionArgs(args: string[]): {
+        inputPath?: string;
+        id?: string;
+        question?: string;
+        options: TaskUserDecisionOption[];
+        recommendedOptionId?: string;
+        required?: boolean;
+        selectOptionId?: string;
+        skip?: boolean;
+        summary?: string;
+    };
+    private parseDecisionOption;
     private parseVerificationArgs;
     private parseTddArgs;
     private parseDebugArgs;
@@ -91,6 +109,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private normalizeWorkerToolTarget;
     private normalizeVerificationEvidenceStatus;
     private normalizeTddEvidencePhase;
+    private normalizeDebugEvidencePhase;
     private normalizeTddEvidenceStatus;
     private normalizeDebugEvidenceStatus;
     private normalizeExitCode;

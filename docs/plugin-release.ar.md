@@ -52,6 +52,16 @@
 - `expected_version` (اختياري)
 - `ref` (اختياري)
 
+## قائمة نشر الإضافات مع Evidence Gate
+
+بالنسبة إلى Checkpoint أو أي إضافة تشارك في archive gate، يجب أن تشمل جاهزية النشر runtime evidence وليس بيانات الحزمة فقط:
+
+1. شغّل `npm run plugins:check -- --plugin <id>`
+2. في تغييرات Checkpoint، شغّل `ospec plugins doctor checkpoint [path]` وأصلح تشخيص `routes.yaml` / `flows.yaml` قبل النشر.
+3. تأكد من تسجيل evidence coverage للـ screenshots وtraces وvisual diffs وroutes وflows وassertions وconsole events وnetwork events وaccessibility checks عندما تكون هذه الخطوات active.
+4. تأكد من أن missing baselines أو missing runtime evidence تعطي إرشادات إصلاح قابلة للتنفيذ، وليس رسالة pass/fail عامة فقط.
+5. عندما تغير الإضافة gate behavior، شغّل `ospec verify [changes/active/<change>]` و`ospec archive [changes/active/<change>] --check` على sample change مفعّل فيه Checkpoint قبل الإصدار.
+
 ## عند إضافة Plugin رسمي جديد
 
 1. أنشئ `plugins/<id>/package.json`

@@ -1,8 +1,9 @@
 import { FileService } from './FileService';
 export type TaskWorkerCapabilityTier = 'standard' | 'strong-reasoning' | 'specialist-review';
-export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'shell' | 'generic';
+export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
 export type TaskReviewRunDecision = 'APPROVED' | 'APPROVED_WITH_CONCERNS' | 'NEEDS_CHANGES' | 'BLOCKED' | 'PENDING';
+export type TaskUserDecisionStatus = 'PENDING' | 'SELECTED' | 'SKIPPED';
 export interface TaskReviewState {
     spec: TaskReviewRunDecision;
     quality: TaskReviewRunDecision;
@@ -58,6 +59,8 @@ export interface TaskGraphExecutionReport {
     concernTasks: TaskGraphExecutionTask[];
     blockedTasks: TaskGraphBlockedTask[];
     invalidTasks: TaskGraphBlockedTask[];
+    decisions: TaskUserDecisionSnapshot;
+    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     issues: string[];
     nextInstruction: string;
 }
@@ -68,6 +71,7 @@ export type TaskDocumentReviewStage = 'design' | 'plan';
 export type TaskDocumentReviewRole = 'design_reviewer' | 'implementation_plan_reviewer';
 export type TaskVerificationEvidenceStatus = 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
 export type TaskTddEvidencePhase = 'red' | 'green' | 'refactor';
+export type TaskDebugEvidencePhase = 'reproduce' | 'isolate' | 'hypothesize' | 'fix' | 'verify';
 export type TaskDebugEvidenceStatus = 'CONFIRMED' | 'FIXED' | 'BLOCKED' | 'SKIPPED';
 export interface TaskDispatchRecord {
     id: string;
@@ -178,7 +182,18 @@ export interface TaskReviewFeedbackPlan {
     summary: string | null;
     findings: string[];
     recommendedActions: string[];
+    userDecisionGate: TaskReviewFeedbackUserDecisionGate;
     nextInstruction: string;
+}
+export interface TaskReviewFeedbackUserDecisionGate {
+    status: 'not_needed' | 'created' | 'pending' | 'already_selected';
+    id: string | null;
+    question: string | null;
+    recommendedOptionId: string | null;
+    recordPath: string | null;
+    reportPath: string | null;
+    reason: string | null;
+    nextInstruction: string | null;
 }
 export interface TaskReviewFeedbackPlanResult {
     changePath: string;
@@ -187,6 +202,7 @@ export interface TaskReviewFeedbackPlanResult {
     stage: TaskReviewStage;
     decision: string;
     action: TaskReviewFeedbackAction;
+    userDecisionGate: TaskReviewFeedbackUserDecisionGate;
     nextInstruction: string;
 }
 export interface TaskDocumentReviewDispatchRecord {
@@ -261,6 +277,7 @@ export interface TaskTddEvidenceResult {
 }
 export interface TaskDebugEvidenceRecord {
     id: string;
+    phase: TaskDebugEvidencePhase;
     symptom: string;
     hypothesis: string | null;
     rootCause: string | null;
@@ -271,11 +288,19 @@ export interface TaskDebugEvidenceRecord {
     reportPath: string;
     summary: string | null;
 }
+export type TaskDebugEvidencePhaseStatus = 'missing' | 'recorded' | 'blocked' | 'skipped';
+export interface TaskDebugEvidencePhaseSnapshot {
+    phase: TaskDebugEvidencePhase;
+    status: TaskDebugEvidencePhaseStatus;
+    latestRecordId: string | null;
+    latestStatus: TaskDebugEvidenceStatus | null;
+}
 export interface TaskDebugEvidenceSession {
     version: string;
     feature: string;
     status: 'pending' | 'confirmed' | 'fixed' | 'blocked' | 'skipped';
     updatedAt: string;
+    phases: TaskDebugEvidencePhaseSnapshot[];
     records: TaskDebugEvidenceRecord[];
 }
 export interface TaskDebugEvidenceResult {
@@ -288,7 +313,7 @@ export interface TaskDebugEvidenceResult {
 export type TaskWorkspaceReadiness = 'ready' | 'needs_isolation' | 'unknown';
 export type TaskWorktreePlanStatus = 'ready' | 'needs_cleanup' | 'unknown';
 export type TaskFinishPlanStatus = 'ready' | 'blocked' | 'unknown';
-export type TaskBootstrapStatus = 'needs_proposal' | 'needs_design' | 'needs_plan' | 'needs_task_graph' | 'needs_workspace_check' | 'ready_to_dispatch' | 'ready_to_launch' | 'needs_worker_completion' | 'needs_review' | 'needs_verification' | 'ready_to_finish' | 'blocked' | 'unknown';
+export type TaskBootstrapStatus = 'needs_proposal' | 'needs_design' | 'needs_plan' | 'needs_task_graph' | 'needs_workspace_check' | 'needs_decision' | 'ready_to_dispatch' | 'ready_to_launch' | 'needs_worker_completion' | 'needs_review' | 'needs_verification' | 'ready_to_finish' | 'blocked' | 'unknown';
 export type TaskBootstrapDocumentReadiness = 'missing' | 'empty' | 'draft' | 'ready';
 export interface TaskWorkspaceGitWorktree {
     path: string;
@@ -344,6 +369,7 @@ export interface TaskWorktreePlanArtifact {
     recommendedPath: string;
     baseRef: string;
     commands: string[];
+    lifecycle: TaskWorktreeLifecycleStep[];
     git: {
         available: boolean;
         repository: boolean;
@@ -360,6 +386,12 @@ export interface TaskWorktreePlanArtifact {
     blockers: string[];
     warnings: string[];
     nextInstruction: string;
+}
+export interface TaskWorktreeLifecycleStep {
+    step: 'plan' | 'create' | 'inspect' | 'dispatch' | 'finish' | 'cleanup' | 'branch-retention';
+    status: 'ready' | 'blocked' | 'manual' | 'pending';
+    command: string | null;
+    guidance: string;
 }
 export interface TaskWorktreePlanResult {
     changePath: string;
@@ -431,17 +463,21 @@ export interface TaskFinishPlanArtifact {
     targetBranch: string;
     remote: string;
     commands: string[];
+    decisionPrompts: TaskFinishDecisionPrompt[];
     readiness: {
         taskGraph: string;
         implementer: TaskGraphCompletionStatus | 'PENDING';
         specReview: string;
         qualityReview: string;
         controller: TaskGraphCompletionStatus | 'PENDING';
+        pendingRequiredDecisions: number;
         verificationChecklistComplete: boolean;
         verificationEvidence: TaskVerificationEvidenceSession['status'];
         tddEvidence: TaskTddEvidenceSession['status'];
         debugEvidence: TaskDebugEvidenceSession['status'];
+        checkpointEvidence: TaskCheckpointEvidenceSnapshot['status'];
     };
+    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     git: {
         available: boolean;
         repository: boolean;
@@ -457,15 +493,55 @@ export interface TaskFinishPlanArtifact {
     warnings: string[];
     nextInstruction: string;
 }
+export interface TaskFinishDecisionPrompt {
+    id: string;
+    required: boolean;
+    question: string;
+    recommendedOptionId: string;
+    options: TaskUserDecisionOption[];
+    command: string;
+}
 export interface TaskFinishPlanResult {
     changePath: string;
     projectRoot: string;
     artifactPath: string;
     reportPath: string;
     status: TaskFinishPlanStatus;
+    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     targetBranch: string;
     remote: string;
     commands: string[];
+    decisionPrompts: TaskFinishDecisionPrompt[];
+    blockers: string[];
+    warnings: string[];
+    nextInstruction: string;
+}
+export type TaskWorkflowRouteStatus = 'ready' | 'blocked' | 'unknown';
+export interface TaskWorkflowRouteRecommendation {
+    priority: number;
+    action: string;
+    command: string | null;
+    reason: string;
+}
+export interface TaskWorkflowRouteArtifact {
+    version: string;
+    feature: string;
+    status: TaskWorkflowRouteStatus;
+    generatedAt: string;
+    changePath: string;
+    projectRoot: string;
+    recommendations: TaskWorkflowRouteRecommendation[];
+    blockers: string[];
+    warnings: string[];
+    nextInstruction: string;
+}
+export interface TaskWorkflowRouteResult {
+    changePath: string;
+    projectRoot: string;
+    artifactPath: string;
+    reportPath: string;
+    status: TaskWorkflowRouteStatus;
+    recommendations: TaskWorkflowRouteRecommendation[];
     blockers: string[];
     warnings: string[];
     nextInstruction: string;
@@ -536,6 +612,7 @@ export interface TaskBootstrapExecutionSnapshot {
     workspace: TaskBootstrapPlanSnapshot;
     worktree: TaskBootstrapPlanSnapshot;
     finish: TaskBootstrapPlanSnapshot;
+    decisions: TaskUserDecisionSnapshot;
     reviews: {
         spec: string;
         quality: string;
@@ -547,6 +624,8 @@ export interface TaskBootstrapExecutionSnapshot {
         tddRecords: number;
         debug: TaskDebugEvidenceSession['status'];
         debugRecords: number;
+        debugPhases: TaskDebugEvidencePhaseSnapshot[];
+        checkpoint: TaskCheckpointEvidenceSnapshot;
     };
     worker: {
         implementer: TaskGraphCompletionStatus | 'PENDING';
@@ -555,6 +634,43 @@ export interface TaskBootstrapExecutionSnapshot {
         controller: TaskGraphCompletionStatus | 'PENDING';
         verificationChecklistComplete: boolean;
     };
+}
+export interface TaskCheckpointEvidenceStepSnapshot {
+    step: string;
+    gateStatus: string;
+    evidenceStatus: string;
+    screenshots: number;
+    traces: number;
+    visualDiffs: number;
+    routes: number;
+    flows: number;
+    assertions: number;
+    consoleEvents: number;
+    networkEvents: number;
+    accessibility: number;
+    missing: string[];
+}
+export interface TaskCheckpointEvidenceSnapshot {
+    active: boolean;
+    status: 'not_active' | 'missing' | 'complete' | 'incomplete' | 'failed';
+    gatePath: string;
+    resultPath: string;
+    summaryPath: string;
+    activeSteps: string[];
+    gateStatus: string;
+    evidenceStatus: string;
+    screenshots: number;
+    traces: number;
+    visualDiffs: number;
+    routes: number;
+    flows: number;
+    assertions: number;
+    consoleEvents: number;
+    networkEvents: number;
+    accessibility: number;
+    missing: string[];
+    nextActions: string[];
+    steps: TaskCheckpointEvidenceStepSnapshot[];
 }
 export interface TaskBootstrapArtifact {
     version: string;
@@ -581,8 +697,79 @@ export interface TaskBootstrapResult {
     artifactPath: string;
     reportPath: string;
     status: TaskBootstrapStatus;
+    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     blockers: string[];
     warnings: string[];
+    nextInstruction: string;
+}
+export interface TaskUserDecisionOption {
+    id: string;
+    label: string;
+    description: string;
+}
+export interface TaskUserDecisionRecord {
+    version: string;
+    feature: string;
+    id: string;
+    status: TaskUserDecisionStatus;
+    required: boolean;
+    question: string;
+    options: TaskUserDecisionOption[];
+    recommendedOptionId: string | null;
+    selectedOptionId: string | null;
+    summary: string | null;
+    createdAt: string;
+    updatedAt: string;
+    selectedAt: string | null;
+    recordPath: string;
+    reportPath: string;
+    nextInstruction: string;
+}
+export interface TaskUserDecisionSnapshot {
+    exists: boolean;
+    dirPath: string;
+    indexPath: string;
+    indexReportPath: string;
+    total: number;
+    pendingRequired: number;
+    pendingOptional: number;
+    selected: number;
+    skipped: number;
+    decisions: Array<{
+        id: string;
+        status: TaskUserDecisionStatus | 'INVALID';
+        required: boolean;
+        question: string;
+        recommendedOptionId: string | null;
+        selectedOptionId: string | null;
+        reportPath: string;
+    }>;
+    blockers: string[];
+    warnings: string[];
+    nextInstruction: string;
+}
+export interface TaskUserDecisionIndexArtifact {
+    version: string;
+    feature: string;
+    generatedAt: string;
+    changePath: string;
+    total: number;
+    pendingRequired: number;
+    pendingOptional: number;
+    selected: number;
+    skipped: number;
+    decisions: TaskUserDecisionSnapshot['decisions'];
+    blockers: string[];
+    warnings: string[];
+    nextInstruction: string;
+}
+export interface TaskUserDecisionResult {
+    changePath: string;
+    projectRoot: string;
+    recordPath: string;
+    reportPath: string;
+    decision: TaskUserDecisionRecord;
+    snapshot: TaskUserDecisionSnapshot;
     nextInstruction: string;
 }
 export type TaskHandoffTarget = TaskWorkerToolTarget;
@@ -666,6 +853,43 @@ export interface TaskNativeAgentLaunchPlan {
     parallelInstructions: string[];
     completionInstructions: string[];
     fallbackInstructions: string[];
+    adapterPacket: TaskNativeAgentAdapterPacket;
+}
+export interface TaskNativeAgentAdapterPacket {
+    version: string;
+    schemaVersion: string;
+    adapterId: string;
+    target: TaskWorkerToolTarget;
+    targetCapabilities: {
+        capabilityTier: TaskWorkerCapabilityTier | 'unknown';
+        recommendedTarget: TaskWorkerToolTarget | 'unknown';
+        workerRole: string;
+        canEditFiles: boolean;
+        canRunCommands: boolean;
+        canDispatchWorkers: boolean;
+    };
+    dispatchMode: string;
+    agentPrimitive: string;
+    taskId: string;
+    taskTitle: string;
+    dispatchId: string;
+    packetPath: string;
+    recordPath: string;
+    prompt: string;
+    completionCommand: string;
+    resultStatusContract: TaskGraphCompletionStatus[];
+    completionContract: {
+        command: string;
+        allowedStatuses: TaskGraphCompletionStatus[];
+        requiresSummary: boolean;
+        updatesDurableState: boolean;
+    };
+    environment: Record<string, string>;
+    safetyRules: string[];
+    requiredInputs: string[];
+    expectedOutputs: string[];
+    controllerActions: string[];
+    toolMapping: TaskWorkerTargetToolMapping | null;
 }
 export interface TaskWorkerLaunchPlanArtifact {
     version: string;
@@ -796,9 +1020,22 @@ export interface TaskOrchestrationRunArtifact {
     commandSource: 'option' | 'config' | 'missing';
     workspaceStatus: TaskWorkspaceReadiness | 'missing';
     rounds: TaskOrchestrationRunRound[];
+    failedTasks: TaskOrchestrationFailedTask[];
     blockers: string[];
     warnings: string[];
     nextInstruction: string;
+}
+export interface TaskOrchestrationFailedTask {
+    taskId: string;
+    taskTitle: string;
+    dispatchId: string;
+    runId: string | null;
+    exitCode: number | null;
+    timedOut: boolean;
+    completionStatus: TaskGraphCompletionStatus | null;
+    collected: boolean;
+    error: string | null;
+    retryCommand: string;
 }
 export interface TaskOrchestrationRunResult {
     changePath: string;
@@ -807,6 +1044,7 @@ export interface TaskOrchestrationRunResult {
     reportPath: string;
     status: TaskOrchestrationRunStatus;
     rounds: TaskOrchestrationRunRound[];
+    failedTasks: TaskOrchestrationFailedTask[];
     blockers: string[];
     warnings: string[];
     nextInstruction: string;
@@ -910,6 +1148,16 @@ export declare class TaskGraphExecutionService {
         stage?: TaskReviewStage;
         summary?: string;
     }): Promise<TaskReviewFeedbackPlanResult>;
+    recordUserDecision(changePath: string, options: {
+        id?: string;
+        question?: string;
+        options?: TaskUserDecisionOption[];
+        recommendedOptionId?: string;
+        required?: boolean;
+        selectOptionId?: string;
+        skip?: boolean;
+        summary?: string;
+    }): Promise<TaskUserDecisionResult>;
     reviewDocument(changePath: string, options?: {
         stage?: TaskDocumentReviewStage;
     }): Promise<TaskDocumentReviewDispatchResult>;
@@ -928,6 +1176,7 @@ export declare class TaskGraphExecutionService {
         summary?: string;
     }): Promise<TaskTddEvidenceResult>;
     recordDebugEvidence(changePath: string, options: {
+        phase?: TaskDebugEvidencePhase;
         symptom?: string;
         hypothesis?: string;
         rootCause?: string;
@@ -951,6 +1200,7 @@ export declare class TaskGraphExecutionService {
         targetBranch?: string;
         remote?: string;
     }): Promise<TaskFinishPlanResult>;
+    routeWorkflow(changePath: string): Promise<TaskWorkflowRouteResult>;
     bootstrap(changePath: string): Promise<TaskBootstrapResult>;
     handoff(changePath: string, options?: {
         target?: TaskHandoffTarget;
@@ -960,6 +1210,9 @@ export declare class TaskGraphExecutionService {
     private getFirstRequiredTaskReviewStage;
     private getBlockedTaskReviewInstruction;
     private getNextInstruction;
+    private readCheckpointEvidenceSnapshot;
+    private readActiveCheckpointSteps;
+    private buildCheckpointEvidenceNextActions;
     private getSessionPath;
     private getProjectSessionBriefPath;
     private getProjectSessionBriefReportPath;
@@ -974,6 +1227,8 @@ export declare class TaskGraphExecutionService {
     private getDebugEvidencePath;
     private getFinishPlanPath;
     private getFinishPlanReportPath;
+    private getWorkflowRoutePath;
+    private getWorkflowRouteReportPath;
     private getBootstrapPath;
     private getBootstrapReportPath;
     private getHandoffPath;
@@ -982,6 +1237,17 @@ export declare class TaskGraphExecutionService {
     private getLaunchPlanReportPath;
     private getReviewFeedbackPlanPath;
     private getReviewFeedbackPlanReportPath;
+    private getUserDecisionDir;
+    private getUserDecisionRecordPath;
+    private getUserDecisionReportPath;
+    private getUserDecisionIndexPath;
+    private getUserDecisionIndexReportPath;
+    private readUserDecisionRecord;
+    private readUserDecisionSnapshot;
+    private writeUserDecisionIndex;
+    private normalizeUserDecisionRecord;
+    private normalizeUserDecisionOptions;
+    private getUserDecisionNextInstruction;
     private readVerificationEvidence;
     private isVerificationEvidenceSessionStatus;
     private isVerificationEvidenceRecord;
@@ -990,9 +1256,11 @@ export declare class TaskGraphExecutionService {
     private isTddEvidenceSessionStatus;
     private isTddEvidenceRecord;
     private isTddEvidencePhase;
+    private isDebugEvidencePhase;
     private readDebugEvidence;
     private isDebugEvidenceSessionStatus;
     private isDebugEvidenceRecord;
+    private normalizeDebugEvidenceRecord;
     private isDebugEvidenceStatus;
     private readReviewWorkerStatus;
     private syncTaskReviewStateFromArtifacts;
@@ -1043,10 +1311,13 @@ export declare class TaskGraphExecutionService {
     private getWorktreePlanNextInstruction;
     private getWorktreeRunNextInstruction;
     private getFinishPlanNextInstruction;
+    private buildWorkflowRouteRecommendations;
     private normalizeWorktreeBranch;
     private resolveRecommendedWorktreePath;
     private buildWorktreePlanCommands;
+    private buildWorktreeLifecycle;
     private buildFinishPlanCommands;
+    private buildFinishDecisionPrompts;
     private quoteShellArg;
     private normalizeHandoffTarget;
     private normalizeWorkerToolTarget;
@@ -1059,6 +1330,8 @@ export declare class TaskGraphExecutionService {
     private selectParallelSafeActiveDispatches;
     private readOrchestrationFinalReadiness;
     private prepareOrchestrationTaskRun;
+    private buildOrchestrationFailedTasks;
+    private isOrchestrationTaskFailure;
     private buildHarnessEnvironment;
     private renderHarnessCommandTemplate;
     private getOrchestrationNextInstruction;
@@ -1067,6 +1340,10 @@ export declare class TaskGraphExecutionService {
     private buildHandoffCommandSequence;
     private buildHandoffSafetyRules;
     private buildNativeAgentLaunchPlan;
+    private buildNativeAgentAdapterPacket;
+    private getNativeAgentAdapterId;
+    private getNativeAgentPrimitive;
+    private getNativeAgentDispatchMode;
     private buildWorkerLaunchCommands;
     private buildWorkerLaunchPrompt;
     private runWorkerCommand;
@@ -1086,10 +1363,15 @@ export declare class TaskGraphExecutionService {
     private normalizeVerificationEvidenceStatus;
     private normalizeTddEvidencePhase;
     private normalizeTddEvidenceStatus;
+    private validateTddEvidenceTransition;
     private normalizeDebugEvidenceStatus;
+    private normalizeDebugEvidencePhase;
+    private deriveDebugEvidencePhase;
+    private validateDebugEvidencePhase;
     private deriveVerificationEvidenceStatus;
     private deriveTddEvidenceStatus;
     private deriveDebugEvidenceStatus;
+    private buildDebugEvidencePhaseSnapshots;
     private getTddEvidenceNextInstruction;
     private getDebugEvidenceNextInstruction;
     private deriveGraphStatus;
@@ -1107,6 +1389,8 @@ export declare class TaskGraphExecutionService {
     private buildBlockerEscalationReport;
     private buildReviewDispatchPacket;
     private extractReviewFindings;
+    private createReviewFeedbackDecisionGateIfNeeded;
+    private getReviewFeedbackDecisionGateReason;
     private buildReviewFeedbackRecommendedActions;
     private buildReviewFeedbackNextInstruction;
     private getTaskReviewRunDecisionNextInstruction;
@@ -1119,7 +1403,11 @@ export declare class TaskGraphExecutionService {
     private buildWorkspaceStatusReport;
     private buildWorktreePlanReport;
     private buildWorktreeRunReport;
+    private buildUserDecisionReport;
+    private buildUserDecisionIndexReport;
     private buildFinishPlanReport;
+    private buildWorkflowRouteReport;
+    private buildCheckpointEvidenceReportLines;
     private buildWorkerLaunchPlanReport;
     private buildHandoffReport;
     private buildBootstrapReport;
