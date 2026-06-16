@@ -1,19 +1,21 @@
 # Skills 安装说明
 
-如果你主要通过 AI 使用 OSpec，优先先用简短的 `/ospec` 和 `/ospec-change` 提示词；这页里的显式 skill 命令主要用于手动安装、同步或排错。
+如果你主要通过 AI 使用 OSpec，小功能优先用 `/ospec-change`，复杂全流程工作用 `/ospec-goal`；这页里的显式 skill 命令主要用于手动安装、同步或排错。
 
 推荐提示词：
 
 ```text
 /ospec 初始化这个项目。
 /ospec 刷新或修复这个目录的项目知识层。先不要创建 change。
-/ospec-change 为这个需求创建并推进一个 change。
+/ospec-change 为这个需求创建并推进一个小 change。
+/ospec-goal 为这个需求创建并推进一个完整 goal。
 ```
 
 托管 skills：
 
 - `ospec`
 - `ospec-change`
+- `ospec-goal`
 
 这两个 skill 会在以下场景自动同步：
 
@@ -34,6 +36,7 @@
 ```bash
 ospec skill status ospec
 ospec skill status ospec-change
+ospec skill status ospec-goal
 ```
 
 显式安装或同步单个托管 skill：
@@ -41,6 +44,7 @@ ospec skill status ospec-change
 ```bash
 ospec skill install ospec
 ospec skill install ospec-change
+ospec skill install ospec-goal
 ```
 
 默认目录：
@@ -62,6 +66,7 @@ ospec skill install ospec-init
 ```bash
 ospec skill status-claude ospec
 ospec skill status-claude ospec-change
+ospec skill status-claude ospec-goal
 ```
 
 显式安装或同步单个托管 skill：
@@ -69,6 +74,7 @@ ospec skill status-claude ospec-change
 ```bash
 ospec skill install-claude ospec
 ospec skill install-claude ospec-change
+ospec skill install-claude ospec-goal
 ```
 
 默认目录：
@@ -87,6 +93,6 @@ ospec skill install-claude ospec-init
 
 新的提示词优先使用 `/ospec`。
 
-当用户意图是“创建并推进一个 change”时，优先使用 `/ospec-change`。
+当用户意图是小功能或常规改动时，优先使用 `/ospec-change`。当工作需要设计文档、实现计划、task graph、worker/review 或证据门禁时，使用 `/ospec-goal`。
 
 `/ospec-cli` 只作为旧提示词或旧自动化的兼容别名保留。

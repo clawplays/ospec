@@ -877,7 +877,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         return (0, path_1.relative)(rootDir, targetPath).replace(/\\/g, '/');
     }
     getManagedSkillNames() {
-        return ['ospec', 'ospec-change'];
+        return ['ospec', 'ospec-change', 'ospec-goal'];
     }
     formatManagedSkills(results) {
         return results.map(result => result.skillName).join(', ');

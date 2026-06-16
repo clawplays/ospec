@@ -38,10 +38,10 @@ Skills Commands:
 function getSkillHelpText() {
     return `
 Skill Package Commands:
-  ospec skill status [skill-name] [dir]          - inspect one Codex OSpec skill; managed skills are ospec and ospec-change
-  ospec skill install [skill-name] [dir]         - install one Codex OSpec skill; managed skills are ospec and ospec-change
-  ospec skill status-claude [skill-name] [dir]   - inspect one Claude Code OSpec skill; managed skills are ospec and ospec-change
-  ospec skill install-claude [skill-name] [dir]  - install one Claude Code OSpec skill; managed skills are ospec and ospec-change
+  ospec skill status [skill-name] [dir]          - inspect one Codex OSpec skill; managed skills are ospec, ospec-change, and ospec-goal
+  ospec skill install [skill-name] [dir]         - install one Codex OSpec skill; managed skills are ospec, ospec-change, and ospec-goal
+  ospec skill status-claude [skill-name] [dir]   - inspect one Claude Code OSpec skill; managed skills are ospec, ospec-change, and ospec-goal
+  ospec skill install-claude [skill-name] [dir]  - install one Claude Code OSpec skill; managed skills are ospec, ospec-change, and ospec-goal
   ospec skill author [dir]                       - show OSpec-native skill authoring workflow guidance
   ospec skill check [dir]                        - check a local skill package before install or publication
   ospec skill help                  - show skill command help
@@ -162,7 +162,9 @@ function getSessionHelpText() {
     return `
 Session Commands:
   ospec session [path]             - write .ospec/session-brief.json and .ospec/session-brief.md with active change, queue, cache fingerprint, and safe next command context
-  ospec session hook [path]        - write session-start and using-ospec hook artifacts for opt-in harness startup integration
+  ospec session hook [path]        - write session-start and using-ospec hook artifacts, plus the Claude Code hook bundle under .ospec/hooks/claude/
   ospec session [path] --hook      - same as ospec session hook [path]
+  ospec session hook [path] --apply        - also merge the OSpec hooks into .claude/settings.json (idempotent, reversible)
+  ospec session hook [path] --target claude - select the harness hook bundle to generate (default: claude)
 `;
 }

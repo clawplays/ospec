@@ -14,33 +14,42 @@ tags: [conventions, workflow, change, ospec]
 
 1. توضيح سياق المشروع ونطاق التأثير
 2. إنشاء `proposal.md` أو تحديثه
-3. إنشاء `design.md` أو تحديثه
-4. إنشاء `implementation-plan.md` أو تحديثه
-5. إنشاء `artifacts/agents/task-graph.json` أو تحديثه
-6. إنشاء `tasks.md` أو تحديثه
-7. دفع التنفيذ وفق `state.json`
-8. إكمال task-level spec review وquality review لكل worker task منتهية
-9. توزيع وإكمال final `artifacts/reviews/spec-compliance.md` و`artifacts/reviews/code-quality.md`
-10. تحديث `artifacts/agents/worker-status.md`
+3. في classic change أنشئ `tasks.md` أو حدّثه مباشرة من `proposal.md`
+4. في goal أنشئ `design.md` أو حدّثه
+5. في goal أنشئ `implementation-plan.md` أو حدّثه
+6. في goal أنشئ `artifacts/agents/task-graph.json` أو حدّثه
+7. أنشئ `tasks.md` أو حدّثه
+8. ادفع التنفيذ وفق `state.json`
+9. في goal أكمل بوابات document وtask-level وfinal review
+10. في goal حدّث `artifacts/agents/worker-status.md`
 11. تحديث `SKILL.md` ذي الصلة
 12. إعادة بناء `SKILL.index.json`
 13. إكمال `verification.md`
-14. الأرشفة فقط بعد اجتياز جميع البوابات
+14. الأرشفة فقط بعد اجتياز بوابات workflow profile الحالي
 
-## صياغة التصميم
+## Workflow Profiles
 
-- عند تنفيذ change بمساعدة AI، أنشئ `design.md` أو حدّثه من المتطلب و`proposal.md` وسياق المشروع قبل تعديل `implementation-plan.md` أو `tasks.md` أو الكود
-- لا تطرح إلا سؤال تصميم موجزاً واحداً عندما يغيّر القرار الناقص البنية أو API أو البيانات أو UI أو المخاطر فعلياً؛ وإلا فسجل الافتراضات في `design.md`
+- `workflow_profile_id: change` هو تدفق 1.0 السريع للتغييرات الصغيرة والروتينية: `proposal.md` و`tasks.md` والتنفيذ و`verification.md` و`review.md` و`state.json`
+- `workflow_profile_id: goal` هو التدفق الكامل للعمل المعقد: يضيف `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وdocument review وworker/reviewer handoff وfinal review وworker status وevidence gates
+- استخدم `ospec new` / `ospec-change` للـ classic changes، واستخدم `ospec goal` / `ospec-goal` للـ goals
+
+## صياغة تصميم Goal
+
+- عند تنفيذ goal بمساعدة AI، أنشئ `design.md` أو حدّثه من المتطلب و`proposal.md` وسياق المشروع قبل تعديل `implementation-plan.md` أو `tasks.md` أو الكود
+- في classic change لا تنشئ `design.md` أو `implementation-plan.md` أو task graph أو worker packets أو goal review artifacts ما لم يطلب المستخدم الترقية إلى goal صراحة
+- `Announce-Before-Act`: لا تُشغّل سير العمل بصمت — أعلن أي OSpec skill ومرحلة، وأي أمر `ospec execute ...` ستشغّله وما يكتبه، وكم subagent أصلي ستوزّع وبأي آلية، وأي بوابة تحجب التقدم
+- `Brainstorm-First`: ابدأ كل goal بجولة عصف ذهني قصيرة قبل تثبيت التصميم، واسأل المستخدم عن الاتجاه والبنية وAPI والبيانات وUI والمخاطر والنطاق واحداً تلو الآخر؛ وفضّل رفع decision gate دائمة على الافتراض الصامت، ولا تسجّل افتراضاً ذاتياً في `design.md` إلا عند تفويض المستخدم صراحةً مع وسمه كافتراض بحاجة لتأكيد
 - يجب اشتقاق `implementation-plan.md` من `design.md` المعتمد، مع الملفات المستهدفة والنتائج المتوقعة وأوامر التحقق والاعتماديات والعمل القابل للتوازي والتعارضات
 - يجب اشتقاق `artifacts/agents/task-graph.json` من `implementation-plan.md`؛ ويجب أن تتضمن كل مهمة id والحالة والاعتماديات وسلامة التوازي والتعارضات والملفات المستهدفة وأوامر التحقق والنتيجة المتوقعة ودور worker
 - يجب اشتقاق `tasks.md` من `artifacts/agents/task-graph.json`؛ وإذا كانت `tasks.md` موجودة بينما الوثائق السابقة ما زالت قوالب، فحدّث الوثائق السابقة أولاً ثم وائم المهام
+- في classic change تُشتق `tasks.md` مباشرة من `proposal.md` ونطاق التنفيذ
 
 ## قيود الحالة
 
 - استخدم `state.json` كمصدر الحقيقة لحالة التنفيذ
 - لا يستبدل `verification.md` ملف `state.json`
 - إذا اختلفت ملفات الحالة وملفات التنفيذ، أصلح الحالة أولاً
-- يسجل `artifacts/agents/task-graph.json` حالة المهام والاعتماديات وقيود التعارض والملفات المستهدفة وأوامر التحقق بصيغة قابلة للقراءة آلياً
+- في goal يسجل `artifacts/agents/task-graph.json` حالة المهام والاعتماديات وقيود التعارض والملفات المستهدفة وأوامر التحقق بصيغة قابلة للقراءة آلياً
 - عند الدخول إلى مشروع موجود، استخدم `ospec session [path]` لكتابة `.ospec/session-brief.json` و`.ospec/session-brief.md`؛ يسجل active change وqueued change وqueue-run وcache fingerprint وسياق الأمر الآمن التالي فقط
 - عند بدء أو استئناف active change واحد، استخدم `ospec execute bootstrap [changes/active/<change>]` لكتابة `bootstrap.json` و`bootstrap.md` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي المسجل فيه
 - عند نقل change بين agents أو tools أو worktrees أو shells أو operators بشريين، استخدم `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` لكتابة `handoff.json` و`handoff.md`؛ يسجل هذا الأمر project session brief snapshot وtool mapping وقواعد السلامة فقط
@@ -64,8 +73,8 @@ tags: [conventions, workflow, change, ospec]
 - بعد تشغيل focused tests، استخدم `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` لتسجيل TDD cycle evidence داخل `artifacts/agents/tdd-evidence.json`
 - بعد تشغيل project checks حديثة، استخدم `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` لتسجيل verification evidence داخل `artifacts/agents/verification-evidence.json`
 - `ospec session` و`ospec execute bootstrap` و`handoff` و`doc-review` و`workspace` وplan-mode `worktree` و`finish` و`dispatch` و`launch` و`collect` و`retry` و`complete` و`review` و`debug` و`tdd` و`verify` و`sync` تحدّث OSpec artifacts فقط؛ وباستثناء قراءة `workspace` و`worktree` و`finish` لحالة git، لا تحرر ملفات source في المشروع مباشرة. يتم تشغيل native subagents بواسطة current AI harness؛ ولا تعمل أوامر shell إلا مع explicit `worktree --create` أو `worktree --cleanup` أو fallback `launch --run --command` أو `review --run --command` أو fallback `orchestrate`
-- لا تؤرشف عندما يحتوي task graph على حالات غير محسومة أو اعتماديات غير صالحة أو تفاصيل تنفيذ ناقصة أو عندما لا يكون `status` العلوي `completed`
-- يسجل `artifacts/agents/worker-status.md` حالات implementer وspec reviewer وquality reviewer وcontroller
+- في goal لا تؤرشف عندما يحتوي task graph على حالات غير محسومة أو اعتماديات غير صالحة أو تفاصيل تنفيذ ناقصة أو عندما لا يكون `status` العلوي `completed`
+- في goal يسجل `artifacts/agents/worker-status.md` حالات implementer وspec reviewer وquality reviewer وcontroller
 - يجب أن ينجح task-level spec review لكل task قبل quality review الخاصة بها، ويجب أن ينجح final `artifacts/reviews/spec-compliance.md` قبل final `artifacts/reviews/code-quality.md`
 - قرارات task-level أو final review مثل `PENDING` أو `NEEDS_CHANGES` أو `BLOCKED` تمنع الأرشفة
 - تمنع debug evidence المسجلة الأرشفة إذا كانت blocked أو تؤكد root cause فقط من دون سجل fixed لاحق
@@ -82,7 +91,7 @@ tags: [conventions, workflow, change, ospec]
 
 - يتم التحكم في تفعيل optional steps عبر `.skillrc.workflow`
 - يجب أن تبقى proposal flags متوافقة مع إعدادات workflow
-- يجب أن تظهر optional steps المفعلة في `artifacts/agents/task-graph.json` و`tasks.md` و`verification.md`
+- يجب أن تظهر optional steps المفعلة في `tasks.md` و`verification.md`؛ وفي goal يجب أن تظهر أيضاً في `artifacts/agents/task-graph.json`
 
 ## Plugin Gates
 

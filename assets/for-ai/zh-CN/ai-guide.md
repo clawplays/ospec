@@ -16,23 +16,27 @@ tags: [ai, guide, ospec]
 2. 读取 `SKILL.index.json`
 3. 读取 `docs/project/` 下的项目采用版规范
 4. 读取相关 `SKILL.md`
-5. 读取当前 change 的执行文件
+5. 读取当前 change 的执行文件。`workflow_profile_id: change` 只读取 `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`；`workflow_profile_id: goal` 还要读取 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json` 和 `artifacts/agents/verification-evidence.json`
 6. 如果项目启用了 Stitch，且当前 change 激活了 `stitch_design_review`，优先检查 `artifacts/stitch/approval.json`
 7. 如果要处理 Stitch / Checkpoint 的安装、provider 切换、doctor 修复、MCP、认证配置或插件启用，先读取与项目文档语言一致的仓库内本地化插件规范；只有该语言文件缺失时，才回退到其他语言版本
 
 ## 必须遵守
 
-- 文档语言按项目 adopted protocol 执行；如果项目采用中文协议，则 `proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json`、`artifacts/agents/verification-evidence.json`、`verification.md`、`review.md` 必须保持中文
+- 文档语言按项目 adopted protocol 执行；如果项目采用中文协议，则 `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` 和所有 goal-only artifacts 必须保持中文，包括 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json` 和 `artifacts/agents/verification-evidence.json`
 - 产品界面文案、站点默认语言或 “English-first” 业务策略，不得自动推导为 change 文档应改成英文
 - 若当前 change 已存在中文内容，后续更新必须延续中文，除非项目规则显式声明文档语言切换为英文
 - 先按索引定位，再读目标知识文件
 - 进入已有 OSpec 项目时，先运行 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`，记录 active change、queued change、queue run、cache fingerprint 和安全下一步命令；该项目入口简报不替代 active change 的 `ospec execute bootstrap`。只有需要接入 harness 启动流程时，才用 `ospec session hook [path]` 写入可选 hook artifacts，包括用于 session-start 注入的 `.ospec/hooks/using-ospec.md`、harness target 元数据、active-change bootstrap 指引，以及 decision/plugin gate 来源
 - 只有需要 change 前探索记录时，才用 `ospec brainstorm [path] --topic "..."`；只有需要计划草稿时，才用 `ospec plan [path] --change changes/active/<change>`，且只有确认要更新 `implementation-plan.md` 时才传 `--apply`
 - 将已激活的内建质量策略步骤（如 `tdd_cycle`、`root_cause_debug`、`verification_evidence`）视为受归档门禁约束的 `optional_steps`；收尾前必须在 `tasks.md`、`verification.md` 和对应 evidence artifacts 中覆盖
-- AI 辅助执行 change 时，不要求用户手写 `design.md` 或 `implementation-plan.md`；必须先基于需求、`proposal.md` 和项目上下文起草或更新它们，再推导 `artifacts/agents/task-graph.json`、编辑 `tasks.md` 或代码
-- 只有缺失决策会实质影响方向、架构、API、数据、UI、风险或范围时，才提出一个简短设计问题；否则把假设写入 `design.md`
+- 小功能和常规改动使用 `ospec new` / `ospec-change`，保持 1.0 快速流程：`proposal.md`、`tasks.md`、实现、`verification.md`、`review.md` 和 `state.json`
+- 复杂工作使用 `ospec goal` / `ospec-goal`，才启用 `design.md`、`implementation-plan.md`、task graph、文档 review、worker/reviewer 交接和 evidence 门禁
+- AI 辅助执行 goal 时，不要求用户手写 `design.md` 或 `implementation-plan.md`；必须先基于需求、`proposal.md` 和项目上下文起草或更新它们，再推导 `artifacts/agents/task-graph.json`、编辑 `tasks.md` 或代码
+- 执行经典 change 时，不要创建 goal-only 文件，除非用户明确把该工作升级为 goal
+- `Announce-Before-Act`：绝不静默执行流程。用一句话宣告当前使用哪个 OSpec skill 及所处阶段；即将运行哪个 `ospec execute ...` 命令、会写出什么产物；派发多少个原生 subagent、走哪种机制（Claude Code 用 `Task`、Codex/GPT 用 `spawn_agent`/`wait_agent`/`close_agent`、Gemini 用 `@generalist`、OpenCode 用 `@mention`）；进度被门禁挡住时说明被什么挡住、如何解锁
+- `Brainstorm-First`：每个 goal 开局先做一次简短头脑风暴再锁定设计。把方向、架构、API、数据、UI、风险、范围的未决问题逐个抛给用户，而不是默默假设；需要时用 `ospec brainstorm [path] --topic "..."` 持久化探索。任一项真正开放时，优先升起持久 decision gate 让用户选择，而不是写下静默假设；仅当用户明确让 AI 自行决定或不可用时，才在 `design.md` 写入假设并标注为待确认
 - 当 change 必须等待用户选择后才能继续时，用 `ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required]` 写入持久 decision gate，向用户展示 decision report 的 `Chat Prompt` 或 `artifacts/agents/decisions/index.md`，再用 `ospec execute decision [changes/active/<change>] --id <id> --select <option-id>` 记录用户选择
-- `implementation-plan.md` 必须从 `design.md` 推导，`artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导，`tasks.md` 必须从 task graph 推导；若任务已存在，先更新上游文档，再回头对齐任务
+- 执行 goal 时，`implementation-plan.md` 必须从 `design.md` 推导，`artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导，`tasks.md` 必须从 task graph 推导；若任务已存在，先更新上游文档，再回头对齐任务。执行经典 change 时，`tasks.md` 直接从 `proposal.md` 和实现范围推导
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按其中的下一步安全动作继续；已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`；它只记录 project session brief snapshot、目标工具映射和安全规则，不会启动 worker 或编辑源码
 - 推导或派发实现任务前，用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 在 `artifacts/agents/document-review-dispatches/` 下生成带 project session brief snapshot 的文档 reviewer 交接包，并创建 `artifacts/reviews/design-review.md` 或 `artifacts/reviews/implementation-plan-review.md`；design review 通过后才能派发 implementation plan review
@@ -52,7 +56,7 @@ tags: [ai, guide, ospec]
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 记录 TDD cycle evidence；该命令只记录 evidence，不会运行 shell 命令
 - 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` 记录验证证据；该命令只记录 evidence，不会运行 shell 命令
 - `ospec execute doc-review` 只记录 artifacts，不会启动 reviewer、运行 shell 命令、同步 worker status 或编辑源码
-- `artifacts/agents/task-graph.json` 中存在未解决 task 状态、无效依赖、缺失目标文件、缺失验证命令，或顶层 `status` 不是 `completed` 时，不得 archive
+- 对 goal，`artifacts/agents/task-graph.json` 中存在未解决 task 状态、无效依赖、缺失目标文件、缺失验证命令，或顶层 `status` 不是 `completed` 时，不得 archive
 - 实现后每个任务必须先完成该任务的 spec review，再完成该任务的 quality review；最终阶段仍必须先完成 `artifacts/reviews/spec-compliance.md`，再完成 `artifacts/reviews/code-quality.md`；未解决的单任务或最终 review decision 会阻止 archive
 - 实现和 review 阶段必须保持 `artifacts/agents/worker-status.md` 与 implementer、spec reviewer、quality reviewer 和 controller 状态一致
 - 任一 worker 状态仍为 `PENDING`、`NEEDS_CONTEXT` 或 `BLOCKED` 时，不得声称完成；归档前 `controller_status` 必须为 `DONE`

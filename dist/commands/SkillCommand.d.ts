@@ -13,6 +13,8 @@ export declare class SkillCommand extends BaseCommand {
     private getInstalledSkillStatus;
     private buildSkillPackage;
     private getSkillDefinition;
+    private buildPackagedGlobalSkillDefinition;
+    private readSkillMarkdownMetadata;
     private buildPrimarySkillDefinition;
     private buildPackageAssets;
     private buildLegacyAliasPackage;

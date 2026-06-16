@@ -87,7 +87,7 @@ class InitCommand extends BaseCommand_1.BaseCommand {
         }
     }
     getManagedSkillNames() {
-        return ['ospec', 'ospec-change'];
+        return ['ospec', 'ospec-change', 'ospec-goal'];
     }
     formatManagedSkills(results) {
         return results.map(result => result.skillName).join(', ');

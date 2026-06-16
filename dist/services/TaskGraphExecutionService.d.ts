@@ -1333,6 +1333,7 @@ export declare class TaskGraphExecutionService {
     private buildFinishPlanCommands;
     private buildFinishDecisionPrompts;
     private quoteShellArg;
+    private quoteHarnessTemplateArg;
     private normalizeHandoffTarget;
     private normalizeWorkerToolTarget;
     private normalizePositiveInteger;

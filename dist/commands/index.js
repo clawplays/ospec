@@ -3,13 +3,15 @@
  * Command entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LayoutCommand = exports.UpdateCommand = exports.SessionCommand = exports.ExecuteCommand = exports.RunCommand = exports.QueueCommand = exports.IndexCommand = exports.PluginsCommand = exports.SkillsCommand = exports.SkillCommand = exports.DocsCommand = exports.WorkflowCommand = exports.BatchCommand = exports.StatusCommand = exports.FinalizeCommand = exports.ArchiveCommand = exports.ProgressCommand = exports.VerifyCommand = exports.PlanCommand = exports.BrainstormCommand = exports.NewCommand = exports.InitCommand = exports.BaseCommand = void 0;
+exports.LayoutCommand = exports.UpdateCommand = exports.SessionCommand = exports.ExecuteCommand = exports.RunCommand = exports.QueueCommand = exports.IndexCommand = exports.PluginsCommand = exports.SkillsCommand = exports.SkillCommand = exports.DocsCommand = exports.WorkflowCommand = exports.BatchCommand = exports.StatusCommand = exports.FinalizeCommand = exports.ArchiveCommand = exports.ProgressCommand = exports.VerifyCommand = exports.PlanCommand = exports.BrainstormCommand = exports.GoalCommand = exports.NewCommand = exports.InitCommand = exports.BaseCommand = void 0;
 var BaseCommand_1 = require("./BaseCommand");
 Object.defineProperty(exports, "BaseCommand", { enumerable: true, get: function () { return BaseCommand_1.BaseCommand; } });
 var InitCommand_1 = require("./InitCommand");
 Object.defineProperty(exports, "InitCommand", { enumerable: true, get: function () { return InitCommand_1.InitCommand; } });
 var NewCommand_1 = require("./NewCommand");
 Object.defineProperty(exports, "NewCommand", { enumerable: true, get: function () { return NewCommand_1.NewCommand; } });
+var GoalCommand_1 = require("./GoalCommand");
+Object.defineProperty(exports, "GoalCommand", { enumerable: true, get: function () { return GoalCommand_1.GoalCommand; } });
 var BrainstormCommand_1 = require("./BrainstormCommand");
 Object.defineProperty(exports, "BrainstormCommand", { enumerable: true, get: function () { return BrainstormCommand_1.BrainstormCommand; } });
 var PlanCommand_1 = require("./PlanCommand");

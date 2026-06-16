@@ -107,10 +107,18 @@ Use ospec to refresh or repair the project knowledge layer for this directory. D
 
 ### 5. Change-Creation Prompt
 
-Use when the user is explicitly ready to move into execution.
+Use when the user is explicitly ready to move into a small or routine execution flow.
 
 ```text
 Use ospec to create and advance a change for this requirement. Respect the current project state and do not create queue work unless I ask for it.
+```
+
+### 5b. Goal-Creation Prompt
+
+Use when the user explicitly wants the full 1.2 workflow for complex, cross-cutting, high-risk, multi-worker, or evidence-heavy work.
+
+```text
+Use ospec goal to create and advance a full goal for this requirement. Use design, implementation-plan, task graph, review, worker-status, and evidence gates.
 ```
 
 ### 6. Queue Prompt
@@ -142,9 +150,18 @@ Always keep these rules:
 - do not apply business scaffold during plain init or docs maintenance
 - do not generate `docs/project/bootstrap-summary.md`
 - do not create the first change automatically unless the user explicitly asks to create a change
+- use `ospec new` / `ospec-change` for the classic fast change flow, and `ospec goal` / `ospec-goal` for the full workflow
 - do not enter queue mode unless the user explicitly asks for queue behavior
 - treat planning defaults as guidance, not as init-time templates
 - use the CLI commands for verification, archiving, and targeted inspection instead of ad-hoc filesystem edits
+
+## Visibility & Decisions
+
+Keep the user continuously informed; never run the workflow silently.
+
+- `Announce-Before-Act`: announce in one line which OSpec skill you are using (`ospec-goal` / `ospec-change`) and the current stage; which `ospec execute ...` command you are about to run and the artifact it writes; how many native subagents you dispatch and via which mechanism (`Task` for Claude Code, `spawn_agent`/`wait_agent`/`close_agent` for Codex/GPT, `@generalist` for Gemini, `@mention` for OpenCode); and which gate is blocking when progress stops.
+- `Brainstorm-First`: open each goal with a short brainstorming pass before locking design. Surface the open questions for direction, architecture, API, data, UI, risk, and scope, and ask the user one question at a time instead of silently assuming. When any of those is genuinely open, prefer raising a durable decision gate (`ospec execute decision ... --required`, present the decision report `Chat Prompt`) over guessing; only record an autonomous assumption in `design.md` when the user explicitly defers, and label it as an assumption to confirm.
+- `Zero-Setup`: the user only starts a goal (`ospec goal <name>` or just describing it) and states the requirement — they never type `ospec execute ...`, `ospec session`, or setup commands; the AI runs every OSpec command itself and the user only answers questions in chat. In a Claude Code harness, if `.claude/settings.json` does not yet reference `.ospec/hooks/claude/ospec-claude-hook.cjs`, the AI runs `ospec session hook --target claude --apply` once (idempotent) so hard enforcement is active for the next session.
 
 ## What The CLI Manages
 
@@ -160,7 +177,7 @@ This CLI now covers:
 
 ## Canonical Execution Files
 
-Treat these as the source of truth for active delivery work:
+For classic `change` work, treat `proposal.md`, `tasks.md`, `state.json`, `verification.md`, `review.md`, and plugin artifacts as the required active delivery files. For full `goal` work, also treat these as source of truth:
 
 - `.skillrc`
 - `.ospec/session-brief.md`
@@ -255,6 +272,7 @@ ospec docs generate [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
+ospec goal <goal-name> [path]
 ospec docs status [path]
 ospec skills status [path]
 ospec changes status [path]
@@ -313,16 +331,21 @@ ospec skill status ospec
 ospec skill install ospec
 ospec skill status ospec-change
 ospec skill install ospec-change
+ospec skill status ospec-goal
+ospec skill install ospec-goal
 ospec skill status-claude ospec
 ospec skill install-claude ospec
 ospec skill status-claude ospec-change
 ospec skill install-claude ospec-change
+ospec skill status-claude ospec-goal
+ospec skill install-claude ospec-goal
 ```
 
 Managed auto-sync targets for global install, `ospec init`, and `ospec update` are:
 
 - `ospec`
 - `ospec-change`
+- `ospec-goal`
 
 Additional packaged skills remain available for explicit install, for example:
 
@@ -339,6 +362,8 @@ ospec new <change-name> [path]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
+
+Use `ospec goal <goal-name> [path]` instead of `ospec new` when the work should use the full design, plan, task graph, review, worker-status, and evidence workflow.
 
 Use `ospec docs generate [path]` later when you need a docs-only maintenance pass.
 

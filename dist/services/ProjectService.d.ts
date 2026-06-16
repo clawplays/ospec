@@ -248,6 +248,7 @@ export declare class ProjectService {
     private calculateProgress;
     private extractDescription;
     private buildActiveChangeStatusItem;
+    private getGoalDocumentReviewChecks;
     private analyzeChecklistDocument;
     analyzeTaskGraphDocument(filePath: string, activatedSteps: string[]): Promise<TaskGraphAnalysis>;
     analyzeReviewArtifactDocument(filePath: string, name: string, expectedReviewerRole: ReviewArtifactRole, activatedSteps: string[]): Promise<ReviewArtifactAnalysis>;

@@ -1,6 +1,6 @@
 # 使い方
 
-OSpec を主に AI で使う場合は、まず短い `/ospec` または `/ospec-change` を使ってください。このページの CLI コマンドは、フォールバックや明示的な自動化が必要なときに使います。
+OSpec を主に AI で使う場合は、まず短い `/ospec` または `/ospec-change` プロンプトを使ってください。小さな通常変更には `/ospec-change`、複雑な full workflow には `/ospec-goal` を使ってください。このページの CLI コマンドは、フォールバックや明示的な自動化が必要なときに使います。
 
 ## よく使うコマンド
 
@@ -15,6 +15,7 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
+ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec execute bootstrap [changes/active/<change>]
@@ -102,6 +103,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```text
 /ospec でこのプロジェクトを初期化してください。
 /ospec-change でこの要件の change を作成して進めてください。
+/ospec-goal でこの要件の full goal を作成して進めてください。
 /ospec で承認済みの change をアーカイブしてください。
 ```
 
@@ -110,23 +112,25 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```bash
 ospec init [path]
 ospec new <change-name> [path]
+# full workflow が必要な場合だけ:
+ospec goal <goal-name> [path]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-## Change 設計文書
+## Change と Goal
 
-`ospec new <change-name> [path]` は、通常の `proposal.md` / `tasks.md` フローの周辺に `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md` を作成します。
+`ospec new <change-name> [path]` は classic fast-flow files だけを作成します: `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`。`ospec goal <goal-name> [path]` は full workflow を作成し、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、`artifacts/agents/worker-status.md`、evidence artifacts を使います。
 
 - workflow flags は built-in agent quality policy steps として `tdd_cycle`、`root_cause_debug`、`verification_evidence` を有効化できます。有効化された steps は change frontmatter の `optional_steps` に書かれ、`tasks.md`、`verification.md`、archive readiness で coverage が必要です。
 - `proposal.md` には、変更理由、範囲、受け入れ条件を記録します。
 - 既存の OSpec project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書き、active change、queue、cache fingerprint、次の安全な command context を記録します。これは project entry brief であり、active change の `ospec execute bootstrap` を置き換えません。
 - `ospec session hook [path]` は `.ospec/hooks/session-start.json` と `.ospec/hooks/session-start.md` を書き、harness の session-start 統合を opt-in にします。この hook は session brief の更新だけを行い、worker 起動、test 実行、git inspect、archive、source file 編集は行いません。
 - `ospec brainstorm [path] --topic "..."` は、change 作成前の探索 artifact を `.ospec/brainstorms/` に残したい場合だけ使います。`--visual` を付けると local static HTML companion も作成します。この command は change を作成しません。
-- `ospec plan [path] --change changes/active/<change>` は `.ospec/plans/<id>/plan-draft.md` に plan draft を作成します。その change の `implementation-plan.md` を更新するときだけ `--apply` を付けます。
-- `design.md` には、実装前に採用方針、主なトレードオフ、影響する境界、リスク、未解決事項を記録します。
-- `implementation-plan.md` には、設計を agent 実行可能な手順へ変換し、ファイル、期待結果、検証コマンド、依存関係、競合を記録します。
-- `artifacts/agents/task-graph.json` には、task ID、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role、task 状態を機械可読な実行グラフとして記録します。
+- `ospec plan [path] --change changes/active/<change>` は `.ospec/plans/<id>/plan-draft.md` に plan draft を作成します。その goal の `implementation-plan.md` を更新するときだけ `--apply` を付けます。
+- goal では `design.md` に、実装前の採用方針、主なトレードオフ、影響する境界、リスク、未解決事項を記録します。
+- goal では `implementation-plan.md` に、設計を agent 実行可能な手順へ変換し、ファイル、期待結果、検証コマンド、依存関係、競合を記録します。
+- goal では `artifacts/agents/task-graph.json` に、task ID、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role、task 状態を機械可読な実行グラフとして記録します。
 - explicit queue runner を使う場合は、`ospec run status [path]` で現在の queue run と active change task graph snapshot を確認できます。completed、running、dispatchable、blocked、invalid の件数と next action を表示します。
 - `ospec run start`、`run resume`、`run step`、`run status` の next instruction は active task graph を参照します。dispatchable work がある場合は `ospec execute dispatch ...` を示しますが、runner は worker dispatch や source file 編集を行いません。
 - one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `artifacts/agents/bootstrap.json` と `artifacts/agents/bootstrap.md` を書き、出力された次の安全な action に従います。active dispatch が既にある場合、bootstrap は対応する `ospec execute launch ... --task ...` command を推奨します。
@@ -156,12 +160,12 @@ ospec finalize [changes/active/<change>]
 - `tasks.md` には、確認済みの実行計画を実行可能な作業へ分解します。
 - task-level spec review を先に使い、その後同じ task の quality review で確認します。final review では `artifacts/reviews/spec-compliance.md` を先に使い、その後 `artifacts/reviews/code-quality.md` で確認します。
 - `artifacts/agents/worker-status.md` には implementer、spec reviewer、quality reviewer、controller の状態を記録します。
-- AI / `/ospec-change` フローでは、AI が要件、`proposal.md`、プロジェクト文脈から `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json` を作成または更新します。ユーザーは仮定の確認や重要判断の修正だけを行えば十分です。
-- CLI のみのフローでは、`tasks.md` の前に `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json` を手動編集し、その後で `ospec verify [changes/active/<change>]` を実行できます。
+- AI / `/ospec-change` フローでは、AI は小さな flow を `proposal.md`、`tasks.md`、実装、`verification.md`、`review.md` に集中させます。
+- AI / `/ospec-goal` フローでは、AI が要件、`proposal.md`、プロジェクト文脈から `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json` を作成または更新します。ユーザーは仮定の確認や重要判断の修正だけを行えば十分です。
 - Task graph の状態値は `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING` です。archive 準備にはトップレベルの `status: "completed"` と、全 task の `DONE` または `DONE_WITH_CONCERNS` が必要です。
 - `ospec execute bootstrap`、`handoff`、`doc-review`、`status`、`next` は、`bootstrap`、`handoff`、`doc-review` が自身の artifacts を書く点を除いて read-only です。`workspace`、plan mode の `worktree`、`finish` は git/artifact state を inspect して workspace/worktree/finish artifacts を書くだけです。`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`feedback`、`debug`、`tdd`、`verify`、`sync` は OSpec artifacts、task graph、launch-plan、worker-runs、review-runs、retries、review-dispatch、review-feedback-plan、debug-evidence、tdd-evidence、verification-evidence、worker-status 状態だけを更新し、project source file を直接編集しません。native subagent は current AI harness が起動します。shell command は `execute worktree --create`、`execute worktree --cleanup`、fallback `execute orchestrate --command "..."`、fallback `execute launch --run --command "..."` または `execute review --run --command "..."` が明示された場合だけ実行されます。
 - Worker 状態値は `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING` です。完了には worker 状態が解決済みで、`controller_status` が `DONE` である必要があります。
-- `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、または `artifacts/agents/worker-status.md` が存在しない、または形式が壊れている場合、`ospec verify [changes/active/<change>]` は失敗します。文書 checklist に未チェック項目が残っている場合は警告します。
+- `change` profile では `ospec verify [changes/active/<change>]` は classic files だけを必須にします。`goal` profile では `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence、`artifacts/agents/worker-status.md` も必須にします。
 - `design.md` は簡潔に保ちます。役割はタスク分解の精度を上げることであり、長期的なプロジェクト文書の代替ではありません。
 
 新規プロジェクトで `ospec init [path]` を実行すると、既定で nested レイアウトを使います。リポジトリ直下に残るのは `.skillrc` と `README.md` だけで、OSpec が管理する他のファイルは `.ospec/` に入ります。
@@ -189,7 +193,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.1
+npm install -g @clawplays/ospec-cli@1.2.2
 ospec update [path]
 ```
 

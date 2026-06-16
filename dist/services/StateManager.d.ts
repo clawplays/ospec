@@ -1,4 +1,4 @@
-import { FeatureState, FeatureStatus, ProjectMode } from '../core/types';
+import { FeatureState, FeatureStatus, ProjectMode, WorkflowProfileId } from '../core/types';
 import { FileService } from './FileService';
 export declare class StateManager {
     private fileService;
@@ -10,6 +10,7 @@ export declare class StateManager {
     createInitialState(feature: string, affects: string[], mode?: ProjectMode, options?: {
         queued?: boolean;
         source?: string;
+        workflowProfileId?: WorkflowProfileId;
     }): FeatureState;
 }
 export declare function createStateManager(fileService: FileService): StateManager;

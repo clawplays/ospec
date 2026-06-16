@@ -14,33 +14,42 @@ tags: [conventions, workflow, change, ospec]
 
 1. プロジェクト文脈と影響範囲を確認する
 2. `proposal.md` を作成または更新する
-3. `design.md` を作成または更新する
-4. `implementation-plan.md` を作成または更新する
-5. `artifacts/agents/task-graph.json` を作成または更新する
-6. `tasks.md` を作成または更新する
-7. `state.json` に従って実装を進める
-8. 完了した各 worker task の task-level spec review と quality review を完了する
-9. final `artifacts/reviews/spec-compliance.md` と `artifacts/reviews/code-quality.md` を割り当てて完了する
-10. `artifacts/agents/worker-status.md` を更新する
+3. classic change では `proposal.md` から直接 `tasks.md` を作成または更新する
+4. goal では `design.md` を作成または更新する
+5. goal では `implementation-plan.md` を作成または更新する
+6. goal では `artifacts/agents/task-graph.json` を作成または更新する
+7. `tasks.md` を作成または更新する
+8. `state.json` に従って実装を進める
+9. goal では document、task-level、final review gates を完了する
+10. goal では `artifacts/agents/worker-status.md` を更新する
 11. 関連する `SKILL.md` を更新する
 12. `SKILL.index.json` を再生成する
 13. `verification.md` を完了させる
-14. すべての gate 通過後にだけ archive する
+14. 現在の workflow profile の gate 通過後にだけ archive する
 
-## 設計作成
+## Workflow Profiles
 
-- AI 支援で change を進める場合は、要件、`proposal.md`、プロジェクト文脈から `design.md` を作成または更新してから `implementation-plan.md`、`tasks.md`、コードを編集する
-- 不足判断がアーキテクチャ、API、データ、UI、リスクを実質的に変える場合だけ、短い設計質問を 1 つ行う。それ以外は仮定を `design.md` に記録する
+- `workflow_profile_id: change` は小さな通常変更の 1.0 高速フロー: `proposal.md`、`tasks.md`、実装、`verification.md`、`review.md`、`state.json`
+- `workflow_profile_id: goal` は複雑な作業の full flow: `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review、worker/reviewer handoff、final review、worker status、evidence gates を追加する
+- classic changes には `ospec new` / `ospec-change` を使い、goals には `ospec goal` / `ospec-goal` を使う
+
+## Goal 設計作成
+
+- AI 支援で goal を進める場合は、要件、`proposal.md`、プロジェクト文脈から `design.md` を作成または更新してから `implementation-plan.md`、`tasks.md`、コードを編集する
+- classic change では、ユーザーが明示的に goal へ昇格させない限り `design.md`、`implementation-plan.md`、task graph、worker packets、goal review artifacts を作成しない
+- `Announce-Before-Act`: ワークフローを黙って実行しない。どの OSpec skill・段階か、これから実行する `ospec execute ...` コマンドと生成物、何体の native subagent をどの機構で派遣するか、どのゲートでブロックしているかを伝える
+- `Brainstorm-First`: 各 goal は設計を確定する前に短いブレインストーミングから始め、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項を 1 つずつユーザーに質問する。黙った仮定より durable な decision gate を優先し、ユーザーが明示的に委任した場合のみ `design.md` に要確認の仮定として記録する
 - `implementation-plan.md` は確定した `design.md` から導き、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する
 - `artifacts/agents/task-graph.json` は `implementation-plan.md` から導く。各 task には id、状態、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role を含める
 - `tasks.md` は `artifacts/agents/task-graph.json` から導く。`tasks.md` が既にあり上流文書がテンプレートのままなら、先に上流文書を更新してから tasks を整合させる
+- classic change では `tasks.md` を `proposal.md` と実装範囲から直接導く
 
 ## 状態制約
 
 - 実行状態の正は `state.json` とする
 - `verification.md` は `state.json` の代わりにならない
 - 状態ファイルと実行ファイルが矛盾する場合は、まず状態を直す
-- `artifacts/agents/task-graph.json` は機械可読な task 状態、依存関係、競合制約、対象ファイル、検証コマンドを記録する
+- goal では `artifacts/agents/task-graph.json` が機械可読な task 状態、依存関係、競合制約、対象ファイル、検証コマンドを記録する
 - 既存 project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書く。active change、queued change、queue-run、cache fingerprint、次の安全な command context のみを記録する
 - one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `bootstrap.json` と `bootstrap.md` を書き、そこにある次の安全な action に従う
 - change を agent、tool、worktree、shell、human operator の間で引き渡すときは、`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` で `handoff.json` と `handoff.md` を書く。このコマンドは project session brief snapshot、target tool mapping、safety rules のみを記録する
@@ -64,8 +73,8 @@ tags: [conventions, workflow, change, ospec]
 - focused test 実行後、`ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` で `artifacts/agents/tdd-evidence.json` に TDD cycle evidence を記録する
 - fresh project checks を実行した後、`ospec execute verify [changes/active/<change>] --command "..." --status PASSED` で `artifacts/agents/verification-evidence.json` に verification evidence を記録する
 - `ospec session` と `ospec execute bootstrap`、`handoff`、`doc-review`、`workspace`、plan-mode `worktree`、`finish`、`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`debug`、`tdd`、`verify`、`sync` は OSpec artifacts のみを更新する。`workspace`、`worktree`、`finish` が git state を読む場合を除き、project source file は直接編集しない。native subagent は current AI harness が起動する。shell command は explicit `worktree --create`、`worktree --cleanup`、fallback `launch --run --command`、`review --run --command`、または fallback `orchestrate` の場合のみ実行する
-- task graph に未解決状態、無効な依存関係、不足した実行詳細、またはトップレベル `status` が `completed` でない状態がある場合は archive しない
-- `artifacts/agents/worker-status.md` は implementer、spec reviewer、quality reviewer、controller の状態を記録する
+- goal では task graph に未解決状態、無効な依存関係、不足した実行詳細、またはトップレベル `status` が `completed` でない状態がある場合は archive しない
+- goal では `artifacts/agents/worker-status.md` が implementer、spec reviewer、quality reviewer、controller の状態を記録する
 - 各 task-level spec review はその task の quality review より先に通過し、final `artifacts/reviews/spec-compliance.md` は final `artifacts/reviews/code-quality.md` より先に通過する
 - task-level と final の review decision が `PENDING`、`NEEDS_CHANGES`、`BLOCKED` の場合は archive をブロックする
 - 記録済み debug evidence が blocked、または root cause の確認のみで後続の fixed 記録がない場合は archive をブロックする
@@ -82,7 +91,7 @@ tags: [conventions, workflow, change, ospec]
 
 - optional step の有効化は `.skillrc.workflow` で管理する
 - proposal flags は workflow 設定と整合していなければならない
-- 有効化された optional step は `artifacts/agents/task-graph.json`、`tasks.md`、`verification.md` に必ず出す
+- 有効化された optional step は `tasks.md` と `verification.md` に必ず出す。goal では `artifacts/agents/task-graph.json` にも出す
 
 ## Plugin Gates
 

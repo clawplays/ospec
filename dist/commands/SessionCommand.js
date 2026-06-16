@@ -52,6 +52,13 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             if (parsed.hook) {
                 const result = await this.writeSessionHook(targetPath);
                 this.printSessionHook(result);
+                const target = parsed.target ?? 'claude';
+                if (target === 'claude') {
+                    const hookInstall = await services_1.services.claudeHookService.install(targetPath, {
+                        apply: parsed.apply,
+                    });
+                    this.printClaudeHookInstall(hookInstall, Boolean(parsed.apply));
+                }
                 return;
             }
             const result = await this.writeSessionBrief(targetPath);
@@ -64,6 +71,8 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
     }
     parseArgs(args) {
         let hook = false;
+        let apply = false;
+        let target;
         let projectPath;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
@@ -78,6 +87,23 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
                 hook = true;
                 continue;
             }
+            if (arg === '--apply') {
+                apply = true;
+                continue;
+            }
+            if (arg === '--target') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Session flag --target requires a value (for example: --target claude).');
+                }
+                target = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--target=')) {
+                target = arg.slice('--target='.length);
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown session flag: ${arg}`);
             }
@@ -87,7 +113,23 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             }
             throw new Error(`Unexpected session argument: ${arg}`);
         }
-        return { help: false, hook, projectPath };
+        if (apply && !hook) {
+            throw new Error('Session flag --apply can only be used with session hook.');
+        }
+        if (target !== undefined) {
+            const normalizedTarget = target.trim().toLowerCase();
+            if (!normalizedTarget) {
+                throw new Error('Session flag --target requires a value (for example: --target claude).');
+            }
+            if (!hook) {
+                throw new Error('Session flag --target can only be used with session hook.');
+            }
+            if (normalizedTarget !== 'claude') {
+                throw new Error(`Unsupported session hook target: ${target}. Supported targets: claude.`);
+            }
+            target = normalizedTarget;
+        }
+        return { help: false, hook, apply, target, projectPath };
     }
     async writeSessionBrief(projectPath) {
         const targetPath = path.resolve(projectPath);
@@ -635,6 +677,19 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         console.log(`Report: ${result.reportPath}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
+        console.log('');
+    }
+    printClaudeHookInstall(result, apply) {
+        console.log('\nClaude Code Hook Bundle');
+        console.log('=======================\n');
+        console.log(`Hook script: ${result.scriptPath}`);
+        console.log(`Settings fragment: ${result.fragmentPath}`);
+        if (apply && result.settingsPath) {
+            console.log(`Settings: ${result.settingsPath} (${result.settingsChanged ? 'updated' : 'already current'})`);
+        }
+        else {
+            console.log('Not applied. Run with --apply to merge into .claude/settings.json, or merge the fragment by hand.');
+        }
         console.log('');
     }
     printSessionHook(result) {

@@ -71,7 +71,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## 托管 Skills
 
-- `ospec init [path]` 和 `ospec update [path]` 会为 Codex 同步托管的 `ospec` 与 `ospec-change` skills
+- `ospec init [path]` 和 `ospec update [path]` 会为 Codex 同步托管的 `ospec`、`ospec-change` 与 `ospec-goal` skills
 - `ospec update [path]` 会修复仍然保留 OSpec 痕迹的旧项目，补装当前项目已启用插件中缺失的全局包，并在发现更高兼容版本时自动升级这些已启用插件的包
 - `ospec update [path]` 不会升级当前项目里未启用的全局插件
 - `ospec plugins update --all` 才是显式的“更新所有已安装插件”命令

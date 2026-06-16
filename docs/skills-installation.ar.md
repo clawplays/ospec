@@ -1,6 +1,6 @@
 # تثبيت المهارات
 
-إذا كنت تستخدم OSpec أساسا عبر AI فابدأ أولا بالمطالبتين القصيرتين `/ospec` و `/ospec-change`، واستخدم أوامر المهارات الصريحة في هذه الصفحة فقط عندما تحتاج إلى تثبيت مباشر أو مزامنة أو استكشاف.
+إذا كنت تستخدم OSpec أساسا عبر AI فاستخدم `/ospec-change` للتغييرات الصغيرة والروتينية، واستخدم `/ospec-goal` للعمل المعقد ذي full workflow. استخدم أوامر المهارات الصريحة في هذه الصفحة فقط عندما تحتاج إلى تثبيت مباشر أو مزامنة أو استكشاف.
 
 المطالبات الموصى بها:
 
@@ -8,14 +8,16 @@
 /ospec هيّئ هذا المشروع.
 /ospec حدّث أو أصلح طبقة معرفة المشروع لهذا الدليل. لا تنشئ change بعد.
 /ospec-change أنشئ تغييرا لهذا المتطلب وادفعه إلى الأمام.
+/ospec-goal أنشئ goal كاملا لهذا المتطلب وادفعه إلى الأمام.
 ```
 
 المهارات المُدارة:
 
 - `ospec`
 - `ospec-change`
+- `ospec-goal`
 
-تتم مزامنة هاتين المهارتين تلقائيا بواسطة:
+تتم مزامنة هذه المهارات الثلاث تلقائيا بواسطة:
 
 - `npm install -g .`
 - `ospec init [path]`
@@ -34,6 +36,7 @@
 ```bash
 ospec skill status ospec
 ospec skill status ospec-change
+ospec skill status ospec-goal
 ```
 
 تثبيت أو مزامنة مهارة مُدارة واحدة صراحة:
@@ -41,6 +44,7 @@ ospec skill status ospec-change
 ```bash
 ospec skill install ospec
 ospec skill install ospec-change
+ospec skill install ospec-goal
 ```
 
 الموقع الافتراضي:
@@ -62,6 +66,7 @@ ospec skill install ospec-init
 ```bash
 ospec skill status-claude ospec
 ospec skill status-claude ospec-change
+ospec skill status-claude ospec-goal
 ```
 
 تثبيت أو مزامنة مهارة مُدارة واحدة صراحة:
@@ -69,6 +74,7 @@ ospec skill status-claude ospec-change
 ```bash
 ospec skill install-claude ospec
 ospec skill install-claude ospec-change
+ospec skill install-claude ospec-goal
 ```
 
 الموقع الافتراضي:
@@ -87,6 +93,6 @@ ospec skill install-claude ospec-init
 
 استخدم `/ospec` في المطالبات الجديدة.
 
-استخدم `/ospec-change` عندما يكون قصد المستخدم تحديدا هو "إنشاء change أو دفعه للأمام".
+استخدم `/ospec-change` للتغييرات الصغيرة والروتينية. استخدم `/ospec-goal` عندما تحتاج إلى design وimplementation plan وtask graph وworker/review وevidence gates.
 
 استخدم `/ospec-cli` فقط عندما تكون هناك عادات أو أتمتة قديمة ما زالت تشير إلى الاسم القديم.

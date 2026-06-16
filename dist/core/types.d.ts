@@ -1,5 +1,6 @@
 export type ProjectMode = 'lite' | 'standard' | 'full';
 export type ProjectLayout = 'classic' | 'nested';
+export type WorkflowProfileId = 'change' | 'goal';
 export type HookCheckPolicy = 'off' | 'warn' | 'error';
 export type ChangeSummaryStatus = 'pass' | 'warn' | 'fail';
 export type FeatureStatus = 'queued' | 'draft' | 'proposed' | 'planned' | 'implementing' | 'verifying' | 'ready_to_archive' | 'archived';
@@ -138,7 +139,7 @@ export interface FeatureState {
     version: string;
     feature: string;
     mode: ProjectMode;
-    workflow_profile_id?: string;
+    workflow_profile_id?: WorkflowProfileId;
     status: FeatureStatus;
     current_step: string;
     affects: string[];

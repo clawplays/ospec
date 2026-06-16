@@ -38,6 +38,7 @@ const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
+const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
@@ -74,6 +75,8 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                 throw new Error('Change state file not found. Expected changes/active/<change>/state.json');
             }
             const featureState = await services_1.services.fileService.readJSON(statePath);
+            const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(targetPath, featureState);
+            const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
             const projectRoot = await this.findProjectRoot(targetPath);
             const config = await services_1.services.configManager.loadConfig(projectRoot);
             const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
@@ -82,36 +85,6 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                     name: 'proposal.md',
                     status: proposalExists ? 'pass' : 'fail',
                     message: proposalExists ? 'Proposal file exists' : 'proposal.md is missing',
-                },
-                {
-                    name: 'design.md',
-                    status: designExists ? 'pass' : 'fail',
-                    message: designExists ? 'Design file exists' : 'design.md is missing',
-                },
-                {
-                    name: 'implementation-plan.md',
-                    status: implementationPlanExists ? 'pass' : 'fail',
-                    message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing',
-                },
-                {
-                    name: 'artifacts/agents/task-graph.json',
-                    status: taskGraphExists ? 'pass' : 'fail',
-                    message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing',
-                },
-                {
-                    name: 'artifacts/reviews/spec-compliance.md',
-                    status: specComplianceReviewExists ? 'pass' : 'fail',
-                    message: specComplianceReviewExists ? 'Spec compliance review artifact exists' : 'artifacts/reviews/spec-compliance.md is missing',
-                },
-                {
-                    name: 'artifacts/reviews/code-quality.md',
-                    status: codeQualityReviewExists ? 'pass' : 'fail',
-                    message: codeQualityReviewExists ? 'Code quality review artifact exists' : 'artifacts/reviews/code-quality.md is missing',
-                },
-                {
-                    name: 'artifacts/agents/worker-status.md',
-                    status: agentWorkerStatusExists ? 'pass' : 'fail',
-                    message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing',
                 },
                 {
                     name: 'tasks.md',
@@ -126,6 +99,38 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                         : 'verification.md is missing',
                 },
             ];
+            checks.push({
+                name: 'workflow_profile',
+                status: 'pass',
+                message: `Workflow profile is ${workflowProfile}`,
+            });
+            if (isGoalWorkflow) {
+                checks.push({
+                    name: 'design.md',
+                    status: designExists ? 'pass' : 'fail',
+                    message: designExists ? 'Design file exists' : 'design.md is missing',
+                }, {
+                    name: 'implementation-plan.md',
+                    status: implementationPlanExists ? 'pass' : 'fail',
+                    message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing',
+                }, {
+                    name: 'artifacts/agents/task-graph.json',
+                    status: taskGraphExists ? 'pass' : 'fail',
+                    message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing',
+                }, {
+                    name: 'artifacts/reviews/spec-compliance.md',
+                    status: specComplianceReviewExists ? 'pass' : 'fail',
+                    message: specComplianceReviewExists ? 'Spec compliance review artifact exists' : 'artifacts/reviews/spec-compliance.md is missing',
+                }, {
+                    name: 'artifacts/reviews/code-quality.md',
+                    status: codeQualityReviewExists ? 'pass' : 'fail',
+                    message: codeQualityReviewExists ? 'Code quality review artifact exists' : 'artifacts/reviews/code-quality.md is missing',
+                }, {
+                    name: 'artifacts/agents/worker-status.md',
+                    status: agentWorkerStatusExists ? 'pass' : 'fail',
+                    message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing',
+                });
+            }
             let activatedSteps = [];
             if (proposalExists) {
                 const proposal = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(proposalPath));
@@ -139,27 +144,27 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                         : 'No optional steps activated',
                 });
             }
-            if (designExists) {
+            if (isGoalWorkflow && designExists) {
                 const designAnalysis = await services_1.services.projectService.analyzeChecklistDocument(designPath, 'design.md', activatedSteps);
                 checks.push(...designAnalysis.checks);
             }
-            if (implementationPlanExists) {
+            if (isGoalWorkflow && implementationPlanExists) {
                 const implementationPlanAnalysis = await services_1.services.projectService.analyzeChecklistDocument(implementationPlanPath, 'implementation-plan.md', activatedSteps);
                 checks.push(...implementationPlanAnalysis.checks);
             }
-            if (taskGraphExists) {
+            if (isGoalWorkflow && taskGraphExists) {
                 const taskGraphAnalysis = await services_1.services.projectService.analyzeTaskGraphDocument(taskGraphPath, activatedSteps);
                 checks.push(...taskGraphAnalysis.checks);
             }
-            if (specComplianceReviewExists) {
+            if (isGoalWorkflow && specComplianceReviewExists) {
                 const specComplianceReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps);
                 checks.push(...specComplianceReviewAnalysis.checks);
             }
-            if (codeQualityReviewExists) {
+            if (isGoalWorkflow && codeQualityReviewExists) {
                 const codeQualityReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps);
                 checks.push(...codeQualityReviewAnalysis.checks);
             }
-            if (agentWorkerStatusExists) {
+            if (isGoalWorkflow && agentWorkerStatusExists) {
                 const agentWorkerStatusAnalysis = await services_1.services.projectService.analyzeAgentWorkerStatusDocument(agentWorkerStatusPath);
                 checks.push(...agentWorkerStatusAnalysis.checks);
             }
@@ -170,6 +175,19 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
             if (verificationExists) {
                 const verificationAnalysis = await services_1.services.projectService.analyzeVerificationDocument(verificationPath, activatedSteps);
                 checks.push(...verificationAnalysis.checks);
+                if (isGoalWorkflow) {
+                    const evidenceCheck = verificationAnalysis.checks.find(check => check.name === 'verification.md.evidence');
+                    if (evidenceCheck?.status !== 'pass') {
+                        checks.push({
+                            name: 'goal.verification_evidence',
+                            status: 'fail',
+                            message: 'Goal workflow requires latest passing artifacts/agents/verification-evidence.json',
+                        });
+                    }
+                }
+            }
+            if (isGoalWorkflow) {
+                await this.addGoalDocumentReviewChecks(targetPath, checks);
             }
             if (activatedSteps.includes('stitch_design_review')) {
                 const approvalPath = path.join(targetPath, 'artifacts', 'stitch', 'approval.json');
@@ -382,6 +400,49 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
         catch (error) {
             this.error(`Verification failed: ${error}`);
             throw error;
+        }
+    }
+    async addGoalDocumentReviewChecks(targetPath, checks) {
+        const approvedDecisions = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
+        for (const review of [
+            {
+                name: 'artifacts/reviews/design-review.md',
+                path: path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, 'design-review.md'),
+            },
+            {
+                name: 'artifacts/reviews/implementation-plan-review.md',
+                path: path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, 'implementation-plan-review.md'),
+            },
+        ]) {
+            const exists = await services_1.services.fileService.exists(review.path);
+            checks.push({
+                name: review.name,
+                status: exists ? 'pass' : 'fail',
+                message: exists ? `${review.name} exists` : `${review.name} is missing`,
+            });
+            if (!exists) {
+                continue;
+            }
+            try {
+                const document = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(review.path));
+                const decision = typeof document.data.decision === 'string'
+                    ? document.data.decision.trim().toUpperCase()
+                    : 'PENDING';
+                checks.push({
+                    name: `${review.name}.decision`,
+                    status: approvedDecisions.has(decision) ? 'pass' : 'fail',
+                    message: approvedDecisions.has(decision)
+                        ? `${review.name} is ${decision}`
+                        : `${review.name} must be approved before goal closeout (current: ${decision})`,
+                });
+            }
+            catch (error) {
+                checks.push({
+                    name: `${review.name}.decision`,
+                    status: 'fail',
+                    message: `${review.name} cannot be parsed: ${error.message || error}`,
+                });
+            }
         }
     }
     async findProjectRoot(startPath) {

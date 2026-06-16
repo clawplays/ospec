@@ -1,6 +1,6 @@
 # 使用说明
 
-如果你主要通过 AI 使用 OSpec，优先先发一个简短的 `/ospec` 或 `/ospec-change` 提示词；这页里的 CLI 命令用于回退方案或显式自动化。
+如果你主要通过 AI 使用 OSpec，先使用简短的 `/ospec` 或 `/ospec-change` 提示词。小功能优先用 `/ospec-change`，复杂全流程工作用 `/ospec-goal`；这页里的 CLI 命令用于回退方案或显式自动化。
 
 ## 常用命令
 
@@ -15,6 +15,7 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
+ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec execute bootstrap [changes/active/<change>]
@@ -103,6 +104,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```text
 /ospec 初始化这个项目。
 /ospec-change 为这个需求创建并推进一个 change。
+/ospec-goal 为这个需求创建并推进一个完整 goal。
 /ospec 归档这个已验收通过的 change。
 ```
 
@@ -111,13 +113,15 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```bash
 ospec init [path]
 ospec new <change-name> [path]
+# 全流程工作使用：
+ospec goal <goal-name> [path]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-## Change 设计文档
+## Change 与 Goal 文档
 
-`ospec new <change-name> [path]` 会围绕常规的 `proposal.md` / `tasks.md` 流程创建 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md` 和 `artifacts/agents/worker-status.md`。
+`ospec new <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md` 和 `artifacts/agents/worker-status.md`。
 
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
 - 用 `proposal.md` 记录为什么要做、范围和验收标准。
@@ -125,9 +129,9 @@ ospec finalize [changes/active/<change>]
 - 用 `ospec session hook [path]` 写入 `.ospec/hooks/session-start.json`、`.ospec/hooks/session-start.md`、`.ospec/hooks/using-ospec.json` 和 `.ospec/hooks/using-ospec.md`，供不同 harness 按需接入 session-start。这些 artifacts 会告诉 Codex、Claude、Gemini、OpenCode、Cursor、Copilot 和 generic harness 启动时应该注入什么：刷新 session brief、在只有一个 active change 时运行 active-change bootstrap、读取 decision/plugin gate 来源，并按安全下一步命令继续。这个 hook 不启动 worker、不运行测试、不检查 git、不归档、不编辑源码。
 - 只有需要在创建 change 前保留探索过程时，才用 `ospec brainstorm [path] --topic "..."` 写入 `.ospec/brainstorms/`；加 `--visual` 会额外生成本地静态 HTML companion，加 `--decision-gates` 会在能解析 active change 时，把方向、范围和验证风险选择写成 durable user decision gates。这个命令不会创建 change。
 - 用 `ospec plan [path] --change changes/active/<change>` 在 `.ospec/plans/<id>/plan-draft.md` 生成计划草稿；只有确认要覆盖该 change 的 `implementation-plan.md` 时才加 `--apply`。
-- 用 `design.md` 在实现前记录选定方案、关键取舍、影响边界、风险和未决问题。
-- 用 `implementation-plan.md` 把设计转成 agent 可执行步骤，明确文件、预期结果、验证命令、依赖和冲突。
-- 用 `artifacts/agents/task-graph.json` 保存机器可读执行图：task ID、依赖、并行安全性、冲突、目标文件、验证命令、预期结果、worker 角色和 task 状态。
+- 在 `ospec-goal` 中，用 `design.md` 在实现前记录选定方案、关键取舍、影响边界、风险和未决问题。
+- 在 `ospec-goal` 中，用 `implementation-plan.md` 把设计转成 agent 可执行步骤，明确文件、预期结果、验证命令、依赖和冲突。
+- 在 `ospec-goal` 中，用 `artifacts/agents/task-graph.json` 保存机器可读执行图：task ID、依赖、并行安全性、冲突、目标文件、验证命令、预期结果、worker 角色和 task 状态。
 - 使用显式队列 runner 时，可用 `ospec run status [path]` 同时查看当前 queue run 和 active change task graph 快照，包括已完成、运行中、可分派、阻塞、无效任务数量和下一步动作。
 - `ospec run start`、`run resume`、`run step` 和 `run status` 的下一步提示会参考 active task graph；如果有可分派任务，会提示 `ospec execute dispatch ...`。runner 仍然不会自动派发 worker，也不会编辑源码。
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
@@ -157,12 +161,12 @@ ospec finalize [changes/active/<change>]
 - 用 `tasks.md` 把已确认的执行计划拆成可执行任务。
 - 先用 `artifacts/reviews/spec-compliance.md` 确认“做的是对的”，再用 `artifacts/reviews/code-quality.md` 确认“做得足够好”。
 - 用 `artifacts/agents/worker-status.md` 记录 implementer、spec reviewer、quality reviewer 和 controller 状态。
-- 在 AI / `/ospec-change` 流程中，AI 会基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`、`implementation-plan.md` 与 `artifacts/agents/task-graph.json`；你只需要审阅假设，或修正关键决策。
-- 纯 CLI 流程仍然可以在 `tasks.md` 前手工编辑 `design.md`、`implementation-plan.md` 和 `artifacts/agents/task-graph.json`，然后运行 `ospec verify [changes/active/<change>]`。
+- 在 AI / `/ospec-change` 流程中，AI 只保持小流程所需的 `proposal.md`、`tasks.md`、实现、`verification.md` 和 `review.md` 对齐。
+- 在 AI / `/ospec-goal` 流程中，AI 会基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`、`implementation-plan.md` 与 `artifacts/agents/task-graph.json`；你只需要审阅假设，或修正关键决策。
 - Task graph 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；归档前顶层 `status` 必须为 `"completed"`，且所有 task 必须为 `DONE` 或 `DONE_WITH_CONCERNS`。
 - `ospec execute bootstrap`、`handoff`、`doc-review`、`status`、`next` 和 `route` 都不会编辑项目源码；其中 `bootstrap`、`handoff`、`doc-review` 与 `route` 会写自己的 artifacts。`workspace`、plan 模式的 `worktree` 与 `finish` 只检查 git/artifact 状态并写 workspace/worktree/finish artifacts；`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`feedback`、`decision`、`debug`、`tdd`、`verify` 和 `sync` 只更新 OSpec artifacts、task graph、decisions、launch-plan、worker-runs、review-runs、retries、review-dispatch、review-feedback-plan、debug-evidence、tdd-evidence、verification-evidence 或 worker-status 状态，不会直接编辑项目源码。原生 subagent 由当前 AI harness 启动；只有显式传入 `execute worktree --create`、`execute worktree --cleanup`、fallback `execute orchestrate --command "..."`、fallback `execute launch --run --command "..."` 或 `execute review --run --command "..."` 时才会运行 shell 命令。
 - Worker 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；完成前必须解决 worker 状态，且 `controller_status` 必须为 `DONE`。
-- 当 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts 或 `artifacts/agents/worker-status.md` 缺失或格式错误时，`ospec verify [changes/active/<change>]` 会失败；当文档 checklist 仍有未勾选项时会给出警告。
+- 对 `change` profile，`ospec verify [changes/active/<change>]` 只强制经典快速流程文件。对 `goal` profile，它还会强制 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence 和 `artifacts/agents/worker-status.md`。
 - 保持 `design.md` 简洁；它的作用是提高任务拆解准确性，不是替代长期项目文档。
 
 新项目执行 `ospec init [path]` 后，默认使用 nested 布局：仓库根目录保留 `.skillrc` 与 `README.md`，其余 OSpec 托管文件写入 `.ospec/`。
@@ -190,7 +194,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.1
+npm install -g @clawplays/ospec-cli@1.2.2
 ospec update [path]
 ```
 

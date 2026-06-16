@@ -14,33 +14,42 @@ tags: [conventions, workflow, change, ospec]
 
 1. 明确项目上下文和影响范围
 2. 创建或更新 `proposal.md`
-3. 创建或更新 `design.md`
-4. 创建或更新 `implementation-plan.md`
-5. 创建或更新 `artifacts/agents/task-graph.json`
-6. 创建或更新 `tasks.md`
-7. 根据 `state.json` 推进实现
-8. 为每个已完成 worker task 完成 task 级 spec 与 quality review
-9. 派发并完成最终 `artifacts/reviews/spec-compliance.md` 与 `artifacts/reviews/code-quality.md`
-10. 更新 `artifacts/agents/worker-status.md`
+3. 对经典 change，直接从 `proposal.md` 创建或更新 `tasks.md`
+4. 对 goal，创建或更新 `design.md`
+5. 对 goal，创建或更新 `implementation-plan.md`
+6. 对 goal，创建或更新 `artifacts/agents/task-graph.json`
+7. 创建或更新 `tasks.md`
+8. 根据 `state.json` 推进实现
+9. 对 goal，完成文档、task 级和最终 review 门禁
+10. 对 goal，更新 `artifacts/agents/worker-status.md`
 11. 更新相关 `SKILL.md`
 12. 重建 `SKILL.index.json`
 13. 完成 `verification.md`
-14. 满足门禁后再归档
+14. 满足当前 workflow profile 的门禁后再归档
 
-## 设计起草
+## Workflow Profiles
 
-- AI 辅助执行 change 时，必须先基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`，再编辑 `implementation-plan.md`、`tasks.md` 或代码
-- 只有缺失决策会实质影响架构、API、数据、UI 或风险时，才提出一个简短设计问题；否则把假设写入 `design.md`
+- `workflow_profile_id: change` 是小功能和常规改动的 1.0 快速流程：`proposal.md`、`tasks.md`、实现、`verification.md`、`review.md` 和 `state.json`
+- `workflow_profile_id: goal` 是复杂工作的全流程：增加 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、文档 review、worker/reviewer 交接、最终 review、worker status 和 evidence 门禁
+- 小功能使用 `ospec new` / `ospec-change`，复杂功能使用 `ospec goal` / `ospec-goal`
+
+## Goal 设计起草
+
+- AI 辅助执行 goal 时，必须先基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`，再编辑 `implementation-plan.md`、`tasks.md` 或代码
+- 执行经典 change 时，不要创建 `design.md`、`implementation-plan.md`、task graph、worker packets 或 goal review artifacts，除非用户明确升级为 goal
+- `Announce-Before-Act`：绝不静默执行——宣告当前使用哪个 OSpec skill 及所处阶段、即将运行哪个 `ospec execute ...` 命令与会写出的产物、派发多少原生 subagent 及机制，以及进度被哪个门禁阻塞
+- `Brainstorm-First`：每个 goal 开局先做一次简短头脑风暴再锁定设计，把方向、架构、API、数据、UI、风险、范围的未决问题逐个问用户；优先升起持久 decision gate 而非静默假设，仅当用户明确让 AI 自行决定时才在 `design.md` 写入假设并标注待确认
 - `implementation-plan.md` 必须从已确认的 `design.md` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突
 - `artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色
 - `tasks.md` 必须从 `artifacts/agents/task-graph.json` 推导；若 `tasks.md` 已存在但上游文档仍是模板，先补上游文档再对齐任务
+- 执行经典 change 时，`tasks.md` 直接从 `proposal.md` 和实现范围推导
 
 ## 状态约束
 
 - 以 `state.json` 为当前执行状态依据
 - `verification.md` 不能替代 `state.json`
 - 若状态文件与执行文件冲突，先修正状态再继续
-- `artifacts/agents/task-graph.json` 记录机器可读的 task 状态、依赖、冲突约束、目标文件和验证命令
+- 对 goal，`artifacts/agents/task-graph.json` 记录机器可读的 task 状态、依赖、冲突约束、目标文件和验证命令
 - 进入已有项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`；它只记录 active change、queued change、queue-run、cache fingerprint 和安全下一步命令上下文
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `bootstrap.json` 和 `bootstrap.md`，然后按其中的下一步安全动作继续
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `handoff.json` 和 `handoff.md`；该命令只记录 project session brief snapshot、目标工具映射和安全规则
@@ -80,7 +89,7 @@ tags: [conventions, workflow, change, ospec]
 
 - 是否启用可选步骤，以 `.skillrc.workflow` 为准
 - proposal 中的 flags 必须与 workflow 配置兼容
-- 被激活的可选步骤必须进入 `artifacts/agents/task-graph.json`、`tasks.md` 和 `verification.md`
+- 被激活的可选步骤必须进入 `tasks.md` 和 `verification.md`；对 goal，还必须进入 `artifacts/agents/task-graph.json`
 
 ## 插件阻断
 
@@ -104,8 +113,8 @@ tags: [conventions, workflow, change, ospec]
 - 文档未同步时不得归档
 - 索引未重建时不得归档
 - 可选步骤未通过时不得归档
-- `artifacts/agents/task-graph.json` 存在未解决 task 状态、无效依赖或缺失执行细节时不得归档
-- `artifacts/agents/worker-status.md` 仍有未解决 worker 状态时不得归档
+- 对 goal，`artifacts/agents/task-graph.json` 存在未解决 task 状态、无效依赖或缺失执行细节时不得归档
+- 对 goal，`artifacts/agents/worker-status.md` 仍有未解决 worker 状态时不得归档
 - 已记录的 debug evidence 为 blocked，或只确认根因但没有后续 fixed 记录时不得归档
 - review artifacts 仍有未解决 decision 时不得归档
 - verification evidence 为 failed、blocked 或 stale 时不得归档

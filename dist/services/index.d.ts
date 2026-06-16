@@ -16,6 +16,7 @@ export { ProjectService, createProjectService } from './ProjectService';
 export { QueueService, createQueueService } from './QueueService';
 export { RunService, createRunService } from './RunService';
 export { TaskGraphExecutionService, createTaskGraphExecutionService } from './TaskGraphExecutionService';
+export { ClaudeHookService, createClaudeHookService } from './ClaudeHookService';
 import { FileService } from './FileService';
 import { ConfigManager } from './ConfigManager';
 import { StateManager } from './StateManager';
@@ -31,6 +32,7 @@ import { ProjectService } from './ProjectService';
 import { QueueService } from './QueueService';
 import { RunService } from './RunService';
 import { TaskGraphExecutionService } from './TaskGraphExecutionService';
+import { ClaudeHookService } from './ClaudeHookService';
 export declare class ServiceContainer {
     private static instance;
     readonly fileService: FileService;
@@ -48,6 +50,7 @@ export declare class ServiceContainer {
     readonly queueService: QueueService;
     readonly runService: RunService;
     readonly taskGraphExecutionService: TaskGraphExecutionService;
+    readonly claudeHookService: ClaudeHookService;
     private constructor();
     static getInstance(): ServiceContainer;
 }

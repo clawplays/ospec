@@ -44,6 +44,7 @@ const FinalizeCommand_1 = require("./commands/FinalizeCommand");
 const IndexCommand_1 = require("./commands/IndexCommand");
 const InitCommand_1 = require("./commands/InitCommand");
 const NewCommand_1 = require("./commands/NewCommand");
+const GoalCommand_1 = require("./commands/GoalCommand");
 const PlanCommand_1 = require("./commands/PlanCommand");
 const QueueCommand_1 = require("./commands/QueueCommand");
 const ProgressCommand_1 = require("./commands/ProgressCommand");
@@ -59,7 +60,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.2.1';
+const CLI_VERSION = '1.2.2';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -149,7 +150,12 @@ function parseInitCommandArgs(commandArgs) {
         options,
     };
 }
-function parseNewCommandArgs(commandArgs) {
+function getNewLikeUsage(commandName) {
+    return commandName === 'goal'
+        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2]'
+        : 'Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]';
+}
+function parseNewCommandArgs(commandArgs, commandName = 'new') {
     const featureName = commandArgs[0];
     let rootDir;
     const flags = [];
@@ -158,7 +164,7 @@ function parseNewCommandArgs(commandArgs) {
         if (arg === '--flags') {
             const rawFlags = commandArgs[index + 1];
             if (!rawFlags || rawFlags.startsWith('--')) {
-                console.error('Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]');
+                console.error(getNewLikeUsage(commandName));
                 process.exit(1);
             }
             flags.push(...rawFlags.split(',').map(flag => flag.trim()).filter(Boolean));
@@ -170,8 +176,8 @@ function parseNewCommandArgs(commandArgs) {
             continue;
         }
         if (arg.startsWith('--')) {
-            console.error(`Unknown option for new: ${arg}`);
-            console.error('Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]');
+            console.error(`Unknown option for ${commandName}: ${arg}`);
+            console.error(getNewLikeUsage(commandName));
             process.exit(1);
         }
         if (!rootDir) {
@@ -179,7 +185,7 @@ function parseNewCommandArgs(commandArgs) {
             continue;
         }
         console.error(`Unexpected argument for new: ${arg}`);
-        console.error('Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]');
+        console.error(getNewLikeUsage(commandName));
         process.exit(1);
     }
     return {
@@ -210,9 +216,20 @@ async function main() {
                     console.log('Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]');
                     process.exit(1);
                 }
-                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs);
+                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs, 'new');
                 const newCmd = new NewCommand_1.NewCommand();
                 await newCmd.execute(featureName, rootDir, { flags });
+                break;
+            }
+            case 'goal': {
+                if (commandArgs.length === 0) {
+                    console.error('Error: goal name is required');
+                    console.log('Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2]');
+                    process.exit(1);
+                }
+                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs, 'goal');
+                const goalCmd = new GoalCommand_1.GoalCommand();
+                await goalCmd.execute(featureName, rootDir, { flags });
                 break;
             }
             case 'brainstorm': {
@@ -357,6 +374,7 @@ Usage: ospec <command> [options]
 Commands:
   init [root-dir]           Initialize OSpec to a change-ready state
   new <change-name> [root]  Create a new change (supports --flags)
+  goal <goal-name> [root]   Create a full OSpec goal (supports --flags)
   brainstorm [path]         Write an optional pre-change brainstorm artifact
   plan [path]               Write an optional implementation plan draft
   verify [path]             Verify change completion
@@ -373,7 +391,7 @@ Commands:
   docs [action] [path]      Docs helpers (status, generate)
   skills [action] [path]    Skills status helpers (status)
   plugins [action] [path]   Plugin helpers (available, info, install, installed, update, list, status, enable, disable, approve, reject)
-  skill [action] [skill] [dir] Skill package helpers (managed skills: ospec, ospec-change)
+  skill [action] [skill] [dir] Skill package helpers (managed skills: ospec, ospec-change, ospec-goal)
   index [action] [path]     Index helpers (check, build)
   workflow [action]         Workflow configuration (show, list-flags)
   layout [action]           Project layout helpers (migrate)
@@ -386,6 +404,7 @@ Examples:
   ospec init . --summary "Internal admin portal" --tech-stack node,react,postgres
   ospec new onboarding-flow
   ospec new landing-refresh . --flags ui_change,page_design
+  ospec goal billing-refactor . --flags complex_feature,multi_file_change
   ospec brainstorm . --topic "Improve onboarding conversion" --change onboarding-flow
   ospec brainstorm . --topic "Explore dashboard UX" --visual
   ospec plan ./changes/active/onboarding-flow
@@ -437,6 +456,8 @@ Examples:
   ospec skill install ospec
   ospec skill status ospec-change
   ospec skill install ospec-change
+  ospec skill status ospec-goal
+  ospec skill install ospec-goal
   ospec skill install ospec-init
   ospec skill status-claude ospec
   ospec skill install-claude ospec

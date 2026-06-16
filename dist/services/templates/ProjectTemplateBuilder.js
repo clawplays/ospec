@@ -1356,8 +1356,10 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 1. 优先读取 \`SKILL.index.json\`。
 2. 修改代码前先读取相关 \`SKILL.md\`。
 3. 当前执行工作以 \`changes/active/<change>\` 为准。
-4. AI 辅助执行 change 时，先基于需求、\`proposal.md\` 和项目上下文起草或更新 \`design.md\`，再编辑 \`implementation-plan.md\`、推导 \`artifacts/agents/task-graph.json\`、编辑 \`tasks.md\` 或代码。
-5. 只有缺失决策会实质影响架构、API、数据、UI 或风险时，才提出一个简短设计问题；否则把假设写入 \`design.md\`。
+4. 对 \`workflow_profile_id: change\`，只维护经典快速流程文件：\`proposal.md\`、\`tasks.md\`、\`state.json\`、\`verification.md\` 和 \`review.md\`；除非明确升级为 goal，不要创建 \`design.md\`、\`implementation-plan.md\`、task graph、worker packets 或 review artifacts。
+4. 对 \`workflow_profile_id: goal\`，先基于需求、\`proposal.md\` 和项目上下文起草或更新 \`design.md\`，再编辑 \`implementation-plan.md\`、推导 \`artifacts/agents/task-graph.json\`、编辑 \`tasks.md\` 或代码。
+5. \`Announce-Before-Act\`：绝不静默执行——宣告当前 skill 与阶段、即将运行的 \`ospec execute ...\` 命令与产物、派发多少原生 subagent 及机制（Claude Code 用 \`Task\`、Codex/GPT 用 \`spawn_agent\`/\`wait_agent\`/\`close_agent\`、Gemini 用 \`@generalist\`、OpenCode 用 \`@mention\`），以及被哪个门禁阻塞。
+5. \`Brainstorm-First\`：goal 开局先做简短头脑风暴再锁定设计，把方向/架构/API/数据/UI/风险/范围的未决问题逐个问用户；优先升起持久 decision gate 而非静默假设，仅当用户明确让 AI 自行决定时才在 \`design.md\` 记录假设并标注待确认。
 5. 当 change 必须等待用户选择后才能继续时，用 \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required]\` 写入持久 decision gate，向用户展示 decision report 的 \`Chat Prompt\` 或 \`artifacts/agents/decisions/index.md\`，再用 \`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\` 记录用户选择。
 6. \`implementation-plan.md\` 必须从 \`design.md\` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突；\`artifacts/agents/task-graph.json\` 必须从 \`implementation-plan.md\` 推导；\`tasks.md\` 必须从 task graph 推导。
 6. 进入已有 OSpec 项目时，用 \`ospec session [path]\` 写入 \`.ospec/session-brief.json\` 和 \`.ospec/session-brief.md\`，记录 active change、queued change、queue-run、cache fingerprint 和安全下一步命令；这是项目入口简报，不替代 active change 的 \`ospec execute bootstrap\`。
@@ -1397,8 +1399,10 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 1. Read \`SKILL.index.json\` when available.
 2. Read the relevant \`SKILL.md\` files before editing code.
 3. Use \`changes/active/<change>\` as the execution layer.
-4. In AI-assisted change execution, draft or update \`design.md\` from the requirement, \`proposal.md\`, and project context before editing \`implementation-plan.md\`, deriving \`artifacts/agents/task-graph.json\`, editing \`tasks.md\`, or editing code.
-5. Ask at most one concise design question only when the missing decision materially changes direction, architecture, API, data, UI, risk, or scope; otherwise write assumptions into \`design.md\`.
+4. For \`workflow_profile_id: change\`, keep the classic fast-flow files only: \`proposal.md\`, \`tasks.md\`, \`state.json\`, \`verification.md\`, and \`review.md\`; do not create \`design.md\`, \`implementation-plan.md\`, task graphs, worker packets, or review artifacts unless the work is promoted to \`goal\`.
+4. For \`workflow_profile_id: goal\`, draft or update \`design.md\` from the requirement, \`proposal.md\`, and project context before editing \`implementation-plan.md\`, deriving \`artifacts/agents/task-graph.json\`, editing \`tasks.md\`, or editing code.
+5. \`Announce-Before-Act\`: never run the workflow silently — announce which OSpec skill and stage you are in, which \`ospec execute ...\` command you will run and the artifact it writes, how many native subagents you dispatch and via which mechanism (\`Task\` for Claude Code, \`spawn_agent\`/\`wait_agent\`/\`close_agent\` for Codex/GPT, \`@generalist\` for Gemini, \`@mention\` for OpenCode), and which gate is blocking when progress stops.
+5. \`Brainstorm-First\`: open each goal with a short brainstorming pass before locking design; surface open questions for direction, architecture, API, data, UI, risk, and scope and ask the user one at a time; prefer raising a durable decision gate over a silent assumption, and only record an assumption in \`design.md\` when the user defers, labeled as an assumption to confirm.
 5. When the change must pause for a user choice, record a durable gate with \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]\`, present the decision report \`Chat Prompt\` or \`artifacts/agents/decisions/index.md\`, then record the selected option with \`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\`.
 6. Derive \`implementation-plan.md\` from \`design.md\`, including target files, expected results, verification commands, dependencies, parallelizable work, and conflicts; derive \`artifacts/agents/task-graph.json\` from \`implementation-plan.md\`; derive \`tasks.md\` from the task graph.
 6. When entering an existing OSpec project, use \`ospec session [path]\` to write \`.ospec/session-brief.json\` and \`.ospec/session-brief.md\` with active change, queued change, queue-run, cache fingerprint, and safe next command context; this project entry brief does not replace active-change \`ospec execute bootstrap\`.
@@ -1438,8 +1442,10 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 1. まず \`SKILL.index.json\` を読む。
 2. コード編集前に関連する \`SKILL.md\` を読む。
 3. 現在の作業は \`changes/active/<change>\` を基準に進める。
-4. AI 支援で change を進める場合は、要件、\`proposal.md\`、プロジェクト文脈から \`design.md\` を作成または更新してから \`implementation-plan.md\` を編集し、\`artifacts/agents/task-graph.json\` を導出し、\`tasks.md\` やコードを編集する。
-5. 不足判断がアーキテクチャ、API、データ、UI、リスクを実質的に変える場合だけ、短い設計質問を 1 つ行う。それ以外は仮定を \`design.md\` に記録する。
+4. \`workflow_profile_id: change\` では、\`proposal.md\`、\`tasks.md\`、\`state.json\`、\`verification.md\`、\`review.md\` だけを維持する。goal に昇格しない限り、\`design.md\`、\`implementation-plan.md\`、task graph、worker packets、review artifacts は作成しない。
+4. \`workflow_profile_id: goal\` では、要件、\`proposal.md\`、プロジェクト文脈から \`design.md\` を作成または更新してから \`implementation-plan.md\` を編集し、\`artifacts/agents/task-graph.json\` を導出し、\`tasks.md\` やコードを編集する。
+5. \`Announce-Before-Act\`: ワークフローを黙って実行しない。どの skill・段階か、これから実行する \`ospec execute ...\` コマンドと生成物、何体の native subagent をどの機構（Claude Code は \`Task\`、Codex/GPT は \`spawn_agent\`/\`wait_agent\`/\`close_agent\`、Gemini は \`@generalist\`、OpenCode は \`@mention\`）で派遣するか、どのゲートでブロックしているかを伝える。
+5. \`Brainstorm-First\`: 各 goal は設計確定前に短いブレインストーミングから始め、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項を 1 つずつ質問する。黙った仮定より durable な decision gate を優先し、ユーザーが委任した場合のみ \`design.md\` に要確認の仮定として記録する。
 5. change がユーザー選択を待つ必要がある場合は \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]\` で durable decision gate を記録し、decision report の \`Chat Prompt\` または \`artifacts/agents/decisions/index.md\` を提示してから、\`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\` で回答を記録する。
 6. \`implementation-plan.md\` は \`design.md\` から導き、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する。\`artifacts/agents/task-graph.json\` は \`implementation-plan.md\` から導き、\`tasks.md\` は task graph から導く。
 6. 既存の OSpec project に入るときは \`ospec session [path]\` で \`.ospec/session-brief.json\` と \`.ospec/session-brief.md\` を書き、active change、queued change、queue-run、cache fingerprint、次の安全な command context を記録する。これは project entry brief であり、active change の \`ospec execute bootstrap\` を置き換えない。
@@ -1479,8 +1485,10 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 1. اقرأ \`SKILL.index.json\` أولاً إن وجد.
 2. اقرأ ملفات \`SKILL.md\` ذات الصلة قبل تعديل الكود.
 3. استخدم \`changes/active/<change>\` كطبقة التنفيذ الحالية.
-4. عند تنفيذ change بمساعدة AI، أنشئ \`design.md\` أو حدّثه من المتطلب و\`proposal.md\` وسياق المشروع قبل تعديل \`implementation-plan.md\` أو اشتقاق \`artifacts/agents/task-graph.json\` أو تعديل \`tasks.md\` أو الكود.
-5. لا تطرح أكثر من سؤال تصميم موجز واحد إلا عندما يغيّر القرار الناقص البنية أو API أو البيانات أو UI أو المخاطر فعلياً؛ وإلا فسجل الافتراضات في \`design.md\`.
+4. عند \`workflow_profile_id: change\`، حافظ فقط على ملفات المسار السريع: \`proposal.md\` و\`tasks.md\` و\`state.json\` و\`verification.md\` و\`review.md\`؛ ولا تنشئ \`design.md\` أو \`implementation-plan.md\` أو task graph أو worker packets أو review artifacts إلا إذا ترقى العمل إلى \`goal\`.
+4. عند \`workflow_profile_id: goal\`، أنشئ \`design.md\` أو حدّثه من المتطلب و\`proposal.md\` وسياق المشروع قبل تعديل \`implementation-plan.md\` أو اشتقاق \`artifacts/agents/task-graph.json\` أو تعديل \`tasks.md\` أو الكود.
+5. \`Announce-Before-Act\`: لا تُشغّل سير العمل بصمت — أعلن أي skill ومرحلة، وأي أمر \`ospec execute ...\` ستشغّله وما يكتبه، وكم subagent أصلي ستوزّع وبأي آلية (\`Task\` لـ Claude Code، و\`spawn_agent\`/\`wait_agent\`/\`close_agent\` لـ Codex/GPT، و\`@generalist\` لـ Gemini، و\`@mention\` لـ OpenCode)، وأي بوابة تحجب التقدم.
+5. \`Brainstorm-First\`: ابدأ كل goal بعصف ذهني قصير قبل تثبيت التصميم، واسأل المستخدم عن الاتجاه والبنية وAPI والبيانات وUI والمخاطر والنطاق واحداً تلو الآخر؛ وفضّل رفع decision gate دائمة على الافتراض الصامت، ولا تسجّل افتراضاً في \`design.md\` إلا عند تفويض المستخدم مع وسمه كافتراض بحاجة لتأكيد.
 5. عندما يجب أن ينتظر change اختيار المستخدم، سجّل durable decision gate عبر \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]\`، واعرض \`Chat Prompt\` من decision report أو \`artifacts/agents/decisions/index.md\`، ثم سجّل الإجابة عبر \`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\`.
 6. يجب اشتقاق \`implementation-plan.md\` من \`design.md\` مع الملفات المستهدفة والنتائج المتوقعة وأوامر التحقق والاعتماديات والعمل القابل للتوازي والتعارضات؛ ويجب اشتقاق \`artifacts/agents/task-graph.json\` من \`implementation-plan.md\`؛ ويجب اشتقاق \`tasks.md\` من task graph.
 6. عند الدخول إلى مشروع OSpec موجود، استخدم \`ospec session [path]\` لكتابة \`.ospec/session-brief.json\` و\`.ospec/session-brief.md\` مع سياق active change وqueued change وqueue-run وcache fingerprint والأمر الآمن التالي؛ هذا project entry brief ولا يستبدل \`ospec execute bootstrap\` للـ active change.
@@ -1571,10 +1579,13 @@ change 相对 agent artifacts 包括 \`artifacts/agents/bootstrap.md\`、\`artif
 
 项目级文档和分层技能文档用于承载长期知识。
 active change 文档用于承载当前实现工作。
+\`workflow_profile_id: change\` 使用经典快速流程，只要求 \`proposal.md\`、\`tasks.md\`、\`state.json\`、\`verification.md\` 和 \`review.md\`；不要为了补齐模板而生成 goal-only 文档。
+\`workflow_profile_id: goal\` 使用完整流程，才要求 \`design.md\`、\`implementation-plan.md\`、\`artifacts/agents/task-graph.json\`、document reviews、final reviews、worker status 和 verification evidence。
 进入已有 OSpec 项目时，用 \`ospec session [path]\` 写入 \`.ospec/session-brief.json\` 和 \`.ospec/session-brief.md\`；该项目入口简报只记录 active change、queued change、queue-run、cache fingerprint 和安全下一步命令，不替代 active change 的 \`ospec execute bootstrap\`。
 将已激活的内建质量策略步骤（如 \`tdd_cycle\`、\`root_cause_debug\`、\`verification_evidence\`）视为受归档门禁约束的 \`optional_steps\`；收尾前必须在任务文档、验证文档和对应 evidence artifacts 中覆盖。
-AI 辅助执行 change 时，先基于需求、\`proposal.md\` 和项目上下文起草或更新 \`design.md\`，再编辑 \`implementation-plan.md\`、推导 \`artifacts/agents/task-graph.json\`、编辑 \`tasks.md\` 或代码。
-只有缺失决策会实质影响方向、架构、API、数据、UI、风险或范围时，才提出一个简短设计问题；否则把假设写入 \`design.md\`。
+AI 辅助执行 goal 时，先基于需求、\`proposal.md\` 和项目上下文起草或更新 \`design.md\`，再编辑 \`implementation-plan.md\`、推导 \`artifacts/agents/task-graph.json\`、编辑 \`tasks.md\` 或代码。
+\`Announce-Before-Act\`：绝不静默执行——宣告当前 skill 与阶段、即将运行的 \`ospec execute ...\` 命令与产物、派发多少原生 subagent 及机制（Claude Code 用 \`Task\`、Codex/GPT 用 \`spawn_agent\`/\`wait_agent\`/\`close_agent\`、Gemini 用 \`@generalist\`、OpenCode 用 \`@mention\`），以及被哪个门禁阻塞。
+\`Brainstorm-First\`：goal 开局先做简短头脑风暴再锁定设计，把方向/架构/API/数据/UI/风险/范围的未决问题逐个问用户；优先升起持久 decision gate 而非静默假设，仅当用户明确让 AI 自行决定时才在 \`design.md\` 记录假设并标注待确认。
 当 change 必须等待用户选择后才能继续时，用 \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required]\` 写入持久 decision gate，向用户展示 decision report 的 \`Chat Prompt\` 或 \`artifacts/agents/decisions/index.md\`，再用 \`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\` 记录用户选择。
 \`implementation-plan.md\` 必须从 \`design.md\` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突；\`artifacts/agents/task-graph.json\` 必须从 \`implementation-plan.md\` 推导；\`tasks.md\` 必须从 task graph 推导。
 开始或恢复单个 active change 时，用 \`ospec execute bootstrap [changes/active/<change>]\` 写入带 project session brief snapshot 的 \`artifacts/agents/bootstrap.json\` 和 \`artifacts/agents/bootstrap.md\`，然后按其中的下一步安全动作继续；已有 active dispatch 时，bootstrap 会推荐对应的 \`ospec execute launch ... --task ...\` 命令。
@@ -1655,10 +1666,13 @@ Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`art
 
 Use project-level docs and layered skill files for long-lived knowledge.
 Use active changes for current implementation work.
+For \`workflow_profile_id: change\`, use the classic fast flow and require only \`proposal.md\`, \`tasks.md\`, \`state.json\`, \`verification.md\`, and \`review.md\`; do not backfill goal-only documents just because a template mentions them.
+For \`workflow_profile_id: goal\`, use the full workflow and require \`design.md\`, \`implementation-plan.md\`, \`artifacts/agents/task-graph.json\`, document reviews, final reviews, worker status, and verification evidence.
 When entering an existing OSpec project, use \`ospec session [path]\` to write \`.ospec/session-brief.json\` and \`.ospec/session-brief.md\`; this project entry brief records active change, queued change, queue-run, cache fingerprint, and safe next command context only and does not replace active-change \`ospec execute bootstrap\`.
 Treat activated built-in quality policy steps such as \`tdd_cycle\`, \`root_cause_debug\`, and \`verification_evidence\` as archive-gated \`optional_steps\`; cover them in task documents, verification documents, and matching evidence artifacts before closeout.
-During AI-assisted change execution, draft or update \`design.md\` from the requirement, \`proposal.md\`, and project context before editing \`implementation-plan.md\`, deriving \`artifacts/agents/task-graph.json\`, editing \`tasks.md\`, or editing code.
-Ask at most one concise design question only when the missing decision materially changes direction, architecture, API, data, UI, risk, or scope; otherwise write assumptions into \`design.md\`.
+During AI-assisted goal execution, draft or update \`design.md\` from the requirement, \`proposal.md\`, and project context before editing \`implementation-plan.md\`, deriving \`artifacts/agents/task-graph.json\`, editing \`tasks.md\`, or editing code.
+\`Announce-Before-Act\`: never run the workflow silently — announce which OSpec skill and stage you are in, which \`ospec execute ...\` command you will run and the artifact it writes, how many native subagents you dispatch and via which mechanism (\`Task\` for Claude Code, \`spawn_agent\`/\`wait_agent\`/\`close_agent\` for Codex/GPT, \`@generalist\` for Gemini, \`@mention\` for OpenCode), and which gate is blocking when progress stops.
+\`Brainstorm-First\`: open each goal with a short brainstorming pass before locking design; surface open questions for direction, architecture, API, data, UI, risk, and scope and ask the user one at a time; prefer raising a durable decision gate over a silent assumption, and only record an assumption in \`design.md\` when the user defers, labeled as an assumption to confirm.
 When the change must pause for a user choice, record a durable gate with \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]\`, present the decision report \`Chat Prompt\` or \`artifacts/agents/decisions/index.md\`, then record the selected option with \`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\`.
 Derive \`implementation-plan.md\` from \`design.md\`, including target files, expected results, verification commands, dependencies, parallelizable work, and conflicts; derive \`artifacts/agents/task-graph.json\` from \`implementation-plan.md\`; derive \`tasks.md\` from the task graph.
 When starting or resuming one active change, use \`ospec execute bootstrap [changes/active/<change>]\` to write \`artifacts/agents/bootstrap.json\` and \`artifacts/agents/bootstrap.md\` with the project session brief snapshot, then follow its next safe action; when an active dispatch is waiting, bootstrap recommends the matching \`ospec execute launch ... --task ...\` command.
@@ -1739,10 +1753,13 @@ Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`art
 
 長期知識にはプロジェクト文書とレイヤー化された SKILL を使う。
 現在の実装作業には active change を使う。
+\`workflow_profile_id: change\` では classic fast flow を使い、\`proposal.md\`、\`tasks.md\`、\`state.json\`、\`verification.md\`、\`review.md\` だけを要求する。テンプレートに記載があっても goal-only 文書を補完しない。
+\`workflow_profile_id: goal\` では full workflow を使い、\`design.md\`、\`implementation-plan.md\`、\`artifacts/agents/task-graph.json\`、document reviews、final reviews、worker status、verification evidence を要求する。
 既存の OSpec project に入るときは \`ospec session [path]\` で \`.ospec/session-brief.json\` と \`.ospec/session-brief.md\` を書く。この project entry brief は active change、queued change、queue-run、cache fingerprint、次の安全な command context のみを記録し、active change の \`ospec execute bootstrap\` を置き換えない。
 \`tdd_cycle\`、\`root_cause_debug\`、\`verification_evidence\` など有効化された built-in quality policy steps は、archive-gated \`optional_steps\` として扱う。closeout 前に task documents、verification documents、対応する evidence artifacts で coverage を記録する。
-AI 支援で change を進める場合は、要件、\`proposal.md\`、プロジェクト文脈から \`design.md\` を作成または更新してから \`implementation-plan.md\` を編集し、\`artifacts/agents/task-graph.json\` を導出し、\`tasks.md\` やコードを編集する。
-不足判断がアーキテクチャ、API、データ、UI、リスクを実質的に変える場合だけ、短い設計質問を 1 つ行う。それ以外は仮定を \`design.md\` に記録する。
+AI 支援で goal を進める場合は、要件、\`proposal.md\`、プロジェクト文脈から \`design.md\` を作成または更新してから \`implementation-plan.md\` を編集し、\`artifacts/agents/task-graph.json\` を導出し、\`tasks.md\` やコードを編集する。
+\`Announce-Before-Act\`: ワークフローを黙って実行しない。どの skill・段階か、これから実行する \`ospec execute ...\` コマンドと生成物、何体の native subagent をどの機構（Claude Code は \`Task\`、Codex/GPT は \`spawn_agent\`/\`wait_agent\`/\`close_agent\`、Gemini は \`@generalist\`、OpenCode は \`@mention\`）で派遣するか、どのゲートでブロックしているかを伝える。
+\`Brainstorm-First\`: 各 goal は設計確定前に短いブレインストーミングから始め、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項を 1 つずつ質問する。黙った仮定より durable な decision gate を優先し、ユーザーが委任した場合のみ \`design.md\` に要確認の仮定として記録する。
 change がユーザー選択を待つ必要がある場合は \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]\` で durable decision gate を記録し、decision report の \`Chat Prompt\` または \`artifacts/agents/decisions/index.md\` を提示してから、\`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\` で回答を記録する。
 \`implementation-plan.md\` は \`design.md\` から導き、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する。\`artifacts/agents/task-graph.json\` は \`implementation-plan.md\` から導き、\`tasks.md\` は task graph から導く。
 one active change を開始または再開するときは、\`ospec execute bootstrap [changes/active/<change>]\` で project session brief snapshot を含む \`artifacts/agents/bootstrap.json\` と \`artifacts/agents/bootstrap.md\` を書き、そこにある次の安全な action に従う。active dispatch がある場合、bootstrap は対応する \`ospec execute launch ... --task ...\` command を推奨する。
@@ -1823,10 +1840,13 @@ Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`art
 
 استخدم وثائق المشروع وملفات SKILL متعددة الطبقات للمعرفة طويلة الأمد.
 واستخدم التغييرات النشطة للأعمال التنفيذية الحالية.
+عند \`workflow_profile_id: change\` استخدم المسار السريع الكلاسيكي ولا تطلب إلا \`proposal.md\` و\`tasks.md\` و\`state.json\` و\`verification.md\` و\`review.md\`؛ لا تملأ وثائق goal-only لمجرد أنها مذكورة في قالب.
+عند \`workflow_profile_id: goal\` استخدم المسار الكامل واطلب \`design.md\` و\`implementation-plan.md\` و\`artifacts/agents/task-graph.json\` وdocument reviews وfinal reviews وworker status وverification evidence.
 عند الدخول إلى مشروع OSpec موجود، استخدم \`ospec session [path]\` لكتابة \`.ospec/session-brief.json\` و\`.ospec/session-brief.md\`؛ هذا project entry brief يسجل سياق active change وqueued change وqueue-run وcache fingerprint والأمر الآمن التالي فقط ولا يستبدل \`ospec execute bootstrap\` للـ active change.
 تعامل مع خطوات built-in quality policy المفعّلة مثل \`tdd_cycle\` و\`root_cause_debug\` و\`verification_evidence\` كـ \`optional_steps\` خاضعة لـ archive gate؛ غطّها في task documents وverification documents وملفات evidence المطابقة قبل closeout.
-عند تنفيذ change بمساعدة AI، أنشئ \`design.md\` أو حدّثه من المتطلب و\`proposal.md\` وسياق المشروع قبل تعديل \`implementation-plan.md\` أو اشتقاق \`artifacts/agents/task-graph.json\` أو تعديل \`tasks.md\` أو الكود.
-لا تطرح أكثر من سؤال تصميم موجز واحد إلا عندما يغيّر القرار الناقص البنية أو API أو البيانات أو UI أو المخاطر فعلياً؛ وإلا فسجل الافتراضات في \`design.md\`.
+عند تنفيذ goal بمساعدة AI، أنشئ \`design.md\` أو حدّثه من المتطلب و\`proposal.md\` وسياق المشروع قبل تعديل \`implementation-plan.md\` أو اشتقاق \`artifacts/agents/task-graph.json\` أو تعديل \`tasks.md\` أو الكود.
+\`Announce-Before-Act\`: لا تُشغّل سير العمل بصمت — أعلن أي skill ومرحلة، وأي أمر \`ospec execute ...\` ستشغّله وما يكتبه، وكم subagent أصلي ستوزّع وبأي آلية (\`Task\` لـ Claude Code، و\`spawn_agent\`/\`wait_agent\`/\`close_agent\` لـ Codex/GPT، و\`@generalist\` لـ Gemini، و\`@mention\` لـ OpenCode)، وأي بوابة تحجب التقدم.
+\`Brainstorm-First\`: ابدأ كل goal بعصف ذهني قصير قبل تثبيت التصميم، واسأل المستخدم عن الاتجاه والبنية وAPI والبيانات وUI والمخاطر والنطاق واحداً تلو الآخر؛ وفضّل رفع decision gate دائمة على الافتراض الصامت، ولا تسجّل افتراضاً في \`design.md\` إلا عند تفويض المستخدم مع وسمه كافتراض بحاجة لتأكيد.
 عندما يجب أن ينتظر change اختيار المستخدم، سجّل durable decision gate عبر \`ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]\`، واعرض \`Chat Prompt\` من decision report أو \`artifacts/agents/decisions/index.md\`، ثم سجّل الإجابة عبر \`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>\`.
 يجب اشتقاق \`implementation-plan.md\` من \`design.md\` مع الملفات المستهدفة والنتائج المتوقعة وأوامر التحقق والاعتماديات والعمل القابل للتوازي والتعارضات؛ ويجب اشتقاق \`artifacts/agents/task-graph.json\` من \`implementation-plan.md\`؛ ويجب اشتقاق \`tasks.md\` من task graph.
 عند بدء أو استئناف active change واحد، استخدم \`ospec execute bootstrap [changes/active/<change>]\` لكتابة \`artifacts/agents/bootstrap.json\` و\`artifacts/agents/bootstrap.md\` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي المسجل فيه؛ عند وجود active dispatch، يوصي bootstrap بأمر \`ospec execute launch ... --task ...\` المطابق.

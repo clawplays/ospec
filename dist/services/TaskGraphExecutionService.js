@@ -4880,6 +4880,15 @@ class TaskGraphExecutionService {
         }
         return `"${value.replace(/"/g, '\\"')}"`;
     }
+    quoteHarnessTemplateArg(value) {
+        if (/^[a-zA-Z0-9_./:=@-]+$/.test(value)) {
+            return value;
+        }
+        if (process.platform === 'win32') {
+            return `"${value.replace(/([()%!^"<>&|])/g, '^$1')}"`;
+        }
+        return `'${value.replace(/'/g, `'\\''`)}'`;
+    }
     normalizeHandoffTarget(target) {
         const normalized = (target || 'generic').trim().toLowerCase();
         if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
@@ -5176,20 +5185,24 @@ class TaskGraphExecutionService {
     }
     renderHarnessCommandTemplate(template, input) {
         const values = {
-            taskId: input.taskId,
-            taskTitle: input.taskTitle,
-            dispatchId: input.dispatchId,
-            target: input.target,
-            packet: this.quoteShellArg(input.packetPath),
-            packetPath: this.quoteShellArg(input.packetPath),
+            taskId: this.quoteHarnessTemplateArg(input.taskId),
+            taskIdRaw: input.taskId,
+            taskTitle: this.quoteHarnessTemplateArg(input.taskTitle),
+            taskTitleRaw: input.taskTitle,
+            dispatchId: this.quoteHarnessTemplateArg(input.dispatchId),
+            dispatchIdRaw: input.dispatchId,
+            target: this.quoteHarnessTemplateArg(input.target),
+            targetRaw: input.target,
+            packet: this.quoteHarnessTemplateArg(input.packetPath),
+            packetPath: this.quoteHarnessTemplateArg(input.packetPath),
             packetRaw: input.packetPath,
-            promptFile: this.quoteShellArg(input.packetPath),
-            record: this.quoteShellArg(input.recordPath),
-            recordPath: this.quoteShellArg(input.recordPath),
+            promptFile: this.quoteHarnessTemplateArg(input.packetPath),
+            record: this.quoteHarnessTemplateArg(input.recordPath),
+            recordPath: this.quoteHarnessTemplateArg(input.recordPath),
             recordRaw: input.recordPath,
-            changePath: this.quoteShellArg(input.changePath),
+            changePath: this.quoteHarnessTemplateArg(input.changePath),
             changePathRaw: input.changePath,
-            projectRoot: this.quoteShellArg(input.projectRoot),
+            projectRoot: this.quoteHarnessTemplateArg(input.projectRoot),
             projectRootRaw: input.projectRoot,
         };
         return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => values[key] ?? '');

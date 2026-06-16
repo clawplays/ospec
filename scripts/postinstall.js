@@ -25,7 +25,7 @@ function shouldSkip() {
 }
 
 function getManagedSkillNames() {
-  return ['ospec', 'ospec-change'];
+  return ['ospec', 'ospec-change', 'ospec-goal'];
 }
 
 async function installManagedSkill(provider, skillName) {
@@ -61,7 +61,7 @@ async function main() {
   } catch (error) {
     console.log(`[ospec] managed skill sync skipped: ${error.message}`);
     console.log(
-      'Tip: rerun `npm install -g .` to retry the automatic ospec / ospec-change skill sync.',
+      'Tip: rerun `npm install -g .` to retry the automatic ospec / ospec-change / ospec-goal skill sync.',
     );
   }
 }

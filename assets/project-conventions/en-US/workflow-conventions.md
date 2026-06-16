@@ -14,33 +14,42 @@ This document fixes the OSpec execution flow inside the project so requirements 
 
 1. Clarify project context and impact scope
 2. Create or update `proposal.md`
-3. Create or update `design.md`
-4. Create or update `implementation-plan.md`
-5. Create or update `artifacts/agents/task-graph.json`
-6. Create or update `tasks.md`
-7. Advance implementation according to `state.json`
-8. Complete task-level spec and quality reviews for each finished worker task
-9. Dispatch and complete final `artifacts/reviews/spec-compliance.md` and `artifacts/reviews/code-quality.md`
-10. Update `artifacts/agents/worker-status.md`
+3. For classic changes, create or update `tasks.md` directly from `proposal.md`
+4. For goals, create or update `design.md`
+5. For goals, create or update `implementation-plan.md`
+6. For goals, create or update `artifacts/agents/task-graph.json`
+7. Create or update `tasks.md`
+8. Advance implementation according to `state.json`
+9. For goals, complete document, task-level, and final review gates
+10. For goals, update `artifacts/agents/worker-status.md`
 11. Update the relevant `SKILL.md`
 12. Rebuild `SKILL.index.json`
 13. Complete `verification.md`
-14. Archive only after all gates pass
+14. Archive only after the active workflow profile's gates pass
 
-## Design Drafting
+## Workflow Profiles
 
-- In AI-assisted change execution, the AI drafts or updates `design.md` from the requirement, `proposal.md`, and project context before editing `implementation-plan.md`, `tasks.md`, or code
-- Ask one concise design question only when the missing decision materially changes architecture, API, data, UI, or risk; otherwise record assumptions in `design.md`
+- `workflow_profile_id: change` is the classic fast flow for routine small changes: `proposal.md`, `tasks.md`, implementation, `verification.md`, `review.md`, and `state.json`
+- `workflow_profile_id: goal` is the full flow for complex work: it adds `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, document review, worker/reviewer handoff, final reviews, worker status, and evidence gates
+- Use `ospec new` / `ospec-change` for classic changes and `ospec goal` / `ospec-goal` for goals
+
+## Goal Design Drafting
+
+- In AI-assisted goal execution, the AI drafts or updates `design.md` from the requirement, `proposal.md`, and project context before editing `implementation-plan.md`, `tasks.md`, or code
+- Do not create `design.md`, `implementation-plan.md`, task graph, worker packets, or goal review artifacts for a classic change unless the user explicitly upgrades it to a goal
+- `Announce-Before-Act`: never run the workflow silently — announce which OSpec skill and stage you are in, which `ospec execute ...` command you will run and the artifact it writes, how many native subagents you dispatch and via which mechanism, and which gate is blocking when progress stops
+- `Brainstorm-First`: open each goal with a short brainstorming pass before locking design; surface open questions for direction, architecture, API, data, UI, risk, and scope and ask the user one at a time; prefer raising a durable decision gate over a silent assumption, and only record an autonomous assumption in `design.md` when the user explicitly defers, labeled as an assumption to confirm
 - Derive `implementation-plan.md` from the accepted `design.md`, including target files, expected results, verification commands, dependencies, parallelizable work, and conflicts
 - Derive `artifacts/agents/task-graph.json` from `implementation-plan.md`; each task must include id, status, dependencies, parallel safety, conflicts, target files, verification commands, expected result, and worker role
 - Derive `tasks.md` from `artifacts/agents/task-graph.json`; if `tasks.md` exists while upstream docs are still templates, update upstream docs first and then reconcile tasks
+- For classic changes, derive `tasks.md` directly from `proposal.md` and the implementation scope
 
 ## State Constraints
 
 - Use `state.json` as the execution status source of truth
 - `verification.md` does not replace `state.json`
 - If state files and execution files disagree, fix state first
-- `artifacts/agents/task-graph.json` records machine-readable task state, dependencies, conflict constraints, target files, and verification commands
+- For goals, `artifacts/agents/task-graph.json` records machine-readable task state, dependencies, conflict constraints, target files, and verification commands
 - When entering an existing project, use `ospec session [path]` to write `.ospec/session-brief.json` and `.ospec/session-brief.md`; it records active change, queued change, queue-run, cache fingerprint, and safe next command context only
 - When starting or resuming one active change, use `ospec execute bootstrap [changes/active/<change>]` to write `bootstrap.json` and `bootstrap.md` with the project session brief snapshot, then follow its next safe action
 - When a change moves between agents, tools, worktrees, shells, or human operators, use `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` to write `handoff.json` and `handoff.md`; this records the project session brief snapshot, target tool mapping, and safety rules only
@@ -80,7 +89,7 @@ This document fixes the OSpec execution flow inside the project so requirements 
 
 - Optional-step activation is controlled by `.skillrc.workflow`
 - Proposal flags must remain compatible with the workflow configuration
-- Activated optional steps must appear in `artifacts/agents/task-graph.json`, `tasks.md`, and `verification.md`
+- Activated optional steps must appear in `tasks.md` and `verification.md`; for goals they must also appear in `artifacts/agents/task-graph.json`
 
 ## Plugin Gates
 
@@ -106,8 +115,8 @@ This document fixes the OSpec execution flow inside the project so requirements 
 - Do not archive when docs are stale
 - Do not archive when the index is stale
 - Do not archive when optional steps have not passed
-- Do not archive when `artifacts/agents/task-graph.json` has unresolved task statuses, invalid dependencies, or missing execution details
-- Do not archive when `artifacts/agents/worker-status.md` has unresolved worker statuses
+- For goals, do not archive when `artifacts/agents/task-graph.json` has unresolved task statuses, invalid dependencies, or missing execution details
+- For goals, do not archive when `artifacts/agents/worker-status.md` has unresolved worker statuses
 - Do not archive when recorded debug evidence is blocked or only confirms a root cause without a later fixed record
 - Do not archive when review artifacts have unresolved decisions
 - Do not archive when verification evidence is failed, blocked, or stale

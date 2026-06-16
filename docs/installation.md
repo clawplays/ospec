@@ -71,7 +71,7 @@ Notes:
 
 ## Managed Skills
 
-- `ospec init [path]` and `ospec update [path]` sync the managed `ospec` and `ospec-change` skills for Codex
+- `ospec init [path]` and `ospec update [path]` sync the managed `ospec`, `ospec-change`, and `ospec-goal` skills for Codex
 - `ospec update [path]` repairs older OSpec projects with an existing OSpec footprint, restores missing packages for already-enabled plugins, and auto-upgrades already-enabled plugin packages when a newer compatible version is available
 - `ospec update [path]` does not upgrade globally installed plugins that are not enabled in the current project
 - `ospec plugins update --all` is the explicit machine-wide plugin update command

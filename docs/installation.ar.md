@@ -71,7 +71,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## المهارات المُدارة
 
-- يقوم `ospec init [path]` و `ospec update [path]` بمزامنة المهارتين المُدارتين `ospec` و `ospec-change` لـ Codex
+- يقوم `ospec init [path]` و `ospec update [path]` بمزامنة المهارات المُدارة `ospec` و `ospec-change` و `ospec-goal` لـ Codex
 - يقوم `ospec update [path]` أيضا بإصلاح آثار OSpec القديمة، واستعادة الحزم العالمية المفقودة للإضافات المفعلة في المشروع الحالي، وترقية تلك الحزم تلقائيا عندما يتوفر إصدار متوافق أحدث
 - لا يقوم `ospec update [path]` بترقية الإضافات العالمية غير المفعلة في المشروع الحالي
 - الأمر الصريح لتحديث جميع الإضافات المثبتة هو `ospec plugins update --all`

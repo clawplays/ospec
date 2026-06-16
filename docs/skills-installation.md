@@ -1,19 +1,21 @@
 # Skills Installation
 
-If you primarily use OSpec through AI, prefer short `/ospec` and `/ospec-change` prompts first. Use the explicit skill commands on this page only when you need direct install, sync, or troubleshooting.
+If you primarily use OSpec through AI, prefer `/ospec-change` for small routine work and `/ospec-goal` for complex full-workflow work. Use the explicit skill commands on this page only when you need direct install, sync, or troubleshooting.
 
 Recommended prompts:
 
 ```text
 /ospec initialize this project.
 /ospec refresh or repair the project knowledge layer for this directory. Do not create a change yet.
-/ospec-change create and advance a change for this requirement.
+/ospec-change create and advance a small change for this requirement.
+/ospec-goal create and advance a full goal for this requirement.
 ```
 
 Managed skills:
 
 - `ospec`
 - `ospec-change`
+- `ospec-goal`
 
 These two skills are synced automatically by:
 
@@ -34,6 +36,7 @@ Check one managed skill:
 ```bash
 ospec skill status ospec
 ospec skill status ospec-change
+ospec skill status ospec-goal
 ```
 
 Install or sync one managed skill explicitly:
@@ -41,6 +44,7 @@ Install or sync one managed skill explicitly:
 ```bash
 ospec skill install ospec
 ospec skill install ospec-change
+ospec skill install ospec-goal
 ```
 
 Default location:
@@ -62,6 +66,7 @@ Check one managed skill:
 ```bash
 ospec skill status-claude ospec
 ospec skill status-claude ospec-change
+ospec skill status-claude ospec-goal
 ```
 
 Install or sync one managed skill explicitly:
@@ -69,6 +74,7 @@ Install or sync one managed skill explicitly:
 ```bash
 ospec skill install-claude ospec
 ospec skill install-claude ospec-change
+ospec skill install-claude ospec-goal
 ```
 
 Default location:
@@ -88,5 +94,7 @@ ospec skill install-claude ospec-init
 Prefer `/ospec` in new prompts.
 
 Use `/ospec-change` when the user intent is specifically "create or advance a change".
+
+Use `/ospec-change` when the user intent is a small or routine change. Use `/ospec-goal` when the work needs design docs, implementation planning, task graphs, workers, reviews, or evidence gates.
 
 Use `/ospec-cli` only when older automation or habits still reference the legacy name.

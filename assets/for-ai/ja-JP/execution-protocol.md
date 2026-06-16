@@ -14,23 +14,27 @@ tags: [ai, protocol, ospec]
 4. `docs/project/naming-conventions.md`
 5. `docs/project/skill-conventions.md`
 6. `docs/project/workflow-conventions.md`
-7. 現在の change ファイル: `proposal.md / design.md / implementation-plan.md / artifacts/agents/task-graph.json / artifacts/agents/bootstrap.md / artifacts/agents/handoff.md / artifacts/agents/document-review-dispatches/ / artifacts/agents/launch-plan.md / artifacts/agents/decisions/ / artifacts/agents/review-feedback-plan.md / tasks.md / artifacts/reviews/design-review.md / artifacts/reviews/implementation-plan-review.md / artifacts/reviews/spec-compliance.md / artifacts/reviews/code-quality.md / artifacts/agents/worker-status.md / artifacts/agents/debug-evidence.json / state.json / verification.md`
+7. 現在の change ファイル。`workflow_profile_id: change` では `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` を読む。`workflow_profile_id: goal` ではさらに `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json`、`artifacts/agents/verification-evidence.json` を読む
 8. `stitch_design_review` がある場合は `artifacts/stitch/approval.json`
 9. Stitch / Checkpoint の provider、MCP、認証、インストール、または有効化設定を変更する必要がある場合は、先にプロジェクト文書言語に一致するリポジトリ内のローカライズ済みプラグイン仕様を読む。一致する言語ファイルがない場合のみ他言語版へフォールバックする
 
 ## 必須ルール
 
-- `proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json`、`artifacts/agents/verification-evidence.json`、`verification.md`、`review.md` はプロジェクト採用の文書言語で維持する
+- `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` と、goal-only artifacts はプロジェクト採用の文書言語で維持する
 - 製品 UI やサイト locale が英語中心でも、それだけを理由に change 文書を英語へ書き換えない
 - 現在の change 文書が既に中国語なら、プロジェクトルールが明示的に英語切り替えを要求しない限り中国語のまま続ける
-- proposal/design/implementation-plan/task-graph/tasks/review-artifacts/worker-status を飛ばして完了を主張しない
+- 現在の workflow profile が要求する files と gates を飛ばして完了を主張しない
 - 既存の OSpec project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書く。active changes、queued changes、queue-run state、cache fingerprint、次の安全な command のみを記録し、worker 起動、test 実行、git inspect、archive、source file 編集は行わない
 - `tdd_cycle`、`root_cause_debug`、`verification_evidence` など有効化された built-in quality policy steps は、archive-gated `optional_steps` として扱う。closeout 前に `tasks.md`、`verification.md`、対応する evidence artifacts で coverage を記録する
-- AI 支援で change を進める場合は、`proposal.md` の後、`implementation-plan.md`、`tasks.md`、コードを編集する前に `design.md` を作成または更新する
-- 不足している判断がアーキテクチャ、API、データ、UI、リスクを実質的に変える場合だけ、短い設計質問を 1 つ行う。それ以外は仮定を `design.md` に記録する
+- 小さな通常変更には `ospec new` / `ospec-change` を使い、1.0 の高速フロー（`proposal.md`、`tasks.md`、実装、`verification.md`、`review.md`、`state.json`）に留める
+- 複雑な作業には `ospec goal` / `ospec-goal` を使い、`design.md`、`implementation-plan.md`、task graph、document review、worker/reviewer handoff、evidence gates を有効にする
+- AI 支援で goal を進める場合は、`proposal.md` の後、`implementation-plan.md`、`tasks.md`、コードを編集する前に `design.md` を作成または更新する。classic change では、ユーザーが明示的に goal へ昇格させない限り goal-only files を作成しない
+- `Announce-Before-Act`: ワークフローを黙って実行しない。どの OSpec skill を使い、どの段階かを 1 行で宣言し、これから実行する `ospec execute ...` コマンドと生成する成果物、ネイティブ subagent を何体・どの機構で派遣するか（Claude Code は `Task`、Codex/GPT は `spawn_agent`/`wait_agent`/`close_agent`、Gemini は `@generalist`、OpenCode は `@mention`）、進行が止まったときに何のゲートがブロックしているかを伝える
+- `Brainstorm-First`: 各 goal は設計を確定する前に短いブレインストーミングから始める。方向、アーキテクチャ、API、データ、UI、リスク、スコープの未決事項を 1 つずつユーザーに質問し、黙って仮定しない。必要に応じて `ospec brainstorm [path] --topic "..."` で探索を保存する。いずれかが本当に未決のときは、黙って仮定を記録するより durable な decision gate を上げることを優先する。ユーザーが明示的に委任した、または不在のときだけ `design.md` に仮定を記録し、要確認の仮定として明記する
 - change がユーザー選択を待つ必要がある場合は `ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required]` で durable decision gate を記録し、decision report の `Chat Prompt` または `artifacts/agents/decisions/index.md` を提示してから、`ospec execute decision [changes/active/<change>] --id <id> --select <option-id>` で回答を記録する
-- `design.md` から `implementation-plan.md` を作成または更新し、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する
-- `implementation-plan.md` から `artifacts/agents/task-graph.json` を導く。各 task には id、状態、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role を含める
+- 利用可能ならネイティブの質問 UI で決定の選択肢を提示してから記録する（Claude Code では `AskUserQuestion`）。Claude Code では `ospec session hook --target claude --apply` が hook を導入し、毎ターンこの契約を再確認し、required な決定が未解決の間は subagent 派遣を強制ブロックする
+- goal では `design.md` から `implementation-plan.md` を作成または更新し、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する
+- goal では `implementation-plan.md` から `artifacts/agents/task-graph.json` を導く。各 task には id、状態、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role を含める
 - one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `artifacts/agents/bootstrap.json` と `artifacts/agents/bootstrap.md` を書き、そこにある次の安全な action に従う
 - change を agent、tool、worktree、shell、human operator の間で引き渡すときは、`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` で `artifacts/agents/handoff.json` と `artifacts/agents/handoff.md` を書く。このコマンドは project session brief snapshot、target tool mapping、safety rules のみを記録し、worker 起動や source file 編集は行わない
 - implementation tasks を導出または dispatch する前に、`ospec execute doc-review [changes/active/<change>] [--stage design|plan]` で `artifacts/agents/document-review-dispatches/` 配下に project session brief snapshot を含む document reviewer packet を作成し、`artifacts/reviews/design-review.md` または `artifacts/reviews/implementation-plan-review.md` を用意する。design review 承認後に implementation plan review を dispatch する。このコマンドは artifacts のみを記録し、reviewer 起動、shell command 実行、worker status 同期、source file 編集は行わない
@@ -53,13 +57,13 @@ tags: [ai, protocol, ospec]
 - focused test 実行後、`ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` で `artifacts/agents/tdd-evidence.json` を記録する。red は通常、期待どおり失敗する test を記録し、green/refactor は passing result を記録する
 - fresh project verification commands を実行した後、`ospec execute verify [changes/active/<change>] --command "..." --status PASSED` で `artifacts/agents/verification-evidence.json` を記録する。chat summary だけで完了を主張しない
 - task graph、execution session、review artifacts、debug evidence、verification checklist を手動編集した後は、`ospec execute sync [changes/active/<change>]` で `artifacts/agents/worker-status.md` を再構築する
-- `tasks.md` は `artifacts/agents/task-graph.json` から導く。tasks が既にあり上流文書がテンプレートのままなら、先に上流文書を更新してから tasks を整合させる
-- `artifacts/agents/task-graph.json` に未解決の task 状態、無効な依存関係、不足した実行詳細、またはトップレベル `status` が `completed` でない状態がある場合は archive しない
+- goal では `tasks.md` は `artifacts/agents/task-graph.json` から導く。tasks が既にあり上流文書がテンプレートのままなら、先に上流文書を更新してから tasks を整合させる。classic change では `tasks.md` を `proposal.md` と実装範囲から直接導く
+- goal では `artifacts/agents/task-graph.json` に未解決の task 状態、無効な依存関係、不足した実行詳細、またはトップレベル `status` が `completed` でない状態がある場合は archive しない
 - 各 task-level spec review をその task の quality review より先に完了し、final `artifacts/reviews/spec-compliance.md` を final `artifacts/reviews/code-quality.md` より先に完了する。未解決の task-level または final review decision は archive をブロックする
 - 実装と review の間は `artifacts/agents/worker-status.md` を implementer、spec reviewer、quality reviewer、controller の状態と揃える
 - worker 状態が `PENDING`、`NEEDS_CONTEXT`、`BLOCKED` のままなら完了と見なさない。archive 前に `controller_status` は `DONE` でなければならない
 - 実行状態の正は `state.json` とする
-- 有効化された optional step は `artifacts/agents/task-graph.json`、`tasks.md`、`verification.md` に出現していなければならない
+- 有効化された optional step は `tasks.md` と `verification.md` に出現していなければならない。goal では `artifacts/agents/task-graph.json` にも出現していなければならない
 - `stitch_design_review` が有効で `approval.json.preview_url` または `submitted_at` が空なら、まず `ospec plugins run stitch <change-path>` を実行して preview を提出する
 - Stitch のデザインレビューでは、ルートごとに canonical layout を 1 つだけ維持する。非 canonical 画面は `archive / old / exploration` として明示する
 - `light/dark` の theme 変体では canonical layout を維持し、モジュール再配置、セクション再編、CTA 移動、ナビ構造変更をしない

@@ -1,6 +1,6 @@
 # Usage
 
-If you primarily use OSpec through AI, start with a short `/ospec` or `/ospec-change` prompt first. Use the CLI commands on this page as fallback or explicit automation.
+If you primarily use OSpec through AI, use a short `/ospec` or `/ospec-change` prompt first. Start with `/ospec-change` for small routine work and `/ospec-goal` for complex full-workflow work. Use the CLI commands on this page as fallback or explicit automation.
 
 ## Common Commands
 
@@ -15,6 +15,7 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
+ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec execute bootstrap [changes/active/<change>]
@@ -103,6 +104,7 @@ Recommended prompts:
 ```text
 /ospec initialize this project.
 /ospec-change create and advance a change for this requirement.
+/ospec-goal create and advance a full goal for this requirement.
 /ospec archive this accepted change.
 ```
 
@@ -111,13 +113,15 @@ For a fresh directory:
 ```bash
 ospec init [path]
 ospec new <change-name> [path]
+# For full workflow:
+ospec goal <goal-name> [path]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-## Change Design Document
+## Change And Goal Documents
 
-`ospec new <change-name> [path]` creates `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/spec-compliance.md`, `artifacts/reviews/code-quality.md`, and `artifacts/agents/worker-status.md` around the normal `proposal.md` / `tasks.md` flow.
+`ospec new <change-name> [path]` creates the classic fast-flow files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. `ospec goal <goal-name> [path]` creates the full workflow with `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/spec-compliance.md`, `artifacts/reviews/code-quality.md`, and `artifacts/agents/worker-status.md`.
 
 - Workflow flags can activate built-in agent quality policy steps: `tdd_cycle`, `root_cause_debug`, and `verification_evidence`. Activated steps are written into change frontmatter as `optional_steps` and must be covered in `tasks.md`, `verification.md`, and archive readiness.
 - Use `proposal.md` to capture why the change exists, scope, and acceptance criteria.
@@ -125,9 +129,9 @@ ospec finalize [changes/active/<change>]
 - Use `ospec session hook [path]` to write `.ospec/hooks/session-start.json`, `.ospec/hooks/session-start.md`, `.ospec/hooks/using-ospec.json`, and `.ospec/hooks/using-ospec.md` for opt-in harness startup integration. These artifacts tell Codex, Claude, Gemini, OpenCode, Cursor, Copilot, and generic harnesses what to inject at session start: refresh the session brief, run active-change bootstrap when exactly one active change exists, read decision/plugin gate sources, and follow the safe next command. The hook must not launch workers, run tests, inspect git, archive, or edit source files.
 - Use `ospec brainstorm [path] --topic "..."` only when you want a durable pre-change exploration artifact under `.ospec/brainstorms/`; `--visual` also writes a local static HTML companion, and `--decision-gates` turns direction, scope, and verification-risk choices into durable user decision gates when an active change can be resolved. This command does not create a change.
 - Use `ospec plan [path] --change changes/active/<change>` to draft `.ospec/plans/<id>/plan-draft.md`; add `--apply` only when you want to replace that change's `implementation-plan.md`.
-- Use `design.md` to record the chosen approach, tradeoffs, affected boundaries, risks, and open questions before implementation starts.
-- Use `implementation-plan.md` to turn the design into agent-executable steps with files, expected results, verification commands, dependencies, and conflicts.
-- Use `artifacts/agents/task-graph.json` to keep the execution graph machine-readable: task IDs, dependencies, parallel safety, conflicts, target files, verification commands, expected result, worker role, and task status.
+- For `ospec-goal`, use `design.md` to record the chosen approach, tradeoffs, affected boundaries, risks, and open questions before implementation starts.
+- For `ospec-goal`, use `implementation-plan.md` to turn the design into agent-executable steps with files, expected results, verification commands, dependencies, and conflicts.
+- For `ospec-goal`, use `artifacts/agents/task-graph.json` to keep the execution graph machine-readable: task IDs, dependencies, parallel safety, conflicts, target files, verification commands, expected result, worker role, and task status.
 - Use `ospec run status [path]` when using the explicit queue runner to see the current queue run plus the active change task graph snapshot, including completed, running, dispatchable, blocked, invalid, and next-action counts.
 - Queue runner next instructions from `ospec run start`, `run resume`, `run step`, and `run status` use the active task graph when available, so dispatchable work points to `ospec execute dispatch ...`; the runner still does not dispatch workers or edit source files.
 - Use `ospec execute bootstrap [changes/active/<change>]` when starting or resuming one active change to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md` with the project session brief snapshot, then follow the next safe action it reports. When an active dispatch already exists, bootstrap recommends the matching `ospec execute launch ... --task ...` command.
@@ -157,12 +161,12 @@ ospec finalize [changes/active/<change>]
 - Use `tasks.md` to break the accepted implementation plan into executable work.
 - Use `artifacts/reviews/spec-compliance.md` before `artifacts/reviews/code-quality.md` to separate "built the right thing" from "built it well".
 - Use `artifacts/agents/worker-status.md` to record implementer, spec reviewer, quality reviewer, and controller statuses.
-- In AI / `/ospec-change` flows, the AI drafts or updates `design.md`, `implementation-plan.md`, and `artifacts/agents/task-graph.json` from the requirement, `proposal.md`, and project context; you only need to review assumptions or correct important decisions.
-- CLI-only workflows can still edit `design.md`, `implementation-plan.md`, and `artifacts/agents/task-graph.json` manually before `tasks.md`, then run `ospec verify [changes/active/<change>]`.
+- In AI / `/ospec-change` flows, the AI keeps the small flow focused on `proposal.md`, `tasks.md`, implementation, `verification.md`, and `review.md`.
+- In AI / `/ospec-goal` flows, the AI drafts or updates `design.md`, `implementation-plan.md`, and `artifacts/agents/task-graph.json` from the requirement, `proposal.md`, and project context; you only need to review assumptions or correct important decisions.
 - Task graph status values are `DONE`, `DONE_WITH_CONCERNS`, `IN_PROGRESS`, `NEEDS_CONTEXT`, `BLOCKED`, and `PENDING`; archive readiness requires top-level `status: "completed"` and all tasks to be `DONE` or `DONE_WITH_CONCERNS`.
 - `ospec execute bootstrap`, `handoff`, `doc-review`, `status`, `next`, and `route` are read-only with respect to project source files; `bootstrap`, `handoff`, `doc-review`, and `route` write their own artifacts. `workspace`, plan-mode `worktree`, and `finish` only inspect git/artifact state and write workspace/worktree/finish artifacts; `dispatch`, `launch`, `collect`, `retry`, `complete`, `review`, `feedback`, `decision`, `debug`, `tdd`, `verify`, and `sync` only update OSpec artifacts and task graph, decisions, launch-plan, worker-runs, review-runs, retries, review-dispatch, review-feedback-plan, debug-evidence, tdd-evidence, verification-evidence, or worker-status state. They do not edit project source files directly. Native subagent dispatch is performed by the current AI harness. Shell commands run only when `execute worktree --create`, `execute worktree --cleanup`, fallback `execute orchestrate --command "..."`, fallback `execute launch --run --command "..."`, or `execute review --run --command "..."` is passed explicitly.
 - Worker status values are `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`, and `PENDING`; completion requires the worker statuses to be resolved and `controller_status` to be `DONE`.
-- `ospec verify [changes/active/<change>]` fails when `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, review artifacts, or `artifacts/agents/worker-status.md` is missing or malformed, and warns when document checklists still have unchecked items.
+- `ospec verify [changes/active/<change>]` requires only the classic files for `change` profile directories. For `goal` profile directories, it also fails when `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, document review artifacts, final review artifacts, verification evidence, or `artifacts/agents/worker-status.md` is missing or malformed, and warns when document checklists still have unchecked items.
 - Keep `design.md` concise; it should make task planning more accurate, not become long-lived project documentation.
 
 New projects initialized by `ospec init [path]` use the nested layout by default: keep `.skillrc` and `README.md` at the repository root, and place other OSpec-managed files under `.ospec/`.
@@ -190,7 +194,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.1
+npm install -g @clawplays/ospec-cli@1.2.2
 ospec update [path]
 ```
 

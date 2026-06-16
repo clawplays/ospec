@@ -24,6 +24,8 @@ export declare class SessionCommand extends BaseCommand {
     parseArgs(args: string[]): {
         help: boolean;
         hook: boolean;
+        apply?: boolean;
+        target?: string;
         projectPath?: string;
     };
     writeSessionBrief(projectPath: string): Promise<SessionBriefResult>;
@@ -37,6 +39,7 @@ export declare class SessionCommand extends BaseCommand {
     private renderUsingOSpec;
     private quoteShellArg;
     private printSessionBrief;
+    private printClaudeHookInstall;
     private printSessionHook;
 }
 export {};

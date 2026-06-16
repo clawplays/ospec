@@ -71,7 +71,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ## Managed Skills
 
-- `ospec init [path]` と `ospec update [path]` は Codex 向けの `ospec` と `ospec-change` managed skills を同期します
+- `ospec init [path]` と `ospec update [path]` は Codex 向けの `ospec`、`ospec-change`、`ospec-goal` managed skills を同期します
 - `ospec update [path]` は古い OSpec プロジェクトを修復し、現在のプロジェクトで有効化されているプラグインについては、欠けているグローバルパッケージの復旧と互換バージョンへの自動更新を行います
 - `ospec update [path]` は現在のプロジェクトで有効化されていないグローバルプラグインは更新しません
 - `ospec plugins update --all` は明示的な「インストール済みプラグインを全部更新する」コマンドです

@@ -4,6 +4,7 @@
 export { BaseCommand } from './BaseCommand';
 export { InitCommand } from './InitCommand';
 export { NewCommand } from './NewCommand';
+export { GoalCommand } from './GoalCommand';
 export { BrainstormCommand } from './BrainstormCommand';
 export { PlanCommand } from './PlanCommand';
 export { VerifyCommand } from './VerifyCommand';

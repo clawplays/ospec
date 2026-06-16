@@ -1,6 +1,6 @@
 # الاستخدام
 
-إذا كنت تستخدم OSpec أساسا عبر AI فابدأ أولا ببرومبت قصير مثل `/ospec` أو `/ospec-change`، واستخدم أوامر CLI في هذه الصفحة عندما تحتاج إلى مسار بديل أو إلى تنفيذ صريح.
+إذا كنت تستخدم OSpec أساسا عبر AI فابدأ بمطالبة قصيرة مثل `/ospec` أو `/ospec-change`. استخدم `/ospec-change` للتغييرات الصغيرة والروتينية، واستخدم `/ospec-goal` للعمل المعقد ذي full workflow. استخدم أوامر CLI في هذه الصفحة عندما تحتاج إلى مسار بديل أو إلى تنفيذ صريح.
 
 ## الأوامر الشائعة
 
@@ -15,6 +15,7 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
+ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec execute bootstrap [changes/active/<change>]
@@ -102,6 +103,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```text
 /ospec هيّئ هذا المشروع.
 /ospec-change أنشئ تغييرا لهذا المتطلب وادفعه إلى الأمام.
+/ospec-goal أنشئ goal كاملا لهذا المتطلب وادفعه إلى الأمام.
 /ospec أرشف هذا التغيير المقبول.
 ```
 
@@ -110,23 +112,25 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```bash
 ospec init [path]
 ospec new <change-name> [path]
+# فقط عند الحاجة إلى full workflow:
+ospec goal <goal-name> [path]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
-## وثيقة تصميم Change
+## Change و Goal
 
-ينشئ `ospec new <change-name> [path]` ملفات `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` و`artifacts/reviews/spec-compliance.md` و`artifacts/reviews/code-quality.md` و`artifacts/agents/worker-status.md` حول مسار `proposal.md` / `tasks.md` المعتاد.
+ينشئ `ospec new <change-name> [path]` ملفات classic fast-flow فقط: `proposal.md` و`tasks.md` و`state.json` و`verification.md` و`review.md`. أما `ospec goal <goal-name> [path]` فينشئ full workflow ويستخدم `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وreview artifacts و`artifacts/agents/worker-status.md` وevidence artifacts.
 
 - يمكن أن تفعّل workflow flags خطوات quality policy المدمجة للـ agent: `tdd_cycle` و`root_cause_debug` و`verification_evidence`. تكتب الخطوات المفعّلة في frontmatter الخاص بالـ change ضمن `optional_steps` ويجب تغطيتها في `tasks.md` و`verification.md` وarchive readiness.
 - استخدم `proposal.md` لتسجيل سبب التغيير والنطاق ومعايير القبول.
 - عند الدخول إلى مشروع OSpec موجود، استخدم `ospec session [path]` لكتابة `.ospec/session-brief.json` و`.ospec/session-brief.md` مع active change وqueue وcache fingerprint والأمر الآمن التالي. هذا project entry brief ولا يستبدل `ospec execute bootstrap` للـ active change.
 - استخدم `ospec session hook [path]` لكتابة `.ospec/hooks/session-start.json` و`.ospec/hooks/session-start.md` لتكامل harness session-start الاختياري. هذا hook يحدّث session brief فقط ولا يشغّل workers ولا tests ولا يفحص git ولا يؤرشف ولا يحرر source files.
 - استخدم `ospec brainstorm [path] --topic "..."` فقط عندما تريد artifact لاستكشاف ما قبل إنشاء change داخل `.ospec/brainstorms/`. يضيف `--visual` ملف HTML محلياً وثابتاً، ولا ينشئ هذا command أي change.
-- استخدم `ospec plan [path] --change changes/active/<change>` لإنشاء plan draft داخل `.ospec/plans/<id>/plan-draft.md`. مرّر `--apply` فقط عندما تريد تحديث `implementation-plan.md` لذلك change.
-- استخدم `design.md` قبل التنفيذ لتسجيل النهج المختار والمفاضلات الرئيسية والحدود المتأثرة والمخاطر والأسئلة المفتوحة.
-- استخدم `implementation-plan.md` لتحويل التصميم إلى خطوات قابلة للتنفيذ بواسطة agent مع الملفات والنتائج المتوقعة وأوامر التحقق والاعتماديات والتعارضات.
-- استخدم `artifacts/agents/task-graph.json` لحفظ مخطط التنفيذ بصيغة قابلة للقراءة آلياً: معرفات المهام والاعتماديات وسلامة التوازي والتعارضات والملفات المستهدفة وأوامر التحقق والنتيجة المتوقعة ودور worker وحالة المهمة.
+- استخدم `ospec plan [path] --change changes/active/<change>` لإنشاء plan draft داخل `.ospec/plans/<id>/plan-draft.md`. مرّر `--apply` فقط عندما تريد تحديث `implementation-plan.md` لذلك goal.
+- في goal استخدم `design.md` قبل التنفيذ لتسجيل النهج المختار والمفاضلات الرئيسية والحدود المتأثرة والمخاطر والأسئلة المفتوحة.
+- في goal استخدم `implementation-plan.md` لتحويل التصميم إلى خطوات قابلة للتنفيذ بواسطة agent مع الملفات والنتائج المتوقعة وأوامر التحقق والاعتماديات والتعارضات.
+- في goal استخدم `artifacts/agents/task-graph.json` لحفظ مخطط التنفيذ بصيغة قابلة للقراءة آلياً: معرفات المهام والاعتماديات وسلامة التوازي والتعارضات والملفات المستهدفة وأوامر التحقق والنتيجة المتوقعة ودور worker وحالة المهمة.
 - عند استخدام explicit queue runner، استخدم `ospec run status [path]` لعرض queue run الحالي مع active change task graph snapshot، بما في ذلك أعداد completed وrunning وdispatchable وblocked وinvalid والخطوة التالية.
 - تستخدم تعليمات الخطوة التالية في `ospec run start` و`run resume` و`run step` و`run status` active task graph عند توفره. عند وجود dispatchable work ستقترح `ospec execute dispatch ...`، لكن runner لا يوزع workers ولا يحرر ملفات source.
 - عند بدء أو استئناف active change واحد، استخدم `ospec execute bootstrap [changes/active/<change>]` لكتابة `artifacts/agents/bootstrap.json` و`artifacts/agents/bootstrap.md` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي الذي يعرضه. عند وجود active dispatch، يوصي bootstrap بأمر `ospec execute launch ... --task ...` المطابق.
@@ -156,12 +160,12 @@ ospec finalize [changes/active/<change>]
 - استخدم `tasks.md` لتقسيم خطة التنفيذ المقبولة إلى عمل قابل للتنفيذ.
 - استخدم task-level spec review قبل quality review للمهمة نفسها، ثم استخدم final `artifacts/reviews/spec-compliance.md` قبل final `artifacts/reviews/code-quality.md` للفصل بين صحة الاتجاه وجودة التنفيذ.
 - استخدم `artifacts/agents/worker-status.md` لتسجيل حالات implementer وspec reviewer وquality reviewer وcontroller.
-- في مسارات AI / `/ospec-change` ينشئ AI ملفات `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` أو يحدّثها من المتطلب و`proposal.md` وسياق المشروع؛ ولا تحتاج إلا إلى مراجعة الافتراضات أو تصحيح القرارات المهمة.
-- في مسارات CLI فقط يمكنك تعديل `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` يدوياً قبل `tasks.md`، ثم تشغيل `ospec verify [changes/active/<change>]`.
+- في مسارات AI / `/ospec-change` يبقي AI التدفق الصغير مركزا على `proposal.md` و`tasks.md` والتنفيذ و`verification.md` و`review.md`.
+- في مسارات AI / `/ospec-goal` ينشئ AI ملفات `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` أو يحدّثها من المتطلب و`proposal.md` وسياق المشروع؛ ولا تحتاج إلا إلى مراجعة الافتراضات أو تصحيح القرارات المهمة.
 - قيم حالة task graph هي `DONE` و`DONE_WITH_CONCERNS` و`IN_PROGRESS` و`NEEDS_CONTEXT` و`BLOCKED` و`PENDING`؛ وتتطلب جاهزية الأرشفة أن يكون `status` العلوي `"completed"` وأن تكون كل المهام `DONE` أو `DONE_WITH_CONCERNS`.
 - `ospec execute bootstrap` و`handoff` و`doc-review` و`status` و`next` للقراءة فقط باستثناء أن `bootstrap` و`handoff` و`doc-review` تكتب artifacts الخاصة بها؛ أما `workspace` و`worktree` في plan mode و`finish` فتفحص حالة git/artifact وتكتب workspace/worktree/finish artifacts فقط. `dispatch` و`launch` و`collect` و`retry` و`complete` و`review` و`feedback` و`debug` و`tdd` و`verify` و`sync` تحدّث OSpec artifacts وحالة task graph أو launch-plan أو worker-runs أو review-runs أو retries أو review-dispatch أو review-feedback-plan أو debug-evidence أو tdd-evidence أو verification-evidence أو worker-status فقط، ولا تحرر ملفات source في المشروع مباشرة. يتم تشغيل native subagents بواسطة current AI harness. تعمل أوامر shell فقط عند تمرير `execute worktree --create` أو `execute worktree --cleanup` أو fallback `execute orchestrate --command "..."` أو fallback `execute launch --run --command "..."` أو `execute review --run --command "..."` صراحة.
 - قيم حالة worker هي `DONE` و`DONE_WITH_CONCERNS` و`NEEDS_CONTEXT` و`BLOCKED` و`PENDING`؛ ويتطلب الاكتمال حل حالات worker وأن تكون `controller_status` مساوية لـ `DONE`.
-- يفشل `ospec verify [changes/active/<change>]` عندما يكون `design.md` أو `implementation-plan.md` أو `artifacts/agents/task-graph.json` أو review artifacts أو `artifacts/agents/worker-status.md` مفقودا أو تالف البنية، ويعرض تحذيرا عندما تبقى عناصر checklist غير محددة في الوثائق.
+- في profile `change` يتطلب `ospec verify [changes/active/<change>]` ملفات classic فقط. وفي profile `goal` يتطلب أيضا `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وdocument review artifacts وfinal review artifacts وverification evidence و`artifacts/agents/worker-status.md`.
 - اجعل `design.md` موجزا؛ دوره رفع دقة تقسيم المهام، وليس استبدال وثائق المشروع طويلة الأمد.
 
 تستخدم المشاريع الجديدة التي تُهيَّأ عبر `ospec init [path]` تخطيط nested افتراضيا. يبقى في جذر المستودع فقط `.skillrc` و `README.md`، بينما تنتقل بقية ملفات OSpec المُدارة إلى `.ospec/`.
@@ -189,7 +193,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.1
+npm install -g @clawplays/ospec-cli@1.2.2
 ospec update [path]
 ```
 
