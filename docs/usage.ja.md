@@ -122,10 +122,11 @@ ospec finalize [changes/active/<change>]
 
 `ospec new <change-name> [path]` は classic fast-flow files だけを作成します: `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`。`ospec goal <goal-name> [path]` は full workflow を作成し、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、`artifacts/agents/worker-status.md`、evidence artifacts を使います。
 
+- 各 goal は 3 つの体験契約で動きます：`Announce-Before-Act`（AI が skill・段階、各 `ospec execute …` コマンドと生成物、各 subagent 派遣を宣言）、`Brainstorm-First`（設計確定前に、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項をネイティブの質問 UI——Claude Code は AskUserQuestion——で 1 つずつ尋ねる）、`Zero-Setup`（すべての `ospec` コマンドを AI 自身が実行するので、あなたは goal を起こして要件を説明するだけ）。
 - workflow flags は built-in agent quality policy steps として `tdd_cycle`、`root_cause_debug`、`verification_evidence` を有効化できます。有効化された steps は change frontmatter の `optional_steps` に書かれ、`tasks.md`、`verification.md`、archive readiness で coverage が必要です。
 - `proposal.md` には、変更理由、範囲、受け入れ条件を記録します。
 - 既存の OSpec project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書き、active change、queue、cache fingerprint、次の安全な command context を記録します。これは project entry brief であり、active change の `ospec execute bootstrap` を置き換えません。
-- `ospec session hook [path]` は `.ospec/hooks/session-start.json` と `.ospec/hooks/session-start.md` を書き、harness の session-start 統合を opt-in にします。この hook は session brief の更新だけを行い、worker 起動、test 実行、git inspect、archive、source file 編集は行いません。
+- `ospec session hook [path]` は `.ospec/hooks/session-start.json` と `.ospec/hooks/session-start.md` を書き、harness の session-start 統合を opt-in にします。この hook は session brief の更新だけを行い、worker 起動、test 実行、git inspect、archive、source file 編集は行いません。`--target claude --apply` を付けると `.ospec/hooks/claude/` に Claude Code hook バンドルを書き込み、`.claude/settings.json` に冪等にマージします。これらの hook はツールレベルで各 subagent 派遣と `ospec` コマンドを宣告し、required な決定が未解決の間は subagent 派遣をハードブロックし、毎ターン `Announce-Before-Act` / `Brainstorm-First` 契約を再確認します（次の Claude Code セッションから有効）。
 - `ospec brainstorm [path] --topic "..."` は、change 作成前の探索 artifact を `.ospec/brainstorms/` に残したい場合だけ使います。`--visual` を付けると local static HTML companion も作成します。この command は change を作成しません。
 - `ospec plan [path] --change changes/active/<change>` は `.ospec/plans/<id>/plan-draft.md` に plan draft を作成します。その goal の `implementation-plan.md` を更新するときだけ `--apply` を付けます。
 - goal では `design.md` に、実装前の採用方針、主なトレードオフ、影響する境界、リスク、未解決事項を記録します。

@@ -163,6 +163,32 @@ ospec finalize changes/active/<change-name>
 
 </details>
 
+### Goal 工作流 —— 完整流程与硬强制
+
+复杂、跨模块或高风险的工作，用 `ospec goal <goal-name>`（或直接说「OSpec，为这个需求创建并推进一个完整 goal」），走完整的 OSpec 1.2 工作流：设计文档、实现计划、任务图、并行 worker 派发、文档与代码评审，以及持久的 TDD / 调试 / 验证证据。
+
+**你只需要起一个 goal 并描述需求。** 其余每一条 `ospec` 命令都由 AI 自己执行，你只在对话里回答提问（`Zero-Setup`）。
+
+每个 goal AI 都会遵守的体验契约：
+
+- **Announce-Before-Act**：AI 会说明当前用哪个 skill、处于哪个阶段、即将运行哪条 `ospec execute …` 命令及其产物、派发了几个子 agent —— 让你随时看清正在发生什么。
+- **Brainstorm-First**：锁定设计前，先把方向、架构、API、数据、UI、风险、范围等未决问题逐个抛给你，用原生提问 UI（Claude Code：AskUserQuestion）询问，而不是默默假设。
+- **持久决策门**：开放选择用 `ospec execute decision …` 记录；required 决策在你回答前会阻断 worker 派发。
+
+Claude Code 硬强制（一次性；在 Claude Code 里 AI 会自动帮你执行）：
+
+```bash
+ospec session hook --target claude --apply
+```
+
+它在 `.ospec/hooks/claude/` 写入 hook bundle，并幂等合并进 `.claude/settings.json`（可逆）。这些 hook 会：
+
+- 在工具层宣告每一次子 agent 派发和每一条 `ospec` 命令，
+- 存在未决 required 决策时硬阻断子 agent 派发，
+- 每一轮重申 Announce-Before-Act / Brainstorm-First 契约。
+
+hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生效。
+
 ### 插件安装方式
 
 - `ospec plugins list`

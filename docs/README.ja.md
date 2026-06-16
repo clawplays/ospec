@@ -160,6 +160,32 @@ CLI は `changes/active/<change-name>` の短縮パスも受け付けますが�
 
 </details>
 
+### Goal ワークフロー — フルフロー＋ハード強制
+
+複雑・横断的・高リスクな作業には `ospec goal <goal-name>`（または「OSpec、この要件で完全な goal を作成して進めて」と言うだけ）を使い、OSpec 1.2 のフルワークフローを実行します：設計文書、実装計画、タスクグラフ、並列ワーカー派遣、文書・コードレビュー、永続的な TDD / デバッグ / 検証エビデンス。
+
+**あなたは goal を起こして要件を説明するだけ。** 残りの `ospec` コマンドはすべて AI が自分で実行し、あなたはチャットで質問に答えるだけです（`Zero-Setup`）。
+
+各 goal で AI が守る体験契約：
+
+- **Announce-Before-Act**：どの skill・段階か、これから実行する `ospec execute …` コマンドと生成物、何体の subagent を派遣するかを宣言し、常に進行状況が見えるようにします。
+- **Brainstorm-First**：設計を確定する前に、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項を 1 つずつ、ネイティブの質問 UI（Claude Code：AskUserQuestion）で尋ね、黙って仮定しません。
+- **永続的な決定ゲート**：未決の選択は `ospec execute decision …` で記録し、required な決定はあなたが答えるまでワーカー派遣をブロックします。
+
+Claude Code のハード強制（一度だけ。Claude Code では AI が自動で実行します）：
+
+```bash
+ospec session hook --target claude --apply
+```
+
+これは `.ospec/hooks/claude/` に hook バンドルを書き込み、`.claude/settings.json` に冪等にマージします（可逆）。hook は次のことを行います：
+
+- ツールレベルで subagent 派遣と `ospec` コマンドをすべて宣告し、
+- required な決定が未解決の間は subagent 派遣をハードブロックし、
+- 毎ターン Announce-Before-Act / Brainstorm-First 契約を再確認します。
+
+hook はセッション開始時に読み込まれるため、次の Claude Code セッションから有効になります。
+
 ## npm で更新
 
 既存の OSpec プロジェクトでは、npm で CLI をアップグレードしたあと、プロジェクトディレクトリで次のコマンドを実行してプロジェクト内の OSpec ファイルを更新します:
