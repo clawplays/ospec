@@ -43,6 +43,7 @@ const textExtensions = new Set([
   '.yaml',
   '.yml',
 ]);
+const releaseSectionKeys = ['new', 'improved', 'fixed', 'docs'];
 
 async function pathExists(targetPath) {
   try {
@@ -79,7 +80,86 @@ async function collectFiles(targetPath, output) {
   }
 }
 
+async function readJsonFile(filePath) {
+  return JSON.parse(await fsp.readFile(filePath, 'utf8'));
+}
+
+function validateStructuredReleaseMetadata(metadata, relativePath) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error(
+      `Current release metadata must be a JSON object: ${relativePath}`,
+    );
+  }
+
+  for (const key of ['title_suffix', 'summary']) {
+    if (
+      typeof metadata[key] !== 'string' ||
+      metadata[key].trim().length === 0
+    ) {
+      throw new Error(
+        `Current release metadata must include non-empty "${key}": ${relativePath}`,
+      );
+    }
+  }
+
+  let sectionItemCount = 0;
+  for (const key of releaseSectionKeys) {
+    const value = metadata[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (!Array.isArray(value)) {
+      throw new Error(
+        `Current release metadata field "${key}" must be an array: ${relativePath}`,
+      );
+    }
+    sectionItemCount += value.filter(
+      (item) => typeof item === 'string' && item.trim().length > 0,
+    ).length;
+  }
+
+  if (sectionItemCount === 0) {
+    throw new Error(
+      `Current release metadata must include at least one release section item: ${relativePath}`,
+    );
+  }
+}
+
+async function validateCurrentReleaseMetadata(scanRoot = rootDir) {
+  const packageJsonPath = path.join(scanRoot, 'package.json');
+  const packageJson = await readJsonFile(packageJsonPath);
+  const version = String(packageJson.version || '').trim();
+  if (!version) {
+    throw new Error('package.json must include a release version.');
+  }
+
+  const relativePath = path.join('releases', `${version}.json`);
+  const metadataPath = path.join(scanRoot, relativePath);
+  if (!(await pathExists(metadataPath))) {
+    throw new Error(
+      `Missing current release metadata: ${relativePath.replace(/\\/g, '/')}`,
+    );
+  }
+
+  let metadata;
+  try {
+    metadata = await readJsonFile(metadataPath);
+  } catch (_error) {
+    throw new Error(
+      `Current release metadata is not valid JSON: ${relativePath.replace(/\\/g, '/')}`,
+    );
+  }
+  validateStructuredReleaseMetadata(metadata, relativePath.replace(/\\/g, '/'));
+
+  return {
+    metadataPath,
+    relativePath: relativePath.replace(/\\/g, '/'),
+    version,
+  };
+}
+
 async function main() {
+  const releaseMetadata = await validateCurrentReleaseMetadata(rootDir);
   const files = [];
   for (const relativeRoot of defaultRoots) {
     await collectFiles(path.join(rootDir, relativeRoot), files);
@@ -112,11 +192,18 @@ async function main() {
   }
 
   console.log(
-    `[release:scan] scanned ${files.length} publication file(s); no blocked labels found`,
+    `[release:scan] scanned ${files.length} publication file(s); ${releaseMetadata.relativePath} present; no blocked labels found`,
   );
 }
 
-main().catch((error) => {
-  console.error(`[release:scan] ${error.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[release:scan] ${error.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  validateCurrentReleaseMetadata,
+  validateStructuredReleaseMetadata,
+};

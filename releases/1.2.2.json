@@ -1,0 +1,23 @@
+{
+  "title_suffix": "Classic change flow and Claude hook enforcement",
+  "summary": "This patch release restores the fast OSpec 1.0-style change workflow as the default small-change path, moves the full 1.2 workflow behind ospec goal, and adds Claude Code hook enforcement for announce, brainstorm, and required-decision gates.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.2.1...1.2.2",
+  "new": [
+    "Added the packaged ospec-goal skill for the full document, task graph, worker, review, and evidence workflow.",
+    "Added the Claude Code hook bundle installed by ospec session hook --target claude --apply, including SessionStart, UserPromptSubmit, Task, and Bash hook handling."
+  ],
+  "improved": [
+    "Restored ospec-change and ospec new to the classic fast workflow for small routine changes while keeping complex work on ospec-goal.",
+    "Improved Announce-Before-Act, Brainstorm-First, and Zero-Setup guidance across packaged skills, AI guidance, and project conventions.",
+    "Improved Claude Code release packaging by deriving Claude skill installs from the Codex packaged source instead of maintaining stale duplicate skill files."
+  ],
+  "fixed": [
+    "Fixed Claude hook installation so malformed .claude/settings.json files are never overwritten during --apply.",
+    "Fixed Claude hook Bash handling so chained, piped, redirected, or shell-expanding commands that merely start with ospec are not auto-allowed.",
+    "Fixed session hook target parsing so unsupported --target values fail explicitly instead of being silently ignored."
+  ],
+  "docs": [
+    "Documented ospec session hook --target claude --apply and clarified the split between classic changes and full goals.",
+    "Added release metadata for 1.2.2 so GitHub Release notes and local release-note preview use curated structured content."
+  ]
+}
