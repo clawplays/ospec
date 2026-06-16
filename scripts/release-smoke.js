@@ -453,7 +453,7 @@ async function main() {
 
     assertContains(
       installedSkillMd,
-      'Use this skill when the user says things like "use ospec change to do a requirement".',
+      'Use this skill for small or routine requirements where the classic OSpec 1.0 change flow is enough.',
       'installed SKILL.md',
     );
 
@@ -630,13 +630,6 @@ async function main() {
 
     const proposalPath = path.join(featureDir, 'proposal.md');
 
-    const designPath = path.join(featureDir, 'design.md');
-
-    const implementationPlanPath = path.join(
-      featureDir,
-      'implementation-plan.md',
-    );
-
     const tasksPath = path.join(featureDir, 'tasks.md');
 
     const verificationPath = path.join(featureDir, 'verification.md');
@@ -715,21 +708,6 @@ async function main() {
     );
 
     await fs.writeFile(
-      designPath,
-      (await fs.readFile(designPath, 'utf8')).replace(/- \[ \]/g, '- [x]'),
-      'utf8',
-    );
-
-    await fs.writeFile(
-      implementationPlanPath,
-      (await fs.readFile(implementationPlanPath, 'utf8')).replace(
-        /- \[ \]/g,
-        '- [x]',
-      ),
-      'utf8',
-    );
-
-    await fs.writeFile(
       verificationPath,
       (await fs.readFile(verificationPath, 'utf8')).replace(
         /- \[ \]/g,
@@ -737,8 +715,6 @@ async function main() {
       ),
       'utf8',
     );
-
-    await writeCompletedReleaseSmokeArtifacts(featureDir, 'release-smoke');
 
     output = run('node', [cliPath, 'finalize', featureDir]);
 
