@@ -195,7 +195,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.2
+npm install -g @clawplays/ospec-cli@1.2.3
 ospec update [path]
 ```
 

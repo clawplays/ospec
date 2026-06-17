@@ -129,21 +129,21 @@ ospec new update-billing-copy .
 
 </details>
 
-### One-Change Agent Execution
+### Agent Execution (Goal Workflow)
 
-The normal AI-assisted path still starts with one active change. OSpec keeps the controller state in repo artifacts, and the current AI harness starts native worker agents when available.
+The classic change flow above stays simple: `proposal.md` → `tasks.md` → implement → `verification.md` → `review.md`, with no controller layer. The agent controller layer — parallel worker dispatch, reviewer gates, and durable evidence — belongs to the full goal workflow. Use it with `ospec goal`, or on a single change only when you explicitly opt into agent/worker execution. OSpec keeps the controller state in repo artifacts, and the current AI harness starts native worker agents when available.
 
 ```bash
 ospec session .
-ospec execute bootstrap changes/active/<change-name>
-ospec execute workspace changes/active/<change-name>
-ospec execute status changes/active/<change-name>
-ospec execute dispatch changes/active/<change-name> --limit 2
-ospec execute launch changes/active/<change-name> --task <task-id> --target codex
-ospec execute complete <task-id> changes/active/<change-name> --status DONE --summary "..."
-ospec execute review changes/active/<change-name> --task <task-id> --stage spec
-ospec execute review changes/active/<change-name> --task <task-id> --stage quality
-ospec execute verify changes/active/<change-name> --command "npm test" --status PASSED --exit-code 0
+ospec execute bootstrap changes/active/<goal-name>
+ospec execute workspace changes/active/<goal-name>
+ospec execute status changes/active/<goal-name>
+ospec execute dispatch changes/active/<goal-name> --limit 2
+ospec execute launch changes/active/<goal-name> --task <task-id> --target codex
+ospec execute complete <task-id> changes/active/<goal-name> --status DONE --summary "..."
+ospec execute review changes/active/<goal-name> --task <task-id> --stage spec
+ospec execute review changes/active/<goal-name> --task <task-id> --stage quality
+ospec execute verify changes/active/<goal-name> --command "npm test" --status PASSED --exit-code 0
 ```
 
 `launch` writes `artifacts/agents/launch-plan.md`; it does not start workers by itself. Codex/GPT use `spawn_agent` / `wait_agent` / `close_agent`, Claude Code uses Task, Gemini uses `@generalist`, and OpenCode uses `@mention`. Use `launch --run --command` or `orchestrate --command` only when the current harness cannot start native subagents.

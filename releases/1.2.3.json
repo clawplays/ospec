@@ -1,0 +1,16 @@
+{
+  "title_suffix": "Lean classic change flow and cross-harness decision clarity",
+  "summary": "This patch release keeps the default ospec change on the classic fast flow by gating the agent controller layer to the goal workflow, and clarifies that user-decision prompting is consistent across every harness, with Claude Code adding a native UI on top.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.2.2...1.2.3",
+  "new": [],
+  "improved": [
+    "Gated the ospec execute controller layer (bootstrap, doc-review, dispatch, launch, review, worktree, finish, collect, retry, sync) and all goal-only artifacts to workflow_profile_id: goal in the AI guidance, so the default change stays on the classic fast flow and does not read or run the goal execute layer.",
+    "Clarified cross-harness decision prompting: every harness asks the user, using the harness-native question UI (Claude Code AskUserQuestion) when available and the plain Chat Prompt text otherwise, while ospec execute dispatch blocks on required pending decisions on every harness."
+  ],
+  "fixed": [],
+  "docs": [
+    "Repositioned the README agent-execution section under the goal workflow and explicit opt-in, so the default ospec change is the classic 1.0-style fast flow.",
+    "Added the Goal Workflow capability section and ospec session hook --target claude --apply usage to the README and usage guides across en-US, zh-CN, ja-JP, and ar.",
+    "Added release metadata for 1.2.3."
+  ]
+}

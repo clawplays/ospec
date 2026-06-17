@@ -42,7 +42,7 @@ Use `ospec-goal` instead when the work needs design docs, implementation plannin
 ## Visibility & Decisions
 
 - `Announce-Before-Act`: never run the change flow silently. Announce in one line which skill you are using (`ospec-change`) and the current stage, which `ospec` command you are about to run and the artifact it writes, and which gate is blocking when progress stops.
-- `Brainstorm-First`: before implementing, confirm scope and acceptance with the user when anything is ambiguous, and ask one question at a time instead of silently assuming direction, API, UI, risk, or scope. Record the agreed scope in `proposal.md` rather than guessing. Use the harness-native question UI to ask when available (Claude Code: `AskUserQuestion`).
+- `Brainstorm-First`: before implementing, confirm scope and acceptance with the user when anything is ambiguous, and ask one question at a time instead of silently assuming direction, API, UI, risk, or scope. Record the agreed scope in `proposal.md` rather than guessing. Use the harness-native question UI to ask when available (Claude Code: `AskUserQuestion`); on harnesses without one (Codex, Gemini, Cursor, Copilot, OpenCode) ask the same question as plain chat text — you always ask the user, only the presentation differs.
 - `Zero-Setup`: the user only describes the change; you run every `ospec` command yourself and never ask them to type setup or execution commands. In a Claude Code harness, if `.claude/settings.json` does not yet reference `.ospec/hooks/claude/ospec-claude-hook.cjs`, run `ospec session hook --target claude --apply` once (idempotent).
 
 ## Required Logic

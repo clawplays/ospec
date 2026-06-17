@@ -275,6 +275,24 @@ async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
     'utf8',
   );
   await fs.writeFile(
+    path.join(finalReviewsDir, 'design-review.md'),
+    reviewArtifactContent({
+      feature,
+      reviewerRole: 'design_reviewer',
+      title: 'Design Review',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(finalReviewsDir, 'implementation-plan-review.md'),
+    reviewArtifactContent({
+      feature,
+      reviewerRole: 'implementation_plan_reviewer',
+      title: 'Implementation Plan Review',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
     path.join(agentsDir, 'worker-status.md'),
     workerStatusContent(feature),
     'utf8',
@@ -453,7 +471,7 @@ async function main() {
 
     assertContains(
       installedSkillMd,
-      'Use this skill when the user says things like "use ospec change to do a requirement".',
+      'Use this skill for small or routine requirements where the classic OSpec 1.0 change flow is enough.',
       'installed SKILL.md',
     );
 
@@ -598,9 +616,16 @@ async function main() {
 
     assertContains(output, 'Index Status', 'index status output');
 
-    output = run('node', [cliPath, 'new', 'release-smoke', projectDir]);
+    // Use the goal workflow for the full-lifecycle smoke so the goal-only
+    // artifacts (design.md, implementation-plan.md, task-graph.json) exist;
+    // the classic change flow intentionally omits them.
+    output = run('node', [cliPath, 'goal', 'release-smoke', projectDir]);
 
-    assertContains(output, 'Change release-smoke created', 'new change output');
+    assertContains(
+      output,
+      'Change release-smoke created',
+      'goal change output',
+    );
     output = runExpectFailure('node', [
       cliPath,
       'new',

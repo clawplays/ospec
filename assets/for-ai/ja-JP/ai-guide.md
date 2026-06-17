@@ -30,6 +30,7 @@ tags: [ai, guide, ospec]
 - `tdd_cycle`、`root_cause_debug`、`verification_evidence` など有効化された built-in quality policy steps は、archive-gated `optional_steps` として扱う。closeout 前に `tasks.md`、`verification.md`、対応する evidence artifacts で coverage を記録する
 - 小さな通常変更には `ospec new` / `ospec-change` を使い、1.0 の高速フロー（`proposal.md`、`tasks.md`、実装、`verification.md`、`review.md`、`state.json`）に留める
 - 複雑な作業には `ospec goal` / `ospec-goal` を使い、`design.md`、`implementation-plan.md`、task graph、document review、worker/reviewer handoff、evidence gates を有効にする
+- `ospec execute …` コントローラ層（bootstrap、doc-review、dispatch、launch、review、worktree、finish、collect、retry、sync）と goal 専用 artifacts はすべて `workflow_profile_id: goal` に属する。`workflow_profile_id: change` では、クラシックな高速フローを維持し、execute 層や goal artifacts を読まず・実行せず、`proposal.md` と `tasks.md` を編集し、実装し、`verification.md` と `review.md` を記録してから `ospec verify` と `ospec finalize` で閉じる——ユーザーがこの change での agent/worker 実行を明示的に求めない限り
 - AI 支援で goal を進める場合、ユーザーに `design.md` や `implementation-plan.md` の手書きを求めない。要件、`proposal.md`、プロジェクト文脈からそれらを作成または更新してから `artifacts/agents/task-graph.json` を導出し、`tasks.md` やコードを編集する
 - classic change では、ユーザーが明示的に goal へ昇格させない限り goal-only files を作成しない
 - `Announce-Before-Act`: ワークフローを黙って実行しない。どの OSpec skill を使い、どの段階かを 1 行で宣言し、これから実行する `ospec execute ...` コマンドと生成する成果物、ネイティブ subagent を何体・どの機構で派遣するか（Claude Code は `Task`、Codex/GPT は `spawn_agent`/`wait_agent`/`close_agent`、Gemini は `@generalist`、OpenCode は `@mention`）、進行が止まったときに何のゲートがブロックしているかを伝える
