@@ -687,11 +687,50 @@ class ProjectService {
             await this.fileService.writeFile(archivedProposalPath, (0, helpers_1.stringifyFrontmatter)(proposal.content, proposal.data));
         }
         await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
+        await this.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
         await this.rebuildIndex(projectRoot);
         return {
             archivePath: this.toRelativePath(projectRoot, archivePath),
             change: item,
         };
+    }
+    /**
+     * Move brainstorms linked to a change into that change's archive folder so the archived change
+     * is self-contained and `.ospec/brainstorms/` does not accumulate orphans. A brainstorm is
+     * linked when its `changeName` equals the feature, or (when it has no `changeName`) when its
+     * directory id equals the feature. Unlinked exploration brainstorms are left in place.
+     */
+    async archiveLinkedBrainstorms(projectRoot, feature, archivePath) {
+        const brainstormsDir = path_1.default.join(projectRoot, '.ospec', 'brainstorms');
+        if (!feature || !(await this.fileService.exists(brainstormsDir))) {
+            return [];
+        }
+        const entries = await this.fileService.readDir(brainstormsDir);
+        const moved = [];
+        for (const name of entries) {
+            const sourceDir = path_1.default.join(brainstormsDir, name);
+            const jsonPath = path_1.default.join(sourceDir, 'brainstorm.json');
+            if (!(await this.fileService.exists(jsonPath))) {
+                continue;
+            }
+            let linked = false;
+            try {
+                const data = await this.fileService.readJSON(jsonPath);
+                const changeName = typeof data?.changeName === 'string' ? data.changeName.trim() : '';
+                linked = changeName === feature || (changeName.length === 0 && name === feature);
+            }
+            catch {
+                linked = false;
+            }
+            if (!linked) {
+                continue;
+            }
+            const destDir = path_1.default.join(archivePath, 'artifacts', 'brainstorm', name);
+            await this.fileService.ensureDir(path_1.default.dirname(destDir));
+            await this.fileService.move(sourceDir, destDir);
+            moved.push(name);
+        }
+        return moved;
     }
     async rebaseMovedChangeMarkdownLinks(previousChangePath, nextChangePath) {
         const previousRoot = path_1.default.resolve(previousChangePath);

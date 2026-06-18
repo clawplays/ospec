@@ -17,6 +17,8 @@ export declare class BrainstormCommand extends BaseCommand {
     private escapeHtml;
     private toFileSafeId;
     private printResult;
+    private parseResolveArgs;
+    private resolve;
     private printHelp;
     private buildDecisionGates;
     private resolveDecisionGateChangePath;

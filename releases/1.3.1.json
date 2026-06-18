@@ -1,0 +1,20 @@
+{
+  "title_suffix": "Auto-archive closeout, brainstorms that close out with their change, and resolvable brainstorms",
+  "summary": "This patch release makes closeout run automatically when a change is ready, archives brainstorms together with the change they belong to, and lets a brainstorm be resolved into a recorded result via the best interactive UI your harness offers.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.0...1.3.1",
+  "new": [
+    "Added ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--note] to record decision-gate answers back into a brainstorm, marking the chosen options and flipping its status to resolved once the required gates are answered.",
+    "Brainstorms linked to a change (by --change or by a matching id) now archive with that change into artifacts/brainstorm/, so the archived change is self-contained and .ospec/brainstorms/ no longer accumulates orphans; unlinked exploration brainstorms stay in place."
+  ],
+  "improved": [
+    "Brainstorm-First now follows a capability ladder: present each open decision with a native question UI (Claude Code AskUserQuestion, Gemini ask_user) when available, otherwise a plan/approval UI (Codex Plan mode), otherwise plain chat text — and never leave a brainstorm as an unanswered template.",
+    "Refreshed the README first line and the \"Why OSpec?\" capability list (overview, ospec change, engineering-grade goal discipline, and the goal loop) across en-US, zh-CN, ja-JP, and ar for clearer positioning and discoverability."
+  ],
+  "fixed": [
+    "Closeout now runs automatically when ready: the change and goal skills plus the AI guidance run ospec finalize once ospec verify passes and no required user decision or blocking plugin gate is pending, instead of stopping at a passing ospec archive --check; closeout only pauses for a genuine human gate (pending required decision, unapproved blocking gate, real verify/archive blockers, or an explicit user request to preview or approve)."
+  ],
+  "docs": [
+    "Documented ospec brainstorm resolve and the closeout/brainstorm guidance in the ospec-change and ospec-goal skills and the AI guidance across en-US, zh-CN, ja-JP, and ar.",
+    "Added release metadata for 1.3.1."
+  ]
+}

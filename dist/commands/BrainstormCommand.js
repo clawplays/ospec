@@ -46,6 +46,10 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 this.printHelp();
                 return;
             }
+            if (args[0] === 'resolve') {
+                await this.resolve(args.slice(1));
+                return;
+            }
             const parsed = this.parseArgs(args);
             const result = await this.writeBrainstorm(parsed);
             this.printResult(result);
@@ -143,8 +147,14 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         const visualPath = args.visual ? path.join(artifactDir, 'companion.html') : null;
         await services_1.services.fileService.ensureDir(artifactDir);
         const decisionGates = this.buildDecisionGates(args, null);
+        const askLadder = 'Present each decision gate to the user using your harness\'s best interactive mechanism — a native question UI (Claude Code AskUserQuestion, Gemini ask_user) if available, otherwise your plan/approval UI (Codex Plan mode) if available, otherwise plain chat text — and ask one at a time.';
+        const recordHint = `After the user answers, record each choice with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Do not leave this brainstorm as an unanswered template.`;
+        const followUp = args.changeName
+            ? `Then create the change with ospec new ${args.changeName} ${projectPath} and fold the resolved brainstorm into proposal.md and design.md.`
+            : 'Then choose a change name from the resolved direction and run ospec new <change-name>.';
         const artifact = {
             version: '1.0',
+            status: 'open',
             topic: args.topic,
             changeName: args.changeName || null,
             createdAt: now,
@@ -160,9 +170,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 'parallel execution candidates',
             ],
             decisionGates,
-            nextInstruction: args.changeName
-                ? `Create the change with ospec new ${args.changeName} ${projectPath}, then fold this brainstorm into proposal.md and design.md.`
-                : 'Use this brainstorm to choose a change name, then run ospec new <change-name>.',
+            nextInstruction: `${askLadder} ${recordHint} ${followUp}`,
         };
         let decisionGateReports = [];
         if (args.decisionGates) {
@@ -170,10 +178,10 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             artifact.decisionGates = this.buildDecisionGates(args, changePath);
             if (changePath) {
                 decisionGateReports = await this.writeDecisionGates(changePath, artifact.decisionGates);
-                artifact.nextInstruction = `Decision gates were written. Present ${path.relative(projectPath, path.join(changePath, 'artifacts', 'agents', 'decisions', 'index.md')).replace(/\\/g, '/')} before dispatch.`;
+                artifact.nextInstruction = `${askLadder} Then record each answer with ospec execute decision ${changePath} --id <gate-id> --select <option-id> (and mirror it into this brainstorm with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>). Do not dispatch until the required gates are answered.`;
             }
             else {
-                artifact.nextInstruction = 'Decision gate commands are recorded below. Create or select the change, then run the listed ospec execute decision commands before dispatch.';
+                artifact.nextInstruction = `${askLadder} Then record each answer with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Create or select the change, then re-run the listed ospec execute decision commands before dispatch.`;
             }
         }
         await services_1.services.fileService.writeJSON(artifactPath, artifact);
@@ -198,6 +206,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         }
     }
     renderBrainstormReport(artifact) {
+        const resolvedGate = (gate) => typeof gate.selectedOptionId === 'string' && gate.selectedOptionId.length > 0;
         const axes = artifact.decisionAxes.map(axis => `- [ ] ${axis}`).join('\n');
         const gates = artifact.decisionGates.length > 0
             ? artifact.decisionGates.map(gate => [
@@ -206,19 +215,24 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 `- Required: ${gate.required ? 'yes' : 'no'}`,
                 `- Question: ${gate.question}`,
                 `- Recommended option: ${gate.recommendedOptionId}`,
+                `- Selected option: ${gate.selectedOptionId || 'not selected yet'}`,
+                ...(gate.note ? [`- Note: ${gate.note}`] : []),
                 `- Report: ${gate.reportPath || 'not written yet'}`,
                 '',
                 'Options:',
-                ...gate.options.map(option => `- ${option.id}: ${option.label} - ${option.description}`),
+                ...gate.options.map(option => `- [${option.id === gate.selectedOptionId ? 'x' : ' '}] ${option.id}: ${option.label} - ${option.description}`),
                 '',
                 'Command:',
                 '',
                 `\`${gate.command}\``,
             ].join('\n')).join('\n\n')
             : '- None';
+        const requiredGates = artifact.decisionGates.filter(gate => gate.required);
+        const status = artifact.status || (requiredGates.length > 0 && requiredGates.every(resolvedGate) ? 'resolved' : 'open');
         return [
             `# Brainstorm: ${artifact.topic}`,
             '',
+            `- Status: ${status}`,
             `- Created at: ${artifact.createdAt}`,
             `- Suggested change: ${artifact.changeName || 'not selected yet'}`,
             '',
@@ -316,10 +330,122 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         console.log(`  ${result.nextInstruction}`);
         console.log('');
     }
+    parseResolveArgs(args) {
+        let projectPath;
+        let brainstormId = '';
+        let gateId = '';
+        let optionId = '';
+        let note;
+        for (let index = 0; index < args.length; index += 1) {
+            const arg = args[index];
+            const takeValue = (flag) => {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error(`Brainstorm resolve requires a value after ${flag}.`);
+                }
+                index += 1;
+                return value.trim();
+            };
+            if (arg === '--brainstorm') {
+                brainstormId = takeValue('--brainstorm');
+                continue;
+            }
+            if (arg.startsWith('--brainstorm=')) {
+                brainstormId = arg.slice('--brainstorm='.length).trim();
+                continue;
+            }
+            if (arg === '--gate') {
+                gateId = takeValue('--gate');
+                continue;
+            }
+            if (arg.startsWith('--gate=')) {
+                gateId = arg.slice('--gate='.length).trim();
+                continue;
+            }
+            if (arg === '--select') {
+                optionId = takeValue('--select');
+                continue;
+            }
+            if (arg.startsWith('--select=')) {
+                optionId = arg.slice('--select='.length).trim();
+                continue;
+            }
+            if (arg === '--note') {
+                note = takeValue('--note');
+                continue;
+            }
+            if (arg.startsWith('--note=')) {
+                note = arg.slice('--note='.length).trim();
+                continue;
+            }
+            if (arg.startsWith('--')) {
+                throw new Error(`Unknown brainstorm resolve flag: ${arg}`);
+            }
+            if (!projectPath) {
+                projectPath = arg;
+                continue;
+            }
+            throw new Error(`Unexpected brainstorm resolve argument: ${arg}`);
+        }
+        if (!brainstormId) {
+            throw new Error('Brainstorm resolve requires --brainstorm <id>.');
+        }
+        if (!gateId) {
+            throw new Error('Brainstorm resolve requires --gate <gate-id>.');
+        }
+        if (!optionId) {
+            throw new Error('Brainstorm resolve requires --select <option-id>.');
+        }
+        return { projectPath, brainstormId, gateId, optionId, note };
+    }
+    async resolve(args) {
+        const parsed = this.parseResolveArgs(args);
+        const projectPath = path.resolve(parsed.projectPath || process.cwd());
+        await this.ensureInitialized(projectPath);
+        const artifactDir = path.join(projectPath, '.ospec', 'brainstorms', parsed.brainstormId);
+        const artifactPath = path.join(artifactDir, 'brainstorm.json');
+        const reportPath = path.join(artifactDir, 'brainstorm.md');
+        if (!await services_1.services.fileService.exists(artifactPath)) {
+            throw new Error(`Brainstorm "${parsed.brainstormId}" not found at ${path.relative(projectPath, artifactPath).replace(/\\/g, '/')}. Create it first with ospec brainstorm --topic "...".`);
+        }
+        const artifact = await services_1.services.fileService.readJSON(artifactPath);
+        const gates = Array.isArray(artifact.decisionGates) ? artifact.decisionGates : [];
+        const gate = gates.find(item => item.id === parsed.gateId);
+        if (!gate) {
+            throw new Error(`Decision gate "${parsed.gateId}" not found in this brainstorm. Available: ${gates.map(item => item.id).join(', ') || 'none'}.`);
+        }
+        if (!gate.options.some(option => option.id === parsed.optionId)) {
+            throw new Error(`Option "${parsed.optionId}" is not valid for gate "${parsed.gateId}". Valid options: ${gate.options.map(option => option.id).join(', ')}.`);
+        }
+        gate.selectedOptionId = parsed.optionId;
+        gate.note = parsed.note ?? gate.note ?? null;
+        const requiredGates = gates.filter(item => item.required);
+        artifact.status = requiredGates.length > 0 && requiredGates.every(item => typeof item.selectedOptionId === 'string' && item.selectedOptionId.length > 0)
+            ? 'resolved'
+            : 'open';
+        await services_1.services.fileService.writeJSON(artifactPath, artifact);
+        await services_1.services.fileService.writeFile(reportPath, this.renderBrainstormReport(artifact));
+        console.log('\nBrainstorm Resolved');
+        console.log('===================\n');
+        console.log(`Brainstorm: ${parsed.brainstormId}`);
+        console.log(`Gate: ${parsed.gateId}`);
+        console.log(`Selected: ${parsed.optionId}`);
+        console.log(`Status: ${artifact.status}`);
+        console.log(`Report: ${path.relative(projectPath, reportPath).replace(/\\/g, '/')}`);
+        if (artifact.status === 'resolved') {
+            this.success('All required decision gates are answered. This brainstorm now has a result.');
+        }
+        else {
+            const pending = requiredGates.filter(item => !item.selectedOptionId).map(item => item.id);
+            this.info(`Still pending required gates: ${pending.join(', ') || 'none'}.`);
+        }
+        console.log('');
+    }
     printHelp() {
         console.log(`
 Brainstorm Commands:
   ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual] [--decision-gates]
+  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--note "..."]
 `);
     }
     buildDecisionGates(args, changePath) {
@@ -361,6 +487,8 @@ Brainstorm Commands:
         ];
         return gates.map(gate => ({
             ...gate,
+            selectedOptionId: null,
+            note: null,
             command: [
                 `ospec execute decision ${changeArg}`,
                 `--id ${this.quoteCommandArg(gate.id)}`,

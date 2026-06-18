@@ -180,6 +180,13 @@ export declare class ProjectService {
         archivePath: string;
         change: ActiveChangeStatusItem;
     }>;
+    /**
+     * Move brainstorms linked to a change into that change's archive folder so the archived change
+     * is self-contained and `.ospec/brainstorms/` does not accumulate orphans. A brainstorm is
+     * linked when its `changeName` equals the feature, or (when it has no `changeName`) when its
+     * directory id equals the feature. Unlinked exploration brainstorms are left in place.
+     */
+    archiveLinkedBrainstorms(projectRoot: string, feature: string, archivePath: string): Promise<string[]>;
     rebaseMovedChangeMarkdownLinks(previousChangePath: string, nextChangePath: string): Promise<void>;
     getFeatureProjectContext(rootDir: string, affects?: string[]): Promise<FeatureProjectContext>;
     getDocsStatus(rootDir: string): Promise<DocsStatus>;
