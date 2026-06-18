@@ -21,7 +21,7 @@
   <a href="README.ar.md">العربية</a>
 </p>
 
-OSpec の公式 CLI パッケージは `@clawplays/ospec-cli`、公式コマンドは `ospec` です。OSpec は AI coding agents と CLI ワークフロー向けに、spec-driven development（SDD）と document-driven development を支援します。
+OSpec の公式 CLI パッケージは `@clawplays/ospec-cli`、公式コマンドは `ospec` です。OSpec は AI coding agents 向けの spec-driven かつ agentic なワークフローフレームワークで、spec-driven development（SDD）と Loop Engineering（検証可能な「計画 → 実行 → 検証」のゴールループ）を Claude Code、Codex、Gemini、OpenCode、MCP ベースのエージェント、そして素の CLI ワークフローにもたらします。
 
 
 <p align="center">

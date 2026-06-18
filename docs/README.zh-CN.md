@@ -21,7 +21,7 @@
   <a href="README.ar.md">العربية</a>
 </p>
 
-OSpec 的官方 CLI 包是 `@clawplays/ospec-cli`，官方命令是 `ospec`。OSpec 面向 AI coding agents 和 CLI 工作流，支持 spec-driven development（SDD）与文档驱动开发。
+OSpec 的官方 CLI 包是 `@clawplays/ospec-cli`，官方命令是 `ospec`。OSpec 是面向 AI coding agents 的 spec-driven、agentic 工作流框架——把 spec-driven development（SDD）和 Loop Engineering（可验证的"规划 → 执行 → 验证"目标循环）带给 Claude Code、Codex、Gemini、OpenCode、基于 MCP 的代理，以及纯 CLI 工作流。
 
 
 <p align="center">

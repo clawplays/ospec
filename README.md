@@ -21,7 +21,7 @@
   <a href="docs/README.ar.md">العربية</a>
 </p>
 
-The official OSpec CLI package is `@clawplays/ospec-cli`, and the official command is `ospec`. OSpec supports spec-driven development (SDD) and document-driven development for AI coding agents and CLI workflows.
+The official OSpec CLI package is `@clawplays/ospec-cli`, and the official command is `ospec`. OSpec is a spec-driven, agentic workflow framework for AI coding agents — it brings spec-driven development (SDD) and Loop Engineering (a verifiable plan → act → verify goal loop) to Claude Code, Codex, Gemini, OpenCode, MCP-based agents, and plain CLI workflows.
 
 <p align="center">
   <a href="docs/prompt-guide.md">Prompt Guide</a> |
