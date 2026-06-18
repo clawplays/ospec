@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/clawplays-ospec-badge.png)](https://mseep.ai/app/clawplays-ospec)
+
 <h1><a href="https://ospec.ai/" target="_blank" rel="noopener noreferrer">OSpec.ai</a></h1>
 
 <p align="center">
