@@ -123,6 +123,8 @@ ospec finalize [changes/active/<change>]
 
 `ospec new <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md` 和 `artifacts/agents/worker-status.md`。
 
+goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、验证，直到工作被测试证明完成。创建时选定安全级——`ospec goal <name> --level L1|L2|L3`（默认 L1）：**L1** 只把发现项写入 triage 收件箱、不改任何代码；**L2** 会改代码但在关键决策处暂停等你确认；**L3** 在你设定的 allowlist 内无人值守运行。用 `ospec loop run/watch/status/pause/resume/level` 驱动，用 `ospec triage list/claim/promote` 处理发现项，用 pause / `STOP` 文件 / 关闭会话来停止。`ospec change` 保持不变。详见 [loop-engineering.md](loop-engineering.md)。
+
 - 每个 goal 都遵守三条体验契约：`Announce-Before-Act`（AI 宣告当前 skill 与阶段、每条 `ospec execute …` 命令及产物、每次子 agent 派发）、`Brainstorm-First`（锁定设计前，把方向、架构、API、数据、UI、风险、范围等未决问题逐个用原生提问 UI——Claude Code 用 AskUserQuestion——询问）、`Zero-Setup`（每一条 `ospec` 命令都由 AI 自己执行，你只需起一个 goal 并描述需求）。
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
 - 用 `proposal.md` 记录为什么要做、范围和验收标准。
@@ -195,7 +197,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.3
+npm install -g @clawplays/ospec-cli@1.3.0
 ospec update [path]
 ```
 

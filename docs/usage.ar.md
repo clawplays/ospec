@@ -122,6 +122,8 @@ ospec finalize [changes/active/<change>]
 
 ينشئ `ospec new <change-name> [path]` ملفات classic fast-flow فقط: `proposal.md` و`tasks.md` و`state.json` و`verification.md` و`review.md`. أما `ospec goal <goal-name> [path]` فينشئ full workflow ويستخدم `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وreview artifacts و`artifacts/agents/worker-status.md` وevidence artifacts.
 
+يعمل goal على شكل **حلقة مرتبطة بالجلسة**: يخطّط وينفّذ ويتحقّق على جولات حتى يثبت إنجاز العمل بالاختبارات. اختر مستوى أمان عند البدء —— `ospec goal <name> --level L1|L2|L3` (الافتراضي L1): **L1** يكتب النتائج في صندوق triage دون تغيير أي شيء، و**L2** يجري تغييرات لكنه يتوقّف عند القرارات المهمة لانتظار موافقتك، و**L3** يعمل بدون إشراف ضمن قائمة سماح تحدّدها. قُدها عبر `ospec loop run/watch/status/pause/resume/level`، وعالِج النتائج عبر `ospec triage list/claim/promote`، وأوقفها عبر pause أو ملف `STOP` أو إغلاق الجلسة. يبقى `ospec change` دون تغيير. راجع [loop-engineering.md](loop-engineering.md).
+
 - يعمل كل goal بثلاثة عقود تجربة: `Announce-Before-Act` (يعلن الذكاء الاصطناعي skill والمرحلة، وكل أمر `ospec execute …` وأثره، وكل توزيع subagent)، و`Brainstorm-First` (قبل تثبيت التصميم يسأل عن القرارات المفتوحة للاتجاه والبنية وAPI والبيانات وUI والمخاطر والنطاق واحداً تلو الآخر عبر واجهة الأسئلة الأصلية — في Claude Code: AskUserQuestion)، و`Zero-Setup` (ينفّذ الذكاء الاصطناعي كل أمر `ospec` بنفسه، فأنت فقط تبدأ goal وتصف المتطلب).
 - يمكن أن تفعّل workflow flags خطوات quality policy المدمجة للـ agent: `tdd_cycle` و`root_cause_debug` و`verification_evidence`. تكتب الخطوات المفعّلة في frontmatter الخاص بالـ change ضمن `optional_steps` ويجب تغطيتها في `tasks.md` و`verification.md` وarchive readiness.
 - استخدم `proposal.md` لتسجيل سبب التغيير والنطاق ومعايير القبول.
@@ -194,7 +196,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.3
+npm install -g @clawplays/ospec-cli@1.3.0
 ospec update [path]
 ```
 

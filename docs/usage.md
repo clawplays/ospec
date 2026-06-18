@@ -123,6 +123,8 @@ ospec finalize [changes/active/<change>]
 
 `ospec new <change-name> [path]` creates the classic fast-flow files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. `ospec goal <goal-name> [path]` creates the full workflow with `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/spec-compliance.md`, `artifacts/reviews/code-quality.md`, and `artifacts/agents/worker-status.md`.
 
+A goal runs as a **session-bound loop**: it plans, acts, and verifies in rounds until the work is proven by tests. Pick a safety level when you start it — `ospec goal <name> --level L1|L2|L3` (default L1): **L1** reports findings to a triage inbox without changing anything, **L2** makes changes but pauses at key decisions, **L3** runs unattended within an allowlist. Drive it with `ospec loop run/watch/status/pause/resume/level`, review findings with `ospec triage list/claim/promote`, and stop it by pausing, dropping a `STOP` file, or closing your session. `ospec change` is unchanged. See [loop-engineering.md](loop-engineering.md).
+
 - Every goal runs with three experience contracts: `Announce-Before-Act` (the AI announces its skill and stage, each `ospec execute …` command and artifact, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, data, UI, risk, and scope decisions are asked one at a time through the native question UI — Claude Code: AskUserQuestion — before design is locked), and `Zero-Setup` (the AI runs every `ospec` command itself, so you only start a goal and describe the requirement).
 - Workflow flags can activate built-in agent quality policy steps: `tdd_cycle`, `root_cause_debug`, and `verification_evidence`. Activated steps are written into change frontmatter as `optional_steps` and must be covered in `tasks.md`, `verification.md`, and archive readiness.
 - Use `proposal.md` to capture why the change exists, scope, and acceptance criteria.
@@ -195,7 +197,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.3
+npm install -g @clawplays/ospec-cli@1.3.0
 ospec update [path]
 ```
 

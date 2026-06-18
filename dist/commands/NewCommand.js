@@ -198,6 +198,13 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 documentPath: path.join(featureDir, constants_1.FILE_NAMES.REVIEW),
             }));
             await this.writePluginArtifacts(targetDir, featureDir, activatedSteps);
+            if (isGoalWorkflow) {
+                const loopConfig = await services_1.services.loopService.scaffold(featureDir, {
+                    level: options.level,
+                    primitive: 'goal',
+                });
+                this.info(`  Loop initialized: level ${loopConfig.level}, primitive ${loopConfig.primitive}, ${loopConfig.executionModel} (${loopConfig.schedule.lifecycle})`);
+            }
             this.success(`${placement === constants_1.DIR_NAMES.QUEUED ? 'Queued change' : 'Change'} ${featureName} created at ${featureDir}`);
             if (flags.length > 0) {
                 this.info(`  Flags: ${flags.join(', ')}`);

@@ -122,6 +122,8 @@ ospec finalize [changes/active/<change>]
 
 `ospec new <change-name> [path]` は classic fast-flow files だけを作成します: `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`。`ospec goal <goal-name> [path]` は full workflow を作成し、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、`artifacts/agents/worker-status.md`、evidence artifacts を使います。
 
+goal は **セッションスコープのループ** として動作します：計画・実行・検証を繰り返し、作業がテストで証明されるまで進めます。開始時に安全レベルを選びます——`ospec goal <name> --level L1|L2|L3`（デフォルト L1）：**L1** は検出項目を triage に記録するだけでコードは変更しません、**L2** は変更しますが重要な決定では一時停止して承認を求めます、**L3** は設定した allowlist 内で無人実行します。`ospec loop run/watch/status/pause/resume/level` で駆動し、`ospec triage list/claim/promote` で検出項目を処理し、pause / `STOP` ファイル / セッションを閉じることで停止します。`ospec change` は変更ありません。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
+
 - 各 goal は 3 つの体験契約で動きます：`Announce-Before-Act`（AI が skill・段階、各 `ospec execute …` コマンドと生成物、各 subagent 派遣を宣言）、`Brainstorm-First`（設計確定前に、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項をネイティブの質問 UI——Claude Code は AskUserQuestion——で 1 つずつ尋ねる）、`Zero-Setup`（すべての `ospec` コマンドを AI 自身が実行するので、あなたは goal を起こして要件を説明するだけ）。
 - workflow flags は built-in agent quality policy steps として `tdd_cycle`、`root_cause_debug`、`verification_evidence` を有効化できます。有効化された steps は change frontmatter の `optional_steps` に書かれ、`tasks.md`、`verification.md`、archive readiness で coverage が必要です。
 - `proposal.md` には、変更理由、範囲、受け入れ条件を記録します。
@@ -194,7 +196,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.2.3
+npm install -g @clawplays/ospec-cli@1.3.0
 ospec update [path]
 ```
 

@@ -1,0 +1,23 @@
+{
+  "title_suffix": "Loop Engineering for goals: session-bound loops, /goal bridge, and triage",
+  "summary": "This minor release turns ospec goal into a session-bound Loop with a verifiable plan-act-observe cycle, capability-probed /goal bridging, safety levels (L1/L2/L3), and a triage inbox. ospec change is unchanged and keeps the classic fast flow.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.2.3...1.3.0",
+  "new": [
+    "ospec goal now creates a session-bound Loop (artifacts/loop/loop.json, state.json, run-log.jsonl) with a safety level chosen at creation via --level L1|L2|L3 (default L1).",
+    "Added ospec loop run/watch/status/pause/resume/level/tick-plan to drive the controller-driven two-phase tick or the CLI-driven in-process watcher; both are session-bound and stop with pause, a STOP sentinel, or closing the session.",
+    "Added ospec triage list/claim/promote with a managed triage inbox (<managed>/triage/inbox.jsonl) where L1 findings and out-of-allowlist items surface instead of being applied silently.",
+    "Added ospec execute launch --primitive subagent|goal|loop with --until/--max-iterations/--interval to bridge to a harness-native /goal (Claude, Codex) or a capability-probed emulated-goal verify-driven loop."
+  ],
+  "improved": [
+    "Verification is now exposed as a non-exiting VerificationService that returns a structured outcome; VerifyCommand is a thin wrapper that owns console output and the exit code, so loops can consume verification without terminating.",
+    "Harness loop primitives are capability-probed at runtime (CapabilityProbeService) instead of assuming /loop or CronCreate; external agent CLI calls use claude -p and codex exec (never claude --goal) via AgentCliRunnerService."
+  ],
+  "fixed": [
+    "Closeout now runs automatically when ready: the change and goal skills plus the AI guidance run ospec finalize once ospec verify passes and no required user decision or blocking plugin gate is pending, instead of stopping at a passing ospec archive --check; closeout only pauses for a genuine human gate (pending required decision, unapproved blocking gate, real verify/archive blockers, or an explicit user request to preview or approve)."
+  ],
+  "docs": [
+    "Added docs/loop-engineering.md and docs/dev/loop-execution-model-contract.md, and updated the ospec-goal skill and usage guide for the Loop model.",
+    "Localized the goal / Loop capability across the README and usage guide in en-US, zh-CN, ja-JP, and ar, and rewrote the \"Why OSpec?\" capability list (overview, ospec change, engineering-grade goal discipline, and the goal loop).",
+    "Added release metadata for 1.3.0."
+  ]
+}

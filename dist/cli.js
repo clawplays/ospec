@@ -55,12 +55,14 @@ const SkillsCommand_1 = require("./commands/SkillsCommand");
 const StatusCommand_1 = require("./commands/StatusCommand");
 const RunCommand_1 = require("./commands/RunCommand");
 const ExecuteCommand_1 = require("./commands/ExecuteCommand");
+const LoopCommand_1 = require("./commands/LoopCommand");
+const TriageCommand_1 = require("./commands/TriageCommand");
 const SessionCommand_1 = require("./commands/SessionCommand");
 const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.2.3';
+const CLI_VERSION = '1.3.0';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -152,13 +154,14 @@ function parseInitCommandArgs(commandArgs) {
 }
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
-        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2]'
+        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3]'
         : 'Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]';
 }
 function parseNewCommandArgs(commandArgs, commandName = 'new') {
     const featureName = commandArgs[0];
     let rootDir;
     const flags = [];
+    let level;
     for (let index = 1; index < commandArgs.length; index += 1) {
         const arg = commandArgs[index];
         if (arg === '--flags') {
@@ -173,6 +176,28 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         }
         if (arg.startsWith('--flags=')) {
             flags.push(...arg.slice('--flags='.length).split(',').map(flag => flag.trim()).filter(Boolean));
+            continue;
+        }
+        const levelValue = arg === '--level'
+            ? commandArgs[index + 1]
+            : arg.startsWith('--level=')
+                ? arg.slice('--level='.length)
+                : undefined;
+        if (levelValue !== undefined) {
+            if (commandName !== 'goal') {
+                console.error(`Unknown option for ${commandName}: --level (only valid for ospec goal)`);
+                console.error(getNewLikeUsage(commandName));
+                process.exit(1);
+            }
+            const normalizedLevel = String(levelValue || '').trim().toUpperCase();
+            if (normalizedLevel !== 'L1' && normalizedLevel !== 'L2' && normalizedLevel !== 'L3') {
+                console.error(`Invalid --level value for goal: ${levelValue || '(empty)'} (expected L1, L2, or L3)`);
+                process.exit(1);
+            }
+            level = normalizedLevel;
+            if (arg === '--level') {
+                index += 1;
+            }
             continue;
         }
         if (arg.startsWith('--')) {
@@ -192,6 +217,7 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         featureName,
         rootDir,
         flags: Array.from(new Set(flags)),
+        level,
     };
 }
 async function main() {
@@ -227,9 +253,9 @@ async function main() {
                     console.log('Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2]');
                     process.exit(1);
                 }
-                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs, 'goal');
+                const { featureName, rootDir, flags, level } = parseNewCommandArgs(commandArgs, 'goal');
                 const goalCmd = new GoalCommand_1.GoalCommand();
-                await goalCmd.execute(featureName, rootDir, { flags });
+                await goalCmd.execute(featureName, rootDir, { flags, level });
                 break;
             }
             case 'brainstorm': {
@@ -302,6 +328,16 @@ async function main() {
             case 'execute': {
                 const executeCmd = new ExecuteCommand_1.ExecuteCommand();
                 await executeCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+                break;
+            }
+            case 'loop': {
+                const loopCmd = new LoopCommand_1.LoopCommand();
+                await loopCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+                break;
+            }
+            case 'triage': {
+                const triageCmd = new TriageCommand_1.TriageCommand();
+                await triageCmd.execute(commandArgs[0] || 'list', ...commandArgs.slice(1));
                 break;
             }
             case 'docs': {
@@ -388,6 +424,8 @@ Commands:
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
   execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, orchestrate, complete)
+  loop [action] [path]      Session-bound goal loop helpers (run, watch, status, pause, resume, level, tick-plan)
+  triage [action] [path]    Triage inbox helpers (list, claim, promote)
   docs [action] [path]      Docs helpers (status, generate)
   skills [action] [path]    Skills status helpers (status)
   plugins [action] [path]   Plugin helpers (available, info, install, installed, update, list, status, enable, disable, approve, reject)

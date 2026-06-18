@@ -69,6 +69,10 @@ export declare class ExecuteCommand extends BaseCommand {
         json: boolean;
         command?: string;
         timeoutMs?: number;
+        primitive?: string;
+        until?: string;
+        maxIterations?: number;
+        interval?: string;
     };
     private parseWorktreeArgs;
     parseHandoffArgs(args: string[]): {

@@ -37,10 +37,10 @@ The official OSpec CLI package is `@clawplays/ospec-cli`, and the official comma
 
 AI coding assistants are powerful, but requirements that live only in chat history are hard to inspect, review, and close out cleanly. OSpec adds a lightweight workflow layer so the repository can hold the change context before code is written and after the work ships.
 
-- Align before code — keep proposal, design, implementation plan, tasks, state, verification, and review visible in the repo
-- Keep each requirement explicit — the default path moves one requirement through one active change
-- Stay lightweight — keep the normal flow short with `init -> change -> verify/finalize`
-- Use the assistants you already have — OSpec is built for Codex/GPT, Claude Code, Gemini, OpenCode, and direct CLI fallback workflows
+- **Spec-driven work, saved to your repo** — OSpec turns a request into files (proposal, design, plan, tasks, reviews, verification evidence) that live in your repo instead of in chat history, so any assistant (Codex/GPT, Claude Code, Gemini, OpenCode, or plain CLI) can pick up exactly where the last one stopped.
+- **`ospec change` — the everyday fast flow** — one requirement becomes one active change on a short `init -> change -> verify/finalize` path, kept lightweight and easy to review.
+- **`ospec goal` — engineering-grade discipline** — brainstorm and lock the design before any code, split the work into a task graph, dispatch parallel sub-agents, enforce TDD and code review by a separate reviewer, and require durable test/verification evidence before anything counts as done.
+- **`ospec goal` runs as a loop** — it plans, acts, and verifies in rounds until tests prove the work, at a safety level you choose (`--level L1|L2|L3`: report-only → assisted → unattended); drive it with `ospec loop …` and surface findings to a triage inbox with `ospec triage …`.
 
 ## Install With npm
 
@@ -184,9 +184,17 @@ Archive notes:
 
 ### Goal Workflow — Full Flow & Hard Enforcement
 
-Use `ospec goal <goal-name>` (or just say "OSpec, create and advance a full goal for this requirement") for complex, cross-cutting, or high-risk work that needs the full OSpec 1.2 workflow: design doc, implementation plan, task graph, parallel worker dispatch, document and code review, and durable TDD / debug / verification evidence.
+Use `ospec goal <goal-name>` (or just say "OSpec, create and advance a full goal for this requirement") for complex, cross-cutting, or high-risk work that needs the full OSpec workflow: design doc, implementation plan, task graph, parallel worker dispatch, document and code review, and durable TDD / debug / verification evidence.
 
 **You only start a goal and describe the requirement.** The AI runs every `ospec` command itself; you just answer questions in chat (`Zero-Setup`).
+
+A goal runs as a **session-bound loop**: it plans, acts, and verifies in rounds until the work is done and proven by tests. You choose a safety level when you start it (`--level L1|L2|L3`, default L1):
+
+- **L1** — report only: findings go to a triage inbox, nothing is changed.
+- **L2** — makes changes but pauses at key decisions for your approval.
+- **L3** — runs unattended within an allowlist you set.
+
+Drive and watch it with `ospec loop run/watch/status/pause/resume/level`, review findings with `ospec triage list/claim/promote`, and stop it by pausing, dropping a `STOP` file, or closing your session. When the harness has a native `/goal` (Claude, Codex) the loop uses it; otherwise it falls back automatically. `ospec change` stays the classic fast flow. See [docs/loop-engineering.md](docs/loop-engineering.md).
 
 Experience contracts the AI follows on every goal:
 

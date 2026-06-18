@@ -17,6 +17,11 @@ export { QueueService, createQueueService } from './QueueService';
 export { RunService, createRunService } from './RunService';
 export { TaskGraphExecutionService, createTaskGraphExecutionService } from './TaskGraphExecutionService';
 export { ClaudeHookService, createClaudeHookService } from './ClaudeHookService';
+export { LoopService, createLoopService } from './LoopService';
+export { TriageService, createTriageService } from './TriageService';
+export { VerificationService, createVerificationService } from './VerificationService';
+export { CapabilityProbeService, createCapabilityProbeService } from './CapabilityProbeService';
+export { AgentCliRunnerService, createAgentCliRunnerService } from './AgentCliRunnerService';
 import { FileService } from './FileService';
 import { ConfigManager } from './ConfigManager';
 import { StateManager } from './StateManager';
@@ -33,6 +38,8 @@ import { QueueService } from './QueueService';
 import { RunService } from './RunService';
 import { TaskGraphExecutionService } from './TaskGraphExecutionService';
 import { ClaudeHookService } from './ClaudeHookService';
+import { LoopService } from './LoopService';
+import { TriageService } from './TriageService';
 export declare class ServiceContainer {
     private static instance;
     readonly fileService: FileService;
@@ -51,6 +58,8 @@ export declare class ServiceContainer {
     readonly runService: RunService;
     readonly taskGraphExecutionService: TaskGraphExecutionService;
     readonly claudeHookService: ClaudeHookService;
+    readonly loopService: LoopService;
+    readonly triageService: TriageService;
     private constructor();
     static getInstance(): ServiceContainer;
 }

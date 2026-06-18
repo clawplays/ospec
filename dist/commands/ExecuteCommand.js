@@ -221,6 +221,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             taskId: parsed.taskId,
             target: parsed.target,
             dryRun: parsed.dryRun,
+            primitive: parsed.primitive,
+            until: parsed.until,
+            maxIterations: parsed.maxIterations,
+            interval: parsed.interval,
         });
         if (parsed.json) {
             console.log(JSON.stringify(await services_1.services.fileService.readJSON(result.artifactPath), null, 2));
@@ -589,6 +593,25 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         console.log(`Artifact: ${result.artifactPath}`);
         console.log(`Report: ${result.reportPath}`);
+        if (result.loopPlan) {
+            console.log(`Loop primitive: ${result.loopPlan.primitive}`);
+            console.log(`Execution model: ${result.loopPlan.executionModel}`);
+            console.log(`Loop mode: ${result.loopPlan.mode}`);
+            console.log(`Controller action required: ${result.loopPlan.requiresControllerAction ? 'yes' : 'no'}`);
+            if (result.loopPlan.until) {
+                console.log(`Until: ${result.loopPlan.until}`);
+            }
+            if (result.loopPlan.interval) {
+                console.log(`Interval: ${result.loopPlan.interval}`);
+            }
+            console.log(`Native loop capability: ${result.loopPlan.capability.nativeLoopCapability} (${result.loopPlan.capability.probeSource})`);
+            if (result.loopPlan.cliCommandPreview) {
+                console.log(`CLI command preview: ${result.loopPlan.cliCommandPreview}`);
+            }
+            for (const instruction of result.loopPlan.instructions) {
+                console.log(`  - ${instruction}`);
+            }
+        }
         if (result.nativeAgent) {
             console.log(`Adapter: ${result.nativeAgent.adapterId}`);
             console.log(`Agent primitive: ${result.nativeAgent.agentPrimitive}`);
@@ -1353,6 +1376,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let json = false;
         let command;
         let timeoutMs;
+        let primitive;
+        let until;
+        let maxIterations;
+        let interval;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--task') {
@@ -1419,6 +1446,58 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 timeoutMs = this.parsePositiveInteger(arg.slice('--timeout-ms='.length), 'Execute launch --timeout-ms');
                 continue;
             }
+            if (arg === '--primitive') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute launch requires a value after --primitive.');
+                }
+                primitive = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--primitive=')) {
+                primitive = arg.slice('--primitive='.length);
+                continue;
+            }
+            if (arg === '--until') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute launch requires a value after --until.');
+                }
+                until = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--until=')) {
+                until = arg.slice('--until='.length);
+                continue;
+            }
+            if (arg === '--max-iterations') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute launch requires a value after --max-iterations.');
+                }
+                maxIterations = this.parsePositiveInteger(value, 'Execute launch --max-iterations');
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--max-iterations=')) {
+                maxIterations = this.parsePositiveInteger(arg.slice('--max-iterations='.length), 'Execute launch --max-iterations');
+                continue;
+            }
+            if (arg === '--interval') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute launch requires a value after --interval.');
+                }
+                interval = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--interval=')) {
+                interval = arg.slice('--interval='.length);
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute launch flag: ${arg}`);
             }
@@ -1434,7 +1513,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (run && json) {
             throw new Error('Execute launch --json cannot be combined with --run.');
         }
-        return { inputPath, taskId, target, dryRun, run, json, command, timeoutMs };
+        if (primitive !== undefined && !['subagent', 'goal', 'loop'].includes(primitive.trim().toLowerCase())) {
+            throw new Error(`Execute launch --primitive must be one of subagent, goal, loop (received ${primitive}).`);
+        }
+        return { inputPath, taskId, target, dryRun, run, json, command, timeoutMs, primitive, until, maxIterations, interval };
     }
     parseWorktreeArgs(args) {
         let inputPath;

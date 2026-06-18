@@ -6,7 +6,17 @@ tags: [ospec, cli, workflow, goal]
 
 # OSpec Goal
 
-Use this skill for complex work that needs the full OSpec 1.2 workflow. A goal is intentionally heavier than a change and is the place to use design docs, implementation planning, task graph dispatch, worker/reviewer handoffs, and durable evidence.
+Use this skill for complex work that needs the full OSpec workflow. A goal is intentionally heavier than a change and is the place to use design docs, implementation planning, task graph dispatch, worker/reviewer handoffs, and durable evidence.
+
+## Loop Model
+
+`ospec goal` creates a **session-bound Loop** automatically (`artifacts/loop/loop.json` + `state.json` + `run-log.jsonl`). You do not run a separate init step. Key contracts:
+
+- **ospec is a state-machine brain; it does not execute agents.** `ospec loop run --once` performs a two-phase tick — it first observes the previous pending action's verification evidence, then plans/produces the next controller instruction. The controller (you) executes the instruction and records completion + verification.
+- **Safety level chosen at creation via a decision gate.** Prefer presenting an `AskUserQuestion` for L1/L2/L3 as the first decision; otherwise pass `ospec goal <name> --level L1|L2|L3` (default L1). L1 = report-only (findings go to triage, no code changes); L2 = assisted (real changes but required-decision gates hard-block); L3 = unattended within an allowlist.
+- **`/goal` is capability-probed, not hardcoded.** `ospec execute launch --primitive goal` produces a native-`/goal` instruction when the target supports it (claude, codex), otherwise an emulated-goal verify-driven plan. CLI-driven targets use `claude -p` / `codex exec` (never `claude --goal`).
+- **Scheduling is session-bound.** Controller-driven loops re-run `loop run --once` on the controller's tick cadence (`ospec loop tick-plan`); CLI-driven loops use `ospec loop watch` (dies with the session). Stop with `ospec loop pause` / a `STOP` file / closing the session.
+- **Stop condition is three-stage:** run the project's real tests, record evidence with `ospec execute verify --status`, then confirm with `ospec verify`.
 
 ## Scope
 
@@ -77,13 +87,24 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 11. Use `ospec execute workspace`, `dispatch`, `launch`, `complete`, `review`, `feedback`, `sync`, `tdd`, `debug`, and `verify` as needed for the full workflow.
 12. Do not archive while task graph status, task-level reviews, final reviews, worker status, required user decisions, document reviews, or verification evidence are incomplete.
 13. Use `ospec execute finish` before finalize when the goal used task graph execution or worktree planning.
-14. Use `ospec finalize [changes/active/<goal>]` as the normal closeout path.
+14. Use `ospec finalize [changes/active/<goal>]` as the normal closeout path. Closeout is automatic when ready: once the goal is complete and `ospec verify` passes with no required user decision or blocking gate pending, run `ospec finalize` yourself — do not stop at `ospec archive ... --check` (preview only) or wait for the user to ask. Only pause for a genuine human gate: a pending required decision, an unapproved blocking plugin gate, real verify/archive blockers, or an explicit user request to preview or approve first.
 
 ## Commands
 
 ```bash
 ospec status [path]
-ospec goal <goal-name> [path] [--flags flag1,flag2]
+ospec goal <goal-name> [path] [--flags flag1,flag2] [--level L1|L2|L3]
+ospec loop status [changes/active/<goal>]
+ospec loop run [changes/active/<goal>] [--once]
+ospec loop watch [changes/active/<goal>] [--interval 10m] [--max-ticks N]
+ospec loop tick-plan [changes/active/<goal>]
+ospec loop level [changes/active/<goal>] <L1|L2|L3>
+ospec loop pause [changes/active/<goal>]
+ospec loop resume [changes/active/<goal>]
+ospec triage list [path]
+ospec triage claim [path] --id <id> --by <name>
+ospec triage promote [path] --id <id>
+ospec execute launch [changes/active/<goal>] [--task task-id] [--target ...] [--primitive subagent|goal|loop] [--until "..."] [--max-iterations N] [--interval 10m]
 ospec execute bootstrap [changes/active/<goal>]
 ospec execute doc-review [changes/active/<goal>] --stage design
 ospec execute doc-review [changes/active/<goal>] --stage plan

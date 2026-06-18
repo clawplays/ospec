@@ -22,6 +22,8 @@ export { IndexCommand } from './IndexCommand';
 export { QueueCommand } from './QueueCommand';
 export { RunCommand } from './RunCommand';
 export { ExecuteCommand } from './ExecuteCommand';
+export { LoopCommand } from './LoopCommand';
+export { TriageCommand } from './TriageCommand';
 export { SessionCommand } from './SessionCommand';
 export { UpdateCommand } from './UpdateCommand';
 export { LayoutCommand } from './LayoutCommand';

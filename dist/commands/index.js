@@ -3,7 +3,7 @@
  * Command entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.LayoutCommand = exports.UpdateCommand = exports.SessionCommand = exports.ExecuteCommand = exports.RunCommand = exports.QueueCommand = exports.IndexCommand = exports.PluginsCommand = exports.SkillsCommand = exports.SkillCommand = exports.DocsCommand = exports.WorkflowCommand = exports.BatchCommand = exports.StatusCommand = exports.FinalizeCommand = exports.ArchiveCommand = exports.ProgressCommand = exports.VerifyCommand = exports.PlanCommand = exports.BrainstormCommand = exports.GoalCommand = exports.NewCommand = exports.InitCommand = exports.BaseCommand = void 0;
+exports.LayoutCommand = exports.UpdateCommand = exports.SessionCommand = exports.TriageCommand = exports.LoopCommand = exports.ExecuteCommand = exports.RunCommand = exports.QueueCommand = exports.IndexCommand = exports.PluginsCommand = exports.SkillsCommand = exports.SkillCommand = exports.DocsCommand = exports.WorkflowCommand = exports.BatchCommand = exports.StatusCommand = exports.FinalizeCommand = exports.ArchiveCommand = exports.ProgressCommand = exports.VerifyCommand = exports.PlanCommand = exports.BrainstormCommand = exports.GoalCommand = exports.NewCommand = exports.InitCommand = exports.BaseCommand = void 0;
 var BaseCommand_1 = require("./BaseCommand");
 Object.defineProperty(exports, "BaseCommand", { enumerable: true, get: function () { return BaseCommand_1.BaseCommand; } });
 var InitCommand_1 = require("./InitCommand");
@@ -46,6 +46,10 @@ var RunCommand_1 = require("./RunCommand");
 Object.defineProperty(exports, "RunCommand", { enumerable: true, get: function () { return RunCommand_1.RunCommand; } });
 var ExecuteCommand_1 = require("./ExecuteCommand");
 Object.defineProperty(exports, "ExecuteCommand", { enumerable: true, get: function () { return ExecuteCommand_1.ExecuteCommand; } });
+var LoopCommand_1 = require("./LoopCommand");
+Object.defineProperty(exports, "LoopCommand", { enumerable: true, get: function () { return LoopCommand_1.LoopCommand; } });
+var TriageCommand_1 = require("./TriageCommand");
+Object.defineProperty(exports, "TriageCommand", { enumerable: true, get: function () { return TriageCommand_1.TriageCommand; } });
 var SessionCommand_1 = require("./SessionCommand");
 Object.defineProperty(exports, "SessionCommand", { enumerable: true, get: function () { return SessionCommand_1.SessionCommand; } });
 var UpdateCommand_1 = require("./UpdateCommand");

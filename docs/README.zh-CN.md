@@ -38,10 +38,10 @@ OSpec 的官方 CLI 包是 `@clawplays/ospec-cli`，官方命令是 `ospec`。OS
 
 AI 编码助手很强，但如果需求只留在聊天记录里，就很难检查、评审和稳定收口。OSpec 增加了一层轻量工作流，让仓库在写代码之前和上线之后都能保留这次 change 的上下文。
 
-- 先对齐再写代码：把 proposal、design、implementation plan、tasks、handoff artifacts、document-review artifacts、worker status、state、verification、review 都留在仓库里
-- 让每个需求显式可见：默认路径是一条需求对应一个 active change
-- 保持轻量：日常流程尽量收敛在 `init -> change -> verify/finalize`
-- 继续使用你已有的助手：OSpec 面向 Codex、Claude Code 和直接 CLI 工作流
+- **把需求变成留在仓库里的规范文件**：OSpec 把一句需求落成 proposal、design、计划、tasks、评审、验证证据等文件，存进你的仓库而不是只留在聊天记录里——任何助手（Codex/GPT、Claude Code、Gemini、OpenCode 或纯 CLI）都能接着上一个停下的地方继续。
+- **`ospec change` —— 日常快速流程**：一条需求对应一个 active change，走简短的 `init -> change -> verify/finalize`，轻量、好评审。
+- **`ospec goal` —— 工程级的严谨**：写代码前先头脑风暴并锁定设计，把工作拆成任务图、派发并行子代理，强制 TDD 和由独立评审者做代码评审，并要求留下可复核的测试/验证证据，才算"完成"。
+- **`ospec goal` 以循环方式运行**：一轮轮地规划、执行、验证，直到测试证明工作完成；安全级由你选（`--level L1|L2|L3`：只读 → 辅助 → 无人值守），用 `ospec loop …` 驱动，用 `ospec triage …` 把发现项收进 triage 收件箱。
 
 ## npm 安装
 
@@ -165,9 +165,17 @@ ospec finalize changes/active/<change-name>
 
 ### Goal 工作流 —— 完整流程与硬强制
 
-复杂、跨模块或高风险的工作，用 `ospec goal <goal-name>`（或直接说「OSpec，为这个需求创建并推进一个完整 goal」），走完整的 OSpec 1.2 工作流：设计文档、实现计划、任务图、并行 worker 派发、文档与代码评审，以及持久的 TDD / 调试 / 验证证据。
+复杂、跨模块或高风险的工作，用 `ospec goal <goal-name>`（或直接说「OSpec，为这个需求创建并推进一个完整 goal」），走完整的 OSpec 工作流：设计文档、实现计划、任务图、并行 worker 派发、文档与代码评审，以及持久的 TDD / 调试 / 验证证据。
 
 **你只需要起一个 goal 并描述需求。** 其余每一条 `ospec` 命令都由 AI 自己执行，你只在对话里回答提问（`Zero-Setup`）。
+
+goal 以**会话内循环**的方式运行：一轮轮地规划、执行、验证，直到工作被测试证明完成。创建时选定安全级（`--level L1|L2|L3`，默认 L1）：
+
+- **L1** —— 只读：把发现项写入 triage 收件箱，不改任何代码。
+- **L2** —— 改代码，但在关键决策处暂停等你确认。
+- **L3** —— 在你设定的 allowlist 内无人值守运行。
+
+用 `ospec loop run/watch/status/pause/resume/level` 驱动和查看，用 `ospec triage list/claim/promote` 处理发现项，用 pause / `STOP` 文件 / 关闭会话来停止。当 harness 提供原生 `/goal`（Claude、Codex）时循环会直接调用它，否则自动降级。`ospec change` 保持经典快速流程不变。详见 [loop-engineering.md](loop-engineering.md)。
 
 每个 goal AI 都会遵守的体验契约：
 

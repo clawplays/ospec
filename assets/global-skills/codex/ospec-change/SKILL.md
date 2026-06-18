@@ -54,8 +54,9 @@ Use `ospec-goal` instead when the work needs design docs, implementation plannin
 5. Keep the work inside the active change container.
 6. Keep `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md` aligned with actual execution.
 7. Do not create `design.md`, `implementation-plan.md`, task graphs, worker packets, or review artifacts for routine small changes.
-8. Use `ospec-goal` when the requirement is complex enough to need the full 1.2 workflow.
+8. Use `ospec-goal` when the requirement is complex enough to need the full workflow.
 9. Use OSpec closeout commands instead of inventing a parallel process.
+10. Closeout is automatic when ready: once implementation, `verification.md`, and `review.md` are aligned and `ospec verify [changes/active/<change>]` passes, run `ospec finalize [changes/active/<change>]` yourself. Do not stop at `ospec archive ... --check` (it is a preview only) and do not wait for the user to ask before archiving. Only pause closeout when a gate genuinely needs a human: a pending required user decision, an unapproved blocking plugin gate, real blockers reported by verify or archive, or an explicit user request to preview or approve before archiving.
 
 ## Commands
 
@@ -65,8 +66,8 @@ ospec new <change-name> [path]
 ospec changes status [path]
 ospec progress [changes/active/<change>]
 ospec verify [changes/active/<change>]
-ospec archive [changes/active/<change>] --check
-ospec finalize [changes/active/<change>]
+ospec archive [changes/active/<change>] --check   # optional preview only — do not stop here
+ospec finalize [changes/active/<change>]          # run automatically once verify passes and no human gate is pending
 ```
 
 ## Guardrails

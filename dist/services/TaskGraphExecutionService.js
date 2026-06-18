@@ -39,6 +39,8 @@ const path = __importStar(require("path"));
 const childProcess = require("child_process");
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
+const CapabilityProbeService_1 = require("./CapabilityProbeService");
+const AgentCliRunnerService_1 = require("./AgentCliRunnerService");
 const EXECUTION_SESSION_FILE = 'execution-session.json';
 const VERIFICATION_EVIDENCE_FILE = 'verification-evidence.json';
 const TDD_EVIDENCE_FILE = 'tdd-evidence.json';
@@ -719,6 +721,21 @@ class TaskGraphExecutionService {
                 launchPrompt,
             })
             : null;
+        const primitive = (0, CapabilityProbeService_1.normalizeAgentPrimitive)(options.primitive);
+        const loopPlan = (selected && primitive !== 'subagent')
+            ? this.buildLaunchLoopPlan({
+                primitive,
+                target,
+                relativeChangePath,
+                launchPrompt,
+                until: options.until,
+                maxIterations: options.maxIterations,
+                interval: options.interval,
+            })
+            : null;
+        if (loopPlan) {
+            warnings.push(...loopPlan.capability.warnings);
+        }
         const status = blockers.length > 0 ? 'blocked' : 'ready';
         const nextInstruction = status === 'ready'
             ? `Review ${this.toChangeRelativePath(resolvedChangePath, reportPath)}, dispatch the ${target} worker with the current harness native agent mechanism, then record the result with ospec execute complete ${selected?.taskId || '<task-id>'} ${this.quoteShellArg(relativeChangePath)} --status DONE --summary "...". Use CLI fallback only if native subagents are unavailable.`
@@ -732,6 +749,7 @@ class TaskGraphExecutionService {
             generatedAt,
             changePath: resolvedChangePath,
             projectRoot,
+            loopPlan,
             projectSession,
             taskGraph: {
                 path: graphPath,
@@ -765,11 +783,67 @@ class TaskGraphExecutionService {
             dryRun: options.dryRun === true,
             taskId: selected?.taskId || null,
             dispatchId: selected?.id || null,
+            loopPlan,
             nativeAgent,
             launchCommands,
             blockers,
             warnings,
             nextInstruction,
+        };
+    }
+    /**
+     * Build the loop/agent-primitive plan for a goal|loop launch (Execution-Model Contracts 1–3).
+     * Controller-driven => produce instructions; cli-driven => provide a `claude -p`/`codex exec`
+     * dry-run preview. Never executes the agent and never emits `claude --goal`.
+     */
+    buildLaunchLoopPlan(input) {
+        const capability = new CapabilityProbeService_1.CapabilityProbeService().resolveHarnessCapability({ target: input.target, primitive: input.primitive });
+        const cliDriven = capability.fallbackMode === 'cli-driven';
+        const executionModel = cliDriven ? 'cli-driven' : 'controller-driven';
+        const isGoal = input.primitive === 'goal';
+        const mode = isGoal
+            ? (capability.nativeLoopCapability === 'supported' ? 'native-goal' : 'emulated-goal')
+            : 'emulated-loop';
+        const until = isGoal
+            ? (input.until && input.until.trim().length > 0
+                ? input.until.trim()
+                : `three-stage: run project tests -> ospec execute verify --status -> ospec verify ${this.quoteShellArg(input.relativeChangePath)}`)
+            : null;
+        const interval = !isGoal ? (input.interval || '10m') : null;
+        const maxIterations = typeof input.maxIterations === 'number' ? input.maxIterations : null;
+        // cli-driven preview uses the external agent CLI command form when the target has one.
+        const agentCliTarget = input.target === 'claude' ? 'claude' : input.target === 'codex' || input.target === 'gpt' ? 'codex' : null;
+        const cliCommandPreview = cliDriven && agentCliTarget
+            ? new AgentCliRunnerService_1.AgentCliRunnerService().buildCommand(agentCliTarget, input.launchPrompt).display
+            : null;
+        const instructions = [];
+        if (mode === 'native-goal') {
+            instructions.push(`Invoke the harness-native /goal primitive on dispatch packet for ${input.relativeChangePath}; run autonomously until: ${until}.`);
+            instructions.push('ospec produces this instruction only — the controller executes /goal and writes back completion + verification evidence.');
+        }
+        else if (mode === 'emulated-goal' && !cliDriven) {
+            instructions.push(`No confirmed native /goal for "${input.target}" — run emulated-goal: a verify-driven loop (act -> run tests -> record evidence -> ospec verify) until passing or ${maxIterations ?? 'the configured'} iterations.`);
+        }
+        else if (mode === 'emulated-goal' && cliDriven) {
+            instructions.push(`cli-driven emulated-goal: spawn the external command${cliCommandPreview ? ` (preview: ${cliCommandPreview})` : ' (deterministic project test/build commands)'} each round, then run the three-stage verify until passing.`);
+        }
+        else {
+            // emulated-loop
+            instructions.push(cliDriven
+                ? `cli-driven emulated-loop: ospec loop watch drives ${cliCommandPreview ? `\`${cliCommandPreview}\`` : 'deterministic commands'} every ${interval}.`
+                : `controller-driven emulated-loop (ControllerTickPlan): re-run ospec loop run --once on the controller's tick cadence (${interval}); no native /loop is assumed (capability-probed).`);
+        }
+        return {
+            primitive: input.primitive,
+            executionModel,
+            mode,
+            until,
+            maxIterations,
+            interval,
+            capability,
+            cliCommandPreview,
+            requiresControllerAction: !cliDriven,
+            instructions,
         };
     }
     async launchAndRun(changePath, options) {
@@ -7669,6 +7743,23 @@ class TaskGraphExecutionService {
                 ...artifact.nativeAgent.adapterPacket.controllerActions.map(item => `- ${item}`),
             ].join('\n')
             : '- Not available';
+        const loopPlanSection = artifact.loopPlan
+            ? [
+                `- Primitive: ${artifact.loopPlan.primitive}`,
+                `- Execution model: ${artifact.loopPlan.executionModel}`,
+                `- Mode: ${artifact.loopPlan.mode}`,
+                `- Controller action required: ${artifact.loopPlan.requiresControllerAction ? 'yes' : 'no'}`,
+                ...(artifact.loopPlan.until ? [`- Until: ${artifact.loopPlan.until}`] : []),
+                ...(artifact.loopPlan.interval ? [`- Interval: ${artifact.loopPlan.interval}`] : []),
+                ...(artifact.loopPlan.maxIterations !== null ? [`- Max iterations: ${artifact.loopPlan.maxIterations}`] : []),
+                `- Native loop capability: ${artifact.loopPlan.capability.nativeLoopCapability} (probe: ${artifact.loopPlan.capability.probeSource})`,
+                ...(artifact.loopPlan.cliCommandPreview ? [`- CLI command preview: \`${artifact.loopPlan.cliCommandPreview}\``] : []),
+                '',
+                '### Loop Instructions',
+                '',
+                ...artifact.loopPlan.instructions.map(item => `- ${item}`),
+            ].join('\n')
+            : '- Not requested (default subagent primitive).';
         return [
             `# Native Agent Launch Plan: ${artifact.feature}`,
             '',
@@ -7691,6 +7782,10 @@ class TaskGraphExecutionService {
             '## Target Tool Mapping',
             '',
             targetToolMapping,
+            '',
+            '## Loop / Agent Primitive Plan',
+            '',
+            loopPlanSection,
             '',
             '## Native Agent Dispatch',
             '',

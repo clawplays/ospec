@@ -1,4 +1,5 @@
 import { FileService } from './FileService';
+import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 export type TaskWorkerCapabilityTier = 'standard' | 'strong-reasoning' | 'specialist-review';
 export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
@@ -891,6 +892,24 @@ export interface TaskNativeAgentAdapterPacket {
     controllerActions: string[];
     toolMapping: TaskWorkerTargetToolMapping | null;
 }
+export type TaskLaunchExecutionMode = 'native-goal' | 'emulated-goal' | 'native-loop' | 'emulated-loop';
+/**
+ * Loop/agent-primitive plan attached to a launch when `--primitive goal|loop` is requested.
+ * Produces instructions (controller-driven) or an external CLI preview (cli-driven); ospec never
+ * executes the agent itself (Execution-Model Contract 1). Absent for the default `subagent` primitive.
+ */
+export interface TaskLaunchLoopPlan {
+    primitive: 'goal' | 'loop';
+    executionModel: 'controller-driven' | 'cli-driven';
+    mode: TaskLaunchExecutionMode;
+    until: string | null;
+    maxIterations: number | null;
+    interval: string | null;
+    capability: HarnessCapability;
+    cliCommandPreview: string | null;
+    requiresControllerAction: boolean;
+    instructions: string[];
+}
 export interface TaskWorkerLaunchPlanArtifact {
     version: string;
     feature: string;
@@ -900,6 +919,7 @@ export interface TaskWorkerLaunchPlanArtifact {
     generatedAt: string;
     changePath: string;
     projectRoot: string;
+    loopPlan?: TaskLaunchLoopPlan | null;
     projectSession: TaskBootstrapProjectSessionSnapshot;
     taskGraph: {
         path: string;
@@ -931,6 +951,7 @@ export interface TaskWorkerLaunchPlanResult {
     dryRun: boolean;
     taskId: string | null;
     dispatchId: string | null;
+    loopPlan: TaskLaunchLoopPlan | null;
     nativeAgent: TaskNativeAgentLaunchPlan | null;
     launchCommands: string[];
     blockers: string[];
@@ -1098,7 +1119,17 @@ export declare class TaskGraphExecutionService {
         taskId?: string;
         target?: TaskWorkerToolTarget;
         dryRun?: boolean;
+        primitive?: TaskAgentPrimitive | string;
+        until?: string;
+        maxIterations?: number;
+        interval?: string;
     }): Promise<TaskWorkerLaunchPlanResult>;
+    /**
+     * Build the loop/agent-primitive plan for a goal|loop launch (Execution-Model Contracts 1–3).
+     * Controller-driven => produce instructions; cli-driven => provide a `claude -p`/`codex exec`
+     * dry-run preview. Never executes the agent and never emits `claude --goal`.
+     */
+    private buildLaunchLoopPlan;
     launchAndRun(changePath: string, options: {
         taskId?: string;
         target?: TaskWorkerToolTarget;
