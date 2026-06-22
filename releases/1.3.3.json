@@ -1,0 +1,16 @@
+{
+  "title_suffix": "Brainstorms archive with their change, closeout stops asking about PR/merge strategy, and clearer brainstorm prompts",
+  "summary": "This patch release makes a change's brainstorm archive together with it even when the names only share a prefix, archives changes without asking about PR/merge/branch strategy (direct-closeout and manual merge are the defaults), and turns the brainstorm's advisory axes and questions into plain prompts instead of confusing empty checkboxes.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.2...1.3.3",
+  "improved": [
+    "ospec execute finish no longer forces PR/merge strategy choices: finish-pr-strategy and finish-merge-strategy are now optional with safe defaults (direct-closeout = archive locally with no PR, manual = the user decides the merge later). Closeout finalizes and archives directly; uncommitted change/OSpec files in the working tree no longer trigger a strategy prompt, and a PR is only opened when the user explicitly asks.",
+    "Brainstorm decision axes and questions are now plain discussion prompts instead of empty - [ ] checkboxes, so a resolved brainstorm no longer looks unfinished; the decision gate options remain checkboxes and mark the chosen option."
+  ],
+  "fixed": [
+    "Brainstorms now archive together with the change they belong to when their directory id matches the feature name or shares a hyphen-bounded prefix (for example feature iot-latest-data and brainstorm iot-latest-data-keyname), not only on an exact name match; unlinked exploration brainstorms still stay in place."
+  ],
+  "docs": [
+    "Documented the direct-closeout / manual-merge defaults and the do-not-ask-about-PR/merge-strategy rule in the ospec-change and ospec-goal skills.",
+    "Added release metadata for 1.3.3."
+  ]
+}

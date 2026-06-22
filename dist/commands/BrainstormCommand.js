@@ -212,7 +212,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         const c = (zh, en) => this.copy(lang, zh, en);
         const notSelected = c('尚未选择', 'not selected yet');
         const resolvedGate = (gate) => typeof gate.selectedOptionId === 'string' && gate.selectedOptionId.length > 0;
-        const axes = artifact.decisionAxes.map(axis => `- [ ] ${this.localizeAxis(lang, axis)}`).join('\n');
+        const axes = artifact.decisionAxes.map(axis => `- ${this.localizeAxis(lang, axis)}`).join('\n');
         const gates = artifact.decisionGates.length > 0
             ? artifact.decisionGates.map(gate => [
                 `### ${gate.id}`,
@@ -251,16 +251,16 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             `- ${c('方向', 'Direction')} B:`,
             `- ${c('方向', 'Direction')} C:`,
             '',
-            `## ${c('决策维度', 'Decision Axes')}`,
+            `## ${c('决策维度（讨论时权衡，不是勾选项）', 'Decision Axes (weigh during discussion; not a checklist)')}`,
             '',
             axes,
             '',
-            `## ${c('待解决的问题', 'Questions To Resolve')}`,
+            `## ${c('待解决的问题（讨论提示）', 'Questions To Resolve (discussion prompts)')}`,
             '',
-            c('- [ ] 这件事要有用，必须满足什么？', '- [ ] What must be true for this to be useful?'),
-            c('- [ ] 明确不做什么（范围外）？', '- [ ] What is explicitly out of scope?'),
-            c('- [ ] 可能影响哪些文件、模块、API 或用户路径？', '- [ ] Which files, modules, APIs, or user journeys are likely affected?'),
-            c('- [ ] 什么验证能证明这个方向是对的？', '- [ ] What verification would prove the direction is correct?'),
+            c('- 这件事要有用，必须满足什么？', '- What must be true for this to be useful?'),
+            c('- 明确不做什么（范围外）？', '- What is explicitly out of scope?'),
+            c('- 可能影响哪些文件、模块、API 或用户路径？', '- Which files, modules, APIs, or user journeys are likely affected?'),
+            c('- 什么验证能证明这个方向是对的？', '- What verification would prove the direction is correct?'),
             '',
             `## ${c('决策门', 'Decision Gates')}`,
             '',

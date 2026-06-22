@@ -717,7 +717,12 @@ class ProjectService {
             try {
                 const data = await this.fileService.readJSON(jsonPath);
                 const changeName = typeof data?.changeName === 'string' ? data.changeName.trim() : '';
-                linked = changeName === feature || (changeName.length === 0 && name === feature);
+                // Explicit link wins; otherwise match the brainstorm directory id to the feature,
+                // including a hyphen-bounded prefix relationship (e.g. feature "iot-latest-data"
+                // and brainstorm id "iot-latest-data-keyname", or vice versa).
+                linked = changeName === feature
+                    || name === feature
+                    || (changeName.length === 0 && (name.startsWith(`${feature}-`) || feature.startsWith(`${name}-`)));
             }
             catch {
                 linked = false;

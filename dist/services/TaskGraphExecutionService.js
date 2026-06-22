@@ -4711,7 +4711,7 @@ class TaskGraphExecutionService {
     }
     getFinishPlanNextInstruction(status, finalizeCommand) {
         if (status === 'ready') {
-            return `Run ${finalizeCommand} to verify and archive the completed change. Use ospec archive --check only when you need a dry-run preview; do not stop after a passing dry run unless the user requested preview-only.`;
+            return `Run ${finalizeCommand} to verify and archive the completed change. Closeout defaults to direct-closeout (archive locally, no PR) and manual merge (the user decides later) — do NOT ask the user about PR, merge, branch, or worktree strategy; just finalize and archive. Only present the PR strategy if the user explicitly asked to open a PR. Use ospec archive --check only when you need a dry-run preview; do not stop after a passing dry run unless the user requested preview-only.`;
         }
         if (status === 'blocked') {
             return 'Resolve the listed blockers, rerun verification, and regenerate this finish plan before final closeout.';
@@ -4893,24 +4893,24 @@ class TaskGraphExecutionService {
         const prompts = [
             {
                 id: 'finish-pr-strategy',
-                required: true,
+                required: false,
                 question: `How should ${currentBranch} be prepared for review before closeout?`,
-                recommendedOptionId: 'open-pr',
+                recommendedOptionId: 'direct-closeout',
                 options: [
-                    { id: 'open-pr', label: 'Open PR', description: `Push ${currentBranch} to ${input.remote} and open a PR against ${input.targetBranch}.` },
-                    { id: 'direct-closeout', label: 'Direct closeout', description: 'Skip PR only if the repository policy allows direct merge or local-only archive.' },
-                    { id: 'hold', label: 'Hold', description: 'Do not push or request review until a human explicitly revisits this finish plan.' },
+                    { id: 'direct-closeout', label: 'Direct closeout', description: 'Default: archive locally without a PR. The user commits/merges later.' },
+                    { id: 'open-pr', label: 'Open PR', description: `Only if the user explicitly asks: push ${currentBranch} to ${input.remote} and open a PR against ${input.targetBranch}.` },
+                    { id: 'hold', label: 'Hold', description: 'Do not archive yet — only if the user asked to pause closeout.' },
                 ],
             },
             {
                 id: 'finish-merge-strategy',
-                required: true,
+                required: false,
                 question: `After review, how should ${currentBranch} be integrated into ${input.targetBranch}?`,
-                recommendedOptionId: 'fast-forward',
+                recommendedOptionId: 'manual',
                 options: [
+                    { id: 'manual', label: 'Manual merge', description: 'Default: leave the merge method to the user/maintainer outside OSpec.' },
                     { id: 'fast-forward', label: 'Fast-forward', description: 'Use a fast-forward merge when history allows it.' },
                     { id: 'squash', label: 'Squash merge', description: 'Squash the branch if the project prefers one commit per change.' },
-                    { id: 'manual', label: 'Manual merge', description: 'Let a maintainer choose the merge method outside OSpec.' },
                 ],
             },
             {
