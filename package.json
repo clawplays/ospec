@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Official OSpec CLI package for spec-driven development (SDD) and document-driven development in AI coding agent and CLI workflows.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

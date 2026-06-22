@@ -61,6 +61,7 @@ tags: [ai, protocol, ospec]
 - focused test 実行後、`ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` で `artifacts/agents/tdd-evidence.json` を記録する。red は通常、期待どおり失敗する test を記録し、green/refactor は passing result を記録する
 - fresh project verification commands を実行した後、`ospec execute verify [changes/active/<change>] --command "..." --status PASSED` で `artifacts/agents/verification-evidence.json` を記録する。chat summary だけで完了を主張しない
 - task graph、execution session、review artifacts、debug evidence、verification checklist を手動編集した後は、`ospec execute sync [changes/active/<change>]` で `artifacts/agents/worker-status.md` を再構築する
+- トークン節約（どの手順も変えない）：`ospec execute …` に `--brief` を付けて完全なレポートではなく簡潔な要約を読み、毎ターン `task-graph.json` / `worker-status.md` / `launch-plan.md` 全体を読み直す代わりに `ospec execute status --brief` で各ステップを駆動する——artifact は完全な形でディスクに書かれるので、詳細が必要なときだけ開く
 - goal では `tasks.md` は `artifacts/agents/task-graph.json` から導く。tasks が既にあり上流文書がテンプレートのままなら、先に上流文書を更新してから tasks を整合させる。classic change では `tasks.md` を `proposal.md` と実装範囲から直接導く
 - goal では `artifacts/agents/task-graph.json` に未解決の task 状態、無効な依存関係、不足した実行詳細、またはトップレベル `status` が `completed` でない状態がある場合は archive しない
 - 各 task-level spec review をその task の quality review より先に完了し、final `artifacts/reviews/spec-compliance.md` を final `artifacts/reviews/code-quality.md` より先に完了する。未解決の task-level または final review decision は archive をブロックする

@@ -1,7 +1,9 @@
 import { TaskDocumentReviewStage, TaskHandoffTarget, TaskWorkerToolTarget, TaskUserDecisionOption } from '../services/TaskGraphExecutionService';
 import { BaseCommand } from './BaseCommand';
 export declare class ExecuteCommand extends BaseCommand {
-    execute(action?: string, ...args: string[]): Promise<void>;
+    /** When true, console reports print a token-lean summary (artifacts are still written in full). */
+    private brief;
+    execute(action?: string, ...rawArgs: string[]): Promise<void>;
     private status;
     private bootstrap;
     private handoff;

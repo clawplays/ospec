@@ -41,13 +41,22 @@ const ProjectLayout_1 = require("../utils/ProjectLayout");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
 const BaseCommand_1 = require("./BaseCommand");
 class ExecuteCommand extends BaseCommand_1.BaseCommand {
-    async execute(action = 'status', ...args) {
+    constructor() {
+        super(...arguments);
+        /** When true, console reports print a token-lean summary (artifacts are still written in full). */
+        this.brief = false;
+    }
+    async execute(action = 'status', ...rawArgs) {
         try {
             const normalizedAction = action || 'status';
             if ((0, subcommandHelp_1.isHelpAction)(normalizedAction)) {
                 this.info((0, subcommandHelp_1.getExecuteHelpText)());
                 return;
             }
+            // `--brief` is a global, output-only flag: strip it before per-action parsing so it never
+            // changes command behavior or the artifacts written — only the console verbosity.
+            this.brief = rawArgs.includes('--brief');
+            const args = rawArgs.filter(arg => arg !== '--brief');
             switch (normalizedAction) {
                 case 'bootstrap':
                     await this.bootstrap(args[0]);
@@ -387,6 +396,16 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         return (0, ProjectLayout_1.resolveManagedPath)(resolvedCandidatePath, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}/${activeNames[0]}`, projectConfig);
     }
     printStatus(report) {
+        if (this.brief) {
+            const d = report.dispatchableTasks.map(task => task.id).join(', ') || 'none';
+            console.log(`graph=${report.graphStatus} tasks=${report.taskCount} ready=${report.readyTasks.length} dispatchable=${report.dispatchableTasks.length} running=${report.runningTasks.length} blocked=${report.blockedTasks.length} completed=${report.completedTasks.length}`);
+            if (report.decisions) {
+                console.log(`pendingRequiredDecisions=${report.decisions.pendingRequired}`);
+            }
+            console.log(`dispatchable: ${d}`);
+            console.log(`next: ${report.nextInstruction}`);
+            return;
+        }
         console.log('\nTask Graph Execution');
         console.log('====================\n');
         console.log(`Change: ${report.feature}`);
@@ -443,6 +462,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
     }
     printBootstrap(result) {
+        if (this.brief) {
+            console.log(`status=${result.status}${result.blockers.length > 0 ? ` blockers=${result.blockers.length}` : ''}`);
+            for (const blocker of result.blockers) {
+                console.log(`- ${blocker}`);
+            }
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nChange Bootstrap Snapshot');
         console.log('=========================\n');
         console.log(`Change path: ${result.changePath}`);
@@ -511,6 +538,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printNext(report) {
+        if (this.brief) {
+            for (const task of report.dispatchableTasks) {
+                console.log(`- ${task.id} [${task.workerRole}]${task.workerProfile ? ` target=${task.workerProfile.recommendedTarget}` : ''} parallel=${task.parallelizable ? 'yes' : 'no'}`);
+            }
+            console.log(`next: ${report.nextInstruction}`);
+            return;
+        }
         console.log('\nNext Task Dispatch');
         console.log('==================\n');
         console.log(`Change: ${report.feature}`);
@@ -539,6 +573,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printDispatch(result) {
+        if (this.brief) {
+            console.log(`dispatched=${result.dispatches.length}${result.dispatchLimit !== null ? ` limit=${result.dispatchLimit}` : ''}`);
+            for (const dispatch of result.dispatches) {
+                console.log(`- ${dispatch.taskId} [${dispatch.workerRole}] packet=${dispatch.packetPath}`);
+            }
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nAgent Dispatch Packets');
         console.log('======================\n');
         console.log(`Change path: ${result.changePath}`);
@@ -578,6 +620,18 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printLaunch(result) {
+        if (this.brief) {
+            console.log(`status=${result.status} target=${result.target}${result.taskId ? ` task=${result.taskId}` : ''}${result.dryRun ? ' dry-run' : ''}`);
+            if (result.loopPlan) {
+                console.log(`loop: primitive=${result.loopPlan.primitive} mode=${result.loopPlan.mode} model=${result.loopPlan.executionModel} controllerAction=${result.loopPlan.requiresControllerAction ? 'yes' : 'no'}`);
+            }
+            if (result.nativeAgent) {
+                console.log(`agent: ${result.nativeAgent.mechanism}`);
+            }
+            console.log(`report=${result.reportPath}`);
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nNative Agent Launch Plan');
         console.log('========================\n');
         console.log(`Change path: ${result.changePath}`);
@@ -738,6 +792,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printWorkspace(result) {
+        if (this.brief) {
+            console.log(`status=${result.status}${result.blockers.length > 0 ? ` blockers=${result.blockers.length}` : ''}`);
+            for (const blocker of result.blockers) {
+                console.log(`- ${blocker}`);
+            }
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nWorkspace Safety Check');
         console.log('======================\n');
         console.log(`Change path: ${result.changePath}`);
@@ -827,6 +889,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printFinish(result) {
+        if (this.brief) {
+            console.log(`status=${result.status} target=${result.targetBranch} remote=${result.remote}`);
+            if (result.blockers.length > 0) {
+                console.log(`blockers: ${result.blockers.join('; ')}`);
+            }
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nFinish Preparation Plan');
         console.log('=======================\n');
         console.log(`Change path: ${result.changePath}`);
@@ -898,6 +968,12 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printReview(result) {
+        if (this.brief) {
+            console.log(`stage=${result.dispatch.stage}${result.dispatch.taskId ? ` task=${result.dispatch.taskId}` : ''} reviewer=${result.dispatch.reviewerRole}`);
+            console.log(`artifact=${result.dispatch.reviewArtifactPath}`);
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nReview Dispatch Packet');
         console.log('======================\n');
         console.log(`Change path: ${result.changePath}`);
@@ -1056,6 +1132,17 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printWorkflowRoute(result) {
+        if (this.brief) {
+            console.log(`status=${result.status}`);
+            for (const item of result.recommendations) {
+                console.log(`${item.priority}. ${item.action}${item.command ? `: ${item.command}` : ''}`);
+            }
+            for (const blocker of result.blockers) {
+                console.log(`blocker: ${blocker}`);
+            }
+            console.log(`next: ${result.nextInstruction}`);
+            return;
+        }
         console.log('\nWorkflow Route');
         console.log('==============\n');
         console.log(`Change path: ${result.changePath}`);

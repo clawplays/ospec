@@ -98,9 +98,12 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 
 ## Commands
 
+> Token economy: pass `--brief` on `ospec execute …` commands to get a token-lean summary (status, key fields, and the next instruction) instead of the full report — the artifacts are still written in full, so read them only when you need detail. Drive each step from `ospec execute status --brief` rather than re-reading the full `task-graph.json` / `worker-status.md` / `launch-plan.md` every turn.
+
 ```bash
 ospec status [path]
 ospec goal <goal-name> [path] [--flags flag1,flag2] [--level L1|L2|L3]
+ospec execute status [changes/active/<goal>] --brief
 ospec loop status [changes/active/<goal>]
 ospec loop run [changes/active/<goal>] [--once]
 ospec loop watch [changes/active/<goal>] [--interval 10m] [--max-ticks N]

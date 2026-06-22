@@ -1,0 +1,16 @@
+{
+  "title_suffix": "Token-lean goal runs: --brief execute reports and read-on-demand guidance",
+  "summary": "This patch release cuts the tokens a goal run spends on the controller layer without changing any step, artifact, gate, or safety level. Adding --brief to ospec execute commands reduces the console report the controller reads by about 73% on average (measured across status/next/route/bootstrap/workspace/dispatch/launch: 5,325 -> 1,431 characters), and the AI guidance now drives each step from a brief status summary instead of re-reading the full task-graph.json / worker-status.md / launch-plan.md every turn. The full artifacts are still written to disk; only the console verbosity and redundant re-reads shrink.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.3...1.3.4",
+  "new": [
+    "Added --brief to ospec execute commands (status, next, route, bootstrap, workspace, dispatch, launch, review, finish). It is an output-only flag that prints a token-lean summary (status + key fields + next instruction); it never changes command behavior, and the full report artifacts are still written. Measured console reduction: ~73% on average (status 75%, bootstrap 88%, workspace 85%)."
+  ],
+  "improved": [
+    "The ospec-goal skill and the AI guidance (en-US, zh-CN, ja-JP, ar) now tell the controller to pass --brief and drive each step from ospec execute status --brief instead of re-reading the full task-graph.json, worker-status.md, or launch-plan.md on every turn — the dominant repeated cost of a multi-step goal — while reading the full artifacts only when detail is needed.",
+    "Net effect: a goal run reads materially fewer tokens (the execute console output drops ~73% and the per-turn artifact re-reads are largely avoided) with zero change to the workflow logic, produced artifacts, gates, decision gates, or safety levels."
+  ],
+  "docs": [
+    "Documented the --brief flag and the read-the-brief-status-first rule in the ospec-goal skill and the AI guidance across en-US, zh-CN, ja-JP, and ar.",
+    "Added release metadata for 1.3.4."
+  ]
+}
