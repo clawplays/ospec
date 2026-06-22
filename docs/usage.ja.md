@@ -196,7 +196,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.3.1
+npm install -g @clawplays/ospec-cli@1.3.2
 ospec update [path]
 ```
 

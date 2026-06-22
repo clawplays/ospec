@@ -1,0 +1,19 @@
+{
+  "title_suffix": "Localized brainstorms, user-answered decision gates, and level-gated auto-advance",
+  "summary": "This patch release makes brainstorms generate in the project's document language, stops the AI from auto-selecting the recommended option, and gives the L1/L2/L3 safety level real teeth: at L1/L2 the loop hard-blocks while a required user decision is pending; only L3 may auto-advance within its allowlist.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.1...1.3.2",
+  "new": [
+    "ospec loop run now enforces the safety level: at L1/L2 it hard-blocks while any required user decision is pending and tells the controller to present each one to the user and record the answer with ospec execute decision --select; only L3 may auto-advance within its allowlist."
+  ],
+  "improved": [
+    "Decision gates and brainstorm options must be answered by the user: the change and goal skills plus the AI guidance now forbid auto-selecting the recommended option or self-resolving a gate — present every gate via the capability ladder and wait for the user's actual choice (required gates block implementation and dispatch).",
+    "Added a Language section to the ospec-goal skill and a do-not-mix-languages rule across the AI guidance so every generated change document and brainstorm is written in one project document language."
+  ],
+  "fixed": [
+    "Brainstorm artifacts (brainstorm.md, decision gates, the visual companion, and the follow-up instruction) are now generated in the project's document language instead of always English, so a Chinese project no longer mixes a Chinese change with an English brainstorm."
+  ],
+  "docs": [
+    "Documented the level-to-asking binding and the never-auto-select-recommended rule in the ospec-change and ospec-goal skills and the AI guidance across en-US, zh-CN, ja-JP, and ar.",
+    "Added release metadata for 1.3.2."
+  ]
+}

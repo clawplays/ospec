@@ -108,6 +108,8 @@ export declare class LoopService {
     setLevel(changePath: string, level: LoopSafetyLevel): Promise<LoopConfig>;
     pause(changePath: string): Promise<LoopState>;
     resume(changePath: string): Promise<LoopState>;
+    /** Count required user decisions still PENDING in the change's decisions index (L-level binding). */
+    private countPendingRequiredDecisions;
     private appendRunLog;
     /**
      * Run a single session-bound tick (two-phase, controller-driven).

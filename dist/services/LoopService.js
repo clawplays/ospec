@@ -153,6 +153,21 @@ class LoopService {
         await this.writeState(changePath, state);
         return state;
     }
+    /** Count required user decisions still PENDING in the change's decisions index (L-level binding). */
+    async countPendingRequiredDecisions(changePath) {
+        const indexPath = path.join(changePath, 'artifacts', 'agents', 'decisions', 'index.json');
+        if (!(await this.fileService.exists(indexPath))) {
+            return 0;
+        }
+        try {
+            const index = await this.fileService.readJSON(indexPath);
+            const decisions = Array.isArray(index?.decisions) ? index.decisions : [];
+            return decisions.filter(decision => decision?.required === true && String(decision?.status || '').toUpperCase() === 'PENDING').length;
+        }
+        catch {
+            return 0;
+        }
+    }
     async appendRunLog(changePath, entry) {
         const current = (await this.fileService.exists(this.runLogPath(changePath)))
             ? await this.fileService.readFile(this.runLogPath(changePath))
@@ -205,6 +220,18 @@ class LoopService {
                 await this.writeState(resolved, state);
                 await this.appendRunLog(resolved, { ts: now, iteration: state.iteration, trigger, tokensEst: null, exitCode: null, verifyPassed: false, summary: 'Observed pending action; verification not yet satisfied.', costToDate: null });
                 return this.result(resolved, state, state.pendingControllerAction, false, null, `Awaiting evidence for ${state.pendingControllerAction.actionId}. Controller should complete the action and record verification, then re-run "ospec loop run --once".`);
+            }
+        }
+        // L-level binding: at L1/L2 the loop must not auto-advance while required user decisions are
+        // unanswered — present them to the user first. Only L3 may auto-advance within its allowlist.
+        if (config.level !== 'L3') {
+            const pendingRequired = await this.countPendingRequiredDecisions(resolved);
+            if (pendingRequired > 0) {
+                state.currentStep = 'gate';
+                state.lastTickTs = now;
+                await this.writeState(resolved, state);
+                await this.appendRunLog(resolved, { ts: now, iteration: state.iteration, trigger, tokensEst: null, exitCode: null, verifyPassed, summary: `Blocked at ${config.level}: ${pendingRequired} required user decision(s) pending.`, costToDate: null });
+                return this.result(resolved, state, state.pendingControllerAction, false, `${pendingRequired} pending required decision(s)`, `Loop is at ${config.level}: present the ${pendingRequired} pending required user decision(s) to the user (do not auto-select the recommended option) and record each answer with "ospec execute decision ${changePath} --id <id> --select <option-id>" before the loop proceeds. Only L3 may auto-advance within its allowlist.`);
             }
         }
         // Phase 1 — plan/act. Produce a controller instruction; record a pending action.

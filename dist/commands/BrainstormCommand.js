@@ -146,15 +146,17 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         const reportPath = path.join(artifactDir, 'brainstorm.md');
         const visualPath = args.visual ? path.join(artifactDir, 'companion.html') : null;
         await services_1.services.fileService.ensureDir(artifactDir);
-        const decisionGates = this.buildDecisionGates(args, null);
-        const askLadder = 'Present each decision gate to the user using your harness\'s best interactive mechanism — a native question UI (Claude Code AskUserQuestion, Gemini ask_user) if available, otherwise your plan/approval UI (Codex Plan mode) if available, otherwise plain chat text — and ask one at a time.';
-        const recordHint = `After the user answers, record each choice with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Do not leave this brainstorm as an unanswered template.`;
+        const language = await this.resolveBrainstormLanguage(projectPath);
+        const decisionGates = this.buildDecisionGates(args, null, language);
+        const askLadder = this.copy(language, '把每个决策门用你 harness 最好的交互方式呈现给用户——有原生问答 UI（Claude Code AskUserQuestion、Gemini ask_user）就用它，否则用 Plan/审批 UI（Codex Plan 模式），都没有就用纯聊天文字——一次问一个。**绝不要自动选"推荐项"：推荐只是给用户看的提示，必须等用户真正回答。**', 'Present each decision gate to the user with your harness\'s best interactive mechanism — a native question UI (Claude Code AskUserQuestion, Gemini ask_user) if available, otherwise your plan/approval UI (Codex Plan mode), otherwise plain chat text — and ask one at a time. NEVER auto-select the recommended option: "recommended" is only a hint to show the user; you must wait for the user\'s actual answer.');
+        const recordHint = this.copy(language, `用户回答后，用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> 记录每个选择。required 决策门未回答前，不要开始实现或派发。不要把这个 brainstorm 留成没答复的空模板。`, `After the user answers, record each choice with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Do not implement or dispatch while a required gate is unanswered. Do not leave this brainstorm as an unanswered template.`);
         const followUp = args.changeName
-            ? `Then create the change with ospec new ${args.changeName} ${projectPath} and fold the resolved brainstorm into proposal.md and design.md.`
-            : 'Then choose a change name from the resolved direction and run ospec new <change-name>.';
+            ? this.copy(language, `然后用 ospec new ${args.changeName} ${projectPath} 创建 change，并把已解决的 brainstorm 融入 proposal.md 和 design.md。`, `Then create the change with ospec new ${args.changeName} ${projectPath} and fold the resolved brainstorm into proposal.md and design.md.`)
+            : this.copy(language, '然后从已确定的方向选一个 change 名字，运行 ospec new <change-name>。', 'Then choose a change name from the resolved direction and run ospec new <change-name>.');
         const artifact = {
             version: '1.0',
             status: 'open',
+            documentLanguage: language,
             topic: args.topic,
             changeName: args.changeName || null,
             createdAt: now,
@@ -175,13 +177,13 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         let decisionGateReports = [];
         if (args.decisionGates) {
             const changePath = await this.resolveDecisionGateChangePath(projectPath, args.changeName);
-            artifact.decisionGates = this.buildDecisionGates(args, changePath);
+            artifact.decisionGates = this.buildDecisionGates(args, changePath, language);
             if (changePath) {
                 decisionGateReports = await this.writeDecisionGates(changePath, artifact.decisionGates);
-                artifact.nextInstruction = `${askLadder} Then record each answer with ospec execute decision ${changePath} --id <gate-id> --select <option-id> (and mirror it into this brainstorm with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>). Do not dispatch until the required gates are answered.`;
+                artifact.nextInstruction = `${askLadder} ${this.copy(language, `然后用 ospec execute decision ${changePath} --id <gate-id> --select <option-id> 记录每个答复（并用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> 同步进本 brainstorm）。required 决策门回答前不要派发。`, `Then record each answer with ospec execute decision ${changePath} --id <gate-id> --select <option-id> (and mirror it into this brainstorm with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>). Do not dispatch until the required gates are answered.`)}`;
             }
             else {
-                artifact.nextInstruction = `${askLadder} Then record each answer with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Create or select the change, then re-run the listed ospec execute decision commands before dispatch.`;
+                artifact.nextInstruction = `${askLadder} ${this.copy(language, `然后用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> 记录每个答复。创建或选定 change，再在派发前运行列出的 ospec execute decision 命令。`, `Then record each answer with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Create or select the change, then re-run the listed ospec execute decision commands before dispatch.`)}`;
             }
         }
         await services_1.services.fileService.writeJSON(artifactPath, artifact);
@@ -206,73 +208,79 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         }
     }
     renderBrainstormReport(artifact) {
+        const lang = artifact.documentLanguage || 'en-US';
+        const c = (zh, en) => this.copy(lang, zh, en);
+        const notSelected = c('尚未选择', 'not selected yet');
         const resolvedGate = (gate) => typeof gate.selectedOptionId === 'string' && gate.selectedOptionId.length > 0;
-        const axes = artifact.decisionAxes.map(axis => `- [ ] ${axis}`).join('\n');
+        const axes = artifact.decisionAxes.map(axis => `- [ ] ${this.localizeAxis(lang, axis)}`).join('\n');
         const gates = artifact.decisionGates.length > 0
             ? artifact.decisionGates.map(gate => [
                 `### ${gate.id}`,
                 '',
-                `- Required: ${gate.required ? 'yes' : 'no'}`,
-                `- Question: ${gate.question}`,
-                `- Recommended option: ${gate.recommendedOptionId}`,
-                `- Selected option: ${gate.selectedOptionId || 'not selected yet'}`,
-                ...(gate.note ? [`- Note: ${gate.note}`] : []),
-                `- Report: ${gate.reportPath || 'not written yet'}`,
+                `- ${c('必答', 'Required')}: ${gate.required ? c('是', 'yes') : c('否', 'no')}`,
+                `- ${c('问题', 'Question')}: ${gate.question}`,
+                `- ${c('推荐项', 'Recommended option')}: ${gate.recommendedOptionId}`,
+                `- ${c('用户已选', 'Selected option')}: ${gate.selectedOptionId || notSelected}`,
+                ...(gate.note ? [`- ${c('备注', 'Note')}: ${gate.note}`] : []),
+                `- ${c('报告', 'Report')}: ${gate.reportPath || c('尚未写入', 'not written yet')}`,
                 '',
-                'Options:',
+                `${c('选项', 'Options')}:`,
                 ...gate.options.map(option => `- [${option.id === gate.selectedOptionId ? 'x' : ' '}] ${option.id}: ${option.label} - ${option.description}`),
                 '',
-                'Command:',
+                `${c('命令', 'Command')}:`,
                 '',
                 `\`${gate.command}\``,
             ].join('\n')).join('\n\n')
-            : '- None';
+            : c('- 无', '- None');
         const requiredGates = artifact.decisionGates.filter(gate => gate.required);
         const status = artifact.status || (requiredGates.length > 0 && requiredGates.every(resolvedGate) ? 'resolved' : 'open');
         return [
-            `# Brainstorm: ${artifact.topic}`,
+            `# ${c('头脑风暴', 'Brainstorm')}: ${artifact.topic}`,
             '',
-            `- Status: ${status}`,
-            `- Created at: ${artifact.createdAt}`,
-            `- Suggested change: ${artifact.changeName || 'not selected yet'}`,
+            `- ${c('状态', 'Status')}: ${status}`,
+            `- ${c('创建于', 'Created at')}: ${artifact.createdAt}`,
+            `- ${c('建议的 change', 'Suggested change')}: ${artifact.changeName || notSelected}`,
             '',
-            '## Problem Statement',
+            `## ${c('问题陈述', 'Problem Statement')}`,
             '',
             artifact.topic,
             '',
-            '## Candidate Directions',
+            `## ${c('候选方向', 'Candidate Directions')}`,
             '',
-            '- Direction A:',
-            '- Direction B:',
-            '- Direction C:',
+            `- ${c('方向', 'Direction')} A:`,
+            `- ${c('方向', 'Direction')} B:`,
+            `- ${c('方向', 'Direction')} C:`,
             '',
-            '## Decision Axes',
+            `## ${c('决策维度', 'Decision Axes')}`,
             '',
             axes,
             '',
-            '## Questions To Resolve',
+            `## ${c('待解决的问题', 'Questions To Resolve')}`,
             '',
-            '- [ ] What must be true for this to be useful?',
-            '- [ ] What is explicitly out of scope?',
-            '- [ ] Which files, modules, APIs, or user journeys are likely affected?',
-            '- [ ] What verification would prove the direction is correct?',
+            c('- [ ] 这件事要有用，必须满足什么？', '- [ ] What must be true for this to be useful?'),
+            c('- [ ] 明确不做什么（范围外）？', '- [ ] What is explicitly out of scope?'),
+            c('- [ ] 可能影响哪些文件、模块、API 或用户路径？', '- [ ] Which files, modules, APIs, or user journeys are likely affected?'),
+            c('- [ ] 什么验证能证明这个方向是对的？', '- [ ] What verification would prove the direction is correct?'),
             '',
-            '## Decision Gates',
+            `## ${c('决策门', 'Decision Gates')}`,
             '',
             gates,
             '',
-            '## Recommended OSpec Follow-Up',
+            `## ${c('OSpec 后续建议', 'Recommended OSpec Follow-Up')}`,
             '',
             artifact.nextInstruction,
             '',
         ].join('\n');
     }
     renderVisualCompanion(artifact) {
+        const lang = artifact.documentLanguage || 'en-US';
+        const cardBody = this.copy(lang, '记录该维度的选项、取舍、风险与证据。', 'Capture options, tradeoffs, risks, and evidence for this axis.');
+        const intro = this.copy(lang, 'OSpec 可视化头脑风暴伴侣', 'OSpec visual brainstorming companion');
         const cards = artifact.decisionAxes
-            .map(axis => `<section class="card"><h2>${this.escapeHtml(axis)}</h2><p>Capture options, tradeoffs, risks, and evidence for this axis.</p></section>`)
+            .map(axis => `<section class="card"><h2>${this.escapeHtml(this.localizeAxis(lang, axis))}</h2><p>${cardBody}</p></section>`)
             .join('\n');
         return `<!doctype html>
-<html lang="en">
+<html lang="${lang === 'zh-CN' ? 'zh-CN' : 'en'}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -288,7 +296,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
 </head>
 <body>
   <main>
-    <p>OSpec visual brainstorming companion</p>
+    <p>${intro}</p>
     <h1>${this.escapeHtml(artifact.topic)}</h1>
     <div class="grid">${cards}</div>
     <div class="next">${this.escapeHtml(artifact.nextInstruction)}</div>
@@ -310,6 +318,26 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '')
             .slice(0, 80) || `brainstorm-${Date.now()}`;
+    }
+    async resolveBrainstormLanguage(projectPath) {
+        const config = await services_1.services.configManager.loadConfig(projectPath).catch(() => null);
+        const lang = config?.documentLanguage;
+        return lang === 'zh-CN' || lang === 'ja-JP' || lang === 'ar' || lang === 'en-US' ? lang : 'en-US';
+    }
+    /** Body-content localization mirrors OSpec change templates: zh-CN vs en-US, with ja-JP/ar on en. */
+    copy(language, zh, en) {
+        return language === 'zh-CN' ? zh : en;
+    }
+    localizeAxis(language, axis) {
+        const map = {
+            'user value': '用户价值',
+            'scope boundaries': '范围边界',
+            'architecture impact': '架构影响',
+            'data and API impact': '数据与 API 影响',
+            'risk and verification': '风险与验证',
+            'parallel execution candidates': '可并行执行的候选',
+        };
+        return language === 'zh-CN' ? (map[axis] || axis) : axis;
     }
     printResult(result) {
         console.log('\nOSpec Brainstorm');
@@ -448,40 +476,41 @@ Brainstorm Commands:
   ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--note "..."]
 `);
     }
-    buildDecisionGates(args, changePath) {
+    buildDecisionGates(args, changePath, language = 'en-US') {
         const changeArg = changePath ? this.quoteCommandArg(changePath) : '[change-path]';
+        const c = (zh, en) => this.copy(language, zh, en);
         const gates = [
             {
                 id: 'brainstorm-direction',
                 required: true,
-                question: `Which direction should the change pursue first for: ${args.topic}`,
+                question: c(`这个 change 应该优先走哪个方向：${args.topic}`, `Which direction should the change pursue first for: ${args.topic}`),
                 recommendedOptionId: 'smallest-scope',
                 options: [
-                    { id: 'smallest-scope', label: 'Smallest scope', description: 'Choose the narrowest direction that proves user value.' },
-                    { id: 'architecture-first', label: 'Architecture first', description: 'Resolve architecture impact before task dispatch.' },
-                    { id: 'explore-alternatives', label: 'Explore alternatives', description: 'Hold implementation until competing directions are compared.' },
+                    { id: 'smallest-scope', label: c('最小范围', 'Smallest scope'), description: c('选能验证用户价值的最窄方向。', 'Choose the narrowest direction that proves user value.') },
+                    { id: 'architecture-first', label: c('架构优先', 'Architecture first'), description: c('在派发任务前先解决架构影响。', 'Resolve architecture impact before task dispatch.') },
+                    { id: 'explore-alternatives', label: c('探索备选', 'Explore alternatives'), description: c('在对比完竞争方向前先不实现。', 'Hold implementation until competing directions are compared.') },
                 ],
             },
             {
                 id: 'brainstorm-scope',
                 required: true,
-                question: 'Which scope boundary should be enforced before implementation?',
+                question: c('实现前应该锁定哪个范围边界？', 'Which scope boundary should be enforced before implementation?'),
                 recommendedOptionId: 'narrow',
                 options: [
-                    { id: 'narrow', label: 'Narrow', description: 'Implement only the core behavior required for this change.' },
-                    { id: 'expanded', label: 'Expanded', description: 'Include adjacent workflow polish if it is low risk.' },
-                    { id: 'split', label: 'Split', description: 'Split follow-up work into another change before dispatch.' },
+                    { id: 'narrow', label: c('收窄', 'Narrow'), description: c('只实现这个 change 必需的核心行为。', 'Implement only the core behavior required for this change.') },
+                    { id: 'expanded', label: c('扩展', 'Expanded'), description: c('在低风险时附带相邻的流程打磨。', 'Include adjacent workflow polish if it is low risk.') },
+                    { id: 'split', label: c('拆分', 'Split'), description: c('派发前把后续工作拆成另一个 change。', 'Split follow-up work into another change before dispatch.') },
                 ],
             },
             {
                 id: 'brainstorm-verification-risk',
                 required: false,
-                question: 'How should verification risk be handled for this brainstorm?',
+                question: c('这个 brainstorm 的验证风险该怎么处理？', 'How should verification risk be handled for this brainstorm?'),
                 recommendedOptionId: 'standard',
                 options: [
-                    { id: 'standard', label: 'Standard', description: 'Use the normal verification commands from implementation-plan.md.' },
-                    { id: 'extra-evidence', label: 'Extra evidence', description: 'Require additional debug, TDD, or checkpoint evidence before finish.' },
-                    { id: 'block-until-tooling', label: 'Block until tooling', description: 'Do not dispatch until missing verification tooling is available.' },
+                    { id: 'standard', label: c('标准', 'Standard'), description: c('用 implementation-plan.md 里的常规验证命令。', 'Use the normal verification commands from implementation-plan.md.') },
+                    { id: 'extra-evidence', label: c('额外证据', 'Extra evidence'), description: c('在 finish 前要求额外的 debug、TDD 或 checkpoint 证据。', 'Require additional debug, TDD, or checkpoint evidence before finish.') },
+                    { id: 'block-until-tooling', label: c('阻塞至工具就绪', 'Block until tooling'), description: c('缺失的验证工具就位前不要派发。', 'Do not dispatch until missing verification tooling is available.') },
                 ],
             },
         ];

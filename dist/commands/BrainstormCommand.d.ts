@@ -16,6 +16,10 @@ export declare class BrainstormCommand extends BaseCommand {
     private renderVisualCompanion;
     private escapeHtml;
     private toFileSafeId;
+    private resolveBrainstormLanguage;
+    /** Body-content localization mirrors OSpec change templates: zh-CN vs en-US, with ja-JP/ar on en. */
+    private copy;
+    private localizeAxis;
     private printResult;
     private parseResolveArgs;
     private resolve;

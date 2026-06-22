@@ -36,13 +36,14 @@ Use `ospec-goal` instead when the work needs design docs, implementation plannin
 
 ## Language
 
-- Follow the project-adopted document language from managed `for-ai/` guidance and existing change docs.
+- Follow the project-adopted document language from managed `for-ai/` guidance, `.skillrc` `documentLanguage`, and existing change docs.
+- Write every change document you author (`proposal.md`, `tasks.md`, `verification.md`, `review.md`, and brainstorm content) in that one language. Do not mix Chinese and English within a change.
 - Keep Chinese projects in Chinese unless the repo explicitly adopts English.
 
 ## Visibility & Decisions
 
 - `Announce-Before-Act`: never run the change flow silently. Announce in one line which skill you are using (`ospec-change`) and the current stage, which `ospec` command you are about to run and the artifact it writes, and which gate is blocking when progress stops.
-- `Brainstorm-First`: before implementing, confirm scope and acceptance with the user when anything is ambiguous, and ask one question at a time instead of silently assuming direction, API, UI, risk, or scope. Record the agreed scope in `proposal.md` rather than guessing. **Present each open decision using the best interactive mechanism your harness has — a native question UI (Claude Code `AskUserQuestion`, Gemini `ask_user`) if available, otherwise your plan/approval UI (Codex Plan mode) if available, otherwise plain chat text — you always ask the user, only the presentation differs.** When you run `ospec brainstorm`, do not leave it as an unanswered template: ask the user the decision gates and record each answer with `ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id>` so the brainstorm has a result.
+- `Brainstorm-First`: before implementing, confirm scope and acceptance with the user when anything is ambiguous, and ask one question at a time instead of silently assuming direction, API, UI, risk, or scope. Record the agreed scope in `proposal.md` rather than guessing. **NEVER auto-select the recommended option or resolve a decision gate yourself — `recommended` is only a hint to show the user; present every gate and wait for the user's actual choice instead of running the change in one shot.** **Present each open decision using the best interactive mechanism your harness has — a native question UI (Claude Code `AskUserQuestion`, Gemini `ask_user`) if available, otherwise your plan/approval UI (Codex Plan mode) if available, otherwise plain chat text — you always ask the user, only the presentation differs.** When you run `ospec brainstorm`, do not leave it as an unanswered template: ask the user the decision gates and record each answer with `ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id>` so the brainstorm has a result.
 - `Zero-Setup`: the user only describes the change; you run every `ospec` command yourself and never ask them to type setup or execution commands. In a Claude Code harness, if `.claude/settings.json` does not yet reference `.ospec/hooks/claude/ospec-claude-hook.cjs`, run `ospec session hook --target claude --apply` once (idempotent).
 
 ## Required Logic
