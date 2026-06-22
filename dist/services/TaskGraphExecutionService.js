@@ -3866,6 +3866,7 @@ class TaskGraphExecutionService {
             [/^## Chat Prompt$/u, '## 对话提示'],
             [/^## Summary$/u, '## 摘要'],
             [/^## Git$/u, '## Git'],
+            [/^## Readiness$/u, '## 就绪度'],
         ];
         for (const [pattern, replacement] of replacements) {
             localized = localized.replace(pattern, replacement);
@@ -3933,6 +3934,12 @@ class TaskGraphExecutionService {
             Head: 'HEAD',
             Dirty: '有未提交变更',
             Repository: '仓库',
+            'Git repository': 'Git 仓库',
+            'Current branch': '当前分支',
+            'Current HEAD': '当前 HEAD',
+            'Current workspace dirty': '当前工作区有改动',
+            'Task graph': '任务图',
+            'Pending required decisions': '待答必答决策',
             Available: '可用',
             'Current worktree': '当前 worktree',
             'Recommended branch': '建议分支',

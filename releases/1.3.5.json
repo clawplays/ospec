@@ -1,0 +1,15 @@
+{
+  "title_suffix": "Brainstorms archive with their change, and zh-CN finish reports drop leftover English labels",
+  "summary": "This patch release fixes two issues found while running goals in a non-English project. First, a brainstorm now reliably archives together with its change even when their names differ: ospec brainstorm resolve records the change the brainstorm belongs to (the active change, or --change <name>), instead of relying on directory-name matching that breaks when the names are unrelated. Second, several finish/readiness report labels that stayed English in zh-CN projects are now localized. Both changes are scoped and low-risk: the report localization only runs for zh-CN projects, so en-US, ja-JP, and ar reports are returned unchanged.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.4...1.3.5",
+  "new": [
+    "ospec brainstorm resolve now records the change a brainstorm belongs to so it archives together with that change. It links to the active change automatically, or you can pass --change <name>; the brainstorm directory name no longer has to match the change name for them to archive together."
+  ],
+  "improved": [
+    "zh-CN finish/readiness reports localize labels that previously stayed English: Git repository, Current branch, Current HEAD, Current workspace dirty, Task graph, Pending required decisions, and the Readiness heading. The report localizer remains zh-CN-only — en-US, ja-JP, and ar reports are returned unchanged (never translated to Chinese)."
+  ],
+  "docs": [
+    "The ospec-goal skill now notes that you should resolve a brainstorm while its change is the active change (or pass --change) so the two archive together, regardless of directory name.",
+    "Added release metadata for 1.3.5."
+  ]
+}

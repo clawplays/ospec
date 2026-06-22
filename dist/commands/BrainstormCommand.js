@@ -364,6 +364,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         let gateId = '';
         let optionId = '';
         let note;
+        let changeName;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             const takeValue = (flag) => {
@@ -406,6 +407,14 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 note = arg.slice('--note='.length).trim();
                 continue;
             }
+            if (arg === '--change') {
+                changeName = takeValue('--change');
+                continue;
+            }
+            if (arg.startsWith('--change=')) {
+                changeName = arg.slice('--change='.length).trim();
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown brainstorm resolve flag: ${arg}`);
             }
@@ -424,7 +433,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         if (!optionId) {
             throw new Error('Brainstorm resolve requires --select <option-id>.');
         }
-        return { projectPath, brainstormId, gateId, optionId, note };
+        return { projectPath, brainstormId, gateId, optionId, note, changeName };
     }
     async resolve(args) {
         const parsed = this.parseResolveArgs(args);
@@ -447,6 +456,16 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         }
         gate.selectedOptionId = parsed.optionId;
         gate.note = parsed.note ?? gate.note ?? null;
+        // Record the change this brainstorm belongs to (if not already linked) so it archives with
+        // the change even when their names differ. Use --change when given, else the single active change.
+        if (!artifact.changeName || String(artifact.changeName).trim().length === 0) {
+            const linked = parsed.changeName
+                || (await services_1.services.projectService.listActiveChangeNames(projectPath).catch(() => []));
+            const changeName = typeof linked === 'string' ? linked : (Array.isArray(linked) && linked.length === 1 ? linked[0] : null);
+            if (changeName) {
+                artifact.changeName = changeName;
+            }
+        }
         const requiredGates = gates.filter(item => item.required);
         artifact.status = requiredGates.length > 0 && requiredGates.every(item => typeof item.selectedOptionId === 'string' && item.selectedOptionId.length > 0)
             ? 'resolved'
@@ -473,7 +492,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         console.log(`
 Brainstorm Commands:
   ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual] [--decision-gates]
-  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--note "..."]
+  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--change name] [--note "..."]
 `);
     }
     buildDecisionGates(args, changePath, language = 'en-US') {
