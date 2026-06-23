@@ -36,9 +36,9 @@ ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--summary "..."] [--force]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
-ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality]
-ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
-ospec execute feedback [changes/active/<change>] [--stage spec|quality] [--summary "..."]
+ospec execute review [changes/active/<change>] [--task task-id]
+ospec execute review [changes/active/<change>] [--task task-id] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
+ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> [--summary "..."]
 ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
@@ -121,7 +121,7 @@ ospec finalize [changes/active/<change>]
 
 ## Change 与 Goal 文档
 
-`ospec new <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md` 和 `artifacts/agents/worker-status.md`。
+`ospec new <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
 
 goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、验证，直到工作被测试证明完成。创建时选定安全级——`ospec goal <name> --level L1|L2|L3`（默认 L1）：**L1** 只把发现项写入 triage 收件箱、不改任何代码；**L2** 会改代码但在关键决策处暂停等你确认；**L3** 在你设定的 allowlist 内无人值守运行。用 `ospec loop run/watch/status/pause/resume/level` 驱动，用 `ospec triage list/claim/promote` 处理发现项，用 pause / `STOP` 文件 / 关闭会话来停止。`ospec change` 保持不变。详见 [loop-engineering.md](loop-engineering.md)。
 
@@ -153,16 +153,16 @@ goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、�
 - 只有当前 AI harness 不支持原生 subagent 时，才把 `ospec execute orchestrate [changes/active/<change>] --command "..."` 当作最后 CLI fallback。fallback 模式下，OSpec 会读取或创建当前并行安全 dispatch batch，为每个 packet 渲染 harness 命令模板并发执行，写入 `artifacts/agents/orchestration-runs/`，然后把 worker run collect 回 task graph。
 - 只有原生 subagent 不可用或被明确绕过时，才用 `ospec execute launch ... --run --command "..."` 作为单 worker CLI fallback。OSpec 会把 stdout/stderr、退出码、timeout 和 run 记录写入 `artifacts/agents/worker-runs/`；随后用 `ospec execute collect ...` 把这次 run 收集为 task 完成状态。
 - blocked、needs-context 或 failed worker run 的问题修复后，用 `ospec execute retry [changes/active/<change>] --task task-id` 写入 `artifacts/agents/retries/`，把 task 重新打开，并生成新的 dispatch packet。已完成任务不会被默认重试；确需覆盖时必须显式传 `--force`。
-- 每个 worker task 完成后，用 `ospec execute review [changes/active/<change>] --task <task-id> --stage spec`，再用 `--stage quality` 做单任务 review。单任务 review 决策写入 `artifacts/reviews/tasks/<task-id>/`，依赖任务会等这两个 review 通过后才可派发。
-- task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>] [--stage spec|quality]` 生成最终 whole-change `artifacts/agents/review-dispatches/*` reviewer 交接包。不传 `--stage` 时，OSpec 会先派发最终 spec review，等 spec 通过后再派发最终 quality review。
+- 每个 worker task 完成后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 做一次合并 code review（一次同时审 spec 符合性与代码质量）。单任务决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等这一次合并 review 通过后才可派发。
+- task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>]` 生成一个合并的最终 whole-change `artifacts/agents/review-dispatches/*` reviewer 交接包；它产出单一 `artifacts/reviews/final-review.md` 决策。
 - 只有你明确传入 `ospec execute review ... --run --command "..."` 时，OSpec 才会运行本地 reviewer 命令，并把 run 记录写入 `artifacts/agents/review-runs/`；如果同时提供 `--decision`，OSpec 会把决策写回对应单任务或最终 review artifact。`--timeout-ms` 可限制 reviewer 命令最长运行时间。
-- review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--stage spec|quality] [--summary "..."]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`。它会记录是接受、修订、澄清还是解除阻塞；当反馈影响范围、方向、API、UI、风险或已接受取舍时，会创建 required user decision gate，避免盲目套用 reviewer 建议。
+- review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--summary "..."]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`。它会记录是接受、修订、澄清还是解除阻塞；当反馈影响范围、方向、API、UI、风险或已接受取舍时，会创建 required user decision gate，避免盲目套用 reviewer 建议。
 - 调试是变更的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 记录分阶段的 `artifacts/agents/debug-evidence.json` 和单次 debug evidence report。`CONFIRMED` 表示该阶段证据已确认，`FIXED` 表示修复已验证，`BLOCKED` 会让 verify 失败。
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 记录 `artifacts/agents/tdd-evidence.json` 和单次 TDD evidence report。red 必须先记录实现前不通过的聚焦测试；green 必须有前置 red `FAILED` 记录；refactor 必须有前置通过的 green/refactor 证据；`SKIPPED` 必须写清具体原因。
 - 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` 记录 `artifacts/agents/verification-evidence.json` 和单次验证 evidence report。
 - 用 `ospec execute sync [changes/active/<change>]` 在人工编辑 task graph、execution session、review artifacts 或 verification checklist 后重建 `artifacts/agents/worker-status.md`。
 - 用 `tasks.md` 把已确认的执行计划拆成可执行任务。
-- 先用 `artifacts/reviews/spec-compliance.md` 确认“做的是对的”，再用 `artifacts/reviews/code-quality.md` 确认“做得足够好”。
+- 用单一的 `artifacts/reviews/final-review.md` 一次性记录“做的是对的”（spec 符合性）和“做得足够好”（代码质量）的合并决策。
 - 用 `artifacts/agents/worker-status.md` 记录 implementer、spec reviewer、quality reviewer 和 controller 状态。
 - 在 AI / `/ospec-change` 流程中，AI 只保持小流程所需的 `proposal.md`、`tasks.md`、实现、`verification.md` 和 `review.md` 对齐。
 - 在 AI / `/ospec-goal` 流程中，AI 会基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`、`implementation-plan.md` 与 `artifacts/agents/task-graph.json`；你只需要审阅假设，或修正关键决策。

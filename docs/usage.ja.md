@@ -35,9 +35,9 @@ ospec execute orchestrate [changes/active/<change>] --command "..." [--target co
 ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] --run --command "..." [--timeout-ms N] # fallback only
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
-ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality]
-ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
-ospec execute feedback [changes/active/<change>] [--stage spec|quality] [--summary "..."]
+ospec execute review [changes/active/<change>] [--task task-id]
+ospec execute review [changes/active/<change>] [--task task-id] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
+ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> [--summary "..."]
 ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
@@ -152,16 +152,16 @@ goal は **セッションスコープのループ** として動作します：
 - `ospec execute orchestrate [changes/active/<change>] --command "..."` は native subagents が使えない場合だけの final CLI fallback です。fallback mode は explicit command template で worker command を並行実行し、`artifacts/agents/orchestration-runs/` と task graph collect を記録します。
 - `ospec execute launch ... --run --command "..."` は native subagents が使えない、または明示的に bypass する場合だけの single-worker CLI fallback です。OSpec は stdout/stderr、exit code、timeout metadata を `artifacts/agents/worker-runs/` に記録します。その後 `ospec execute collect ...` でその run を task completion state に変換します。
 - blocked、needs-context、failed の worker run を修正した後は、`ospec execute retry [changes/active/<change>] --task task-id` を使います。`artifacts/agents/retries/` を書き、task を reopen し、新しい dispatch packet を作成します。完了済み task は explicit `--force` が必要です。
-- 各 worker task 完了後、`ospec execute review [changes/active/<change>] --task <task-id> --stage spec`、続けて `--stage quality` を使います。task-level review decision は `artifacts/reviews/tasks/<task-id>/` に保存され、dependent task は両方の review が承認されるまで dispatch されません。
-- すべての task-level review が承認され task graph が完了した後、`--task` なしの `ospec execute review [changes/active/<change>] [--stage spec|quality]` で final whole-change `artifacts/agents/review-dispatches/*` reviewer handoff packet を作成します。`--stage` を省略すると final spec review を先に割り当て、final spec 承認後に final quality review を割り当てます。
+- 各 worker task 完了後、`ospec execute review [changes/active/<change>] --task <task-id>` で 1 回の統合 code review（spec compliance と code quality を一度に確認）を行います。task-level decision は `artifacts/reviews/tasks/<task-id>/review.md` に保存され、その 1 回の統合 review が承認されるまで dependent task は dispatch されません。
+- task graph が完了した後、`--task` なしの `ospec execute review [changes/active/<change>]` で 1 つの統合 final whole-change `artifacts/agents/review-dispatches/*` reviewer handoff packet を作成します。これは単一 `artifacts/reviews/final-review.md` の decision を書きます。
 - `ospec execute review ... --run --command "..."` は、OSpec に local reviewer command を実行させたい場合だけ明示的に使います。OSpec は run を `artifacts/agents/review-runs/` に記録し、`--decision` がある場合は対応する task-level または final review artifact を更新できます。
-- review artifact が non-`PENDING` decision を持つ場合は `ospec execute feedback [changes/active/<change>] [--stage spec|quality] [--summary "..."]` で `artifacts/agents/review-feedback-plan.json` と `artifacts/agents/review-feedback-plan.md` を書きます。追加作業を dispatch する前に、feedback を accept、revise、clarify、unblock のどれで扱うか記録し、feedback が scope、direction、API、UI、risk、accepted tradeoff に影響する場合は required user decision gate を作成します。
+- review artifact が non-`PENDING` decision を持つ場合は `ospec execute feedback [changes/active/<change>] [--summary "..."]` で `artifacts/agents/review-feedback-plan.json` と `artifacts/agents/review-feedback-plan.md` を書きます。追加作業を dispatch する前に、feedback を accept、revise、clarify、unblock のどれで扱うか記録し、feedback が scope、direction、API、UI、risk、accepted tradeoff に影響する場合は required user decision gate を作成します。
 - debugging が change の一部だった場合、`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` で `artifacts/agents/debug-evidence.json` と debug evidence report を記録します。`CONFIRMED` は root cause の隔離、`FIXED` は verified fix、`BLOCKED` は verify failure を意味します。
 - focused test 実行後、`ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` で `artifacts/agents/tdd-evidence.json` と cycle ごとの evidence report を記録します。red は implementation 前の non-passing focused test を記録し、green は prior red `FAILED` record を要求し、refactor は prior passing green/refactor evidence を要求します。`SKIPPED` には具体的な summary が必要です。
 - fresh project checks を実行した後、`ospec execute verify [changes/active/<change>] --command "..." --status PASSED` で `artifacts/agents/verification-evidence.json` と run ごとの evidence report を記録します。
 - `ospec execute sync [changes/active/<change>]` は、task graph、execution session、review artifacts、verification checklist を手動編集した後に `artifacts/agents/worker-status.md` を再構築します。
 - `tasks.md` には、確認済みの実行計画を実行可能な作業へ分解します。
-- task-level spec review を先に使い、その後同じ task の quality review で確認します。final review では `artifacts/reviews/spec-compliance.md` を先に使い、その後 `artifacts/reviews/code-quality.md` で確認します。
+- 各 task は 1 回の統合 review で spec compliance と code quality を一度に確認します。final review は単一の `artifacts/reviews/final-review.md` に 1 つの decision を記録します。
 - `artifacts/agents/worker-status.md` には implementer、spec reviewer、quality reviewer、controller の状態を記録します。
 - AI / `/ospec-change` フローでは、AI は小さな flow を `proposal.md`、`tasks.md`、実装、`verification.md`、`review.md` に集中させます。
 - AI / `/ospec-goal` フローでは、AI が要件、`proposal.md`、プロジェクト文脈から `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json` を作成または更新します。ユーザーは仮定の確認や重要判断の修正だけを行えば十分です。
