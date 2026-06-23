@@ -39,6 +39,7 @@ exports.FILE_NAMES = {
     TASK_GRAPH: 'task-graph.json',
     SPEC_COMPLIANCE_REVIEW: 'spec-compliance.md',
     CODE_QUALITY_REVIEW: 'code-quality.md',
+    FINAL_REVIEW: 'final-review.md',
     AGENT_WORKER_STATUS: 'worker-status.md',
     TASKS: 'tasks.md',
     VERIFICATION: 'verification.md',

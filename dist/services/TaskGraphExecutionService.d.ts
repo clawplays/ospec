@@ -6,10 +6,8 @@ export type TaskWorkerRunStatus = 'completed' | 'failed';
 export type TaskReviewRunDecision = 'APPROVED' | 'APPROVED_WITH_CONCERNS' | 'NEEDS_CHANGES' | 'BLOCKED' | 'PENDING';
 export type TaskUserDecisionStatus = 'PENDING' | 'SELECTED' | 'SKIPPED';
 export interface TaskReviewState {
-    spec: TaskReviewRunDecision;
-    quality: TaskReviewRunDecision;
-    specArtifactPath: string | null;
-    qualityArtifactPath: string | null;
+    decision: TaskReviewRunDecision;
+    reviewArtifactPath: string | null;
 }
 export interface TaskWorkerTargetToolMapping {
     target: TaskWorkerToolTarget;
@@ -66,7 +64,7 @@ export interface TaskGraphExecutionReport {
     nextInstruction: string;
 }
 export type TaskGraphCompletionStatus = 'DONE' | 'DONE_WITH_CONCERNS' | 'NEEDS_CONTEXT' | 'BLOCKED';
-export type TaskReviewStage = 'spec' | 'quality';
+export type TaskReviewStage = 'spec' | 'quality' | 'review';
 export type TaskReviewFeedbackAction = 'accept' | 'revise' | 'clarify' | 'blocked';
 export type TaskDocumentReviewStage = 'design' | 'plan';
 export type TaskDocumentReviewRole = 'design_reviewer' | 'implementation_plan_reviewer';
@@ -152,7 +150,7 @@ export interface TaskReviewDispatchRecord {
     stage: TaskReviewStage;
     taskId?: string | null;
     taskTitle?: string | null;
-    reviewerRole: 'spec_compliance_reviewer' | 'code_quality_reviewer';
+    reviewerRole: 'spec_compliance_reviewer' | 'code_quality_reviewer' | 'code_reviewer';
     projectSession?: TaskBootstrapProjectSessionSnapshot;
     status: 'DISPATCHED';
     assignedAt: string;
@@ -173,7 +171,7 @@ export interface TaskReviewFeedbackPlan {
     version: string;
     feature: string;
     stage: TaskReviewStage;
-    reviewerRole: 'spec_compliance_reviewer' | 'code_quality_reviewer';
+    reviewerRole: 'spec_compliance_reviewer' | 'code_quality_reviewer' | 'code_reviewer';
     decision: string;
     action: TaskReviewFeedbackAction;
     createdAt: string;
@@ -1239,7 +1237,7 @@ export declare class TaskGraphExecutionService {
     }): Promise<TaskHandoffResult>;
     private selectDispatchableTasks;
     private selectNonConflictingBatch;
-    private getFirstRequiredTaskReviewStage;
+    private isTaskReviewRequired;
     private getBlockedTaskReviewInstruction;
     private getNextInstruction;
     private readCheckpointEvidenceSnapshot;
@@ -1305,9 +1303,11 @@ export declare class TaskGraphExecutionService {
     private getDocumentReviewArtifactPath;
     private getTaskReviewArtifactFile;
     private getTaskReviewArtifactRelativePath;
+    private getTaskCombinedReviewArtifactRelativePath;
     private getTaskReviewArtifactPath;
     private prepareTaskReviewDispatch;
     private buildDefaultTaskReviewArtifact;
+    private buildDefaultFinalReviewArtifact;
     private deriveImplementerWorkerStatus;
     private deriveControllerWorkerStatus;
     private deriveWorkerStatusDocumentStatus;

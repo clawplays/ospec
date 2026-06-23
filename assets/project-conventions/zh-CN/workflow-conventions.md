@@ -65,8 +65,8 @@ tags: [conventions, workflow, change, ospec]
 - 只有当前 harness 不支持原生 subagent 时，才用 `ospec execute orchestrate [changes/active/<change>] --command "..." [--limit N] [--max-rounds N] [--timeout-ms N]` 作为最后 CLI fallback；fallback 模式渲染显式 command template、并发运行 worker command，把结果 collect 回 task graph，并报告 failed-worker retry commands
 - 只有原生 subagent 不可用或被明确绕过时，才用 `--run --command`（即 `ospec execute launch ... --run --command "..."`）作为单 worker CLI fallback；随后用 `ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id]` 记录 fallback 任务结果。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务必须显式 `--force` 才能 retry
 - `ospec execute dispatch` 与 `complete` 也会同步 `artifacts/agents/worker-status.md`；人工修改 task graph、execution session、review artifacts、debug evidence 或 verification checklist 后，用 `ospec execute sync` 重建 worker 状态
-- 每个 worker task 完成后，先用 `ospec execute review [changes/active/<change>] --task <task-id> --stage spec`，再用 `--stage quality` 生成 task 级 reviewer 交接包。task 级 review 决策写入 `artifacts/reviews/tasks/<task-id>/`，依赖任务会等这两个 review 通过后才可派发
-- 所有 task 级 review 通过且 task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>] [--stage spec|quality]` 在 `artifacts/agents/review-dispatches/` 下生成最终 whole-change reviewer 交接包；最终 spec review 通过前不得派发最终 quality review
+- 每个 worker task 完成后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 生成一个合并的 code reviewer 交接包（一次同时审 spec 符合性与代码质量）。task 级 review 决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等这一次合并 review 通过后才可派发
+- 所有 task 级 review 通过且 task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>]` 在 `artifacts/agents/review-dispatches/` 下生成一个合并的最终整体 code review 交接包；它产出单一 `artifacts/reviews/final-review.md`、一道决策
 - 只有显式使用 `ospec execute review ... --run --command "..."` 时才运行本地 reviewer 命令，并写入 `artifacts/agents/review-runs/`；提供 `--decision` 时可写回对应 review artifact
 - review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`；继续派发工作前要明确接受、修订、澄清或阻塞处理；当反馈改变范围、方向、API、UI、风险或已接受取舍时创建 required user decision
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 在 `artifacts/agents/debug-evidence.json` 下记录根因和修复证据
@@ -75,13 +75,13 @@ tags: [conventions, workflow, change, ospec]
 - `ospec session` 以及 `ospec execute bootstrap`、`handoff`、`doc-review`、`workspace`、plan 模式 `worktree`、`finish`、`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`debug`、`tdd`、`verify` 与 `sync` 只更新 OSpec artifacts；除 `workspace`、`worktree` 与 `finish` 会读取 git 状态外，不直接编辑项目源码。原生 subagent 由当前 AI harness 启动；只有显式 `worktree --create`、`worktree --cleanup`、fallback `launch --run --command`、`review --run --command` 或 fallback `orchestrate` 才运行 shell 命令
 - task graph 存在未解决状态、无效依赖、缺失执行细节，或顶层 `status` 不是 `completed` 时不得归档
 - `artifacts/agents/worker-status.md` 记录 implementer、spec reviewer、quality reviewer 和 controller 状态
-- 每个 task 级 spec review 必须先通过，才能做该 task 的 quality review；最终 `artifacts/reviews/spec-compliance.md` 必须先通过，才能做最终 `artifacts/reviews/code-quality.md`
+- 每个 task 的一次合并 review（`artifacts/reviews/tasks/<task-id>/review.md`）必须通过；单一的最终 `artifacts/reviews/final-review.md` 必须通过
 - task 级或最终 review decision 为 `PENDING`、`NEEDS_CHANGES` 或 `BLOCKED` 时会阻止 archive
 - 任一 worker 状态仍为 `PENDING`、`NEEDS_CONTEXT` 或 `BLOCKED` 时，不得标记 change 完成；归档前 `controller_status` 必须为 `DONE`
 
 ## 文档语言
 
-- 项目采用中文 protocol 时，`proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/spec-compliance.md`、`artifacts/reviews/code-quality.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`verification.md`、`review.md` 必须保持中文
+- 项目采用中文 protocol 时，`proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/final-review.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`verification.md`、`review.md` 必须保持中文
 - 产品界面语言可以按业务使用英文，但不得把产品语言自动映射为 OSpec change 文档语言
 - 若当前 change 文档已用中文创建，后续更新必须延续中文，除非项目规则显式要求切换为英文
 

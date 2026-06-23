@@ -492,7 +492,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         console.log(`
 Brainstorm Commands:
   ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual] [--decision-gates]
-  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--change name] [--note "..."]
+  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--note "..."]
 `);
     }
     buildDecisionGates(args, changePath, language = 'en-US') {

@@ -206,8 +206,7 @@ For classic `change` work, treat `proposal.md`, `tasks.md`, `state.json`, `verif
 - `changes/active/<change>/tasks.md`
 - `changes/active/<change>/artifacts/reviews/design-review.md`
 - `changes/active/<change>/artifacts/reviews/implementation-plan-review.md`
-- `changes/active/<change>/artifacts/reviews/spec-compliance.md`
-- `changes/active/<change>/artifacts/reviews/code-quality.md`
+- `changes/active/<change>/artifacts/reviews/final-review.md`
 - `changes/active/<change>/artifacts/agents/worker-status.md`
 - `changes/active/<change>/artifacts/agents/debug-evidence.json`
 - `changes/active/<change>/artifacts/agents/tdd-evidence.json`
@@ -243,8 +242,8 @@ Before advancing an active change:
 - use `--run --command` with `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] --run --command "..." [--timeout-ms N]` only as single-worker CLI fallback when native subagents are unavailable or explicitly bypassed; it captures stdout, stderr, exit code, timeout metadata, and run metadata under `artifacts/agents/worker-runs/`, then `ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id]` records the task result
 - use `ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--force]` after a blocked, needs-context, or failed run has been corrected; it writes `artifacts/agents/retries/`, reopens the task, and creates a fresh dispatch packet. Completed tasks require explicit `--force`
 - keep `dispatch`, `launch`, `orchestrate`, `collect`, `retry`, and `complete` artifact-controlled: native subagent dispatch is performed by the current AI harness, while shell commands run only for explicit fallback `launch --run --command` or `orchestrate` with a command template; none of these commands edits project source files directly; when `complete` or `collect` records `NEEDS_CONTEXT` or `BLOCKED`, OSpec writes blocker escalation under `artifacts/agents/blockers/`
-- complete `changes/active/<change>/artifacts/reviews/spec-compliance.md` before `changes/active/<change>/artifacts/reviews/code-quality.md`
-- use `ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality]` to create durable task-level or final reviewer handoff packets with the project session brief snapshot; with `--task`, review one completed task and write `artifacts/reviews/tasks/<task-id>/...`; without `--task`, run the final whole-change review after the task graph is completed; do not dispatch quality review before the matching spec review is approved
+- complete the single `changes/active/<change>/artifacts/reviews/final-review.md` (one combined spec compliance + code quality decision)
+- use `ospec execute review [changes/active/<change>] [--task task-id]` to create durable task-level or final reviewer handoff packets with the project session brief snapshot; with `--task`, run one combined code review for a completed task and write `artifacts/reviews/tasks/<task-id>/review.md`; without `--task`, run the single combined final whole-change review after the task graph is completed
 - use `ospec execute review [changes/active/<change>] [--task task-id] [--stage spec|quality] --run --command "..."` only when explicitly asked to run a local reviewer command; it captures review stdout/stderr under `artifacts/agents/review-runs/` and can update the matching task-level or final review artifact when `--decision` is provided
 - use `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` after a review artifact has a non-`PENDING` decision to write `artifacts/agents/review-feedback-plan.json` and `artifacts/agents/review-feedback-plan.md`; this records how to accept, revise, clarify, or unblock review feedback, creates a required user decision gate when feedback changes scope, direction, API, UI, risk, or accepted tradeoffs, and does not edit source files or launch workers
 - do not archive while any task-level review or final review decision is `PENDING`, `NEEDS_CHANGES`, or `BLOCKED`

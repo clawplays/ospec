@@ -1,0 +1,20 @@
+{
+  "title_suffix": "Faster goals: combined final review, dispatch auto-launch, parallel-by-default planning",
+  "summary": "This release continues cutting the per-goal round-trips that follow 1.4.0's combined per-task review. The whole-change final review is now a single combined code review (one reviewer, one artifacts/reviews/final-review.md, one gate) instead of sequential spec then quality passes. A single-task ospec execute dispatch now generates the native agent launch plan itself, so the controller can spawn the worker straight from the dispatch next instruction without a separate ospec execute launch round-trip. Planning guidance across all four languages now tells the AI to mark independent tasks parallelizable: true (non-overlapping target files, no dependency) so OSpec dispatches them as one parallel batch instead of one at a time. The legacy two-stage per-task review fields were also removed, since old task graphs are not supported.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.5...1.5.0",
+  "new": [
+    "The whole-change final review is a single combined code review. ospec execute review (without --task) now dispatches one code_reviewer that covers spec compliance and code quality in one pass, writes one artifacts/reviews/final-review.md, and gates archive on a single decision — replacing the sequential spec-compliance.md then code-quality.md final reviews.",
+    "ospec execute dispatch folds in the launch step for a single task: it generates the native agent launch plan during dispatch so the controller spawns the worker directly from the dispatch next instruction. ospec execute launch is still used for multi-task batches or to regenerate a plan."
+  ],
+  "improved": [
+    "Planning guidance (ai-guide, execution-protocol, workflow-conventions) across en-US, zh-CN, ja-JP, and ar now instructs the AI to set parallelizable: true for tasks whose target files do not overlap and that have no dependency between them, so genuinely independent tasks run as one parallel batch instead of serially. Dependency chains are unaffected.",
+    "Net effect with 1.4.0: a multi-task goal spends fewer sequential reviewer/launch round-trips (one combined review per task, one combined final review, dispatch-folds-launch for single tasks) with no change to the gates, decision gates, or safety levels."
+  ],
+  "fixed": [
+    "Removed the legacy two-stage per-task review fields (review.spec/review.quality and their artifacts). Per-task review state is now a single review.decision with one artifacts/reviews/tasks/<task-id>/review.md; old task graphs are not migrated."
+  ],
+  "docs": [
+    "Updated the ospec-goal skill, the for-ai guidance, and the project workflow-conventions (en-US, zh-CN, ja-JP, ar) to describe the single combined final review (artifacts/reviews/final-review.md), the dispatch-auto-launch behavior, and parallel-by-default task marking.",
+    "Added release metadata for 1.5.0."
+  ]
+}

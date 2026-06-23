@@ -14,6 +14,7 @@ export declare const FILE_NAMES: {
     TASK_GRAPH: string;
     SPEC_COMPLIANCE_REVIEW: string;
     CODE_QUALITY_REVIEW: string;
+    FINAL_REVIEW: string;
     AGENT_WORKER_STATUS: string;
     TASKS: string;
     VERIFICATION: string;

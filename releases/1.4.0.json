@@ -1,0 +1,19 @@
+{
+  "title_suffix": "Per-task review merged into one combined code review (half the review round-trips)",
+  "summary": "This release collapses the per-task review from two sequential gated passes (spec compliance, then code quality) into a single combined code review. After a worker finishes a task, ospec execute review [changes/active/<change>] --task <task-id> now dispatches one reviewer that assesses spec compliance and code quality in a single pass, writes one artifact at artifacts/reviews/tasks/<task-id>/review.md, and gates the task on one decision. This halves the per-task review round-trips (and the agent/token cost they carry) without weakening quality — both dimensions are still reviewed. The whole-change final review is unchanged and still runs spec then quality. Existing task graphs that use the legacy spec/quality fields keep working: the combined decision is derived from them, so a fully two-stage-approved task stays approved.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.3.5...1.4.0",
+  "new": [
+    "Per-task review is now a single combined code review. ospec execute review [changes/active/<change>] --task <task-id> dispatches one code_reviewer that covers spec compliance and code quality in one pass, produces one artifact at artifacts/reviews/tasks/<task-id>/review.md, and blocks dependent tasks until that one decision is approved. The per-task --stage spec/--stage quality split is gone; the task graph stores a single review.decision."
+  ],
+  "improved": [
+    "Halves the per-task review work: a task with dependents previously needed two sequential reviewer agent dispatches (spec then quality) before its dependents could start; it now needs one. This removes the dominant repeated cost in a multi-task goal without changing the workflow, gates, or safety levels.",
+    "The whole-change final review is intentionally unchanged: ospec execute review without --task still runs spec compliance then code quality on artifacts/reviews/spec-compliance.md and artifacts/reviews/code-quality.md."
+  ],
+  "fixed": [
+    "Backward compatibility: task graphs created before 1.4.0 (with review.spec/review.quality) still advance — the combined review.decision is derived from the legacy two-stage decisions, so a task approved on both stages remains approved."
+  ],
+  "docs": [
+    "Updated the ospec-goal skill, the for-ai guidance (ai-guide + execution-protocol), and the project workflow-conventions across en-US, zh-CN, ja-JP, and ar to describe the single combined per-task review and to keep the whole-change final review as the two-stage spec -> quality gate.",
+    "Added release metadata for 1.4.0."
+  ]
+}

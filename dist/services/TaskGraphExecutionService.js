@@ -120,13 +120,9 @@ function normalizeTaskReview(rawReview) {
         return null;
     }
     return {
-        spec: normalizeReviewDecisionValue(rawReview.spec),
-        quality: normalizeReviewDecisionValue(rawReview.quality),
-        specArtifactPath: typeof rawReview.spec_artifact === 'string' && rawReview.spec_artifact.trim().length > 0
-            ? rawReview.spec_artifact.trim()
-            : null,
-        qualityArtifactPath: typeof rawReview.quality_artifact === 'string' && rawReview.quality_artifact.trim().length > 0
-            ? rawReview.quality_artifact.trim()
+        decision: normalizeReviewDecisionValue(rawReview.decision),
+        reviewArtifactPath: typeof rawReview.review_artifact === 'string' && rawReview.review_artifact.trim().length > 0
+            ? rawReview.review_artifact.trim()
             : null,
     };
 }
@@ -444,9 +440,8 @@ class TaskGraphExecutionService {
                     reasons.push(`waiting_for:${dependencyId}`);
                     continue;
                 }
-                const dependencyReviewStage = this.getFirstRequiredTaskReviewStage(dependency);
-                if (dependencyReviewStage) {
-                    reasons.push(`waiting_for_task_${dependencyReviewStage}_review:${dependencyId}`);
+                if (this.isTaskReviewRequired(dependency)) {
+                    reasons.push(`waiting_for_task_review:${dependencyId}`);
                 }
             }
             for (const runningTask of runningTasks) {
@@ -455,9 +450,8 @@ class TaskGraphExecutionService {
                 }
             }
             if (TERMINAL_TASK_STATUSES.has(task.status)) {
-                const taskReviewStage = this.getFirstRequiredTaskReviewStage(task);
-                if (taskReviewStage) {
-                    reasons.push(`waiting_for_task_${taskReviewStage}_review:${task.id}`);
+                if (this.isTaskReviewRequired(task)) {
+                    reasons.push(`waiting_for_task_review:${task.id}`);
                 }
             }
             if (reasons.some(reason => reason.startsWith('invalid_status:') || reason.startsWith('unknown_dependency:') || reason.startsWith('missing_'))) {
@@ -582,6 +576,20 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(report.graphPath, rawGraph);
         await this.fileService.writeJSON(sessionPath, session);
         const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        // Fold the launch step into dispatch for a single task: generate its native agent launch
+        // plan now so the controller can spawn the worker directly without a separate
+        // `ospec execute launch` round-trip. Batches keep per-task launch (one plan file per task).
+        let nextInstruction = `Run ospec execute launch for each active dispatch, start native harness worker agent(s) from the launch plan, then record results with ospec execute complete <task-id>. Use CLI fallback only when native subagents are unavailable.`;
+        if (createdDispatches.length === 1) {
+            try {
+                await this.planLaunch(resolvedChangePath, { taskId: createdDispatches[0].taskId });
+                const launchReportPath = this.toChangeRelativePath(resolvedChangePath, this.getLaunchPlanReportPath(resolvedChangePath));
+                nextInstruction = `Launch plan for ${createdDispatches[0].taskId} is already generated at ${launchReportPath} (no separate ospec execute launch step needed). Start the native harness worker agent directly from it, then record the result with ospec execute complete ${createdDispatches[0].taskId}. Use CLI fallback only when native subagents are unavailable.`;
+            }
+            catch {
+                // Keep the manual launch instruction if the launch plan could not be prepared.
+            }
+        }
         return {
             changePath: resolvedChangePath,
             sessionPath,
@@ -591,7 +599,7 @@ class TaskGraphExecutionService {
             dispatches: createdDispatches,
             dispatchLimit: options.limit ?? null,
             warnings,
-            nextInstruction: `Run ospec execute launch for each active dispatch, start native harness worker agent(s) from the launch plan, then record results with ospec execute complete <task-id>. Use CLI fallback only when native subagents are unavailable.`,
+            nextInstruction,
         };
     }
     async planLaunch(changePath, options = {}) {
@@ -1290,7 +1298,7 @@ class TaskGraphExecutionService {
             nextInstruction: blockerEscalation
                 ? `Resolve blocker escalation at ${blockerEscalation.reportPath}, then rerun ospec execute status.`
                 : TERMINAL_TASK_STATUSES.has(completionStatus)
-                    ? `Task ${normalizedTaskId} implementation is recorded. Run ospec execute review [change-path] --task ${normalizedTaskId} --stage spec before dispatching dependent work.`
+                    ? `Task ${normalizedTaskId} implementation is recorded. Run ospec execute review [change-path] --task ${normalizedTaskId} before dispatching dependent work.`
                     : graphStatus === 'completed'
                         ? 'Task graph is complete. Continue with review, verification, and archive gates.'
                         : 'Run ospec execute status to inspect remaining work.',
@@ -1307,8 +1315,10 @@ class TaskGraphExecutionService {
         const sessionPath = this.getSessionPath(resolvedChangePath);
         const session = await this.readSession(sessionPath, report.feature);
         const workerStatusPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
-        const specReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW));
-        const qualityReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW));
+        // Final review is one combined code review; both reviewer-status fields reflect its single decision.
+        const finalReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW));
+        const specReviewerStatus = finalReviewerStatus;
+        const qualityReviewerStatus = finalReviewerStatus;
         const implementerStatus = this.deriveImplementerWorkerStatus(tasks, report);
         const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), report.feature);
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), report.feature);
@@ -1388,55 +1398,72 @@ class TaskGraphExecutionService {
         }
         const requestedTaskId = options.taskId?.trim();
         const taskReview = requestedTaskId
-            ? await this.prepareTaskReviewDispatch(resolvedChangePath, report, requestedTaskId, options.stage)
+            ? await this.prepareTaskReviewDispatch(resolvedChangePath, report, requestedTaskId)
             : null;
         if (!taskReview && (report.completedTasks.length !== report.taskCount || report.taskCount === 0 || report.graphStatus.toLowerCase() !== 'completed')) {
             throw new Error('Cannot dispatch review until the task graph is completed.');
         }
-        const specReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
-        const qualityReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
-        const specDecision = taskReview ? taskReview.specDecision : await this.readReviewDecision(specReviewPath);
-        const qualityDecision = taskReview ? taskReview.qualityDecision : await this.readReviewDecision(qualityReviewPath);
-        const stage = taskReview?.stage || options.stage || this.selectNextReviewStage(specDecision, qualityDecision);
-        if (stage === 'spec' && APPROVED_REVIEW_DECISIONS.has(specDecision)) {
-            throw new Error(taskReview
-                ? `Task ${taskReview.task.id} spec compliance review is already ${specDecision}. Dispatch task quality review next.`
-                : `Spec compliance review is already ${specDecision}. Dispatch quality review next.`);
-        }
-        if (stage === 'quality' && !APPROVED_REVIEW_DECISIONS.has(specDecision)) {
-            throw new Error(taskReview
-                ? `Cannot dispatch task code quality review before task spec compliance review is approved (current: ${specDecision || 'PENDING'}).`
-                : `Cannot dispatch code quality review before spec compliance review is approved (current: ${specDecision || 'PENDING'}).`);
-        }
-        if (stage === 'quality' && APPROVED_REVIEW_DECISIONS.has(qualityDecision)) {
-            throw new Error(taskReview
-                ? `Task ${taskReview.task.id} code quality review is already ${qualityDecision}. Continue with dependent task dispatch.`
-                : `Code quality review is already ${qualityDecision}. Continue with verification and archive gates.`);
-        }
-        const reviewArtifactPath = taskReview?.reviewArtifactPath || (stage === 'spec' ? specReviewPath : qualityReviewPath);
-        if (!(await this.fileService.exists(reviewArtifactPath))) {
-            throw new Error(`Review artifact not found at ${reviewArtifactPath}`);
-        }
         const now = new Date().toISOString();
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
         const warnings = [...projectSession.warnings];
-        const reviewId = taskReview
-            ? `review-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskReview.task.id)}-${stage}`
-            : `review-${this.toFileSafeTimestamp(now)}-${stage}`;
+        // Per-task review is a single combined code review (spec compliance + code quality in one pass).
+        if (taskReview) {
+            if (APPROVED_REVIEW_DECISIONS.has(taskReview.decision)) {
+                throw new Error(`Task ${taskReview.task.id} code review is already ${taskReview.decision}. Continue with dependent task dispatch.`);
+            }
+            const reviewId = `review-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskReview.task.id)}`;
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
+            const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
+            const record = {
+                id: reviewId,
+                stage: 'review',
+                taskId: taskReview.task.id,
+                taskTitle: taskReview.task.title,
+                reviewerRole: 'code_reviewer',
+                projectSession,
+                status: 'DISPATCHED',
+                assignedAt: now,
+                packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
+                recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
+                reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, taskReview.reviewArtifactPath),
+            };
+            await this.fileService.writeJSON(recordPath, record);
+            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+            const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+            return {
+                changePath: resolvedChangePath,
+                graphPath: report.graphPath,
+                workerStatusPath: workerStatusSync.workerStatusPath,
+                dispatch: record,
+                projectSession,
+                warnings,
+                nextInstruction: `Hand the combined code review packet to one reviewer (spec compliance + code quality in a single pass), then update ${record.reviewArtifactPath} with one decision and run ospec execute sync.`,
+            };
+        }
+        // Change-level final review is a single combined code review (spec compliance + code quality).
+        const finalReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        const finalDecision = await this.readReviewDecision(finalReviewPath);
+        if (APPROVED_REVIEW_DECISIONS.has(finalDecision)) {
+            throw new Error(`Final code review is already ${finalDecision}. Continue with verification and archive gates.`);
+        }
+        if (!(await this.fileService.exists(finalReviewPath))) {
+            await this.writeLocalizedReportFile(resolvedChangePath, finalReviewPath, this.buildDefaultFinalReviewArtifact(report.feature));
+        }
+        const reviewId = `review-${this.toFileSafeTimestamp(now)}-final`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
         const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
         const record = {
             id: reviewId,
-            stage,
-            taskId: taskReview?.task.id || null,
-            taskTitle: taskReview?.task.title || null,
-            reviewerRole: stage === 'spec' ? 'spec_compliance_reviewer' : 'code_quality_reviewer',
+            stage: 'review',
+            taskId: null,
+            taskTitle: null,
+            reviewerRole: 'code_reviewer',
             projectSession,
             status: 'DISPATCHED',
             assignedAt: now,
             packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
-            reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath),
+            reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, finalReviewPath),
         };
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
@@ -1448,20 +1475,15 @@ class TaskGraphExecutionService {
             dispatch: record,
             projectSession,
             warnings,
-            nextInstruction: stage === 'spec'
-                ? `Hand the spec compliance review packet to a reviewer, then update ${record.reviewArtifactPath} and run ospec execute sync.`
-                : `Hand the code quality review packet to a reviewer, then update ${record.reviewArtifactPath} and run ospec execute sync.`,
+            nextInstruction: `Hand the combined final code review packet to one reviewer (spec compliance + code quality in a single pass), then update ${record.reviewArtifactPath} with one decision and run ospec execute sync.`,
         };
     }
     async planReviewFeedback(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
-        const specReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
-        const qualityReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
-        const specDecision = await this.readReviewDecision(specReviewPath);
-        const qualityDecision = await this.readReviewDecision(qualityReviewPath);
-        const stage = options.stage || this.selectNextReviewFeedbackStage(specDecision, qualityDecision);
-        const reviewArtifactPath = stage === 'spec' ? specReviewPath : qualityReviewPath;
+        // Final review feedback operates on the single combined final-review.md.
+        const stage = 'review';
+        const reviewArtifactPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
         if (!(await this.fileService.exists(reviewArtifactPath))) {
             throw new Error(`Review artifact not found at ${reviewArtifactPath}`);
         }
@@ -1489,7 +1511,7 @@ class TaskGraphExecutionService {
             version: '1.0',
             feature: report.feature,
             stage,
-            reviewerRole: stage === 'spec' ? 'spec_compliance_reviewer' : 'code_quality_reviewer',
+            reviewerRole: 'code_reviewer',
             decision,
             action,
             createdAt: now,
@@ -2158,29 +2180,21 @@ class TaskGraphExecutionService {
             const tasks = Array.isArray(rawGraph?.tasks)
                 ? rawGraph.tasks.map((task, index) => normalizeTask(task, index))
                 : [];
-            const specReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW));
-            const qualityReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW));
+            const finalReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW));
             implementerStatus = this.deriveImplementerWorkerStatus(tasks, report);
             controllerStatus = this.deriveControllerWorkerStatus({
                 implementerStatus,
-                specReviewerStatus,
-                qualityReviewerStatus,
+                specReviewerStatus: finalReviewerStatus,
+                qualityReviewerStatus: finalReviewerStatus,
                 report,
             });
         }
-        const specDecision = await this.readReviewDecision(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW));
-        const qualityDecision = await this.readReviewDecision(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW));
-        if (!APPROVED_REVIEW_DECISIONS.has(specDecision)) {
-            blockers.push(`Spec compliance review is not approved (current: ${specDecision}).`);
+        const finalDecision = await this.readReviewDecision(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW));
+        if (!APPROVED_REVIEW_DECISIONS.has(finalDecision)) {
+            blockers.push(`Final code review is not approved (current: ${finalDecision}).`);
         }
-        if (!APPROVED_REVIEW_DECISIONS.has(qualityDecision)) {
-            blockers.push(`Code quality review is not approved (current: ${qualityDecision}).`);
-        }
-        if (specDecision === 'APPROVED_WITH_CONCERNS') {
-            warnings.push('Spec compliance review was approved with concerns; review the concerns before closeout.');
-        }
-        if (qualityDecision === 'APPROVED_WITH_CONCERNS') {
-            warnings.push('Code quality review was approved with concerns; review the concerns before closeout.');
+        if (finalDecision === 'APPROVED_WITH_CONCERNS') {
+            warnings.push('Final code review was approved with concerns; review the concerns before closeout.');
         }
         if (!TERMINAL_TASK_STATUSES.has(implementerStatus)) {
             blockers.push(`Implementer status is not terminal (current: ${implementerStatus}).`);
@@ -2297,8 +2311,8 @@ class TaskGraphExecutionService {
             readiness: {
                 taskGraph: graphStatus,
                 implementer: implementerStatus,
-                specReview: specDecision,
-                qualityReview: qualityDecision,
+                specReview: finalDecision,
+                qualityReview: finalDecision,
                 controller: controllerStatus,
                 pendingRequiredDecisions: userDecisions.pendingRequired,
                 verificationChecklistComplete,
@@ -2422,10 +2436,11 @@ class TaskGraphExecutionService {
                 ? rawGraph.tasks.map((task, index) => normalizeTask(task, index))
                 : [];
         }
-        const specDecision = await this.readReviewDecision(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW));
-        const qualityDecision = await this.readReviewDecision(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW));
-        const specReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW));
-        const qualityReviewerStatus = await this.readReviewWorkerStatus(path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW));
+        const finalReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        const specDecision = await this.readReviewDecision(finalReviewPath);
+        const qualityDecision = specDecision;
+        const specReviewerStatus = await this.readReviewWorkerStatus(finalReviewPath);
+        const qualityReviewerStatus = specReviewerStatus;
         const verificationChecklistComplete = await this.isVerificationChecklistComplete(resolvedChangePath);
         const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), feature);
@@ -2655,24 +2670,19 @@ class TaskGraphExecutionService {
         }
         return selectedTasks;
     }
-    getFirstRequiredTaskReviewStage(task) {
+    isTaskReviewRequired(task) {
+        // One combined code review (spec compliance + code quality) gates each task.
         if (!task.review) {
-            return null;
+            return false;
         }
-        if (!APPROVED_REVIEW_DECISIONS.has(task.review.spec)) {
-            return 'spec';
-        }
-        if (!APPROVED_REVIEW_DECISIONS.has(task.review.quality)) {
-            return 'quality';
-        }
-        return null;
+        return !APPROVED_REVIEW_DECISIONS.has(task.review.decision);
     }
     getBlockedTaskReviewInstruction(blockedTasks) {
         for (const blocked of blockedTasks) {
             for (const reason of blocked.reasons) {
-                const match = reason.match(/^waiting_for_task_(spec|quality)_review:(.+)$/);
+                const match = reason.match(/^waiting_for_task_review:(.+)$/);
                 if (match) {
-                    return `Run ospec execute review [change-path] --task ${match[2]} --stage ${match[1]} before dispatching dependent work.`;
+                    return `Run ospec execute review [change-path] --task ${match[1]} before dispatching dependent work.`;
                 }
             }
         }
@@ -3322,33 +3332,19 @@ class TaskGraphExecutionService {
             rawTask.review = typeof rawTask.review === 'object' && !Array.isArray(rawTask.review)
                 ? rawTask.review
                 : {};
-            const specArtifact = typeof rawTask.review.spec_artifact === 'string' && rawTask.review.spec_artifact.trim().length > 0
-                ? rawTask.review.spec_artifact.trim()
-                : this.getTaskReviewArtifactRelativePath(taskId, 'spec');
-            const qualityArtifact = typeof rawTask.review.quality_artifact === 'string' && rawTask.review.quality_artifact.trim().length > 0
-                ? rawTask.review.quality_artifact.trim()
-                : this.getTaskReviewArtifactRelativePath(taskId, 'quality');
-            if (rawTask.review.spec_artifact !== specArtifact) {
-                rawTask.review.spec_artifact = specArtifact;
+            // Combined per-task code review (primary): one review.md gates the task.
+            const reviewArtifact = typeof rawTask.review.review_artifact === 'string' && rawTask.review.review_artifact.trim().length > 0
+                ? rawTask.review.review_artifact.trim()
+                : this.getTaskCombinedReviewArtifactRelativePath(taskId);
+            if (rawTask.review.review_artifact !== reviewArtifact) {
+                rawTask.review.review_artifact = reviewArtifact;
                 changed = true;
             }
-            if (rawTask.review.quality_artifact !== qualityArtifact) {
-                rawTask.review.quality_artifact = qualityArtifact;
-                changed = true;
-            }
-            const specPath = path.join(changePath, specArtifact);
-            if (await this.fileService.exists(specPath)) {
-                const nextSpec = this.normalizeReviewRunDecision(await this.readReviewDecision(specPath));
-                if (rawTask.review.spec !== nextSpec) {
-                    rawTask.review.spec = nextSpec;
-                    changed = true;
-                }
-            }
-            const qualityPath = path.join(changePath, qualityArtifact);
-            if (await this.fileService.exists(qualityPath)) {
-                const nextQuality = this.normalizeReviewRunDecision(await this.readReviewDecision(qualityPath));
-                if (rawTask.review.quality !== nextQuality) {
-                    rawTask.review.quality = nextQuality;
+            const reviewPath = path.join(changePath, reviewArtifact);
+            if (await this.fileService.exists(reviewPath)) {
+                const nextDecision = this.normalizeReviewRunDecision(await this.readReviewDecision(reviewPath));
+                if (rawTask.review.decision !== nextDecision) {
+                    rawTask.review.decision = nextDecision;
                     changed = true;
                 }
             }
@@ -3433,10 +3429,19 @@ class TaskGraphExecutionService {
             this.getTaskReviewArtifactFile(stage),
         ].join('/');
     }
+    getTaskCombinedReviewArtifactRelativePath(taskId) {
+        return [
+            'artifacts',
+            'reviews',
+            TASK_REVIEWS_DIR,
+            this.toFileSafeId(taskId) || 'task',
+            constants_1.FILE_NAMES.REVIEW,
+        ].join('/');
+    }
     getTaskReviewArtifactPath(changePath, taskId, stage) {
         return path.join(changePath, this.getTaskReviewArtifactRelativePath(taskId, stage));
     }
-    async prepareTaskReviewDispatch(changePath, report, taskId, requestedStage) {
+    async prepareTaskReviewDispatch(changePath, report, taskId) {
         const task = this.flattenReportTasks(report).find(item => item.id === taskId);
         if (!task) {
             throw new Error(`Task not found in task graph: ${taskId}`);
@@ -3454,59 +3459,40 @@ class TaskGraphExecutionService {
         rawTask.review = rawTask.review && typeof rawTask.review === 'object' && !Array.isArray(rawTask.review)
             ? rawTask.review
             : {};
-        rawTask.review.spec_artifact = typeof rawTask.review.spec_artifact === 'string' && rawTask.review.spec_artifact.trim()
-            ? rawTask.review.spec_artifact.trim()
-            : this.getTaskReviewArtifactRelativePath(taskId, 'spec');
-        rawTask.review.quality_artifact = typeof rawTask.review.quality_artifact === 'string' && rawTask.review.quality_artifact.trim()
-            ? rawTask.review.quality_artifact.trim()
-            : this.getTaskReviewArtifactRelativePath(taskId, 'quality');
-        const specArtifactPath = path.join(changePath, rawTask.review.spec_artifact);
-        const qualityArtifactPath = path.join(changePath, rawTask.review.quality_artifact);
-        const specDecision = await this.fileService.exists(specArtifactPath)
-            ? this.normalizeReviewRunDecision(await this.readReviewDecision(specArtifactPath))
-            : normalizeReviewDecisionValue(rawTask.review.spec);
-        const qualityDecision = await this.fileService.exists(qualityArtifactPath)
-            ? this.normalizeReviewRunDecision(await this.readReviewDecision(qualityArtifactPath))
-            : normalizeReviewDecisionValue(rawTask.review.quality);
-        const stage = requestedStage || this.selectNextReviewStage(specDecision, qualityDecision);
-        const reviewArtifactPath = stage === 'spec' ? specArtifactPath : qualityArtifactPath;
+        rawTask.review.review_artifact = typeof rawTask.review.review_artifact === 'string' && rawTask.review.review_artifact.trim()
+            ? rawTask.review.review_artifact.trim()
+            : this.getTaskCombinedReviewArtifactRelativePath(taskId);
+        const reviewArtifactPath = path.join(changePath, rawTask.review.review_artifact);
+        const decision = await this.fileService.exists(reviewArtifactPath)
+            ? this.normalizeReviewRunDecision(await this.readReviewDecision(reviewArtifactPath))
+            : normalizeReviewDecisionValue(rawTask.review.decision);
         if (!(await this.fileService.exists(reviewArtifactPath))) {
-            await this.fileService.writeFile(reviewArtifactPath, this.buildDefaultTaskReviewArtifact(report.feature, task, stage));
+            await this.writeLocalizedReportFile(changePath, reviewArtifactPath, this.buildDefaultTaskReviewArtifact(report.feature, task));
         }
-        rawTask.review.spec = specDecision;
-        rawTask.review.quality = qualityDecision;
-        if (stage === 'spec' && !APPROVED_REVIEW_DECISIONS.has(specDecision)) {
-            rawTask.review.spec = 'PENDING';
-        }
-        if (stage === 'quality' && !APPROVED_REVIEW_DECISIONS.has(qualityDecision)) {
-            rawTask.review.quality = 'PENDING';
-        }
+        rawTask.review.decision = APPROVED_REVIEW_DECISIONS.has(decision) ? decision : 'PENDING';
         rawGraph.status = this.deriveGraphStatus(rawGraph);
         await this.fileService.writeJSON(report.graphPath, rawGraph);
         return {
             task,
-            stage,
-            specDecision,
-            qualityDecision,
+            stage: 'review',
+            decision,
             reviewArtifactPath,
         };
     }
-    buildDefaultTaskReviewArtifact(feature, task, stage) {
-        const reviewerRole = stage === 'spec' ? 'spec_compliance_reviewer' : 'code_quality_reviewer';
-        const title = stage === 'spec' ? 'Task Spec Compliance Review' : 'Task Code Quality Review';
+    buildDefaultTaskReviewArtifact(feature, task) {
         return [
             '---',
             `feature: ${feature}`,
             `created: ${new Date().toISOString().split('T')[0]}`,
             'status: pending',
-            `reviewer_role: ${reviewerRole}`,
+            'reviewer_role: code_reviewer',
             'decision: PENDING',
             `task_id: ${task.id}`,
             `task_title: ${task.title}`,
             'optional_steps: []',
             '---',
             '',
-            `# ${title}: ${task.id}`,
+            `# Task Code Review: ${task.id}`,
             '',
             '## Task Scope',
             '',
@@ -3514,13 +3500,48 @@ class TaskGraphExecutionService {
             `- Target files: ${task.targetFiles.length > 0 ? task.targetFiles.join(', ') : 'none'}`,
             `- Expected result: ${task.expectedResult || 'none'}`,
             '',
-            '## Checklist',
+            '## Spec Compliance',
             '',
-            '- [ ] Review the task packet, changed files, and verification evidence.',
-            stage === 'spec'
-                ? '- [ ] Confirm the implementation satisfies this task without under-building or over-building.'
-                : '- [ ] Confirm the implementation is maintainable, minimal, tested, and safe.',
-            '- [ ] Record concrete findings before changing `decision`.',
+            '- [ ] Confirm the implementation satisfies this task without under-building or over-building.',
+            '- TBD',
+            '',
+            '## Code Quality',
+            '',
+            '- [ ] Confirm the implementation is maintainable, minimal, tested, and safe.',
+            '- TBD',
+            '',
+            '## Decision',
+            '',
+            '- Review the task packet, changed files, and verification evidence across both dimensions, record concrete findings above, then set the single `decision` (APPROVED, APPROVED_WITH_CONCERNS, NEEDS_CHANGES, BLOCKED).',
+            '',
+        ].join('\n');
+    }
+    buildDefaultFinalReviewArtifact(feature) {
+        return [
+            '---',
+            `feature: ${feature}`,
+            `created: ${new Date().toISOString().split('T')[0]}`,
+            'status: pending',
+            'reviewer_role: code_reviewer',
+            'decision: PENDING',
+            'optional_steps: []',
+            '---',
+            '',
+            '# Final Code Review',
+            '',
+            '## Spec Compliance',
+            '',
+            '- [ ] Confirm the change satisfies `proposal.md`, `design.md`, `implementation-plan.md`, and `tasks.md` without under-building or over-building.',
+            '- TBD',
+            '',
+            '## Code Quality',
+            '',
+            '- [ ] Confirm the change is maintainable, minimal, tested, and safe across all task output.',
+            '- TBD',
+            '',
+            '## Decision',
+            '',
+            '- Review the whole change across both dimensions after all task-level reviews are approved and the task graph is completed, record concrete findings above, then set the single `decision` (APPROVED, APPROVED_WITH_CONCERNS, NEEDS_CHANGES, BLOCKED).',
             '',
         ].join('\n');
     }
@@ -4267,8 +4288,8 @@ class TaskGraphExecutionService {
             ['workerStatus', path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.AGENT_WORKER_STATUS), false],
             ['designReview', this.getDocumentReviewArtifactPath(changePath, 'design'), false],
             ['implementationPlanReview', this.getDocumentReviewArtifactPath(changePath, 'plan'), false],
-            ['specReview', path.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW), false],
-            ['qualityReview', path.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW), false],
+            ['specReview', path.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW), false],
+            ['qualityReview', path.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW), false],
             ['verificationEvidence', this.getVerificationEvidencePath(changePath), false],
             ['tddEvidence', this.getTddEvidencePath(changePath), false],
             ['debugEvidence', this.getDebugEvidencePath(changePath), false],
@@ -6158,10 +6179,8 @@ class TaskGraphExecutionService {
             throw new Error(`Task not found in task graph: ${task.id}`);
         }
         rawTask.review = {
-            spec: 'PENDING',
-            quality: 'PENDING',
-            spec_artifact: this.getTaskReviewArtifactRelativePath(task.id, 'spec'),
-            quality_artifact: this.getTaskReviewArtifactRelativePath(task.id, 'quality'),
+            decision: 'PENDING',
+            review_artifact: this.getTaskCombinedReviewArtifactRelativePath(task.id),
         };
     }
     normalizeCompletionStatus(status) {
@@ -6394,7 +6413,7 @@ class TaskGraphExecutionService {
             if (!review) {
                 return true;
             }
-            return APPROVED_REVIEW_DECISIONS.has(review.spec) && APPROVED_REVIEW_DECISIONS.has(review.quality);
+            return APPROVED_REVIEW_DECISIONS.has(review.decision);
         })) {
             return 'completed';
         }
@@ -6678,14 +6697,19 @@ class TaskGraphExecutionService {
     }
     buildReviewDispatchPacket(report, record) {
         const isTaskReview = Boolean(record.taskId);
-        const reviewName = record.stage === 'spec' ? 'Spec Compliance Review' : 'Code Quality Review';
-        const priorReview = record.stage === 'quality'
-            ? isTaskReview
-                ? '- Confirm this task\'s spec review artifact is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
-                : '- Confirm `artifacts/reviews/spec-compliance.md` is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
-            : isTaskReview
-                ? '- Check this task implementation against the task packet, accepted design, implementation plan, and expected result.'
-                : '- Check implementation against `proposal.md`, `design.md`, `implementation-plan.md`, and `tasks.md` before deciding whether it satisfies the spec.';
+        const isCombinedReview = record.stage === 'review';
+        const reviewName = isCombinedReview
+            ? 'Code Review (Spec Compliance + Code Quality)'
+            : record.stage === 'spec' ? 'Spec Compliance Review' : 'Code Quality Review';
+        const priorReview = isCombinedReview
+            ? '- Review BOTH dimensions in one pass: (1) spec compliance — the implementation satisfies the task packet, accepted design, implementation plan, and expected result without under/over-building; (2) code quality — it is maintainable, minimal, tested, and safe. Record one combined decision.'
+            : record.stage === 'quality'
+                ? isTaskReview
+                    ? '- Confirm this task\'s spec review artifact is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
+                    : '- Confirm `artifacts/reviews/spec-compliance.md` is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
+                : isTaskReview
+                    ? '- Check this task implementation against the task packet, accepted design, implementation plan, and expected result.'
+                    : '- Check implementation against `proposal.md`, `design.md`, `implementation-plan.md`, and `tasks.md` before deciding whether it satisfies the spec.';
         const taskScope = isTaskReview
             ? [
                 `- Task ID: ${record.taskId}`,

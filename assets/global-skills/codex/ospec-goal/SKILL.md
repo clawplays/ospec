@@ -31,7 +31,7 @@ This skill covers the full lifecycle inside an initialized OSpec project:
 - user decision gates
 - workspace and worktree planning
 - TDD, debug, and verification evidence
-- final spec and code-quality reviews
+- a single combined final code review
 - finish planning, verification, archive readiness, and finalize closeout
 
 Use `ospec-change` for small routine changes that only need the classic fast flow.
@@ -54,9 +54,8 @@ Use `ospec-change` for small routine changes that only need the classic fast flo
 14. `.ospec/changes/active/<goal>/artifacts/agents/worker-runs/`
 15. `.ospec/changes/active/<goal>/artifacts/agents/review-runs/`
 16. `.ospec/changes/active/<goal>/artifacts/agents/decisions/`
-17. `.ospec/changes/active/<goal>/artifacts/reviews/spec-compliance.md`
-18. `.ospec/changes/active/<goal>/artifacts/reviews/code-quality.md`
-19. `.ospec/changes/active/<goal>/artifacts/agents/worker-status.md`
+17. `.ospec/changes/active/<goal>/artifacts/reviews/final-review.md`
+18. `.ospec/changes/active/<goal>/artifacts/agents/worker-status.md`
 20. `.ospec/changes/active/<goal>/artifacts/agents/tdd-evidence.json`
 21. `.ospec/changes/active/<goal>/artifacts/agents/debug-evidence.json`
 22. `.ospec/changes/active/<goal>/artifacts/agents/verification-evidence.json`
@@ -123,8 +122,8 @@ ospec execute workspace [changes/active/<goal>]
 ospec execute dispatch [changes/active/<goal>] [--task task-id] [--limit N]
 ospec execute launch [changes/active/<goal>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute complete <task-id> [changes/active/<goal>] --status DONE --summary "..."
-ospec execute review [changes/active/<goal>] [--task task-id] --stage spec
-ospec execute review [changes/active/<goal>] [--task task-id] --stage quality
+ospec execute review [changes/active/<goal>] --task task-id   # per-task: one combined code review (spec compliance + code quality)
+ospec execute review [changes/active/<goal>]                  # whole-change: one combined final code review (after all task reviews approved)
 ospec execute tdd [changes/active/<goal>] --phase red|green|refactor --command "..." --status ...
 ospec execute debug [changes/active/<goal>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --status ...
 ospec execute verify [changes/active/<goal>] --command "..." --status PASSED
