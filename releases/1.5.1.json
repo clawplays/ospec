@@ -1,0 +1,15 @@
+{
+  "title_suffix": "Linked brainstorms archive with their change even when archive bypassed the CLI",
+  "summary": "This patch closes a gap where a brainstorm could be left behind in .ospec/brainstorms/ after its change was archived. ospec finalize/ospec archive already move a change's linked brainstorm at archive time, but if a change was relocated into archived/ without running those commands (for example a manual directory move after human/device verification), the linking never ran and the brainstorm was orphaned. A new reconcile sweep now re-homes any brainstorm whose linked change is already archived, and the goal guidance makes clear that archiving must always go through ospec finalize.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.5.0...1.5.1",
+  "new": [
+    "Added a brainstorm reconcile safety net: rebuildIndex now moves any brainstorm whose recorded changeName (or matching brainstorm id) points to an already-archived change into that archived change's artifacts/brainstorm/. This recovers brainstorms orphaned by a change that was archived without ospec finalize/ospec archive (e.g. a manual directory move), and brainstorms linked after their change was archived. Brainstorms linked to an active change are left in place."
+  ],
+  "improved": [
+    "The ospec-goal skill and the AI guidance (en-US, zh-CN, ja-JP, ar) now state that archiving — even when the user explicitly asks — must go through ospec finalize (or ospec archive) and never a manual directory move, because finalize archives the change's linked brainstorm at the same moment. If finalize reports not-ready because a review still awaits human or device verification (its decision is not APPROVED), record the user's confirmed approval in that review and rerun ospec finalize instead of relocating files."
+  ],
+  "docs": [
+    "Documented the archive-must-use-finalize rule and the brainstorm reconcile behavior in the ospec-goal skill and the for-ai guidance across all four languages.",
+    "Added release metadata for 1.5.1."
+  ]
+}

@@ -187,6 +187,7 @@ export declare class ProjectService {
      * directory id equals the feature. Unlinked exploration brainstorms are left in place.
      */
     archiveLinkedBrainstorms(projectRoot: string, feature: string, archivePath: string): Promise<string[]>;
+    reconcileArchivedBrainstorms(projectRoot: string): Promise<string[]>;
     rebaseMovedChangeMarkdownLinks(previousChangePath: string, nextChangePath: string): Promise<void>;
     getFeatureProjectContext(rootDir: string, affects?: string[]): Promise<FeatureProjectContext>;
     getDocsStatus(rootDir: string): Promise<DocsStatus>;

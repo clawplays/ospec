@@ -737,6 +737,96 @@ class ProjectService {
         }
         return moved;
     }
+    // Safety net for the archive-moment linking: if a change was moved into archived/ without
+    // running `ospec finalize`/`ospec archive` (e.g. a manual directory move), or a brainstorm was
+    // linked after its change was archived, the brainstorm is left behind in .ospec/brainstorms/.
+    // This sweep moves any brainstorm whose linked change (by recorded changeName, or by matching
+    // brainstorm id when unlinked) is already archived into that archived change's artifacts/brainstorm/.
+    async reconcileArchivedBrainstorms(projectRoot) {
+        const brainstormsDir = path_1.default.join(projectRoot, '.ospec', 'brainstorms');
+        if (!(await this.fileService.exists(brainstormsDir))) {
+            return [];
+        }
+        const brainstormEntries = await this.fileService.readDir(brainstormsDir).catch(() => []);
+        const candidates = [];
+        for (const name of brainstormEntries) {
+            const jsonPath = path_1.default.join(brainstormsDir, name, 'brainstorm.json');
+            if (!(await this.fileService.exists(jsonPath))) {
+                continue;
+            }
+            let changeName = '';
+            try {
+                const data = await this.fileService.readJSON(jsonPath);
+                changeName = typeof data?.changeName === 'string' ? data.changeName.trim() : '';
+            }
+            catch {
+                changeName = '';
+            }
+            candidates.push({ name, changeName });
+        }
+        if (candidates.length === 0) {
+            return [];
+        }
+        // Mirror archiveLinkedBrainstorms, which also reads the managed tree under .ospec/.
+        const archivedRoot = path_1.default.join(projectRoot, '.ospec', constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ARCHIVED);
+        if (!(await this.fileService.exists(archivedRoot))) {
+            return [];
+        }
+        const isDir = async (target) => {
+            try {
+                return (await this.fileService.stat(target)).isDirectory();
+            }
+            catch {
+                return false;
+            }
+        };
+        // Map archived change feature -> archive directory (archived/<month>/<day>/<feature>).
+        const archivedByFeature = new Map();
+        for (const month of await this.fileService.readDir(archivedRoot).catch(() => [])) {
+            const monthDir = path_1.default.join(archivedRoot, month);
+            if (!(await isDir(monthDir))) {
+                continue;
+            }
+            for (const day of await this.fileService.readDir(monthDir).catch(() => [])) {
+                const dayDir = path_1.default.join(monthDir, day);
+                if (!(await isDir(dayDir))) {
+                    continue;
+                }
+                for (const feature of await this.fileService.readDir(dayDir).catch(() => [])) {
+                    if (archivedByFeature.has(feature)) {
+                        continue;
+                    }
+                    const changeDir = path_1.default.join(dayDir, feature);
+                    if (await this.fileService.exists(path_1.default.join(changeDir, constants_1.FILE_NAMES.STATE))
+                        || await this.fileService.exists(path_1.default.join(changeDir, constants_1.FILE_NAMES.PROPOSAL))) {
+                        archivedByFeature.set(feature, changeDir);
+                    }
+                }
+            }
+        }
+        if (archivedByFeature.size === 0) {
+            return [];
+        }
+        const moved = [];
+        for (const { name, changeName } of candidates) {
+            // Confident resolution only: an explicit changeName that is archived, or (when unlinked)
+            // a brainstorm id that equals an archived feature. An active linked change is left alone.
+            const targetFeature = changeName && archivedByFeature.has(changeName)
+                ? changeName
+                : (!changeName && archivedByFeature.has(name) ? name : '');
+            if (!targetFeature) {
+                continue;
+            }
+            const destDir = path_1.default.join(archivedByFeature.get(targetFeature), 'artifacts', 'brainstorm', name);
+            if (await this.fileService.exists(destDir)) {
+                continue;
+            }
+            await this.fileService.ensureDir(path_1.default.dirname(destDir));
+            await this.fileService.move(path_1.default.join(brainstormsDir, name), destDir);
+            moved.push(name);
+        }
+        return moved;
+    }
     async rebaseMovedChangeMarkdownLinks(previousChangePath, nextChangePath) {
         const previousRoot = path_1.default.resolve(previousChangePath);
         const nextRoot = path_1.default.resolve(nextChangePath);
@@ -1273,6 +1363,9 @@ class ProjectService {
         const config = await this.configManager.loadConfig(rootDir).catch(() => null);
         await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage, this.getProjectLayout(config));
         await this.indexBuilder.write(rootDir);
+        // Safety net: re-home any brainstorm whose change is already archived (e.g. the change was
+        // archived by a manual move that bypassed `ospec finalize`). Never let this break the index.
+        await this.reconcileArchivedBrainstorms(rootDir).catch(() => []);
         return this.getIndexStatus(rootDir);
     }
     getDirectorySkeleton(rootDir, config = null) {
