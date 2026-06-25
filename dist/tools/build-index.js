@@ -3,21 +3,9 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes']);
-const KNOWLEDGE_ROOTS = ['for-ai/', 'docs/project/'];
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes', 'for-ai']);
 const INDEX_FILE = 'SKILL.index.json';
 const SKILL_FILE = 'SKILL.md';
-// A managed file is indexed when it is a SKILL.md module or a Markdown knowledge
-// document under a knowledge root. Keep this predicate identical in IndexBuilder.ts.
-function isIndexableManagedFile(managedRelativePath, fileName) {
-    if (fileName === SKILL_FILE) {
-        return true;
-    }
-    if (!fileName.toLowerCase().endsWith('.md')) {
-        return false;
-    }
-    return KNOWLEDGE_ROOTS.some(root => managedRelativePath.startsWith(root));
-}
 // Best-effort HEAD commit the index reflects. Null outside a git work tree. Treated
 // as a volatile field in comparisons so a new commit never makes the index "stale".
 function resolveGitCommit(rootDir) {
@@ -170,9 +158,6 @@ async function buildIndex(rootDir) {
     let totalSections = 0;
     await walk(managedRoot, async fullPath => {
         const relativePath = normalizeManagedRelativePath(rootDir, fullPath, layout);
-        if (!isIndexableManagedFile(relativePath, path.basename(fullPath))) {
-            return;
-        }
         totalFiles += 1;
         const content = await fsp.readFile(fullPath, 'utf8');
         const parsed = parseSkillFile(content);
@@ -201,12 +186,10 @@ async function buildIndex(rootDir) {
     for (const tag of Object.keys(tagIndex).sort((left, right) => left.localeCompare(right))) {
         tagIndex[tag] = tagIndex[tag].sort((left, right) => left.localeCompare(right));
     }
-    const activeChanges = await listActiveChanges(rootDir, layout);
     return {
         version: '1.0',
         generated: new Date().toISOString(),
         git_commit: resolveGitCommit(rootDir),
-        active_changes: activeChanges,
         stats: {
             totalFiles,
             totalModules: Object.keys(modules).length,
@@ -226,7 +209,9 @@ async function walk(currentDir, onSkillFile) {
             }
             continue;
         }
-        await onSkillFile(fullPath);
+        if (entry.name === SKILL_FILE) {
+            await onSkillFile(fullPath);
+        }
     }
 }
 async function buildChangeSummary(rootDir, changeName, config) {
@@ -456,18 +441,7 @@ function isHookRelevantPath(filePath) {
     return filePath === '.skillrc' || isIndexRelevantPath(filePath);
 }
 function isIndexRelevantPath(filePath) {
-    return (filePath === SKILL_FILE ||
-        /(^|\/)SKILL\.md$/.test(filePath) ||
-        filePath.startsWith('changes/active/') ||
-        filePath.startsWith('.ospec/changes/active/') ||
-        isKnowledgeDocPath(filePath));
-}
-function isKnowledgeDocPath(filePath) {
-    if (!filePath.toLowerCase().endsWith('.md')) {
-        return false;
-    }
-    const managedRelativePath = filePath.startsWith('.ospec/') ? filePath.slice('.ospec/'.length) : filePath;
-    return KNOWLEDGE_ROOTS.some(root => managedRelativePath.startsWith(root));
+    return filePath === SKILL_FILE || /(^|\/)SKILL\.md$/.test(filePath) || filePath.startsWith('changes/active/') || filePath.startsWith('.ospec/changes/active/');
 }
 async function listActiveChanges(rootDir, layout) {
     const resolvedLayout = layout || (await getProjectLayout(rootDir));
@@ -1304,7 +1278,6 @@ function stripVolatileFields(index) {
 }
 function printIndexStats(index) {
     console.log(`[ospec] files ${index.stats.totalFiles}, modules ${index.stats.totalModules}, sections ${index.stats.totalSections}`);
-    console.log(`[ospec] active changes: ${index.active_changes.join(', ') || 'none'}`);
 }
 function normalizePath(filePath) {
     return filePath.replace(/\\/g, '/');

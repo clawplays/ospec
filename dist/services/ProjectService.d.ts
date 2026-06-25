@@ -271,7 +271,6 @@ export declare class ProjectService {
     private analyzeTddEvidenceForVerificationDocument;
     private analyzeDebugEvidenceForVerificationDocument;
     private maxUpdatedAt;
-    private collectKnowledgeDocPaths;
     private getLatestUpdatedAt;
     private shouldRebuildIndex;
     private getIndexRebuildReasons;

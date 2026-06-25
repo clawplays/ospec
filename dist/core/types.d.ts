@@ -179,7 +179,6 @@ export interface SkillIndex {
     version: string;
     generated: string;
     git_commit: string | null;
-    active_changes: string[];
     stats: {
         totalFiles: number;
         totalModules: number;

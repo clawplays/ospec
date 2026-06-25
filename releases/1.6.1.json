@@ -1,0 +1,17 @@
+{
+  "title_suffix": "Revert the SKILL.index.json knowledge-doc indexing back to a focused SKILL.md catalog",
+  "summary": "1.6.0 expanded SKILL.index.json to also index the for-ai/ and docs/project/ knowledge documents. In practice that made the index large for documentation-heavy projects — and the index is read into context at the start of every session — so 1.6.1 reverts it back to what it was designed to be: a focused catalog of the project's SKILL.md modules. All of the 1.6.0 correctness fixes, token trims, and diagnostics are kept; only the knowledge-doc indexing (and the index's active_changes list) are removed.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.6.0...1.6.1",
+  "fixed": [
+    "Reverted the 1.6.0 knowledge-doc indexing: SKILL.index.json is once again a catalog of SKILL.md modules only — for-ai/ and docs/project/ markdown are no longer indexed — which avoids index bloat and per-session token cost in documentation-heavy projects.",
+    "Removed the active_changes list from the index; it is no longer concerned with change state."
+  ],
+  "improved": [
+    "Kept all 1.6.0 index hardening: the single-source algorithm shared by the writer and the git hook, consistent nested .ospec/ prefix stripping, frontmatter title/name H1 alignment, tagIndex de-duplication, populated-and-volatile git_commit, module-name collision disambiguation, the dropped per-section byte offsets, and the ospec update / ospec verify index regeneration.",
+    "Kept the off-CLI state-drift diagnostic in ospec changes status / ospec verify that explains why a hand-progressed change never auto-archives."
+  ],
+  "docs": [
+    "Bumped the documented install version to 1.6.1 across the usage guides (en-US, zh-CN, ja-JP, ar).",
+    "Added release metadata for 1.6.1."
+  ]
+}

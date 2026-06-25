@@ -39,7 +39,6 @@ class IndexBuilder {
             version: '1.0',
             generated: new Date().toISOString(),
             git_commit: indexTool.resolveGitCommit(rootDir),
-            active_changes: [],
             stats: {
                 totalFiles: 0,
                 totalModules: 0,

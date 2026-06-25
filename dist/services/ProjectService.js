@@ -545,10 +545,7 @@ class ProjectService {
         const existingSkillPaths = allSkills
             .filter(skill => skill.exists)
             .map(skill => skill.path);
-        // Knowledge docs (for-ai/, docs/project/) are indexed too, so their edits must also mark
-        // the index stale — keeps `ospec index check` aligned with the commit hook and finalize.
-        const knowledgeDocPaths = await this.collectKnowledgeDocPaths(rootDir, config);
-        latestSourceUpdatedAt = await this.getLatestUpdatedAt([...existingSkillPaths, ...knowledgeDocPaths]);
+        latestSourceUpdatedAt = await this.getLatestUpdatedAt(existingSkillPaths);
         const indexNeedsRebuild = this.shouldRebuildIndex(skillIndexUpdatedAt, latestSourceUpdatedAt, allSkills);
         const indexReasons = this.getIndexRebuildReasons(skillIndexPath, skillIndexUpdatedAt, latestSourceUpdatedAt, allSkills);
         return {
@@ -3750,36 +3747,6 @@ ${formatSuggestion()}
         }
         timestamps.sort();
         return timestamps[timestamps.length - 1] ?? null;
-    }
-    async collectKnowledgeDocPaths(rootDir, config) {
-        const knowledgeRoots = [`${constants_1.DIR_NAMES.FOR_AI}`, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}`];
-        const collected = [];
-        const walk = async (dirPath) => {
-            let entries;
-            try {
-                entries = await this.fileService.readDir(dirPath);
-            }
-            catch {
-                return;
-            }
-            for (const entry of entries) {
-                const fullPath = path_1.default.join(dirPath, entry);
-                const stats = await this.fileService.stat(fullPath).catch(() => null);
-                if (!stats) {
-                    continue;
-                }
-                if (stats.isDirectory()) {
-                    await walk(fullPath);
-                }
-                else if (entry.toLowerCase().endsWith('.md')) {
-                    collected.push(fullPath);
-                }
-            }
-        };
-        for (const knowledgeRoot of knowledgeRoots) {
-            await walk(this.resolveManagedPath(rootDir, knowledgeRoot, config));
-        }
-        return collected;
     }
     async getLatestUpdatedAt(filePaths) {
         const timestamps = await Promise.all(filePaths.map(async (filePath) => (await this.fileService.exists(filePath)
