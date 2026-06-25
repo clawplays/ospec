@@ -1,14 +1,13 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexBuilder = exports.IndexBuilder = void 0;
 const fs_1 = require("fs");
-const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
-const ProjectLayout_1 = require("../utils/ProjectLayout");
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes', 'for-ai']);
+// Single source of truth for the index algorithm. `build-index.ts` is also compiled to the
+// standalone `.ospec/tools/build-index-auto.cjs` used by the git hook; requiring it here means
+// the writer and the hook share one implementation (no parser/layout divergence). The tool
+// only runs its CLI `main()` under `require.main === module`, so importing it is side-effect free.
+const indexTool = require('../tools/build-index');
 async function pathExists(targetPath) {
     try {
         await fs_1.promises.access(targetPath, fs_1.constants.F_OK);
@@ -19,109 +18,27 @@ async function pathExists(targetPath) {
     }
 }
 async function readJson(filePath) {
-    return JSON.parse((await fs_1.promises.readFile(filePath, 'utf8')).replace(/^\uFEFF/, ''));
+    return JSON.parse((await fs_1.promises.readFile(filePath, 'utf8')).replace(/^﻿/, ''));
 }
 class IndexBuilder {
-    constructor(skillParser) {
-        this.skillParser = skillParser;
-    }
+    // skillParser is retained for backward-compatible construction; the index algorithm now
+    // lives in the shared build-index tool, so parsing is no longer done here.
+    constructor(_skillParser) { }
     async build(rootDir) {
-        const config = await this.readProjectConfig(rootDir);
-        const projectLayout = (0, ProjectLayout_1.getProjectLayout)(config);
-        const managedRoot = (0, ProjectLayout_1.getProjectManagedRoot)(rootDir, projectLayout);
-        const modules = {};
-        const tagIndex = {};
-        let totalFiles = 0;
-        let totalSections = 0;
-        const visit = async (currentDir) => {
-            const entries = (await fs_1.promises.readdir(currentDir, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
-            for (const entry of entries) {
-                const fullPath = path_1.default.join(currentDir, entry.name);
-                if (entry.isDirectory()) {
-                    if (!SKIP_DIRS.has(entry.name)) {
-                        await visit(fullPath);
-                    }
-                    continue;
-                }
-                if (entry.name !== constants_1.FILE_NAMES.SKILL_MD) {
-                    continue;
-                }
-                totalFiles++;
-                const relativePath = path_1.default.relative(rootDir, fullPath).replace(/\\/g, '/');
-                const content = await fs_1.promises.readFile(fullPath, 'utf-8');
-                const parsed = this.skillParser.parseSkillFile(content);
-                const moduleName = parsed.frontmatter.name || relativePath;
-                const title = parsed.frontmatter.title || parsed.frontmatter.name || relativePath;
-                const tags = parsed.frontmatter.tags || [];
-                const sections = parsed.sections;
-                totalSections += Object.keys(sections).length;
-                modules[moduleName] = {
-                    file: relativePath,
-                    title,
-                    tags,
-                    sections,
-                };
-                for (const tag of tags) {
-                    if (!tagIndex[tag]) {
-                        tagIndex[tag] = [];
-                    }
-                    tagIndex[tag].push(moduleName);
-                }
-            }
-        };
-        if (await pathExists(managedRoot)) {
-            await visit(managedRoot);
-        }
-        const activeChangesDir = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'changes/active', projectLayout);
-        const activeChanges = (await pathExists(activeChangesDir))
-            ? (await fs_1.promises.readdir(activeChangesDir)).sort((left, right) => left.localeCompare(right))
-            : [];
-        for (const tag of Object.keys(tagIndex)) {
-            tagIndex[tag] = tagIndex[tag].sort((left, right) => left.localeCompare(right));
-        }
-        return {
-            version: '1.0',
-            generated: new Date().toISOString(),
-            git_commit: null,
-            active_changes: activeChanges,
-            stats: {
-                totalFiles,
-                totalModules: Object.keys(modules).length,
-                totalSections,
-            },
-            modules,
-            tagIndex,
-        };
+        return indexTool.buildIndex(rootDir);
     }
     async write(rootDir) {
-        const config = await this.readProjectConfig(rootDir);
-        const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
-        const previous = (await pathExists(indexPath))
-            ? (await readJson(indexPath))
-            : null;
-        const index = await this.build(rootDir);
-        const previousComparable = previous ? this.stripVolatileFields(previous) : null;
-        const nextComparable = this.stripVolatileFields(index);
-        if (previous && JSON.stringify(previousComparable) === JSON.stringify(nextComparable)) {
-            return previous;
-        }
-        const output = {
-            ...index,
-            generated: new Date().toISOString(),
-        };
-        await fs_1.promises.writeFile(indexPath, JSON.stringify(output, null, 2), 'utf-8');
-        return output;
+        const { index } = await indexTool.writeIndex(rootDir, { silent: true });
+        return index;
     }
     async createEmpty(rootDir) {
-        const config = await this.readProjectConfig(rootDir);
-        const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
-        const previous = (await pathExists(indexPath))
-            ? (await readJson(indexPath))
-            : null;
+        const layout = await indexTool.getProjectLayout(rootDir);
+        const indexPath = indexTool.resolveManagedPath(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, layout);
+        const previous = (await pathExists(indexPath)) ? await readJson(indexPath) : null;
         const index = {
             version: '1.0',
             generated: new Date().toISOString(),
-            git_commit: null,
+            git_commit: indexTool.resolveGitCommit(rootDir),
             active_changes: [],
             stats: {
                 totalFiles: 0,
@@ -131,29 +48,17 @@ class IndexBuilder {
             modules: {},
             tagIndex: {},
         };
-        if (previous && JSON.stringify(this.stripVolatileFields(previous)) === JSON.stringify(this.stripVolatileFields(index))) {
+        if (previous && JSON.stringify(stripVolatileFields(previous)) === JSON.stringify(stripVolatileFields(index))) {
             return previous;
         }
         await fs_1.promises.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
         return index;
     }
-    stripVolatileFields(index) {
-        const { generated: _generated, ...stable } = index;
-        return stable;
-    }
-    async readProjectConfig(rootDir) {
-        const configPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILLRC);
-        if (!(await pathExists(configPath))) {
-            return null;
-        }
-        try {
-            return await readJson(configPath);
-        }
-        catch {
-            return null;
-        }
-    }
 }
 exports.IndexBuilder = IndexBuilder;
+function stripVolatileFields(index) {
+    const { generated: _generated, git_commit: _gitCommit, ...stable } = index;
+    return stable;
+}
 const createIndexBuilder = (skillParser) => new IndexBuilder(skillParser);
 exports.createIndexBuilder = createIndexBuilder;

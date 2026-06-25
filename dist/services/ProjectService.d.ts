@@ -224,7 +224,12 @@ export declare class ProjectService {
     getBootstrapFieldPolicy(): BootstrapFieldPolicy[];
     getBootstrapStructurePolicy(rootDir: string): BootstrapStructurePolicy;
     private buildBootstrapPreview;
-    rebuildIndex(rootDir: string): Promise<SkillsStatus['skillIndex']>;
+    rebuildIndex(rootDir: string, options?: {
+        syncAssets?: boolean;
+    }): Promise<SkillsStatus['skillIndex']>;
+    rebuildIndexForPath(targetPath: string, options?: {
+        syncAssets?: boolean;
+    }): Promise<SkillsStatus['skillIndex']>;
     private getDirectorySkeleton;
     private getProtocolShellDirectorySkeleton;
     private getKnowledgeLayerDirectorySkeleton;
@@ -266,6 +271,7 @@ export declare class ProjectService {
     private analyzeTddEvidenceForVerificationDocument;
     private analyzeDebugEvidenceForVerificationDocument;
     private maxUpdatedAt;
+    private collectKnowledgeDocPaths;
     private getLatestUpdatedAt;
     private shouldRebuildIndex;
     private getIndexRebuildReasons;

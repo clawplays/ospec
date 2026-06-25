@@ -46,6 +46,9 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
                 ? (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), featurePath, await services_1.services.configManager.loadConfig(process.cwd()).catch(() => null))
                 : featurePath || process.cwd();
             this.logger.info(`Verifying change at ${targetPath}`);
+            // Keep the index fresh for the verification context. Idempotent (a no-op when the
+            // index is already current) and best-effort — never block verification on it.
+            await services_1.services.projectService.rebuildIndexForPath(targetPath, { syncAssets: false }).catch(() => null);
             const outcome = await (0, VerificationService_1.createVerificationService)().verify(targetPath);
             console.log('\nChange Verification Results:');
             console.log('====================\n');

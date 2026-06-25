@@ -1880,6 +1880,13 @@ Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`art
 - إذا نجح provider الداخلي لـ Codex في الاستدعاءات للقراءة فقط لكن توقفت عمليات كتابة Stitch، فتحقق أولاً من أن التشغيل يستخدم فعلاً \`codex exec --dangerously-bypass-approvals-and-sandbox\`. وإذا استُخدم runner مخصص فيجب أن يمرر العلم نفسه.
 - عند تسجيل قرارات المراجعة اليدوية، فضّل \`ospec plugins approve stitch <change-path>\` أو \`ospec plugins reject stitch <change-path>\`.`));
     }
+    /**
+     * @deprecated Legacy classic-only index generator. NOT used for deployment: the
+     * managed `.ospec/tools/build-index-auto.cjs` is direct-copied from `dist/tools/build-index.js`
+     * (compiled from `src/tools/build-index.ts`), which is the canonical implementation kept in
+     * lockstep with `IndexBuilder`. This template lacks nested-layout, knowledge-doc indexing,
+     * git_commit, and active-changes scanning and should not be revived without reconciling all three.
+     */
     generateBuildIndexScriptTemplate() {
         return `#!/usr/bin/env node
 

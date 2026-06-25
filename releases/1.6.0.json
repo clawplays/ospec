@@ -1,0 +1,22 @@
+{
+  "title_suffix": "Index covers project knowledge docs, a single-source index algorithm, and off-CLI state-drift diagnostics",
+  "summary": "This release makes SKILL.index.json useful for locating project knowledge, not just skill modules: it now indexes the for-ai/ guidance and docs/project/ rules alongside SKILL.md so an AI can find the relevant document straight from the index. The index algorithm is unified into a single source shared by the writer and the commit hook, which removes several builder divergences that could leave nested or edge-case projects reporting the index as perpetually stale. ospec update and ospec verify now regenerate the index so existing changes and knowledge docs are reflected for the next piece of work, while the index's token footprint is kept bounded. It also adds a diagnostic that explains why a finished change sometimes never auto-archives: ospec changes status and ospec verify now flag a state.json that drifted off the OSpec vocabulary because the change was progressed by hand instead of through the CLI.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.5.1...1.6.0",
+  "new": [
+    "SKILL.index.json now indexes project knowledge documents (for-ai/ and docs/project/) as first-class modules alongside SKILL.md, so an AI can locate the project's rules and guidance directly from the index instead of only skill modules.",
+    "ospec update and ospec verify now regenerate SKILL.index.json, so after upgrading the CLI or verifying a change, existing active changes and the newly-indexed knowledge docs are reflected for subsequent work.",
+    "ospec changes status and ospec verify now flag a state.json that has drifted off the OSpec vocabulary (an unrecognized status or workflow steps) — the tell-tale sign a change was progressed by hand instead of through the CLI — and explain why such a change never reaches ready_to_archive and therefore never auto-archives."
+  ],
+  "improved": [
+    "Unified the index algorithm into a single source (the build-index tool) shared by both the index writer and the git hook, eliminating parser and layout-detection divergences between them.",
+    "Scoped knowledge-doc indexing to docs/project/ and dropped per-section byte offsets from the index to keep its token footprint bounded.",
+    "ospec update now skips a redundant managed-asset re-sync when it only needs to regenerate the index."
+  ],
+  "fixed": [
+    "Fixed several index-builder divergences that could make the commit hook report SKILL.index.json as perpetually stale: the nested .ospec/ path prefix is now stripped consistently, active_changes lists only directories (stray files are ignored), tagIndex entries are de-duplicated, git_commit is populated and treated as volatile in comparisons, the frontmatter title/name H1 fallback is aligned across builders, and module-name collisions are disambiguated by path instead of silently overwriting a module."
+  ],
+  "docs": [
+    "Bumped the documented install version to 1.6.0 across the usage guides (en-US, zh-CN, ja-JP, ar).",
+    "Added release metadata for 1.6.0."
+  ]
+}

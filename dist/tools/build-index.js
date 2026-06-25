@@ -3,9 +3,39 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes', 'for-ai']);
+const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes']);
+const KNOWLEDGE_ROOTS = ['for-ai/', 'docs/project/'];
 const INDEX_FILE = 'SKILL.index.json';
 const SKILL_FILE = 'SKILL.md';
+// A managed file is indexed when it is a SKILL.md module or a Markdown knowledge
+// document under a knowledge root. Keep this predicate identical in IndexBuilder.ts.
+function isIndexableManagedFile(managedRelativePath, fileName) {
+    if (fileName === SKILL_FILE) {
+        return true;
+    }
+    if (!fileName.toLowerCase().endsWith('.md')) {
+        return false;
+    }
+    return KNOWLEDGE_ROOTS.some(root => managedRelativePath.startsWith(root));
+}
+// Best-effort HEAD commit the index reflects. Null outside a git work tree. Treated
+// as a volatile field in comparisons so a new commit never makes the index "stale".
+function resolveGitCommit(rootDir) {
+    try {
+        const result = spawnSync('git', ['rev-parse', 'HEAD'], {
+            cwd: rootDir,
+            encoding: 'utf8',
+        });
+        if (result.status !== 0) {
+            return null;
+        }
+        const commit = String(result.stdout || '').trim();
+        return commit.length > 0 ? commit : null;
+    }
+    catch {
+        return null;
+    }
+}
 async function main() {
     try {
         const action = process.argv[2] || 'build';
@@ -139,11 +169,17 @@ async function buildIndex(rootDir) {
     let totalFiles = 0;
     let totalSections = 0;
     await walk(managedRoot, async fullPath => {
-        totalFiles += 1;
         const relativePath = normalizeManagedRelativePath(rootDir, fullPath, layout);
+        if (!isIndexableManagedFile(relativePath, path.basename(fullPath))) {
+            return;
+        }
+        totalFiles += 1;
         const content = await fsp.readFile(fullPath, 'utf8');
         const parsed = parseSkillFile(content);
-        const moduleName = parsed.frontmatter.name || relativePath;
+        const preferredName = parsed.frontmatter.name || relativePath;
+        // Disambiguate a name collision (e.g. two frontmatter-less docs sharing an H1) by the
+        // unique managed-relative path so neither module is silently overwritten/lost.
+        const moduleName = modules[preferredName] ? relativePath : preferredName;
         const title = parsed.frontmatter.title || parsed.frontmatter.name || relativePath;
         const tags = Array.isArray(parsed.frontmatter.tags) ? parsed.frontmatter.tags : [];
         totalSections += Object.keys(parsed.sections).length;
@@ -157,7 +193,9 @@ async function buildIndex(rootDir) {
             if (!tagIndex[tag]) {
                 tagIndex[tag] = [];
             }
-            tagIndex[tag].push(moduleName);
+            if (!tagIndex[tag].includes(moduleName)) {
+                tagIndex[tag].push(moduleName);
+            }
         }
     });
     for (const tag of Object.keys(tagIndex).sort((left, right) => left.localeCompare(right))) {
@@ -167,7 +205,7 @@ async function buildIndex(rootDir) {
     return {
         version: '1.0',
         generated: new Date().toISOString(),
-        git_commit: null,
+        git_commit: resolveGitCommit(rootDir),
         active_changes: activeChanges,
         stats: {
             totalFiles,
@@ -188,9 +226,7 @@ async function walk(currentDir, onSkillFile) {
             }
             continue;
         }
-        if (entry.name === SKILL_FILE) {
-            await onSkillFile(fullPath);
-        }
+        await onSkillFile(fullPath);
     }
 }
 async function buildChangeSummary(rootDir, changeName, config) {
@@ -420,7 +456,18 @@ function isHookRelevantPath(filePath) {
     return filePath === '.skillrc' || isIndexRelevantPath(filePath);
 }
 function isIndexRelevantPath(filePath) {
-    return filePath === SKILL_FILE || /(^|\/)SKILL\.md$/.test(filePath) || filePath.startsWith('changes/active/') || filePath.startsWith('.ospec/changes/active/');
+    return (filePath === SKILL_FILE ||
+        /(^|\/)SKILL\.md$/.test(filePath) ||
+        filePath.startsWith('changes/active/') ||
+        filePath.startsWith('.ospec/changes/active/') ||
+        isKnowledgeDocPath(filePath));
+}
+function isKnowledgeDocPath(filePath) {
+    if (!filePath.toLowerCase().endsWith('.md')) {
+        return false;
+    }
+    const managedRelativePath = filePath.startsWith('.ospec/') ? filePath.slice('.ospec/'.length) : filePath;
+    return KNOWLEDGE_ROOTS.some(root => managedRelativePath.startsWith(root));
 }
 async function listActiveChanges(rootDir, layout) {
     const resolvedLayout = layout || (await getProjectLayout(rootDir));
@@ -485,13 +532,25 @@ function getStagedFiles(rootDir) {
         .map(item => normalizePath(item.trim()))
         .filter(Boolean);
 }
+// Frontmatter name/title derivation MUST match SkillParser (used by IndexBuilder):
+// fall back to the document H1 so both builders key modules and titles identically.
+function extractDocumentTitle(body) {
+    const match = body.match(/^#\s+(.+)$/m);
+    return match?.[1]?.trim() || null;
+}
 function parseSkillFile(content) {
     const normalizedContent = normalizeLineEndings(content);
     const parsed = parseFrontmatter(normalizedContent);
+    const title = typeof parsed.data.title === 'string' && parsed.data.title.trim().length > 0
+        ? parsed.data.title.trim()
+        : extractDocumentTitle(parsed.body);
+    const name = typeof parsed.data.name === 'string' && parsed.data.name.trim().length > 0
+        ? parsed.data.name.trim()
+        : title || 'Unknown';
     return {
         frontmatter: {
-            name: typeof parsed.data.name === 'string' ? parsed.data.name : undefined,
-            title: typeof parsed.data.title === 'string' ? parsed.data.title : undefined,
+            name,
+            title: title || undefined,
             tags: ensureArray(parsed.data.tags),
         },
         sections: extractSections(parsed.body),
@@ -1207,26 +1266,17 @@ function createFrontmatterParseError(message, lineNumber) {
     error.name = 'FrontmatterParseError';
     return error;
 }
+// Index sections record only heading level + title. Byte offsets were dropped in 1.6.0:
+// nothing slices content by them and they were the largest token cost in the index.
 function extractSections(content) {
     const sections = {};
-    const matches = [];
     const headingRegex = /^(#{1,6})\s+(.+?)$/gm;
     let match;
     while ((match = headingRegex.exec(content)) !== null) {
-        matches.push({
+        const title = match[2].trim();
+        sections[title] = {
             level: match[1].length,
-            title: match[2].trim(),
-            start: match.index,
-        });
-    }
-    for (let index = 0; index < matches.length; index += 1) {
-        const current = matches[index];
-        const next = matches[index + 1];
-        sections[current.title] = {
-            level: current.level,
-            title: current.title,
-            start: current.start,
-            end: next ? next.start : content.length,
+            title,
         };
     }
     return sections;
@@ -1249,6 +1299,7 @@ function isSameIndex(left, right) {
 function stripVolatileFields(index) {
     const clone = JSON.parse(JSON.stringify(index));
     delete clone.generated;
+    delete clone.git_commit;
     return clone;
 }
 function printIndexStats(index) {
@@ -1311,4 +1362,17 @@ async function readJsonIfExists(targetPath) {
     }
     return JSON.parse(await fsp.readFile(targetPath, 'utf8'));
 }
-main();
+// Run as a standalone script (the deployed .ospec/tools/build-index-auto.cjs) only when
+// invoked directly. When required by the package (e.g. IndexBuilder), expose the canonical
+// index algorithm so the writer and the hook share one implementation.
+if (require.main === module) {
+    main();
+}
+module.exports = {
+    buildIndex,
+    writeIndex,
+    computeIndexStatus,
+    resolveGitCommit,
+    getProjectLayout,
+    resolveManagedPath,
+};

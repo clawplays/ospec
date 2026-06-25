@@ -167,8 +167,6 @@ export interface SkillFrontmatter {
 export interface SkillSection {
     level: number;
     title: string;
-    start: number;
-    end: number;
     tags?: string[];
 }
 export interface IndexModule {

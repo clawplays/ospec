@@ -545,7 +545,10 @@ class ProjectService {
         const existingSkillPaths = allSkills
             .filter(skill => skill.exists)
             .map(skill => skill.path);
-        latestSourceUpdatedAt = await this.getLatestUpdatedAt(existingSkillPaths);
+        // Knowledge docs (for-ai/, docs/project/) are indexed too, so their edits must also mark
+        // the index stale — keeps `ospec index check` aligned with the commit hook and finalize.
+        const knowledgeDocPaths = await this.collectKnowledgeDocPaths(rootDir, config);
+        latestSourceUpdatedAt = await this.getLatestUpdatedAt([...existingSkillPaths, ...knowledgeDocPaths]);
         const indexNeedsRebuild = this.shouldRebuildIndex(skillIndexUpdatedAt, latestSourceUpdatedAt, allSkills);
         const indexReasons = this.getIndexRebuildReasons(skillIndexPath, skillIndexUpdatedAt, latestSourceUpdatedAt, allSkills);
         return {
@@ -1358,15 +1361,26 @@ class ProjectService {
             ],
         };
     }
-    async rebuildIndex(rootDir) {
-        const documentLanguage = (await this.getBootstrapUpgradePlan(rootDir)).documentLanguage || 'en-US';
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
-        await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage, this.getProjectLayout(config));
+    async rebuildIndex(rootDir, options = {}) {
+        // Callers that already refreshed managed assets (e.g. `ospec update`) can skip the
+        // direct-copy asset sync and only regenerate the index.
+        if (options.syncAssets !== false) {
+            const documentLanguage = (await this.getBootstrapUpgradePlan(rootDir)).documentLanguage || 'en-US';
+            const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+            await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage, this.getProjectLayout(config));
+        }
         await this.indexBuilder.write(rootDir);
         // Safety net: re-home any brainstorm whose change is already archived (e.g. the change was
         // archived by a manual move that bypassed `ospec finalize`). Never let this break the index.
         await this.reconcileArchivedBrainstorms(rootDir).catch(() => []);
         return this.getIndexStatus(rootDir);
+    }
+    // Resolve the owning project root from any path (a change dir or the root itself), then
+    // regenerate the index. `write()` is a no-op when the index is already current, so this is
+    // safe to call from read-mostly commands like `ospec verify` for index freshness.
+    async rebuildIndexForPath(targetPath, options = {}) {
+        const rootDir = await this.findProjectRootFromPath(path_1.default.resolve(targetPath));
+        return this.rebuildIndex(rootDir, options);
     }
     getDirectorySkeleton(rootDir, config = null) {
         return [
@@ -2569,10 +2583,29 @@ ${formatSuggestion()}
         if (isGoalWorkflow) {
             checks.push(...await this.getGoalDocumentReviewChecks(featureDir));
         }
+        // Detect a state.json that drifted off the OSpec vocabulary — the tell-tale sign a change
+        // was progressed by hand instead of through the ospec CLI. Such a change never reaches
+        // `ready_to_archive`, so finalize/auto-archive silently never fires. Surface the root cause.
+        const validStatuses = Object.keys(constants_1.STATE_TRANSITIONS);
+        const knownSteps = new Set([...constants_1.WORKFLOW_STEPS, 'write_proposal']);
+        const statusRecognized = validStatuses.includes(state.status);
+        const unknownSteps = [
+            ...(Array.isArray(state.completed) ? state.completed : []),
+            ...(Array.isArray(state.pending) ? state.pending : []),
+        ].filter(step => typeof step === 'string' && !knownSteps.has(step));
+        const stateDrifted = !statusRecognized || unknownSteps.length > 0;
+        const stateDriftDetail = [
+            !statusRecognized
+                ? `status "${state.status}" is not a recognized OSpec state (expected one of: ${validStatuses.join(', ')})`
+                : null,
+            unknownSteps.length > 0 ? `unknown workflow steps: ${unknownSteps.join(', ')}` : null,
+        ].filter(Boolean).join('; ');
         checks.push({
             name: 'state.json',
-            status: 'pass',
-            message: `Status is ${state.status}, current step is ${state.current_step}`,
+            status: stateDrifted ? 'warn' : 'pass',
+            message: stateDrifted
+                ? `${stateDriftDetail}. This change looks progressed outside the ospec CLI, so its state never reached ready_to_archive and finalize/auto-archive cannot trigger. Drive it through ospec commands (or reset state.json to a valid status/steps) to close it out.`
+                : `Status is ${state.status}, current step is ${state.current_step}`,
         });
         const archiveResult = await ArchiveGate_1.archiveGate.checkArchiveReadiness(state, workflow.getArchiveGate(), {
             activatedSteps,
@@ -3717,6 +3750,36 @@ ${formatSuggestion()}
         }
         timestamps.sort();
         return timestamps[timestamps.length - 1] ?? null;
+    }
+    async collectKnowledgeDocPaths(rootDir, config) {
+        const knowledgeRoots = [`${constants_1.DIR_NAMES.FOR_AI}`, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}`];
+        const collected = [];
+        const walk = async (dirPath) => {
+            let entries;
+            try {
+                entries = await this.fileService.readDir(dirPath);
+            }
+            catch {
+                return;
+            }
+            for (const entry of entries) {
+                const fullPath = path_1.default.join(dirPath, entry);
+                const stats = await this.fileService.stat(fullPath).catch(() => null);
+                if (!stats) {
+                    continue;
+                }
+                if (stats.isDirectory()) {
+                    await walk(fullPath);
+                }
+                else if (entry.toLowerCase().endsWith('.md')) {
+                    collected.push(fullPath);
+                }
+            }
+        };
+        for (const knowledgeRoot of knowledgeRoots) {
+            await walk(this.resolveManagedPath(rootDir, knowledgeRoot, config));
+        }
+        return collected;
     }
     async getLatestUpdatedAt(filePaths) {
         const timestamps = await Promise.all(filePaths.map(async (filePath) => (await this.fileService.exists(filePath)

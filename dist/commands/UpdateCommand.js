@@ -30,6 +30,10 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         const toolingResult = await this.syncProjectTooling(targetPath, protocolResult.documentLanguage);
         const pluginResult = await this.syncEnabledPluginAssets(targetPath);
         const archiveResult = await this.syncArchiveLayout(targetPath);
+        // Regenerate SKILL.index.json with the refreshed tooling so existing changes and
+        // newly-indexed knowledge docs are reflected for subsequent feature work. Never let
+        // an index rebuild failure abort the rest of the update.
+        const indexResult = await services_1.services.projectService.rebuildIndex(targetPath, { syncAssets: false }).catch(() => null);
         const skillResult = await this.syncInstalledSkills();
         const postSyncMaintenance = await this.runPostSyncMaintenance();
         const refreshedFiles = Array.from(new Set([
@@ -69,6 +73,9 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             if (legacyKnowledgeMigration.removedPaths.length > 0) {
                 this.info(`  legacy knowledge paths removed: ${legacyKnowledgeMigration.removedPaths.join(', ')}`);
             }
+        }
+        if (indexResult?.stats) {
+            this.info(`  index regenerated: ${indexResult.stats.totalModules} modules, ${indexResult.stats.totalSections} sections`);
         }
         if (toolingResult.hookInstalledFiles.length > 0) {
             this.info(`  git hooks refreshed: ${toolingResult.hookInstalledFiles.join(', ')}`);
@@ -113,7 +120,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         if (archiveResult.migratedChanges.length > 0) {
             this.info(`  archived changes migrated: ${archiveResult.migratedChanges.length}`);
         }
-        this.info('  note: update refreshes protocol docs, tooling, hooks, managed skills, managed assets for already-enabled plugins, and the archive layout when needed');
+        this.info('  note: update refreshes protocol docs, tooling, hooks, managed skills, managed assets for already-enabled plugins, the archive layout when needed, and regenerates SKILL.index.json');
         this.info('  note: it can repair legacy OSpec projects with an existing OSpec footprint before refreshing assets');
         this.info('  note: it auto-upgrades already-enabled plugin npm packages only when a newer compatible version is available');
         this.info('  note: it does not upgrade the CLI itself');
