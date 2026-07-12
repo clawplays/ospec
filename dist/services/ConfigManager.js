@@ -41,6 +41,66 @@ const errors_1 = require("../core/errors");
 const ConfigurableWorkflow_1 = require("../workflow/ConfigurableWorkflow");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
+function normalizeWorkflowConfig(workflow, mode) {
+    const preset = ConfigurableWorkflow_1.WORKFLOW_PRESETS[mode];
+    if (!workflow || typeof workflow !== 'object' || Array.isArray(workflow)) {
+        return preset;
+    }
+    const modelProfiles = workflow.model_profiles && typeof workflow.model_profiles === 'object' && !Array.isArray(workflow.model_profiles)
+        ? Object.fromEntries(Object.entries(workflow.model_profiles)
+            .map(([profile, value]) => {
+            if (!['mechanical', 'standard', 'strong_reasoning', 'review', 'final_review'].includes(profile)
+                || !value || typeof value !== 'object' || Array.isArray(value)) {
+                return null;
+            }
+            const targets = value.targets && typeof value.targets === 'object' && !Array.isArray(value.targets)
+                ? Object.fromEntries(Object.entries(value.targets)
+                    .map(([target, model]) => [String(target).trim(), String(model || '').trim()])
+                    .filter(([target, model]) => target.length > 0 && model.length > 0))
+                : {};
+            const defaultModel = typeof value.default === 'string' ? value.default.trim() : '';
+            return [profile, {
+                    ...(defaultModel ? { default: defaultModel } : {}),
+                    ...(Object.keys(targets).length > 0 ? { targets } : {}),
+                }];
+        }).filter(Boolean))
+        : {};
+    const withExecutionPolicy = (value) => ({
+        ...value,
+        document_review_policy: workflow.document_review_policy === 'adaptive' ? 'adaptive' : 'always',
+        model_profiles: modelProfiles,
+    });
+    if (!Array.isArray(workflow.core_required)) {
+        return withExecutionPolicy({
+            ...preset,
+            ...workflow,
+            core_required: preset.core_required,
+            optional_steps: workflow.optional_steps && typeof workflow.optional_steps === 'object'
+                ? workflow.optional_steps
+                : preset.optional_steps,
+            archive_gate: workflow.archive_gate && typeof workflow.archive_gate === 'object'
+                ? workflow.archive_gate
+                : preset.archive_gate,
+            feature_flags: workflow.feature_flags && typeof workflow.feature_flags === 'object'
+                ? workflow.feature_flags
+                : preset.feature_flags,
+        });
+    }
+    const coreRequired = workflow.core_required.map(step => String(step));
+    const legacyReviewSteps = ['spec_compliance_review', 'code_quality_review'];
+    if (!legacyReviewSteps.every(step => coreRequired.includes(step))) {
+        return withExecutionPolicy(workflow);
+    }
+    const firstLegacyReview = Math.min(...legacyReviewSteps.map(step => coreRequired.indexOf(step)));
+    const withoutLegacyReviews = coreRequired.filter(step => !legacyReviewSteps.includes(step));
+    if (!withoutLegacyReviews.includes('final_review')) {
+        withoutLegacyReviews.splice(firstLegacyReview, 0, 'final_review');
+    }
+    return withExecutionPolicy({
+        ...workflow,
+        core_required: withoutLegacyReviews,
+    });
+}
 class ConfigManager {
     constructor(fileService) {
         this.fileService = fileService;
@@ -663,7 +723,7 @@ class ConfigManager {
                     : {}),
             },
             plugins: this.normalizePluginsConfig(config.plugins),
-            workflow: config.workflow || ConfigurableWorkflow_1.WORKFLOW_PRESETS[mode],
+            workflow: normalizeWorkflowConfig(config.workflow, mode),
         };
     }
     async getPackageVersion() {

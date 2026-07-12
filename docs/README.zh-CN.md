@@ -40,8 +40,8 @@ AI 编码助手很强，但如果需求只留在聊天记录里，就很难检�
 
 - **把需求变成留在仓库里的规范文件**：OSpec 把一句需求落成 proposal、design、计划、tasks、评审、验证证据等文件，存进你的仓库而不是只留在聊天记录里——任何助手（Codex/GPT、Claude Code、Gemini、OpenCode 或纯 CLI）都能接着上一个停下的地方继续。
 - **`ospec change` —— 日常快速流程**：一条需求对应一个 active change，走简短的 `init -> change -> verify/finalize`，轻量、好评审。
-- **`ospec goal` —— 工程级的严谨**：写代码前先头脑风暴并锁定设计，把工作拆成任务图、派发并行子代理，强制 TDD 和由独立评审者做代码评审，并要求留下可复核的测试/验证证据，才算"完成"。
-- **`ospec goal` 以循环方式运行**：一轮轮地规划、执行、验证，直到测试证明工作完成；安全级由你选（`--level L1|L2|L3`：只读 → 辅助 → 无人值守），用 `ospec loop …` 驱动，用 `ospec triage …` 把发现项收进 triage 收件箱。
+- **`ospec goal` 适合较大或风险较高的工作**：你只需要说明想要的结果；AI 会询问重要选择、写出可检查的方案、完成实现和测试、安排独立审查、更新项目文档，并持续推进到结果得到验证。
+- **你决定 AI 可以自动做到什么程度**：`L1` 只检查，`L2` 可以修改但会在重要选择处暂停，`L3` 可以在你设定的范围内持续执行。进度保存在项目中，换一个会话也能继续。
 
 ## npm 安装
 
@@ -163,25 +163,39 @@ ospec finalize changes/active/<change-name>
 
 </details>
 
-### Goal 工作流 —— 完整流程与硬强制
+### Goal：适合需要认真规划和反复验证的工作
 
-复杂、跨模块或高风险的工作，用 `ospec goal <goal-name>`（或直接说「OSpec，为这个需求创建并推进一个完整 goal」），走完整的 OSpec 工作流：设计文档、实现计划、任务图、并行 worker 派发、文档与代码评审，以及持久的 TDD / 调试 / 验证证据。
+当一个需求会改动多个模块、存在重要方案选择、涉及 API/数据/安全/迁移，或者预计要分几轮才能完成时，使用 goal。只是改一个明确的小功能或修一个局部问题，使用 `ospec new` 会更快。
 
-**你只需要起一个 goal 并描述需求。** 其余每一条 `ospec` 命令都由 AI 自己执行，你只在对话里回答提问（`Zero-Setup`）。
+可以从终端开始：
 
-goal 以**会话内循环**的方式运行：一轮轮地规划、执行、验证，直到工作被测试证明完成。创建时选定安全级（`--level L1|L2|L3`，默认 L1）：
+```bash
+ospec goal improve-checkout
+```
 
-- **L1** —— 只读：把发现项写入 triage 收件箱，不改任何代码。
-- **L2** —— 改代码，但在关键决策处暂停等你确认。
-- **L3** —— 在你设定的 allowlist 内无人值守运行。
+然后直接用平常说话的方式告诉 AI 你想要什么结果。也可以不手动运行命令，直接说：「这个需求使用 OSpec goal，一直做到测试通过并完成归档。」
 
-用 `ospec loop run/watch/status/pause/resume/level` 驱动和查看，用 `ospec triage list/claim/promote` 处理发现项，用 pause / `STOP` 文件 / 关闭会话来停止。当 harness 提供原生 `/goal`（Claude、Codex）时循环会直接调用它，否则自动降级。`ospec change` 保持经典快速流程不变。详见 [loop-engineering.md](loop-engineering.md)。
+普通用户只需要做到这里。后面的工作由 AI 完成：
 
-每个 goal AI 都会遵守的体验契约：
+1. 只询问那些会真正改变结果的重要选择。
+2. 先把商定的做法写下来，让你在改代码前可以检查。
+3. 把工作拆成安全的小块，适合并行的部分同时处理。
+4. 运行测试，再让独立的审查者检查实现，并处理发现的问题。
+5. 更新相关项目文档和索引，确认后续 AI 能找到这个功能，再完成归档。
 
-- **Announce-Before-Act**：AI 会说明当前用哪个 skill、处于哪个阶段、即将运行哪条 `ospec execute …` 命令及其产物、派发了几个子 agent —— 让你随时看清正在发生什么。
-- **Brainstorm-First**：锁定设计前，先把方向、架构、API、数据、UI、风险、范围等未决问题逐个抛给你，用原生提问 UI（Claude Code：AskUserQuestion）询问，而不是默默假设。
-- **持久决策门**：开放选择用 `ospec execute decision …` 记录；required 决策在你回答前会阻断 worker 派发。
+整个过程中你仍然掌握决定权。AI 会提前说明下一步做什么，遇到需要你选择的地方会暂停，并把进度保存在项目里。即使更换会话，也可以从已有记录继续；你不需要自己运行内部的 `ospec execute` 命令。
+
+创建时可用 `--level L1|L2|L3` 选择 AI 可以自主做到什么程度（默认 L1）：
+
+- **L1**：只检查和报告，不修改项目文件。
+- **L2**：可以修改，但遇到重要选择会暂停等待确认。
+- **L3**：可以持续执行，但只能在你预先设置的范围内操作。
+
+查看进度使用 `ospec loop status`；暂停和继续使用 `ospec loop pause`、`ospec loop resume`。直接关闭当前 AI 会话也不会丢失已记录的进度。更多高级命令见 [loop-engineering.md](loop-engineering.md)。
+
+在内部，OSpec 会阻止 AI 在重要问题尚未回答时开始实现，让实现者和审查者彼此独立，并要求有测试证据后才把 goal 标记为完成。
+
+每次成功执行 `ospec finalize` 或 `ospec archive`，都会自动生成一份 `docs/project/changes/<归档路径>.md`（nested 布局下位于 `.ospec/docs/project/changes/`），并写入功能索引和 AI 索引。因此普通 change 和 goal 都至少有一份可检索文档。移动 active change 前，归档预检会拒绝覆盖该目标路径上的人工文档，并验证托管输出目录可写。goal 如果修改了架构、API、模块或运行方式，仍必须更新对应的长期项目文档；自动摘要不能代替这些文档。
 
 Claude Code 硬强制（一次性；在 Claude Code 里 AI 会自动帮你执行）：
 
@@ -193,9 +207,17 @@ ospec session hook --target claude --apply
 
 - 在工具层宣告每一次子 agent 派发和每一条 `ospec` 命令，
 - 存在未决 required 决策时硬阻断子 agent 派发，
-- 每一轮重申 Announce-Before-Act / Brainstorm-First 契约。
+- 只在 startup、clear、compact 时注入静态 Announce-Before-Act / Brainstorm-First 契约；普通 prompt 没有 required decision 时保持静默。
 
 hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生效。
+
+### 目标执行优化
+
+- `.skillrc.workflow.document_review_policy` 默认保持独立文档审查；显式设为 `adaptive` 后，也只有文档声明 `risk_level: low`（或 `none`）且未发现风险信号时才走确定性 inline preflight。
+- `.skillrc.workflow.model_profiles` 把逻辑 worker/reviewer profile 映射到各 harness 模型，OSpec 默认配置不硬编码供应商型号。
+- 命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`ospec execute complete --usage-file` 保留为手工入口。`execution-metrics.json` 会区分完整、部分和缺失数据。
+- review 同时保存人类可读 Markdown 和结构化 `*.findings.json`；归档会验证声明的文档确实发生有效变化，并从功能索引直接链接长期项目文档。
+- `ospec execute repair` 把最终 review 的全部 `NEEDS_CHANGES` findings 合成一个 repair task，并复用原有 dispatch、task review 和 final review 门禁。
 
 ### 插件安装方式
 
@@ -215,6 +237,7 @@ hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生�
 - [Skills Installation](skills-installation.zh-CN.md)
 - [External Plugins](external-plugins.zh-CN.md)
 - [Plugin Release](plugin-release.zh-CN.md)
+- [上下文效率与流程回归基准（2026-07-11）](benchmarks/context-efficiency-2026-07-11.zh-CN.md)
 
 ## 仓库结构
 

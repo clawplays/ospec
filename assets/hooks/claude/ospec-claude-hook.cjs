@@ -3,9 +3,9 @@
  * OSpec Claude Code hook — managed by OSpec (`ospec session hook`).
  *
  * Hard-enforces the OSpec harness contract inside Claude Code:
- *   - SessionStart / UserPromptSubmit: injects the Announce-Before-Act and
- *     Brainstorm-First contract (re-affirmed every turn, not just when a skill
- *     is read), plus any pending required decisions.
+ *   - SessionStart on startup / clear / compact: injects the static
+ *     Announce-Before-Act and Brainstorm-First contract once.
+ *   - UserPromptSubmit: injects only pending required decisions, when present.
  *   - PreToolUse(Task): announces every subagent dispatch, and BLOCKS dispatch
  *     while a required decision is still pending.
  *   - PreToolUse(Bash) for `ospec ...`: announces the command. Shell-executing
@@ -105,7 +105,13 @@ function decisionReminder(pending) {
 }
 
 function handleContextEvent(event, cwd) {
-  const context = CONTRACT + decisionReminder(pendingRequiredDecisions(cwd));
+  const pending = pendingRequiredDecisions(cwd);
+  const context = event === 'SessionStart'
+    ? CONTRACT + decisionReminder(pending)
+    : decisionReminder(pending).trim();
+  if (!context) {
+    process.exit(0);
+  }
   emit({
     hookSpecificOutput: {
       hookEventName: event,
@@ -199,7 +205,15 @@ function main() {
   const event = input.hook_event_name;
   const cwd = input.cwd || process.cwd();
 
-  if (event === 'SessionStart' || event === 'UserPromptSubmit') {
+  if (event === 'SessionStart') {
+    const source = String(input.source || input.session_start_source || '').toLowerCase();
+    if (source === 'resume') {
+      process.exit(0);
+    }
+    handleContextEvent(event, cwd);
+    return;
+  }
+  if (event === 'UserPromptSubmit') {
     handleContextEvent(event, cwd);
     return;
   }

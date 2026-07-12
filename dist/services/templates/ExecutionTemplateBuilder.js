@@ -327,6 +327,8 @@ ${this.formatReferenceList(linkedKnowledgeDocs, 'قيد التحديد')}
                 feature: context.feature,
                 created,
                 status: context.placement === 'queued' ? 'queued' : 'draft',
+                risk_level: 'pending',
+                risk_flags: [],
                 optional_steps: context.optionalSteps,
             }, this.copy(context.documentLanguage, zh, en, ja, ar));
         }
@@ -611,6 +613,8 @@ ${optionalStepTasksAr}`.trim();
                 feature: context.feature,
                 created,
                 status: context.placement === 'queued' ? 'queued' : 'draft',
+                risk_level: 'pending',
+                risk_flags: [],
                 optional_steps: context.optionalSteps,
             }, this.copy(context.documentLanguage, zh, en, ja, ar));
         }
@@ -753,6 +757,7 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
             feature: context.feature,
             status: 'pending',
             optional_steps: context.optionalSteps,
+            global_constraints: [],
             generated_from: [
                 'proposal.md',
                 'design.md',
@@ -770,6 +775,9 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
                     target_files: [],
                     verification_commands: [],
                     expected_result: 'TBD',
+                    context: 'TBD',
+                    interfaces: [],
+                    documentation_updates: [],
                     worker_role: 'implementer',
                 },
             ],
@@ -799,19 +807,12 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
 - Verification run: 待补充
 - Concerns: 待补充
 
-## Spec Compliance Review
+## Combined Review
 
 - Status: \`PENDING\`
 - Reviewer: 待补充
 - Decision: 待补充
-- Findings: 待补充
-
-## Code Quality Review
-
-- Status: \`PENDING\`
-- Reviewer: 待补充
-- Decision: 待补充
-- Findings: 待补充
+- Findings: 待补充（一次检查 spec compliance 与 code quality）
 
 ## Controller Decision
 
@@ -822,8 +823,7 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
 ## Checklist
 
 - [ ] Implementer 已给出 \`DONE\` 或 \`DONE_WITH_CONCERNS\`
-- [ ] Spec compliance review 已完成
-- [ ] Code quality review 已完成
+- [ ] Combined review 已完成（spec compliance + code quality）
 - [ ] Controller 已处理 concerns、context request 或 blocker
 - [ ] 最终验证命令已写入 \`verification.md\``;
             const en = `## Worker Status Protocol
@@ -844,19 +844,12 @@ Allowed statuses:
 - Verification run: TBD
 - Concerns: TBD
 
-## Spec Compliance Review
+## Combined Review
 
 - Status: \`PENDING\`
 - Reviewer: TBD
 - Decision: TBD
-- Findings: TBD
-
-## Code Quality Review
-
-- Status: \`PENDING\`
-- Reviewer: TBD
-- Decision: TBD
-- Findings: TBD
+- Findings: TBD (spec compliance and code quality in one pass)
 
 ## Controller Decision
 
@@ -867,8 +860,7 @@ Allowed statuses:
 ## Checklist
 
 - [ ] Implementer returned \`DONE\` or \`DONE_WITH_CONCERNS\`
-- [ ] Spec compliance review completed
-- [ ] Code quality review completed
+- [ ] Combined review completed (spec compliance + code quality)
 - [ ] Controller resolved concerns, context requests, or blockers
 - [ ] Final verification commands are recorded in \`verification.md\``;
             const ja = `## Worker 状態プロトコル
@@ -889,19 +881,12 @@ Allowed statuses:
 - Verification run: 未定
 - Concerns: 未定
 
-## Spec Compliance Review
+## Combined Review
 
 - Status: \`PENDING\`
 - Reviewer: 未定
 - Decision: 未定
-- Findings: 未定
-
-## Code Quality Review
-
-- Status: \`PENDING\`
-- Reviewer: 未定
-- Decision: 未定
-- Findings: 未定
+- Findings: 未定（spec compliance と code quality を一度に確認）
 
 ## Controller Decision
 
@@ -912,8 +897,7 @@ Allowed statuses:
 ## Checklist
 
 - [ ] Implementer が \`DONE\` または \`DONE_WITH_CONCERNS\` を返した
-- [ ] Spec compliance review が完了した
-- [ ] Code quality review が完了した
+- [ ] Combined review が完了した（spec compliance + code quality）
 - [ ] Controller が concerns、context request、blocker を解決した
 - [ ] 最終検証コマンドを \`verification.md\` に記録した`;
             const ar = `## بروتوكول حالة worker
@@ -934,19 +918,12 @@ Allowed statuses:
 - Verification run: قيد التحديد
 - Concerns: قيد التحديد
 
-## مراجعة مطابقة المواصفة
+## مراجعة موحدة
 
 - Status: \`PENDING\`
 - Reviewer: قيد التحديد
 - Decision: قيد التحديد
-- Findings: قيد التحديد
-
-## مراجعة جودة الكود
-
-- Status: \`PENDING\`
-- Reviewer: قيد التحديد
-- Decision: قيد التحديد
-- Findings: قيد التحديد
+- Findings: قيد التحديد (مطابقة المواصفة وجودة الكود في مراجعة واحدة)
 
 ## قرار controller
 
@@ -957,8 +934,7 @@ Allowed statuses:
 ## قائمة الفحص
 
 - [ ] أعاد implementer الحالة \`DONE\` أو \`DONE_WITH_CONCERNS\`
-- [ ] اكتملت مراجعة مطابقة المواصفة
-- [ ] اكتملت مراجعة جودة الكود
+- [ ] اكتملت المراجعة الموحدة لمطابقة المواصفة وجودة الكود
 - [ ] عالج controller المخاوف أو طلبات السياق أو الحواجز
 - [ ] سُجلت أوامر التحقق النهائية في \`verification.md\``;
             return this.withFrontmatter({

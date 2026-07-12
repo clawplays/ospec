@@ -11,7 +11,7 @@ exports.ConfigurableWorkflow = exports.WORKFLOW_PRESETS = void 0;
  */
 exports.WORKFLOW_PRESETS = {
     lite: {
-        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'spec_compliance_review', 'code_quality_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
+        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'final_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
         optional_steps: {
             code_review: { enabled: true, when: ['high_risk', 'multi_file_change'] },
             design_doc: { enabled: false, when: [] },
@@ -33,9 +33,11 @@ exports.WORKFLOW_PRESETS = {
         feature_flags: {
             supported: ['high_risk', 'multi_file_change'],
         },
+        document_review_policy: 'always',
+        model_profiles: {},
     },
     standard: {
-        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'spec_compliance_review', 'code_quality_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
+        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'final_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
         optional_steps: {
             code_review: { enabled: true, when: ['high_risk', 'multi_file_change'] },
             design_doc: { enabled: true, when: ['cross_module', 'complex_feature'] },
@@ -61,9 +63,11 @@ exports.WORKFLOW_PRESETS = {
                 'bug_fix', 'regression', 'flaky_test',
             ],
         },
+        document_review_policy: 'always',
+        model_profiles: {},
     },
     full: {
-        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'spec_compliance_review', 'code_quality_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
+        core_required: ['proposal', 'design', 'implementation_plan', 'task_graph', 'tasks', 'final_review', 'agent_worker_status', 'state', 'verification', 'skill_update', 'index_regenerated'],
         optional_steps: {
             code_review: { enabled: true, when: ['high_risk', 'cross_module', 'multi_file_change'] },
             design_doc: { enabled: true, when: ['cross_module', 'complex_feature', 'architecture_change'] },
@@ -91,6 +95,8 @@ exports.WORKFLOW_PRESETS = {
                 'bug_fix', 'regression', 'flaky_test',
             ],
         },
+        document_review_policy: 'always',
+        model_profiles: {},
     },
 };
 class ConfigurableWorkflow {

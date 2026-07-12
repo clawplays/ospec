@@ -87,6 +87,15 @@ tags: [conventions, workflow, change, ospec]
 - قد تختلف لغة واجهة المنتج عن لغة وثائق OSpec الخاصة بالchange؛ لا تستنتج إحداهما من الأخرى
 - إذا أُنشىء change بالصينية، فاستمر بالصينية ما لم تتطلب قواعد المشروع التحويل إلى الإنجليزية صراحةً
 
+## توجيه السياق
+
+- يجب على أي AI أو شخص يتابع change قراءة `.skillrc` و`SKILL.index.json` أولاً، ثم فتح ملفات change والملفات المستهدفة والوثائق المفهرسة التي يطلبها brief أو dispatch packet الحالي فقط
+- استخدم `docs/project/feature-index.md` و`SKILL.index.json.archived_changes` لتحديد السلوك المكتمل بدلاً من فحص جميع archived changes
+- يربط إدخال feature المكتملة كلا من دليل archive ووثائق المشروع الدائمة المعلنة في المهام. يمكن أن تضيف frontmatter لوثيقة المشروع `features` و`modules` و`aliases` حتى يصل الإنسان وAI مباشرة من اسم الميزة أو الوحدة.
+- لا يكتمل تحديث الوثيقة المعلن إلا عندما يثبت دليل dispatch إلى complete تغيرا فعليا في المحتوى المطبّع؛ وجود الملف وحده ليس دليلا على تحديثه.
+- يملك كل classic change وgoal مؤرشف وثيقة واحدة ينشئها OSpec ويفهرسها تحت `docs/project/changes/<archive-path>.md`. يمكن إعادة بناء أو تنظيف سجلات change التي أنشأها OSpec عند اختفاء archive، ولا يحذف التنظيف الملفات التي يملكها البشر ولا يكتب archive فوق وثيقة بشرية في المسار نفسه.
+- تحدّث archive وfinalize دليل الميزات والفهرس المعرفي المولدين، ولا تستبدلان نصوص architecture أو module أو API التي يديرها البشر
+
 ## optional steps
 
 - يتم التحكم في تفعيل optional steps عبر `.skillrc.workflow`

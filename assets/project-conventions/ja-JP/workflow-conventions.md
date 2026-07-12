@@ -87,6 +87,15 @@ tags: [conventions, workflow, change, ospec]
 - 製品 UI 言語と OSpec change 文書言語は異なってよく、片方からもう片方を推測しない
 - change が中国語で作成されている場合は、プロジェクトルールが明示的に英語切り替えを要求しない限り中国語で継続する
 
+## コンテキストの参照
+
+- change を進める AI または人は、最初に `.skillrc` と `SKILL.index.json` を読み、現在の brief または dispatch packet から必要な change ファイル、対象ファイル、索引済み文書だけを開く
+- 完了済み機能は `docs/project/feature-index.md` と `SKILL.index.json.archived_changes` から特定し、すべての archived changes を走査しない
+- 完了 feature entry は archive evidence と task が宣言した永続 project document の両方をリンクする。project document frontmatter に `features`、`modules`、`aliases` を追加すると、人と AI が feature 名または module 名から直接ルーティングできる。
+- 宣言済み documentation update は dispatch から complete までの evidence が正規化 content の有意な変更を示した場合だけ完了とする。file の存在だけでは更新の証明にならない。
+- archive 済みの classic change と goal はそれぞれ OSpec が生成して index する `docs/project/changes/<archive-path>.md` を 1 つ持つ。archive がなくなった場合、OSpec 生成 change document だけを安全に再構築または削除し、人が所有する file は削除せず、archive 中にも同じ path の文書を上書きしない。
+- archive と finalize は生成済みの機能ロケータと knowledge index を更新するが、人が管理する architecture、module、API の本文は上書きしない
+
 ## optional steps
 
 - optional step の有効化は `.skillrc.workflow` で管理する

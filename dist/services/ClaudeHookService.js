@@ -64,7 +64,7 @@ class ClaudeHookService {
     buildSettingsFragment() {
         return {
             hooks: {
-                SessionStart: [{ hooks: [this.hookEntry()] }],
+                SessionStart: [{ matcher: 'startup|clear|compact', hooks: [this.hookEntry()] }],
                 UserPromptSubmit: [{ hooks: [this.hookEntry()] }],
                 PreToolUse: [
                     { matcher: 'Task', hooks: [this.hookEntry()] },
@@ -114,7 +114,8 @@ class ClaudeHookService {
             '',
             '## What it does',
             '',
-            '- `SessionStart` / `UserPromptSubmit`: injects the `Announce-Before-Act` and `Brainstorm-First` contract every turn, plus any pending required decisions.',
+            '- `SessionStart(startup|clear|compact)`: injects the static `Announce-Before-Act` and `Brainstorm-First` contract once; resume does not reinject it.',
+            '- `UserPromptSubmit`: stays silent unless a required decision is pending, then injects only that dynamic reminder.',
             '- `PreToolUse(Task)`: announces every subagent dispatch, and blocks dispatch while a required decision is pending.',
             '- `PreToolUse(Bash)` for `ospec ...`: announces the command; shell-executing fallbacks (`--run`, `orchestrate`) escalate to a user prompt.',
             '',

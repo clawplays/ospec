@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.6.1';
+const CLI_VERSION = '1.7.0';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -423,7 +423,7 @@ Commands:
   changes [action] [path]   Active change summaries (status)
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
-  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, orchestrate, complete)
+  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, orchestrate, complete, repair)
   loop [action] [path]      Session-bound goal loop helpers (run, watch, status, pause, resume, level, tick-plan)
   triage [action] [path]    Triage inbox helpers (list, claim, promote)
   docs [action] [path]      Docs helpers (status, generate)
@@ -474,6 +474,8 @@ Examples:
   ospec execute launch ./changes/active/onboarding-flow --target codex
   ospec execute orchestrate ./changes/active/onboarding-flow --command "codex exec {{packet}}" --limit 2 --max-rounds 5  # fallback only
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --summary "Implemented and verified"
+  ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --usage-file ./usage.json
+  ospec execute repair ./changes/active/onboarding-flow
   ospec docs status
   ospec docs generate
   ospec docs sync-protocol

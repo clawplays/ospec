@@ -183,6 +183,26 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             indexPresent: skills.skillIndex.exists,
             indexNeedsRebuild: skills.skillIndex.needsRebuild,
         };
+        const skillIndexPath = typeof skills.skillIndex.path === 'string' && skills.skillIndex.path.trim()
+            ? skills.skillIndex.path
+            : null;
+        const knowledgeIndex = skills.skillIndex.exists && skillIndexPath
+            ? await services_1.services.fileService.readJSON(skillIndexPath).catch(() => null)
+            : null;
+        const featureIndexPath = Object.keys(knowledgeIndex?.documents || {})
+            .find(documentPath => documentPath.replace(/\\/g, '/').endsWith('/docs/project/feature-index.md')
+            || documentPath.replace(/\\/g, '/') === 'docs/project/feature-index.md') || null;
+        const knowledgeSnapshot = {
+            indexPath: skills.skillIndex.exists && skillIndexPath
+                ? path.relative(targetPath, skillIndexPath).replace(/\\/g, '/')
+                : null,
+            featureIndexPath,
+            documentCount: Object.keys(knowledgeIndex?.documents || {}).length,
+            archivedChangeCount: Array.isArray(knowledgeIndex?.archived_changes)
+                ? knowledgeIndex.archived_changes.length
+                : 0,
+            indexGeneratedAt: typeof knowledgeIndex?.generated === 'string' ? knowledgeIndex.generated : null,
+        };
         const cacheInput = {
             projectPath: targetPath,
             mode: summary.mode,
@@ -202,6 +222,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             queueRun,
             docs: docsSnapshot,
             skills: skillsSnapshot,
+            knowledge: knowledgeSnapshot,
             recommendedCommands,
         };
         const cacheKey = this.hashSessionCacheInput(cacheInput);
@@ -223,6 +244,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             queueRun,
             docs: docsSnapshot,
             skills: skillsSnapshot,
+            knowledge: knowledgeSnapshot,
             cache: {
                 key: cacheKey,
                 previousKey,
@@ -518,6 +540,10 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             `- Skill files: ${brief.skills.existing}/${brief.skills.total}`,
             `- Skill index: ${brief.skills.indexPresent ? 'present' : 'missing'}`,
             `- Skill index needs rebuild: ${brief.skills.indexNeedsRebuild ? 'yes' : 'no'}`,
+            `- Knowledge index: ${brief.knowledge.indexPath || 'missing'}`,
+            `- Feature index: ${brief.knowledge.featureIndexPath || 'missing'}`,
+            `- Indexed docs: ${brief.knowledge.documentCount}`,
+            `- Archived features: ${brief.knowledge.archivedChangeCount}`,
             '',
             '## Cache',
             '',

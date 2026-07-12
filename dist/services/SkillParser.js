@@ -41,12 +41,24 @@ class SkillParser {
     extractSections(content) {
         const sections = {};
         const headingRegex = /^(#{1,6})\s+(.+?)$/gm;
+        const matches = [];
         let match;
         while ((match = headingRegex.exec(content)) !== null) {
-            const title = match[2].trim();
-            sections[title] = {
+            matches.push({
                 level: match[1].length,
-                title,
+                title: match[2].trim(),
+                start: match.index,
+                headerEnd: match.index + match[0].length,
+            });
+        }
+        for (let index = 0; index < matches.length; index += 1) {
+            const current = matches[index];
+            const next = matches[index + 1];
+            sections[current.title] = {
+                level: current.level,
+                title: current.title,
+                start: current.start,
+                end: next ? next.start : content.length,
             };
         }
         return sections;

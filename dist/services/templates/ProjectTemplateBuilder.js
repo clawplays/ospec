@@ -1,7 +1,42 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProjectTemplateBuilder = void 0;
 const constants_1 = require("../../core/constants");
+const fs_1 = require("fs");
+const path = __importStar(require("path"));
 const TemplateBuilderBase_1 = require("./TemplateBuilderBase");
 class ProjectTemplateBuilder extends TemplateBuilderBase_1.TemplateBuilderBase {
     constructor(inputs) {
@@ -1364,7 +1399,7 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 6. \`implementation-plan.md\` 必须从 \`design.md\` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突；\`artifacts/agents/task-graph.json\` 必须从 \`implementation-plan.md\` 推导；\`tasks.md\` 必须从 task graph 推导。
 6. 进入已有 OSpec 项目时，用 \`ospec session [path]\` 写入 \`.ospec/session-brief.json\` 和 \`.ospec/session-brief.md\`，记录 active change、queued change、queue-run、cache fingerprint 和安全下一步命令；这是项目入口简报，不替代 active change 的 \`ospec execute bootstrap\`。
 6. 将已激活的内建质量策略步骤（如 \`tdd_cycle\`、\`root_cause_debug\`、\`verification_evidence\`）视为受归档门禁约束的 \`optional_steps\`；收尾前必须在任务文档、验证文档和对应 evidence artifacts 中覆盖。
-6. 常用 agent artifacts 包括 \`artifacts/agents/bootstrap.md\`、\`artifacts/agents/handoff.md\`、\`artifacts/agents/document-review-dispatches/\`、\`artifacts/agents/workspace-status.md\`、\`artifacts/agents/worktree-plan.md\`、\`artifacts/agents/workflow-route.json\`、\`artifacts/agents/workflow-route.md\`、\`artifacts/agents/finish-plan.md\`、\`artifacts/agents/launch-plan.md\`、\`artifacts/agents/worker-runs/\`、\`artifacts/agents/review-runs/\`、\`artifacts/agents/retries/\`、\`artifacts/agents/blockers/\`、\`artifacts/agents/decisions/\`、\`artifacts/agents/review-feedback-plan.md\`、\`artifacts/agents/worker-status.md\`、\`artifacts/agents/debug-evidence.json\`、\`artifacts/agents/tdd-evidence.json\` 和 \`artifacts/agents/verification-evidence.json\`。
+6. 用 \`ospec execute status --brief\` 和当前 packet 定位下一步；再通过 \`SKILL.index.json\` 与 \`docs/project/feature-index.md\` 按需打开 artifacts 和文档。
 7. 开始或恢复单个 active change 时，用 \`ospec execute bootstrap [changes/active/<change>]\` 写入带 project session brief snapshot 的 \`artifacts/agents/bootstrap.json\` 和 \`artifacts/agents/bootstrap.md\`，然后按其中的下一步安全动作继续；已有 active dispatch 时，bootstrap 会推荐对应的 \`ospec execute launch ... --task ...\` 命令。
 7. 需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 \`ospec execute route [changes/active/<change>]\` 写入 \`artifacts/agents/workflow-route.json\` 和 \`artifacts/agents/workflow-route.md\`；该命令只记录 workflow routing artifacts，不会编辑源码。
 8. change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 \`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]\` 写入 \`artifacts/agents/handoff.json\` 和 \`artifacts/agents/handoff.md\`；该命令只记录 project session brief snapshot、目标工具映射和安全规则，不会启动 worker 或编辑源码。
@@ -1392,7 +1427,12 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 19. 如果项目启用了 Stitch 且当前 change 激活了 \`stitch_design_review\`，先检查 \`artifacts/stitch/approval.json\`，未 \`approved\` 前不要把 change 视为可继续实现或可归档。
 20. 如果涉及 Stitch 安装、provider 切换、doctor 修复、MCP 或认证配置，优先读取仓库内 Stitch 规范；若缺失规范文档，则使用内建基线：Gemini 用 \`%USERPROFILE%/.gemini/settings.json\` 的 \`mcpServers.stitch.httpUrl\` 与 \`headers.X-Goog-Api-Key\`，Codex 用 \`%USERPROFILE%/.codex/config.toml\` 的 \`[mcp_servers.stitch]\`、\`type = "http"\`、\`url = "https://stitch.googleapis.com/mcp"\` 与 \`X-Goog-Api-Key\`。
 21. 如果内建 Codex provider 只读调用正常但 Stitch 写操作卡住，优先检查是否真正走了 \`codex exec --dangerously-bypass-approvals-and-sandbox\`；如果项目覆写了自定义 Codex runner，则该 runner 也必须显式带上这个参数。
-22. 发生重要变更后同步更新技能文档并重建索引。`, `# AI Guide
+22. 文档审查策略读取 \`.skillrc.workflow.document_review_policy\`：默认 \`always\` 保持独立 reviewer；\`adaptive\` 只有在目标文档显式声明 \`risk_level: low\`（或 \`none\`）且没有风险信号时才允许确定性 inline preflight，否则派独立 reviewer。
+23. worker/reviewer 使用逻辑 model profile。命令执行器通过 \`OSPEC_USAGE_FILE\` 自动归集 usage，\`--usage-file\` 保留为手工入口；指标必须区分 complete、partial、missing，不能把未上报显示成零。
+24. 最终 review 为 \`NEEDS_CHANGES\` 且 required decisions 已解决时，用 \`ospec execute repair [changes/active/<change>]\` 把完整 findings 合成一个 repair task，集中验证、task review 和 final re-review 各一次。
+25. reviewer 同时写 Markdown 和相邻的 \`*.findings.json\`；声明的 \`documentation_updates\` 必须有有效内容变化证据，归档索引直接链接长期项目文档。
+26. 每个归档的普通 change 和 goal 都自动生成并索引一份 \`docs/project/changes/<归档路径>.md\`；移动 active change 前，归档预检拒绝覆盖同路径人工文档并验证托管输出目录可写；这份摘要不能代替必须维护的架构、API、模块或运行文档。
+27. 发生重要变更后同步更新技能文档并重建索引。`, `# AI Guide
 
 ## Working Order
 
@@ -1407,7 +1447,7 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 6. Derive \`implementation-plan.md\` from \`design.md\`, including target files, expected results, verification commands, dependencies, parallelizable work, and conflicts; derive \`artifacts/agents/task-graph.json\` from \`implementation-plan.md\`; derive \`tasks.md\` from the task graph.
 6. When entering an existing OSpec project, use \`ospec session [path]\` to write \`.ospec/session-brief.json\` and \`.ospec/session-brief.md\` with active change, queued change, queue-run, cache fingerprint, and safe next command context; this project entry brief does not replace active-change \`ospec execute bootstrap\`.
 6. Treat activated built-in quality policy steps such as \`tdd_cycle\`, \`root_cause_debug\`, and \`verification_evidence\` as archive-gated \`optional_steps\`; cover them in task documents, verification documents, and matching evidence artifacts before closeout.
-6. Common agent artifacts include \`artifacts/agents/bootstrap.md\`, \`artifacts/agents/handoff.md\`, \`artifacts/agents/document-review-dispatches/\`, \`artifacts/agents/workspace-status.md\`, \`artifacts/agents/worktree-plan.md\`, \`artifacts/agents/workflow-route.json\`, \`artifacts/agents/workflow-route.md\`, \`artifacts/agents/finish-plan.md\`, \`artifacts/agents/launch-plan.md\`, \`artifacts/agents/worker-runs/\`, \`artifacts/agents/review-runs/\`, \`artifacts/agents/retries/\`, \`artifacts/agents/blockers/\`, \`artifacts/agents/decisions/\`, \`artifacts/agents/review-feedback-plan.md\`, \`artifacts/agents/worker-status.md\`, \`artifacts/agents/debug-evidence.json\`, \`artifacts/agents/tdd-evidence.json\`, and \`artifacts/agents/verification-evidence.json\`.
+6. Use \`ospec execute status --brief\` and the current packet to locate the next action, then open artifacts and docs on demand through \`SKILL.index.json\` and \`docs/project/feature-index.md\`.
 7. When starting or resuming one active change, use \`ospec execute bootstrap [changes/active/<change>]\` to write \`artifacts/agents/bootstrap.json\` and \`artifacts/agents/bootstrap.md\` with the project session brief snapshot, then follow its next safe action; when an active dispatch is waiting, bootstrap recommends the matching \`ospec execute launch ... --task ...\` command.
 7. When you need to persist the next recommended OSpec command for a human or AI handoff, use \`ospec execute route [changes/active/<change>]\` to write \`artifacts/agents/workflow-route.json\` and \`artifacts/agents/workflow-route.md\`; this records workflow routing artifacts only and does not edit source files.
 8. When a change moves between agents, tools, worktrees, shells, or human operators, use \`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]\` to write \`artifacts/agents/handoff.json\` and \`artifacts/agents/handoff.md\`; this records the project session brief snapshot, target tool mapping, and safety rules only and does not launch workers or edit source files.
@@ -1435,7 +1475,12 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 19. If Stitch is enabled and the current change activates \`stitch_design_review\`, inspect \`artifacts/stitch/approval.json\` first and do not treat the change as ready to continue or archive until it is \`approved\`.
 20. If Stitch installation, provider switching, doctor remediation, MCP setup, or auth setup is involved, read \`.ospec/plugins/stitch/docs/\` first; if those docs are missing, install or enable Stitch to sync them before changing config.
 21. If the built-in Codex provider succeeds on read-only calls but Stitch write operations stall, first verify the run actually uses \`codex exec --dangerously-bypass-approvals-and-sandbox\`; if the project overrides a custom Codex runner, that runner must also pass the same flag explicitly.
-22. Update skill documents and rebuild the index after meaningful changes.`, `# AI ガイド
+22. Read document review policy from \`.skillrc.workflow.document_review_policy\`: \`always\` is the compatible independent-review default; \`adaptive\` uses inline preflight only when the target document explicitly declares \`risk_level: low\` (or \`none\`) and no risk signal exists; otherwise dispatch an independent reviewer.
+23. Workers and reviewers use logical model profiles. Command runners ingest \`OSPEC_USAGE_FILE\` automatically while \`--usage-file\` remains a manual input; metrics distinguish complete, partial, and missing coverage rather than treating absent counters as zero.
+24. When final review is \`NEEDS_CHANGES\` and required decisions are resolved, use \`ospec execute repair [changes/active/<change>]\` to create one repair task from all findings, then run covering verification, one task review, and one final re-review.
+25. Reviewers write Markdown plus sibling \`*.findings.json\`; declared \`documentation_updates\` require meaningful-change evidence and archive indexes link durable project documents directly.
+26. Every archived classic change and goal automatically generates and indexes one \`docs/project/changes/<archive-path>.md\`; before moving the active change, archive preflight refuses to overwrite a human-owned file at that path and verifies managed output directories are writable; this summary does not replace required architecture, API, module, or operational docs.
+27. Update skill documents and rebuild the index after meaningful changes.`, `# AI ガイド
 
 ## 作業順序
 
@@ -1450,7 +1495,7 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 6. \`implementation-plan.md\` は \`design.md\` から導き、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する。\`artifacts/agents/task-graph.json\` は \`implementation-plan.md\` から導き、\`tasks.md\` は task graph から導く。
 6. 既存の OSpec project に入るときは \`ospec session [path]\` で \`.ospec/session-brief.json\` と \`.ospec/session-brief.md\` を書き、active change、queued change、queue-run、cache fingerprint、次の安全な command context を記録する。これは project entry brief であり、active change の \`ospec execute bootstrap\` を置き換えない。
 6. \`tdd_cycle\`、\`root_cause_debug\`、\`verification_evidence\` など有効化された built-in quality policy steps は、archive-gated \`optional_steps\` として扱う。closeout 前に task documents、verification documents、対応する evidence artifacts で coverage を記録する。
-6. 主な agent artifacts は \`artifacts/agents/bootstrap.md\`、\`artifacts/agents/handoff.md\`、\`artifacts/agents/document-review-dispatches/\`、\`artifacts/agents/workspace-status.md\`、\`artifacts/agents/worktree-plan.md\`、\`artifacts/agents/workflow-route.json\`、\`artifacts/agents/workflow-route.md\`、\`artifacts/agents/finish-plan.md\`、\`artifacts/agents/launch-plan.md\`、\`artifacts/agents/worker-runs/\`、\`artifacts/agents/review-runs/\`、\`artifacts/agents/retries/\`、\`artifacts/agents/blockers/\`、\`artifacts/agents/decisions/\`、\`artifacts/agents/review-feedback-plan.md\`、\`artifacts/agents/worker-status.md\`、\`artifacts/agents/debug-evidence.json\`、\`artifacts/agents/tdd-evidence.json\`、\`artifacts/agents/verification-evidence.json\` である。
+6. \`ospec execute status --brief\` と現在の packet で次の action を特定し、\`SKILL.index.json\` と \`docs/project/feature-index.md\` から必要な artifact と文書だけを開く。
 7. one active change を開始または再開するときは、\`ospec execute bootstrap [changes/active/<change>]\` で project session brief snapshot を含む \`artifacts/agents/bootstrap.json\` と \`artifacts/agents/bootstrap.md\` を書き、そこにある次の安全な action に従う。active dispatch がある場合、bootstrap は対応する \`ospec execute launch ... --task ...\` command を推奨する。
 7. 次に推奨される OSpec command を人や AI への handoff 用に残す必要がある場合、\`ospec execute route [changes/active/<change>]\` で \`artifacts/agents/workflow-route.json\` と \`artifacts/agents/workflow-route.md\` を記録する。この command は workflow routing artifacts だけを書き、source files は編集しない。
 8. change を agent、tool、worktree、shell、human operator の間で引き渡すときは、\`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]\` で \`artifacts/agents/handoff.json\` と \`artifacts/agents/handoff.md\` を書く。このコマンドは project session brief snapshot、target tool mapping、safety rules のみを記録し、worker 起動や source file 編集は行わない。
@@ -1478,7 +1523,12 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 19. Stitch が有効で、現在の change が \`stitch_design_review\` を有効化している場合は、先に \`artifacts/stitch/approval.json\` を確認し、\`approved\` になるまで継続や archive 可と見なさない。
 20. Stitch のインストール、provider 切り替え、doctor 修復、MCP 設定、認証設定が関係する場合は、まずリポジトリ内の Stitch 仕様を読む。仕様がない場合のみ内蔵ベースラインを使う。
 21. 内蔵 Codex provider が読み取り専用呼び出しでは成功するのに Stitch 書き込みが止まる場合は、\`codex exec --dangerously-bypass-approvals-and-sandbox\` が本当に使われているかを確認する。カスタム Codex runner を使う場合も同じフラグを明示的に渡す。
-22. 重要な変更後は SKILL 文書を更新し、インデックスを再生成する。`, `# دليل الذكاء الاصطناعي
+22. document review policy は \`.skillrc.workflow.document_review_policy\` から読み、既定の \`always\` は独立 review を維持する。\`adaptive\` は対象文書が \`risk_level: low\`（または \`none\`）を明示し risk signal がない場合だけ inline preflight を許可し、それ以外は独立 reviewer を使う。
+23. worker/reviewer は logical model profile を使う。command runner は \`OSPEC_USAGE_FILE\` を自動集計し、\`--usage-file\` は手動入力として残す。metrics は complete、partial、missing を区別し、未報告値を 0 と扱わない。
+24. final review が \`NEEDS_CHANGES\` なら、required decisions 解決後に \`ospec execute repair [changes/active/<change>]\` で全 findings を 1 repair task にまとめ、verification、task review、final re-review を各 1 回行う。
+25. reviewer は Markdown と隣接 \`*.findings.json\` を書く。宣言済み \`documentation_updates\` には有意な変更 evidence が必要で、archive index は永続 project document を直接リンクする。
+26. archive 済み classic change と goal ごとに \`docs/project/changes/<archive-path>.md\` を自動生成して index する。active change を移動する前に、archive preflight は同じ path にある人所有の文書の上書きを拒否し、管理対象の出力ディレクトリが書き込み可能であることを確認する。この概要は必要な architecture、API、module、operation 文書の代わりにはならない。
+27. 重要な変更後は SKILL 文書を更新し、インデックスを再生成する。`, `# دليل الذكاء الاصطناعي
 
 ## ترتيب العمل
 
@@ -1493,7 +1543,7 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 6. يجب اشتقاق \`implementation-plan.md\` من \`design.md\` مع الملفات المستهدفة والنتائج المتوقعة وأوامر التحقق والاعتماديات والعمل القابل للتوازي والتعارضات؛ ويجب اشتقاق \`artifacts/agents/task-graph.json\` من \`implementation-plan.md\`؛ ويجب اشتقاق \`tasks.md\` من task graph.
 6. عند الدخول إلى مشروع OSpec موجود، استخدم \`ospec session [path]\` لكتابة \`.ospec/session-brief.json\` و\`.ospec/session-brief.md\` مع سياق active change وqueued change وqueue-run وcache fingerprint والأمر الآمن التالي؛ هذا project entry brief ولا يستبدل \`ospec execute bootstrap\` للـ active change.
 6. تعامل مع خطوات built-in quality policy المفعّلة مثل \`tdd_cycle\` و\`root_cause_debug\` و\`verification_evidence\` كـ \`optional_steps\` خاضعة لـ archive gate؛ غطّها في task documents وverification documents وملفات evidence المطابقة قبل closeout.
-6. تتضمن agent artifacts الشائعة \`artifacts/agents/bootstrap.md\` و\`artifacts/agents/handoff.md\` و\`artifacts/agents/document-review-dispatches/\` و\`artifacts/agents/workspace-status.md\` و\`artifacts/agents/worktree-plan.md\` و\`artifacts/agents/workflow-route.json\` و\`artifacts/agents/workflow-route.md\` و\`artifacts/agents/finish-plan.md\` و\`artifacts/agents/launch-plan.md\` و\`artifacts/agents/worker-runs/\` و\`artifacts/agents/review-runs/\` و\`artifacts/agents/retries/\` و\`artifacts/agents/blockers/\` و\`artifacts/agents/decisions/\` و\`artifacts/agents/review-feedback-plan.md\` و\`artifacts/agents/worker-status.md\` و\`artifacts/agents/debug-evidence.json\` و\`artifacts/agents/tdd-evidence.json\` و\`artifacts/agents/verification-evidence.json\`.
+6. استخدم \`ospec execute status --brief\` وpacket الحالي لتحديد الإجراء التالي، ثم افتح artifacts والوثائق المطلوبة فقط عبر \`SKILL.index.json\` و\`docs/project/feature-index.md\`.
 7. عند بدء أو استئناف active change واحد، استخدم \`ospec execute bootstrap [changes/active/<change>]\` لكتابة \`artifacts/agents/bootstrap.json\` و\`artifacts/agents/bootstrap.md\` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي المسجل فيه؛ عند وجود active dispatch، يوصي bootstrap بأمر \`ospec execute launch ... --task ...\` المطابق.
 7. عندما تحتاج إلى حفظ أمر OSpec التالي الموصى به لتسليمه إلى إنسان أو AI، استخدم \`ospec execute route [changes/active/<change>]\` لكتابة \`artifacts/agents/workflow-route.json\` و\`artifacts/agents/workflow-route.md\`؛ هذا يسجل workflow routing artifacts فقط ولا يعدل source files.
 8. عند نقل change بين agents أو tools أو worktrees أو shells أو operators بشريين، استخدم \`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]\` لكتابة \`artifacts/agents/handoff.json\` و\`artifacts/agents/handoff.md\`؛ يسجل هذا الأمر project session brief snapshot وtool mapping وقواعد السلامة فقط ولا يشغّل workers أو يعدّل source files.
@@ -1521,7 +1571,12 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 19. إذا كان Stitch مفعلاً وكان change الحالي يفعّل \`stitch_design_review\`، فافحص \`artifacts/stitch/approval.json\` أولاً ولا تعتبر change جاهزاً للاستمرار أو الأرشفة حتى تصبح حالته \`approved\`.
 20. إذا كان العمل يتضمن تثبيت Stitch أو تبديل provider أو إصلاح doctor أو إعداد MCP أو المصادقة، فاقرأ مواصفة Stitch المحلية في المستودع أولاً. استخدم الخطوط الأساسية المدمجة فقط عند غياب المواصفة.
 21. إذا نجح provider الداخلي لـ Codex في الاستدعاءات للقراءة فقط لكن توقفت عمليات الكتابة الخاصة بـ Stitch، فتحقق أولاً من أن التشغيل يستخدم فعلاً \`codex exec --dangerously-bypass-approvals-and-sandbox\`. وإذا كان المشروع يبدل Runner مخصصاً لـ Codex فيجب أن يمرر العلم نفسه صراحةً.
-22. حدّث وثائق SKILL وأعد بناء الفهرس بعد التغييرات المهمة.`));
+22. اقرأ document review policy من \`.skillrc.workflow.document_review_policy\`؛ يحافظ \`always\` على reviewer مستقل، ولا يسمح \`adaptive\` بـ inline preflight إلا عندما تصرح الوثيقة بـ \`risk_level: low\` (أو \`none\`) ولا توجد risk signals؛ وإلا يوزع reviewer مستقلا.
+23. يستخدم worker/reviewer logical model profile. يجمع command runner \`OSPEC_USAGE_FILE\` تلقائيا ويبقى \`--usage-file\` للإدخال اليدوي؛ وتفرق metrics بين complete وpartial وmissing ولا تعتبر القيمة الغائبة صفرا.
+24. عندما يكون final review هو \`NEEDS_CHANGES\` وبعد حل required decisions، استخدم \`ospec execute repair [changes/active/<change>]\` لإنشاء repair task واحدة من كل findings ثم verification وtask review وfinal re-review مرة واحدة لكل منها.
+25. يكتب reviewer ملف Markdown وملف \`*.findings.json\` مجاورا؛ وتتطلب \`documentation_updates\` دليلا على تغير فعلي، ويربط archive index وثائق المشروع الدائمة مباشرة.
+26. ينشئ كل classic change وgoal مؤرشف وثيقة \`docs/project/changes/<archive-path>.md\` ويفهرسها تلقائيا؛ وقبل نقل change النشط يرفض فحص archive المسبق الكتابة فوق وثيقة يملكها البشر في المسار نفسه ويتحقق من قابلية الكتابة في أدلة الإخراج المُدارة؛ ولا يغني هذا الملخص عن وثائق architecture أو API أو module أو operation المطلوبة.
+27. حدّث وثائق SKILL وأعد بناء الفهرس بعد التغييرات المهمة.`));
     }
     generateExecutionProtocolTemplate(input) {
         const language = input?.documentLanguage === 'zh-CN' ||
@@ -1540,39 +1595,10 @@ ${this.formatReferenceList(refs, 'قيد التحديد')}
 
 - \`.skillrc\`
 - \`.ospec/session-brief.md\`
-- \`changes/active/<change>/proposal.md\`
-- \`changes/active/<change>/design.md\`
-- \`changes/active/<change>/implementation-plan.md\`
-- \`changes/active/<change>/artifacts/agents/task-graph.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.md\`
-- \`changes/active/<change>/artifacts/agents/handoff.json\`
-- \`changes/active/<change>/artifacts/agents/handoff.md\`
-- \`changes/active/<change>/artifacts/agents/document-review-dispatches/\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.json\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.md\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.json\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.md\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.json\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.md\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.json\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.md\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.json\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.md\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.json\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.md\`
-- \`changes/active/<change>/tasks.md\`
-- \`changes/active/<change>/artifacts/reviews/design-review.md\`
-- \`changes/active/<change>/artifacts/reviews/implementation-plan-review.md\`
-- \`changes/active/<change>/artifacts/reviews/final-review.md\`
-- \`changes/active/<change>/artifacts/agents/worker-status.md\`
-- \`changes/active/<change>/artifacts/agents/debug-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/tdd-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/verification-evidence.json\`
-- \`changes/active/<change>/state.json\`
-- \`changes/active/<change>/verification.md\`
+- \`SKILL.index.json\` 与 \`docs/project/feature-index.md\`
+- 当前 \`ospec execute status --brief\` 输出或 dispatch/review/decision/verification packet
 
-change 相对 agent artifacts 包括 \`artifacts/agents/bootstrap.md\`、\`artifacts/agents/handoff.md\`、\`artifacts/agents/document-review-dispatches/\`、\`artifacts/agents/workspace-status.md\`、\`artifacts/agents/worktree-plan.md\`、\`artifacts/agents/workflow-route.json\`、\`artifacts/agents/workflow-route.md\`、\`artifacts/agents/finish-plan.md\`、\`artifacts/agents/launch-plan.md\`、\`artifacts/agents/worker-runs/\`、\`artifacts/agents/review-runs/\`、\`artifacts/agents/retries/\`、\`artifacts/agents/blockers/\`、\`artifacts/agents/decisions/\`、\`artifacts/agents/review-feedback-plan.md\`、\`artifacts/agents/worker-status.md\`、\`artifacts/agents/debug-evidence.json\`、\`artifacts/agents/tdd-evidence.json\` 和 \`artifacts/agents/verification-evidence.json\`。
+先把 brief 或 packet 当作任务上下文，再按索引打开当前阶段需要的 change artifacts、目标文件和项目/归档文档。不要默认加载全部 goal artifacts。
 
 ## 规则
 
@@ -1612,6 +1638,11 @@ review artifact 有非 \`PENDING\` 决策后，用 \`ospec execute feedback [cha
 调试是 change 的一部分时，必须用 \`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED\` 记录 \`artifacts/agents/debug-evidence.json\`，或记录不适用原因。
 运行最新项目验证命令后，必须用 \`ospec execute verify [changes/active/<change>] --command "..." --status PASSED\` 记录 \`artifacts/agents/verification-evidence.json\`。
 实现后必须完成每个 task 的一次合并 review；最终必须完成单一的 \`artifacts/reviews/final-review.md\`；任一 task 级或最终 review decision 仍为 \`PENDING\`、\`NEEDS_CHANGES\` 或 \`BLOCKED\` 时，不得 archive。
+\`.skillrc.workflow.document_review_policy\` 默认是 \`always\`；\`adaptive\` 只有在目标文档显式声明 \`risk_level: low\`（或 \`none\`）且没有风险信号时内联批准，否则仍派独立 reviewer。
+worker/reviewer packet 必须记录逻辑 model profile、解析到的 model 或 harness-default 回退；命令执行器自动归集 \`OSPEC_USAGE_FILE\`，并报告 complete/partial/missing 覆盖率。
+reviewer 必须同时写 Markdown 与相邻的 \`*.findings.json\`；声明的文档更新必须有有效内容变化证据，归档索引必须链接长期项目文档。
+每个归档的普通 change 和 goal 必须自动生成并索引 \`docs/project/changes/<归档路径>.md\`；移动 active change 前，预检必须拒绝覆盖同路径人工文档并验证托管输出目录可写；后置检查必须确认 change 文档和两个索引链接都存在。
+最终 review 为 \`NEEDS_CHANGES\` 时，解决 required decision 后用 \`ospec execute repair\` 把全部 findings 合成一个 repair task，再各运行一次 covering verification、task review 和 final re-review。
 
 ## 插件阻断
 
@@ -1626,39 +1657,10 @@ review artifact 有非 \`PENDING\` 决策后，用 \`ospec execute feedback [cha
 
 - \`.skillrc\`
 - \`.ospec/session-brief.md\`
-- \`changes/active/<change>/proposal.md\`
-- \`changes/active/<change>/design.md\`
-- \`changes/active/<change>/implementation-plan.md\`
-- \`changes/active/<change>/artifacts/agents/task-graph.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.md\`
-- \`changes/active/<change>/artifacts/agents/handoff.json\`
-- \`changes/active/<change>/artifacts/agents/handoff.md\`
-- \`changes/active/<change>/artifacts/agents/document-review-dispatches/\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.json\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.md\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.json\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.md\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.json\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.md\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.json\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.md\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.json\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.md\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.json\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.md\`
-- \`changes/active/<change>/tasks.md\`
-- \`changes/active/<change>/artifacts/reviews/design-review.md\`
-- \`changes/active/<change>/artifacts/reviews/implementation-plan-review.md\`
-- \`changes/active/<change>/artifacts/reviews/final-review.md\`
-- \`changes/active/<change>/artifacts/agents/worker-status.md\`
-- \`changes/active/<change>/artifacts/agents/debug-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/tdd-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/verification-evidence.json\`
-- \`changes/active/<change>/state.json\`
-- \`changes/active/<change>/verification.md\`
+- \`SKILL.index.json\` and \`docs/project/feature-index.md\`
+- the current \`ospec execute status --brief\` output or dispatch/review/decision/verification packet
 
-Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`artifacts/agents/handoff.md\`, \`artifacts/agents/document-review-dispatches/\`, \`artifacts/agents/workspace-status.md\`, \`artifacts/agents/worktree-plan.md\`, \`artifacts/agents/workflow-route.json\`, \`artifacts/agents/workflow-route.md\`, \`artifacts/agents/finish-plan.md\`, \`artifacts/agents/launch-plan.md\`, \`artifacts/agents/worker-runs/\`, \`artifacts/agents/review-runs/\`, \`artifacts/agents/retries/\`, \`artifacts/agents/blockers/\`, \`artifacts/agents/decisions/\`, \`artifacts/agents/review-feedback-plan.md\`, \`artifacts/agents/worker-status.md\`, \`artifacts/agents/debug-evidence.json\`, \`artifacts/agents/tdd-evidence.json\`, and \`artifacts/agents/verification-evidence.json\`.
+Treat the brief or packet as task context, then use the indexes to open only the change artifacts, target files, and project/archive docs required by the current stage. Do not load every goal artifact by default.
 
 ## Rule
 
@@ -1698,6 +1700,11 @@ After focused test runs, record \`artifacts/agents/tdd-evidence.json\` with \`os
 When debugging is part of the change, record \`artifacts/agents/debug-evidence.json\` with \`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED\`, or record why it is not applicable.
 After running fresh project verification commands, record \`artifacts/agents/verification-evidence.json\` with \`ospec execute verify [changes/active/<change>] --command "..." --status PASSED\`.
 After implementation, complete each task's one combined review, then complete the single final \`artifacts/reviews/final-review.md\`; do not archive while any task-level or final review decision is \`PENDING\`, \`NEEDS_CHANGES\`, or \`BLOCKED\`.
+\`.skillrc.workflow.document_review_policy\` defaults to \`always\`; \`adaptive\` approves inline only when the target document explicitly declares \`risk_level: low\` (or \`none\`) and no risk signal exists, otherwise it dispatches an independent reviewer.
+Worker/reviewer packets record the logical model profile, configured model, or explicit harness-default fallback; command runners ingest \`OSPEC_USAGE_FILE\` automatically and report complete/partial/missing coverage.
+Reviewers write Markdown and sibling \`*.findings.json\`; declared documentation updates require meaningful-change evidence and archive indexes link durable project documents.
+Every archived classic change and goal must generate and index \`docs/project/changes/<archive-path>.md\`; before moving the active change, preflight must refuse to overwrite a human-owned file at that path and verify managed output directories are writable; the postcondition verifies the document and both index links.
+When final review is \`NEEDS_CHANGES\`, resolve required decisions and use \`ospec execute repair\` to group all findings into one repair task, followed by one covering verification, one task review, and one final re-review.
 
 ## Plugin Gates
 
@@ -1712,39 +1719,10 @@ After implementation, complete each task's one combined review, then complete th
 
 - \`.skillrc\`
 - \`.ospec/session-brief.md\`
-- \`changes/active/<change>/proposal.md\`
-- \`changes/active/<change>/design.md\`
-- \`changes/active/<change>/implementation-plan.md\`
-- \`changes/active/<change>/artifacts/agents/task-graph.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.md\`
-- \`changes/active/<change>/artifacts/agents/handoff.json\`
-- \`changes/active/<change>/artifacts/agents/handoff.md\`
-- \`changes/active/<change>/artifacts/agents/document-review-dispatches/\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.json\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.md\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.json\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.md\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.json\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.md\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.json\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.md\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.json\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.md\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.json\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.md\`
-- \`changes/active/<change>/tasks.md\`
-- \`changes/active/<change>/artifacts/reviews/design-review.md\`
-- \`changes/active/<change>/artifacts/reviews/implementation-plan-review.md\`
-- \`changes/active/<change>/artifacts/reviews/final-review.md\`
-- \`changes/active/<change>/artifacts/agents/worker-status.md\`
-- \`changes/active/<change>/artifacts/agents/debug-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/tdd-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/verification-evidence.json\`
-- \`changes/active/<change>/state.json\`
-- \`changes/active/<change>/verification.md\`
+- \`SKILL.index.json\` と \`docs/project/feature-index.md\`
+- 現在の \`ospec execute status --brief\` 出力、または dispatch/review/decision/verification packet
 
-Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`artifacts/agents/handoff.md\`, \`artifacts/agents/document-review-dispatches/\`, \`artifacts/agents/workspace-status.md\`, \`artifacts/agents/worktree-plan.md\`, \`artifacts/agents/workflow-route.json\`, \`artifacts/agents/workflow-route.md\`, \`artifacts/agents/finish-plan.md\`, \`artifacts/agents/launch-plan.md\`, \`artifacts/agents/worker-runs/\`, \`artifacts/agents/review-runs/\`, \`artifacts/agents/retries/\`, \`artifacts/agents/blockers/\`, \`artifacts/agents/decisions/\`, \`artifacts/agents/review-feedback-plan.md\`, \`artifacts/agents/worker-status.md\`, \`artifacts/agents/debug-evidence.json\`, \`artifacts/agents/tdd-evidence.json\`, and \`artifacts/agents/verification-evidence.json\`.
+brief または packet をタスク文脈として扱い、索引から現在の段階に必要な change artifact、対象ファイル、project/archive 文書だけを開く。すべての goal artifact を既定で読み込まない。
 
 ## ルール
 
@@ -1784,6 +1762,11 @@ focused test 実行後、\`ospec execute tdd [changes/active/<change>] --phase r
 debugging が change の一部だった場合、\`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED\` で \`artifacts/agents/debug-evidence.json\` を記録するか、適用外の理由を記録する。
 fresh project verification commands を実行した後、\`ospec execute verify [changes/active/<change>] --command "..." --status PASSED\` で \`artifacts/agents/verification-evidence.json\` を記録する。
 実装後は各 task の 1 回の統合 review を完了し、単一の final \`artifacts/reviews/final-review.md\` を完了する。task-level または final review decision が \`PENDING\`、\`NEEDS_CHANGES\`、\`BLOCKED\` のままなら archive しない。
+\`.skillrc.workflow.document_review_policy\` の既定値は \`always\`。\`adaptive\` は対象文書が \`risk_level: low\`（または \`none\`）を明示し risk signal がない場合だけ inline 承認し、それ以外は独立 reviewer を dispatch する。
+worker/reviewer packet は logical model profile、configured model、または harness-default fallback を記録する。command runner は \`OSPEC_USAGE_FILE\` を自動集計し、complete/partial/missing coverage を報告する。
+reviewer は Markdown と隣接 \`*.findings.json\` を書く。宣言済み documentation update には有意な変更 evidence が必要で、archive index は永続 project document をリンクする。
+archive 済み classic change と goal ごとに \`docs/project/changes/<archive-path>.md\` を生成して index する。active change を移動する前に、preflight は同じ path にある人所有の文書の上書きを拒否し、管理対象の出力ディレクトリが書き込み可能であることを確認する。postcondition で文書と両方の index link を確認する。
+final review が \`NEEDS_CHANGES\` の場合、required decision 解決後に \`ospec execute repair\` で全 findings を 1 repair task にまとめ、covering verification、task review、final re-review を各 1 回行う。
 
 ## プラグインゲート
 
@@ -1798,39 +1781,10 @@ fresh project verification commands を実行した後、\`ospec execute verify 
 
 - \`.skillrc\`
 - \`.ospec/session-brief.md\`
-- \`changes/active/<change>/proposal.md\`
-- \`changes/active/<change>/design.md\`
-- \`changes/active/<change>/implementation-plan.md\`
-- \`changes/active/<change>/artifacts/agents/task-graph.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.json\`
-- \`changes/active/<change>/artifacts/agents/bootstrap.md\`
-- \`changes/active/<change>/artifacts/agents/handoff.json\`
-- \`changes/active/<change>/artifacts/agents/handoff.md\`
-- \`changes/active/<change>/artifacts/agents/document-review-dispatches/\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.json\`
-- \`changes/active/<change>/artifacts/agents/workspace-status.md\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.json\`
-- \`changes/active/<change>/artifacts/agents/worktree-plan.md\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.json\`
-- \`changes/active/<change>/artifacts/agents/workflow-route.md\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.json\`
-- \`changes/active/<change>/artifacts/agents/finish-plan.md\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.json\`
-- \`changes/active/<change>/artifacts/agents/launch-plan.md\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.json\`
-- \`changes/active/<change>/artifacts/agents/review-feedback-plan.md\`
-- \`changes/active/<change>/tasks.md\`
-- \`changes/active/<change>/artifacts/reviews/design-review.md\`
-- \`changes/active/<change>/artifacts/reviews/implementation-plan-review.md\`
-- \`changes/active/<change>/artifacts/reviews/final-review.md\`
-- \`changes/active/<change>/artifacts/agents/worker-status.md\`
-- \`changes/active/<change>/artifacts/agents/debug-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/tdd-evidence.json\`
-- \`changes/active/<change>/artifacts/agents/verification-evidence.json\`
-- \`changes/active/<change>/state.json\`
-- \`changes/active/<change>/verification.md\`
+- \`SKILL.index.json\` و\`docs/project/feature-index.md\`
+- ناتج \`ospec execute status --brief\` الحالي أو dispatch/review/decision/verification packet
 
-Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`artifacts/agents/handoff.md\`, \`artifacts/agents/document-review-dispatches/\`, \`artifacts/agents/workspace-status.md\`, \`artifacts/agents/worktree-plan.md\`, \`artifacts/agents/workflow-route.json\`, \`artifacts/agents/workflow-route.md\`, \`artifacts/agents/finish-plan.md\`, \`artifacts/agents/launch-plan.md\`, \`artifacts/agents/worker-runs/\`, \`artifacts/agents/review-runs/\`, \`artifacts/agents/retries/\`, \`artifacts/agents/blockers/\`, \`artifacts/agents/decisions/\`, \`artifacts/agents/review-feedback-plan.md\`, \`artifacts/agents/worker-status.md\`, \`artifacts/agents/debug-evidence.json\`, \`artifacts/agents/tdd-evidence.json\`, and \`artifacts/agents/verification-evidence.json\`.
+تعامل مع brief أو packet كسياق المهمة، ثم استخدم الفهارس لفتح change artifacts والملفات المستهدفة ووثائق project/archive اللازمة للمرحلة الحالية فقط. لا تحمّل جميع goal artifacts افتراضياً.
 
 ## القاعدة
 
@@ -1870,6 +1824,11 @@ Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`art
 عندما يكون debugging جزءا من change، سجل \`artifacts/agents/debug-evidence.json\` باستخدام \`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED\` أو سجل سبب عدم الانطباق.
 بعد تشغيل project verification commands حديثة، سجل \`artifacts/agents/verification-evidence.json\` باستخدام \`ospec execute verify [changes/active/<change>] --command "..." --status PASSED\`.
 بعد التنفيذ، أكمل المراجعة الموحدة الواحدة لكل task، ثم أكمل \`artifacts/reviews/final-review.md\` النهائية الموحدة؛ ولا تؤرشف ما دام أي task-level أو final review decision هو \`PENDING\` أو \`NEEDS_CHANGES\` أو \`BLOCKED\`.
+القيمة الافتراضية لـ \`.skillrc.workflow.document_review_policy\` هي \`always\`؛ لا يعتمد \`adaptive\` inline إلا عندما تصرح الوثيقة بـ \`risk_level: low\` (أو \`none\`) ولا توجد risk signals، وإلا يوزع reviewer مستقلا.
+تسجل worker/reviewer packets logical model profile أو configured model أو harness-default fallback؛ ويجمع command runner \`OSPEC_USAGE_FILE\` تلقائيا ويبلغ تغطية complete/partial/missing.
+يكتب reviewer ملف Markdown وملف \`*.findings.json\` مجاورا؛ وتتطلب documentation updates المعلنة دليلا على تغير فعلي، ويربط archive index وثائق المشروع الدائمة.
+يجب إنشاء وفهرسة \`docs/project/changes/<archive-path>.md\` لكل classic change وgoal مؤرشف. قبل نقل change النشط، يجب أن يرفض preflight الكتابة فوق وثيقة يملكها البشر في المسار نفسه وأن يتحقق من قابلية الكتابة في أدلة الإخراج المُدارة، ويتحقق postcondition من الوثيقة وروابط الفهرسين.
+عندما يكون final review هو \`NEEDS_CHANGES\`، حل required decisions ثم استخدم \`ospec execute repair\` لتجميع كل findings في repair task واحدة، ثم verification وtask review وfinal re-review مرة واحدة لكل منها.
 
 ## بوابات الإضافات
 
@@ -1880,104 +1839,9 @@ Change-relative agent artifacts include \`artifacts/agents/bootstrap.md\`, \`art
 - إذا نجح provider الداخلي لـ Codex في الاستدعاءات للقراءة فقط لكن توقفت عمليات كتابة Stitch، فتحقق أولاً من أن التشغيل يستخدم فعلاً \`codex exec --dangerously-bypass-approvals-and-sandbox\`. وإذا استُخدم runner مخصص فيجب أن يمرر العلم نفسه.
 - عند تسجيل قرارات المراجعة اليدوية، فضّل \`ospec plugins approve stitch <change-path>\` أو \`ospec plugins reject stitch <change-path>\`.`));
     }
-    /**
-     * @deprecated Legacy classic-only index generator. NOT used for deployment: the
-     * managed `.ospec/tools/build-index-auto.cjs` is direct-copied from `dist/tools/build-index.js`
-     * (compiled from `src/tools/build-index.ts`), which is the canonical implementation kept in
-     * lockstep with `IndexBuilder`. This template lacks nested-layout, knowledge-doc indexing,
-     * git_commit, and active-changes scanning and should not be revived without reconciling all three.
-     */
     generateBuildIndexScriptTemplate() {
-        return `#!/usr/bin/env node
-
-const fsp = require('fs/promises');
-const path = require('path');
-const yaml = require('js-yaml');
-
-const rootDir = process.cwd();
-const indexPath = path.join(rootDir, 'SKILL.index.json');
-const modules = {};
-const tagIndex = {};
-
-async function scan(dir) {
-  const entries = await fsp.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (['node_modules', 'dist', '.git', 'changes', 'for-ai'].includes(entry.name)) {
-        continue;
-      }
-      await scan(fullPath);
-      continue;
-    }
-
-    if (entry.name !== 'SKILL.md') {
-      continue;
-    }
-
-    const content = await fsp.readFile(fullPath, 'utf8');
-    const relativePath = path.relative(rootDir, fullPath).replace(/\\\\/g, '/');
-    const frontmatterMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);
-    if (!frontmatterMatch) {
-      continue;
-    }
-
-    const frontmatter = yaml.load(frontmatterMatch[1]) || {};
-    const moduleName = frontmatter.name || relativePath;
-    const tags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
-    const sections = {};
-    const headingRegex = /^(#{1,6})\\s+(.+?)$/gm;
-    let match;
-
-    while ((match = headingRegex.exec(content)) !== null) {
-      sections[match[2]] = {
-        level: match[1].length,
-        title: match[2],
-        start: match.index,
-        end: match.index + match[0].length,
-      };
-    }
-
-    modules[moduleName] = {
-      file: relativePath,
-      title: frontmatter.title || moduleName,
-      tags,
-      sections,
-    };
-
-    for (const tag of tags) {
-      if (!tagIndex[tag]) {
-        tagIndex[tag] = [];
-      }
-      tagIndex[tag].push(moduleName);
-    }
-  }
-}
-
-scan(rootDir)
-  .then(async () => {
-    const index = {
-      version: '1.0',
-      generated: new Date().toISOString(),
-      git_commit: null,
-      active_changes: [],
-      stats: {
-        totalFiles: Object.keys(modules).length,
-        totalModules: Object.keys(modules).length,
-        totalSections: Object.values(modules).reduce((count, module) => count + Object.keys(module.sections).length, 0),
-      },
-      modules,
-      tagIndex,
-    };
-
-    await fsp.writeFile(indexPath, JSON.stringify(index, null, 2));
-    console.log('Index rebuilt:', indexPath);
-  })
-  .catch(error => {
-    console.error(error);
-    process.exit(1);
-  });
-`;
+        const runtimeTool = path.resolve(__dirname, '..', '..', 'tools', 'build-index.js');
+        return (0, fs_1.readFileSync)(runtimeTool, 'utf8');
     }
     getProjectContext(fallbackName, mode, input) {
         return this.inputs.normalizeProjectBootstrapInput(input, fallbackName, mode);

@@ -43,6 +43,7 @@ const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
+const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
 class ArchiveCommand extends BaseCommand_1.BaseCommand {
     async execute(featurePath, options = {}) {
         await this.run(featurePath, options);
@@ -62,8 +63,6 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             const designPath = path.join(targetPath, constants_1.FILE_NAMES.DESIGN);
             const implementationPlanPath = path.join(targetPath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN);
             const taskGraphPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
-            const specComplianceReviewPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
-            const codeQualityReviewPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
             const agentWorkerStatusPath = path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
             const tasksPath = path.join(targetPath, constants_1.FILE_NAMES.TASKS);
             const verificationPath = path.join(targetPath, constants_1.FILE_NAMES.VERIFICATION);
@@ -105,6 +104,7 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 verificationComplete: !/- \[ \]/.test(verification.content),
             });
             if (isGoalWorkflow) {
+                const reviewArtifactSet = await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(services_1.services.fileService, targetPath);
                 if (!(await services_1.services.fileService.exists(designPath))) {
                     result.blockers.push('design.md is required before archiving');
                 }
@@ -188,23 +188,13 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                         .filter(check => check.status === 'warn')
                         .map(check => check.message));
                 }
-                if (!(await services_1.services.fileService.exists(specComplianceReviewPath))) {
-                    result.blockers.push('artifacts/reviews/spec-compliance.md is required before archiving');
+                if (reviewArtifactSet.missing.length > 0) {
+                    result.blockers.push(`A combined final review is required before archiving (legacy dual-review artifacts are also accepted). Missing: ${reviewArtifactSet.missing.join(', ')}`);
                 }
-                else {
-                    const specComplianceReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps);
-                    result.blockers.push(...specComplianceReviewAnalysis.blockers);
-                    result.warnings.push(...specComplianceReviewAnalysis.checks
-                        .filter(check => check.status === 'warn')
-                        .map(check => check.message));
-                }
-                if (!(await services_1.services.fileService.exists(codeQualityReviewPath))) {
-                    result.blockers.push('artifacts/reviews/code-quality.md is required before archiving');
-                }
-                else {
-                    const codeQualityReviewAnalysis = await services_1.services.projectService.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps);
-                    result.blockers.push(...codeQualityReviewAnalysis.blockers);
-                    result.warnings.push(...codeQualityReviewAnalysis.checks
+                for (const reviewArtifact of reviewArtifactSet.artifacts) {
+                    const analysis = await services_1.services.projectService.analyzeReviewArtifactDocument(reviewArtifact.path, reviewArtifact.name, reviewArtifact.role, activatedSteps);
+                    result.blockers.push(...analysis.blockers);
+                    result.warnings.push(...analysis.checks
                         .filter(check => check.status === 'warn')
                         .map(check => check.message));
                 }
@@ -220,6 +210,17 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 }
                 await this.addGoalDocumentReviewBlockers(targetPath, result.blockers);
                 await this.addGoalVerificationEvidenceBlocker(targetPath, result.blockers);
+            }
+            const documentationUpdateAnalysis = await services_1.services.projectService.analyzeDocumentationUpdates(targetPath);
+            for (const check of documentationUpdateAnalysis.checks) {
+                result.checks.push({
+                    name: check.name,
+                    passed: check.status !== 'fail',
+                    message: check.message,
+                });
+                if (check.status === 'fail') {
+                    result.blockers.push(check.message);
+                }
             }
             if (activatedSteps.includes('stitch_design_review')) {
                 const approvalPath = path.join(targetPath, 'artifacts', 'stitch', 'approval.json');
@@ -351,6 +352,7 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     this.success('Change is ready to archive');
                     return;
                 }
+                await services_1.services.projectService.rebuildIndex(projectRoot);
                 const archivePath = await this.performArchive(targetPath, projectRoot, featureState, config);
                 this.success(`Change archived to ${archivePath}`);
                 return archivePath;
@@ -446,12 +448,14 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             pending: featureState.pending.filter(step => step !== 'archived'),
             blocked_by: [],
         };
+        await services_1.services.projectService.preflightArchivedKnowledgeWrite(projectRoot, archivePath);
         await services_1.services.fileService.move(targetPath, archivePath);
         await services_1.services.stateManager.writeState(archivePath, nextState);
         await this.updateProposalStatus(archivePath, 'archived');
         await services_1.services.projectService.rebaseMovedChangeMarkdownLinks(targetPath, archivePath);
         await services_1.services.projectService.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
         await services_1.services.projectService.rebuildIndex(projectRoot);
+        await services_1.services.projectService.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
         return this.toRelativePath(projectRoot, archivePath);
     }
     inferProjectRootFromChangePath(startPath) {

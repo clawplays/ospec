@@ -112,6 +112,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 case 'feedback':
                     await this.feedback(args);
                     return;
+                case 'repair':
+                    await this.repair(args);
+                    return;
                 case 'decision':
                     await this.decision(args);
                     return;
@@ -284,6 +287,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const result = await services_1.services.taskGraphExecutionService.complete(changePath, parsed.taskId, {
             status: parsed.status,
             summary: parsed.summary,
+            usageFile: parsed.usageFile,
         });
         this.printCompletion(result);
     }
@@ -303,6 +307,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 decision: parsed.decision,
                 summary: parsed.summary,
                 timeoutMs: parsed.timeoutMs,
+                usageFile: parsed.usageFile,
             });
             this.printReviewRun(result);
             return;
@@ -321,6 +326,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             summary: parsed.summary,
         });
         this.printReviewFeedback(result);
+    }
+    async repair(args) {
+        if (args.length > 1 || args[0]?.startsWith('--')) {
+            throw new Error(`Unexpected execute repair argument: ${args.find(arg => arg.startsWith('--')) || args[1]}`);
+        }
+        const changePath = await this.resolveChangePath(args[0]);
+        const result = await services_1.services.taskGraphExecutionService.createRepairWave(changePath);
+        this.printRepairWave(result);
     }
     async decision(args) {
         const parsed = this.parseDecisionArgs(args);
@@ -943,10 +956,26 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Graph status: ${result.graphStatus}`);
         console.log(`Session: ${result.sessionPath}`);
         console.log(`Worker status: ${result.workerStatusPath}`);
+        if (result.usage) {
+            console.log(`Usage: input=${result.usage.inputTokens} cached=${result.usage.cachedInputTokens} output=${result.usage.outputTokens} reasoning=${result.usage.reasoningTokens} tools=${result.usage.toolCalls} turns=${result.usage.turns} elapsed=${result.usage.elapsedMs}ms`);
+        }
         if (result.blockerEscalation) {
             console.log(`Blocker artifact: ${result.blockerEscalation.recordPath}`);
             console.log(`Blocker report: ${result.blockerEscalation.reportPath}`);
         }
+        console.log('\nNext instruction:');
+        console.log(`  ${result.nextInstruction}`);
+        console.log('');
+    }
+    printRepairWave(result) {
+        console.log('\nGrouped Repair Wave Created');
+        console.log('===========================\n');
+        console.log(`Change path: ${result.changePath}`);
+        console.log(`Wave: ${result.record.id}`);
+        console.log(`Task: ${result.record.taskId}`);
+        console.log(`Findings: ${result.record.findings.length}`);
+        console.log(`Packet: ${result.record.packetPath}`);
+        console.log(`Dispatches: ${result.dispatch.dispatches.length}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -1790,6 +1819,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let inputPath;
         let status;
         let summary;
+        let usageFile;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--status') {
@@ -1818,6 +1848,19 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 summary = arg.slice('--summary='.length);
                 continue;
             }
+            if (arg === '--usage-file') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute complete requires a value after --usage-file.');
+                }
+                usageFile = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--usage-file=')) {
+                usageFile = arg.slice('--usage-file='.length);
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute complete flag: ${arg}`);
             }
@@ -1834,7 +1877,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (!taskId) {
             throw new Error('Execute complete requires a task id.');
         }
-        return { taskId, inputPath, status, summary };
+        return { taskId, inputPath, status, summary, usageFile };
     }
     parseCollectArgs(args) {
         let inputPath;
@@ -1981,6 +2024,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let decision;
         let summary;
         let timeoutMs;
+        let usageFile;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--stage') {
@@ -2065,6 +2109,19 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 timeoutMs = this.parsePositiveInteger(arg.slice('--timeout-ms='.length), 'Execute review --timeout-ms');
                 continue;
             }
+            if (arg === '--usage-file') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute review requires a value after --usage-file.');
+                }
+                usageFile = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--usage-file=')) {
+                usageFile = arg.slice('--usage-file='.length);
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute review flag: ${arg}`);
             }
@@ -2077,7 +2134,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (run && !command?.trim()) {
             throw new Error('Execute review --run requires --command.');
         }
-        return { inputPath, stage, taskId, run, command, decision, summary, timeoutMs };
+        return { inputPath, stage, taskId, run, command, decision, summary, timeoutMs, usageFile };
     }
     parseReviewFeedbackArgs(args) {
         let inputPath;

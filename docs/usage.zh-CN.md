@@ -197,7 +197,7 @@ goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.6.1
+npm install -g @clawplays/ospec-cli@1.7.0
 ospec update [path]
 ```
 

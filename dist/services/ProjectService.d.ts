@@ -10,6 +10,7 @@ import { SkillParser } from './SkillParser';
 import { TemplateEngine } from './TemplateEngine';
 import { FeatureProjectContext, ProjectBootstrapInput } from './TemplateEngine';
 import { ProjectPresetFirstChangeSuggestion } from '../presets/ProjectPresets';
+import { ReviewArtifactRole } from '../utils/ReviewArtifacts';
 interface BootstrapStructurePolicy {
     minimumRequiredPaths: string[];
     recommendedPaths: string[];
@@ -61,6 +62,7 @@ export interface TaskGraphTask {
     target_files: string[];
     verification_commands: string[];
     expected_result: string;
+    documentation_updates?: string[];
     worker_role: string;
     review?: {
         spec?: string;
@@ -77,9 +79,14 @@ export interface TaskGraphAnalysis {
     blockers: string[];
     checks: ChangeStatusCheck[];
 }
+export interface DocumentationUpdateAnalysis {
+    enabled: boolean;
+    declared: string[];
+    checks: ChangeStatusCheck[];
+}
 declare const REVIEW_ARTIFACT_ALLOWED_DECISIONS: readonly ["APPROVED", "APPROVED_WITH_CONCERNS", "NEEDS_CHANGES", "BLOCKED", "PENDING"];
 export type ReviewArtifactDecision = typeof REVIEW_ARTIFACT_ALLOWED_DECISIONS[number];
-export type ReviewArtifactRole = 'spec_compliance_reviewer' | 'code_quality_reviewer';
+export type { ReviewArtifactRole } from '../utils/ReviewArtifacts';
 export interface ReviewArtifactAnalysis {
     optionalSteps: string[];
     decision: string;
@@ -187,7 +194,6 @@ export declare class ProjectService {
      * directory id equals the feature. Unlinked exploration brainstorms are left in place.
      */
     archiveLinkedBrainstorms(projectRoot: string, feature: string, archivePath: string): Promise<string[]>;
-    reconcileArchivedBrainstorms(projectRoot: string): Promise<string[]>;
     rebaseMovedChangeMarkdownLinks(previousChangePath: string, nextChangePath: string): Promise<void>;
     getFeatureProjectContext(rootDir: string, affects?: string[]): Promise<FeatureProjectContext>;
     getDocsStatus(rootDir: string): Promise<DocsStatus>;
@@ -224,12 +230,9 @@ export declare class ProjectService {
     getBootstrapFieldPolicy(): BootstrapFieldPolicy[];
     getBootstrapStructurePolicy(rootDir: string): BootstrapStructurePolicy;
     private buildBootstrapPreview;
-    rebuildIndex(rootDir: string, options?: {
-        syncAssets?: boolean;
-    }): Promise<SkillsStatus['skillIndex']>;
-    rebuildIndexForPath(targetPath: string, options?: {
-        syncAssets?: boolean;
-    }): Promise<SkillsStatus['skillIndex']>;
+    rebuildIndex(rootDir: string): Promise<SkillsStatus['skillIndex']>;
+    preflightArchivedKnowledgeWrite(projectRoot: string, archivePath: string): Promise<void>;
+    assertArchivedKnowledgeIndexed(projectRoot: string, archivePath: string): Promise<void>;
     private getDirectorySkeleton;
     private getProtocolShellDirectorySkeleton;
     private getKnowledgeLayerDirectorySkeleton;
@@ -264,6 +267,7 @@ export declare class ProjectService {
     private getGoalDocumentReviewChecks;
     private analyzeChecklistDocument;
     analyzeTaskGraphDocument(filePath: string, activatedSteps: string[]): Promise<TaskGraphAnalysis>;
+    analyzeDocumentationUpdates(featureDir: string): Promise<DocumentationUpdateAnalysis>;
     analyzeReviewArtifactDocument(filePath: string, name: string, expectedReviewerRole: ReviewArtifactRole, activatedSteps: string[]): Promise<ReviewArtifactAnalysis>;
     analyzeAgentWorkerStatusDocument(filePath: string): Promise<AgentWorkerStatusAnalysis>;
     private analyzeVerificationDocument;
@@ -271,6 +275,7 @@ export declare class ProjectService {
     private analyzeTddEvidenceForVerificationDocument;
     private analyzeDebugEvidenceForVerificationDocument;
     private maxUpdatedAt;
+    private collectKnowledgeIndexSourcePaths;
     private getLatestUpdatedAt;
     private shouldRebuildIndex;
     private getIndexRebuildReasons;
@@ -282,4 +287,3 @@ export declare class ProjectService {
     private scanDocsInDirectory;
 }
 export declare const createProjectService: (fileService: FileService, configManager: ConfigManager, templateEngine: TemplateEngine, indexBuilder: IndexBuilder, skillParser: SkillParser, projectAssetService: ProjectAssetService, projectScaffoldService: ProjectScaffoldService, projectScaffoldCommandService: ProjectScaffoldCommandService) => ProjectService;
-export {};

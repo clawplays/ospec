@@ -1,6 +1,7 @@
+import { AgentModelProfileId, DocumentReviewPolicy } from '../core/types';
 import { FileService } from './FileService';
 import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
-export type TaskWorkerCapabilityTier = 'standard' | 'strong-reasoning' | 'specialist-review';
+export type TaskWorkerCapabilityTier = 'mechanical' | 'standard' | 'strong-reasoning' | 'specialist-review';
 export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
 export type TaskReviewRunDecision = 'APPROVED' | 'APPROVED_WITH_CONCERNS' | 'NEEDS_CHANGES' | 'BLOCKED' | 'PENDING';
@@ -26,6 +27,9 @@ export interface TaskWorkerProfile {
     rationale: string[];
     requiredBehavior: string[];
     targetToolMapping: TaskWorkerTargetToolMapping;
+    modelProfile: AgentModelProfileId;
+    model: string | null;
+    modelSelectionSource: 'configured' | 'harness-default';
 }
 export interface TaskGraphExecutionTask {
     id: string;
@@ -37,6 +41,9 @@ export interface TaskGraphExecutionTask {
     targetFiles: string[];
     verificationCommands: string[];
     expectedResult: string;
+    context: string;
+    interfaces: string[];
+    documentationUpdates: string[];
     workerRole: string;
     review: TaskReviewState | null;
     workerProfile: TaskWorkerProfile;
@@ -49,6 +56,7 @@ export interface TaskGraphExecutionReport {
     changePath: string;
     graphPath: string;
     feature: string;
+    globalConstraints: string[];
     graphStatus: string;
     taskCount: number;
     readyTasks: TaskGraphExecutionTask[];
@@ -85,6 +93,21 @@ export interface TaskDispatchRecord {
     packetPath: string;
     recordPath: string;
     summary: string | null;
+    gitBaseCommit?: string | null;
+    gitHeadAtCompletion?: string | null;
+    workspaceDirtyAtDispatch?: boolean | null;
+    documentationBaseline?: TaskDocumentationSnapshot[];
+    documentationEvidence?: TaskDocumentationEvidence[];
+}
+export interface TaskDocumentationSnapshot {
+    path: string;
+    exists: boolean;
+    contentHash: string | null;
+}
+export interface TaskDocumentationEvidence extends TaskDocumentationSnapshot {
+    baselineExists: boolean;
+    baselineContentHash: string | null;
+    meaningfullyChanged: boolean;
 }
 export interface TaskExecutionSession {
     version: string;
@@ -114,6 +137,7 @@ export interface TaskCompletionResult {
     taskId: string;
     status: TaskGraphCompletionStatus;
     graphStatus: string;
+    usage: TaskExecutionUsage | null;
     nextInstruction: string;
 }
 export interface TaskBlockerEscalationRecord {
@@ -121,6 +145,8 @@ export interface TaskBlockerEscalationRecord {
     taskId: string;
     taskTitle: string;
     status: 'NEEDS_CONTEXT' | 'BLOCKED';
+    judgmentRequired: true;
+    escalationReason: 'missing_context' | 'external_blocker';
     createdAt: string;
     workerRole: string;
     workerProfile?: TaskWorkerProfile;
@@ -157,6 +183,20 @@ export interface TaskReviewDispatchRecord {
     packetPath: string;
     recordPath: string;
     reviewArtifactPath: string;
+    reviewPackagePath?: string | null;
+    workerProfile?: TaskWorkerProfile;
+}
+export interface TaskExecutionUsage {
+    inputTokens: number | null;
+    cachedInputTokens: number | null;
+    outputTokens: number | null;
+    reasoningTokens: number | null;
+    toolCalls: number | null;
+    turns: number | null;
+    elapsedMs: number | null;
+    observedFields: string[];
+    source: string;
+    coverage: 'complete' | 'partial' | 'none';
 }
 export interface TaskReviewDispatchResult {
     changePath: string;
@@ -180,9 +220,21 @@ export interface TaskReviewFeedbackPlan {
     reportPath: string;
     summary: string | null;
     findings: string[];
+    structuredFindings: TaskReviewFinding[];
     recommendedActions: string[];
     userDecisionGate: TaskReviewFeedbackUserDecisionGate;
     nextInstruction: string;
+}
+export interface TaskReviewFinding {
+    id: string;
+    severity: 'critical' | 'high' | 'medium' | 'low' | 'info' | 'unknown';
+    category: string;
+    message: string;
+    file: string | null;
+    line: number | null;
+    evidence: string;
+    requirementRefs: string[];
+    repairScope: string[];
 }
 export interface TaskReviewFeedbackUserDecisionGate {
     status: 'not_needed' | 'created' | 'pending' | 'already_selected';
@@ -209,19 +261,47 @@ export interface TaskDocumentReviewDispatchRecord {
     stage: TaskDocumentReviewStage;
     reviewerRole: TaskDocumentReviewRole;
     projectSession?: TaskBootstrapProjectSessionSnapshot;
-    status: 'DISPATCHED';
+    status: 'DISPATCHED' | 'COMPLETED_INLINE';
     assignedAt: string;
     packetPath: string;
     recordPath: string;
     documentPath: string;
     reviewArtifactPath: string;
     documentReadiness: TaskBootstrapDocumentReadiness;
+    mode: 'specialist' | 'inline_preflight';
+    policy: DocumentReviewPolicy;
+    riskSignals: string[];
+    workerProfile: TaskWorkerProfile;
 }
 export interface TaskDocumentReviewDispatchResult {
     changePath: string;
     dispatch: TaskDocumentReviewDispatchRecord;
     projectSession: TaskBootstrapProjectSessionSnapshot;
     warnings: string[];
+    nextInstruction: string;
+}
+export interface TaskRepairWaveRecord {
+    version: string;
+    id: string;
+    feature: string;
+    createdAt: string;
+    status: 'ready' | 'dispatched';
+    sourceReviewPath: string;
+    sourceDecision: string;
+    findings: string[];
+    structuredFindings: TaskReviewFinding[];
+    taskId: string;
+    targetFiles: string[];
+    verificationCommands: string[];
+    documentationUpdates: string[];
+    recordPath: string;
+    packetPath: string;
+    dispatchIds: string[];
+}
+export interface TaskRepairWaveResult {
+    changePath: string;
+    record: TaskRepairWaveRecord;
+    dispatch: TaskDispatchResult;
     nextInstruction: string;
 }
 export interface TaskVerificationEvidenceRecord {
@@ -582,6 +662,10 @@ export interface TaskBootstrapProjectSessionSnapshot {
     cacheKey: string | null;
     activeChangeCount: number;
     queuedChangeCount: number;
+    knowledgeIndexPath: string | null;
+    featureIndexPath: string | null;
+    indexedDocumentCount: number;
+    archivedChangeCount: number;
     recommendedCommands: string[];
     nextInstruction: string | null;
     warnings: string[];
@@ -1164,10 +1248,12 @@ export declare class TaskGraphExecutionService {
         decision?: TaskReviewRunDecision;
         summary?: string;
         timeoutMs?: number;
+        usageFile?: string;
     }): Promise<TaskReviewRunResult>;
     complete(changePath: string, taskId: string, options?: {
         status?: TaskGraphCompletionStatus;
         summary?: string;
+        usageFile?: string;
     }): Promise<TaskCompletionResult>;
     syncWorkerStatus(changePath: string): Promise<TaskWorkerStatusSyncResult>;
     review(changePath: string, options?: {
@@ -1178,6 +1264,7 @@ export declare class TaskGraphExecutionService {
         stage?: TaskReviewStage;
         summary?: string;
     }): Promise<TaskReviewFeedbackPlanResult>;
+    createRepairWave(changePath: string): Promise<TaskRepairWaveResult>;
     recordUserDecision(changePath: string, options: {
         id?: string;
         question?: string;
@@ -1300,6 +1387,7 @@ export declare class TaskGraphExecutionService {
     private deriveReviewFeedbackAction;
     private selectNextDocumentReviewStage;
     private getDocumentReviewTarget;
+    private assessDocumentReviewRisk;
     private getDocumentReviewArtifactPath;
     private getTaskReviewArtifactFile;
     private getTaskReviewArtifactRelativePath;
@@ -1312,6 +1400,14 @@ export declare class TaskGraphExecutionService {
     private deriveControllerWorkerStatus;
     private deriveWorkerStatusDocumentStatus;
     private isVerificationChecklistComplete;
+    private writeTaskReviewPackage;
+    private renderGitStatusEntries;
+    private ingestReviewUsageSidecars;
+    private readExecutionUsageFile;
+    private captureDocumentationSnapshots;
+    private captureDocumentationEvidence;
+    private hashMeaningfulDocumentation;
+    private recordExecutionMetric;
     private readSession;
     private isSessionStatus;
     private isDispatchRecord;
@@ -1331,6 +1427,7 @@ export declare class TaskGraphExecutionService {
     private zhReportLabel;
     private localizeZhReportValue;
     private localizeZhBoundarySentence;
+    private readWorkflowExecutionPolicy;
     private findProjectRoot;
     private findProjectRootForOptionalSession;
     private inferProjectRootFromChangePath;
@@ -1435,12 +1532,16 @@ export declare class TaskGraphExecutionService {
     private buildBlockerEscalationReport;
     private buildReviewDispatchPacket;
     private extractReviewFindings;
+    private getReviewFindingsRelativePath;
+    private readReviewFindings;
+    private renderReviewFinding;
     private createReviewFeedbackDecisionGateIfNeeded;
     private getReviewFeedbackDecisionGateReason;
     private buildReviewFeedbackRecommendedActions;
     private buildReviewFeedbackNextInstruction;
     private getTaskReviewRunDecisionNextInstruction;
     private buildReviewFeedbackPlanReport;
+    private buildRepairWavePacket;
     private buildDocumentReviewArtifact;
     private buildDocumentReviewDispatchPacket;
     private buildVerificationEvidenceReport;

@@ -14,7 +14,7 @@ tags: [ai, protocol, ospec]
 4. `docs/project/naming-conventions.md`
 5. `docs/project/skill-conventions.md`
 6. `docs/project/workflow-conventions.md`
-7. 当前 change 文件。`workflow_profile_id: change` 读取 `proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`；`workflow_profile_id: goal` 还要读取 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/final-review.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json` 和 `artifacts/agents/verification-evidence.json`
+7. 当前 brief 或 dispatch packet；结合 `SKILL.index.json` 和 `docs/project/feature-index.md`，只打开当前阶段需要的 change artifacts、目标文件和索引文档
 8. 如存在 `stitch_design_review`，读取 `artifacts/stitch/approval.json`
 9. 如要处理 Stitch / Checkpoint 的 provider、MCP、认证、安装或启用配置，先读取与项目文档语言一致的仓库内本地化插件规范；只有该语言文件缺失时，才回退到其他语言版本
 
@@ -47,7 +47,7 @@ tags: [ai, protocol, ospec]
 - 派发 worker 前，用 `ospec execute workspace [changes/active/<change>]` 写入 `artifacts/agents/workspace-status.json` 和 `artifacts/agents/workspace-status.md`；如果状态为 `needs_isolation`，先清理当前工作区或转入隔离 git worktree，再进行并行派发
 - 创建隔离 worktree 前，用 `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` 写入 `artifacts/agents/worktree-plan.json` 和 `artifacts/agents/worktree-plan.md`；plan 模式只记录准备计划，不会运行 git。只有显式传 `--create` 时才运行 `git worktree add`，只有显式传 `--cleanup` 时才运行 `git worktree remove`；两者都会写入 `artifacts/agents/worktree-runs/`，cleanup 不删除分支
 - 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`；该命令只记录 readiness 和命令文本，不会 finalize、archive、push、merge 或删除 worktree。当 finish plan 状态为 ready 且没有 required pending decision 时，继续运行 `ospec finalize [changes/active/<change>]`；`ospec archive ... --check` 只用于可选 dry-run 预览，检查通过后不要停在这里
-- 准备好就自动收尾：当 `ospec verify [changes/active/<change>]` 通过、且没有 required pending decision 或 blocking 插件 gate 时，自己运行 `ospec finalize [changes/active/<change>]`——不要停在通过的 `ospec verify` 或 `ospec archive ... --check`（`--check` 只是预览），也不要等用户来要求。只有当某个 gate 确实需要人工时才暂停收尾：尚未答复的 required decision、未批准的 blocking 插件 gate（如 Stitch 或 Checkpoint）、verify 或 archive 报出的真实 blocker，或用户明确要求先预览或批准再归档。始终通过 `ospec finalize`（或 `ospec archive`）收尾；绝不手动搬动 change 目录——finalize 会在同一刻把该 change 关联的 brainstorm 一起归档。若 finalize 因某个 review 仍待人工或真机验证（`decision` 不是 `APPROVED`）而报未就绪，应在该 review 里记录用户已确认的批准后重跑 `ospec finalize`，而不是靠搬文件绕过
+- 准备好就自动收尾：当 `ospec verify [changes/active/<change>]` 通过、且没有 required pending decision 或 blocking 插件 gate 时，自己运行 `ospec finalize [changes/active/<change>]`——不要停在通过的 `ospec verify` 或 `ospec archive ... --check`（`--check` 只是预览），也不要等用户来要求。只有当某个 gate 确实需要人工时才暂停收尾：尚未答复的 required decision、未批准的 blocking 插件 gate（如 Stitch 或 Checkpoint）、verify 或 archive 报出的真实 blocker，或用户明确要求先预览或批准再归档
 - 决策门和 brainstorm 选项属于用户：**绝不要自动选"推荐项"、也不要自己 resolve 决策门**——用能力阶梯（原生问答 UI → Plan/审批 UI → 纯聊天文字）把每个门呈现给用户，等用户真正回答；required 门在用户回答前会阻塞实现与派发，`recommended` 只是给用户看的提示
 - 你产出的每个 change 文档和 brainstorm 都要用项目的文档语言（`.skillrc` 的 `documentLanguage` / 托管 `for-ai/` 指引）书写；同一个 change 内不要中英文混用
 - 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成并行安全的 worker 任务包批次和 `artifacts/agents/execution-session.json`；每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior。用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制派发批次大小。这些命令也会同步 `artifacts/agents/worker-status.md`，只更新 OSpec artifacts，不启动外部 worker；required pending user decision 会阻止 dispatch；当结果是 `NEEDS_CONTEXT` 或 `BLOCKED` 时，`complete` 会在 `artifacts/agents/blockers/` 下写入 blocker escalation
@@ -56,7 +56,8 @@ tags: [ai, protocol, ospec]
 - 默认多 worker 执行路径是当前 harness 的原生 subagent：用 `ospec execute dispatch` 创建安全 packet，查看 `launch-plan.md`，再由当前 AI 会话为每个安全 packet 启动一个原生 worker agent，并用 `ospec execute complete` 记录结果
 - 只有当前 AI harness 不支持原生 subagent 时，才用 `ospec execute orchestrate [changes/active/<change>] --command "..."` 作为最后 CLI fallback；fallback 模式会渲染显式 command template，并发运行 worker command，写入 `artifacts/agents/orchestration-runs/`，collect 结果，并报告 failed-worker retry commands
 - 只有原生 subagent 不可用或被明确绕过时，才用 `--run --command`（即 `ospec execute launch ... --run --command "..."`）作为单 worker CLI fallback；它会写入 `artifacts/agents/worker-runs/`，随后用 `ospec execute collect ...` 记录 fallback task result。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务默认不得 retry，除非显式 `--force`
-- worker 记录 `DONE` 或 `DONE_WITH_CONCERNS` 后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 生成一个合并的 code reviewer 交接包（一次同时审 spec 符合性与代码质量）；单任务决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等该任务这一次合并 review 通过后才可派发
+- worker 记录 `DONE` 或 `DONE_WITH_CONCERNS` 后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 生成一次合并 review 和范围受控的 `artifacts/agents/review-packages/*.diff`；reviewer 一次读取该 package，不重复做宽范围 Git 探索。packet、report、package 字节数和 task 耗时记录在 `artifacts/agents/execution-metrics.json`
+- task graph 启用 `documentation_updates` 后，每个 task 都必须包含该数组（没有则为 `[]`）；声明的 docs 路径必须同时出现在同一 task 的 `target_files` 中、在归档前存在，并具有从 dispatch 到 complete 的有效内容变化证据。没有历史基线的旧流程保持兼容，但必须把证据标记为无法验证。
 - 所有单任务 review 通过且 task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>]` 在 `artifacts/agents/review-dispatches/` 下生成一个合并的最终整体 code review 交接包；它产出单一 `artifacts/reviews/final-review.md`、一道决策
 - 只有显式使用 `ospec execute review ... --run --command "..."` 时，OSpec 才会运行本地 reviewer 命令并写入 `artifacts/agents/review-runs/`；提供 `--decision` 时可写回单任务或最终 review decision
 - review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`；继续派发工作前，必须明确接受、修订、澄清或解除阻塞；当反馈影响范围、方向、API、UI、风险或已接受取舍时创建 required user decision gate
@@ -112,3 +113,13 @@ tags: [ai, protocol, ospec]
   - `Do not reorder modules`
   - `Do not create a different composition`
   - `Only transform the visual theme`
+
+## 上下文与修复策略
+
+- `.skillrc.workflow.document_review_policy` 默认 `always`；`adaptive` 只有在目标文档显式声明 `risk_level: low`（或 `none`）且没有风险信号时才执行 deterministic inline preflight。风险上下文缺失、语言无法可靠识别或无法解析时必须派独立 reviewer。
+- `.skillrc.workflow.model_profiles` 将 `mechanical`、`standard`、`strong_reasoning`、`review`、`final_review` 逻辑 profile 映射到各 target 模型；未配置时使用 harness 默认并在 packet 中警告。
+- 命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`--usage-file` 保留为手工覆盖入口。`execution-metrics.json` 按 capability tier、model profile 和 workflow stage 汇总，并报告 complete/partial/missing 覆盖率。
+- 每个可执行 review finding 还必须写入相邻的 `*.findings.json`，包含稳定 ID、严重度、类别、问题说明、文件/行证据、需求引用和修复范围。结构化 findings 损坏时应阻断处理，不能静默降级。
+- 归档后，`docs/project/feature-index.md` 必须同时链接归档证据和任务声明且仍存在的长期项目文档；`SKILL.index.json.documents` 增加功能关联，供 AI 直接检索。
+- finalize/archive 必须为每个普通 change 和 goal 生成一份本地化的 `docs/project/changes/<归档路径>.md`，将它加入 `SKILL.index.json.documents` 与 `archived_changes`，从 `feature-index.md` 链接，并在任何链接缺失时让归档后置检查失败。移动 active change 前，预检必须拒绝覆盖该路径上的人工文档，并验证托管输出目录可写。
+- `ospec execute repair [change-path]` 只在最终 review 为 `NEEDS_CHANGES` 时创建一个包含全部 findings 的 repair task，并复用 dispatch、complete、task review 和 final review 门禁。

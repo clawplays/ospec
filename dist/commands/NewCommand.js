@@ -137,30 +137,6 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 documentPath: path.join(featureDir, constants_1.FILE_NAMES.VERIFICATION),
             }));
             if (isGoalWorkflow) {
-                const reviewArtifactsDir = path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS);
-                await services_1.services.fileService.ensureDir(reviewArtifactsDir);
-                await services_1.services.fileService.writeFile(path.join(reviewArtifactsDir, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW), services_1.services.templateEngine.generateSpecComplianceReviewTemplate({
-                    feature: featureName,
-                    mode: config.mode,
-                    placement,
-                    projectContext,
-                    flags,
-                    optionalSteps: activatedSteps,
-                    documentLanguage,
-                    projectRoot: targetDir,
-                    documentPath: path.join(reviewArtifactsDir, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW),
-                }));
-                await services_1.services.fileService.writeFile(path.join(reviewArtifactsDir, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW), services_1.services.templateEngine.generateCodeQualityReviewTemplate({
-                    feature: featureName,
-                    mode: config.mode,
-                    placement,
-                    projectContext,
-                    flags,
-                    optionalSteps: activatedSteps,
-                    documentLanguage,
-                    projectRoot: targetDir,
-                    documentPath: path.join(reviewArtifactsDir, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW),
-                }));
                 const agentArtifactsDir = path.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS);
                 await services_1.services.fileService.ensureDir(agentArtifactsDir);
                 await services_1.services.fileService.writeFile(path.join(agentArtifactsDir, constants_1.FILE_NAMES.TASK_GRAPH), services_1.services.templateEngine.generateTaskGraphTemplate({

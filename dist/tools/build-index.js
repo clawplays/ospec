@@ -6,24 +6,15 @@ const { spawnSync } = require('child_process');
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'changes', 'for-ai']);
 const INDEX_FILE = 'SKILL.index.json';
 const SKILL_FILE = 'SKILL.md';
-// Best-effort HEAD commit the index reflects. Null outside a git work tree. Treated
-// as a volatile field in comparisons so a new commit never makes the index "stale".
-function resolveGitCommit(rootDir) {
-    try {
-        const result = spawnSync('git', ['rev-parse', 'HEAD'], {
-            cwd: rootDir,
-            encoding: 'utf8',
-        });
-        if (result.status !== 0) {
-            return null;
-        }
-        const commit = String(result.stdout || '').trim();
-        return commit.length > 0 ? commit : null;
-    }
-    catch {
-        return null;
-    }
-}
+const ARCHIVED_DOCUMENTS = [
+    'proposal.md',
+    'design.md',
+    'implementation-plan.md',
+    'tasks.md',
+    'verification.md',
+    'review.md',
+    'artifacts/reviews/final-review.md',
+];
 async function main() {
     try {
         const action = process.argv[2] || 'build';
@@ -118,8 +109,11 @@ async function runHookCheck(rootDir, event) {
 }
 async function writeIndex(rootDir, options) {
     const layout = await getProjectLayout(rootDir);
+    const archivedChanges = await scanArchivedChanges(rootDir, layout);
+    await writeArchivedChangeKnowledgeDocuments(rootDir, layout, archivedChanges);
+    await writeFeatureIndex(rootDir, layout, archivedChanges);
     const indexPath = resolveManagedPath(rootDir, INDEX_FILE, layout);
-    const nextIndex = await buildIndex(rootDir);
+    const nextIndex = await buildIndex(rootDir, { layout, archivedChanges });
     const currentIndex = await readJsonIfExists(indexPath);
     if (currentIndex && isSameIndex(currentIndex, nextIndex)) {
         if (!options.silent) {
@@ -149,22 +143,20 @@ async function computeIndexStatus(rootDir) {
         nextIndex,
     };
 }
-async function buildIndex(rootDir) {
-    const layout = await getProjectLayout(rootDir);
+async function buildIndex(rootDir, snapshot) {
+    const layout = snapshot?.layout || await getProjectLayout(rootDir);
     const managedRoot = getManagedRoot(rootDir, layout);
     const modules = {};
     const tagIndex = {};
+    const documents = {};
     let totalFiles = 0;
     let totalSections = 0;
     await walk(managedRoot, async fullPath => {
-        const relativePath = normalizeManagedRelativePath(rootDir, fullPath, layout);
         totalFiles += 1;
+        const relativePath = normalizeManagedRelativePath(rootDir, fullPath, layout);
         const content = await fsp.readFile(fullPath, 'utf8');
         const parsed = parseSkillFile(content);
-        const preferredName = parsed.frontmatter.name || relativePath;
-        // Disambiguate a name collision (e.g. two frontmatter-less docs sharing an H1) by the
-        // unique managed-relative path so neither module is silently overwritten/lost.
-        const moduleName = modules[preferredName] ? relativePath : preferredName;
+        const moduleName = parsed.frontmatter.name || relativePath;
         const title = parsed.frontmatter.title || parsed.frontmatter.name || relativePath;
         const tags = Array.isArray(parsed.frontmatter.tags) ? parsed.frontmatter.tags : [];
         totalSections += Object.keys(parsed.sections).length;
@@ -178,18 +170,31 @@ async function buildIndex(rootDir) {
             if (!tagIndex[tag]) {
                 tagIndex[tag] = [];
             }
-            if (!tagIndex[tag].includes(moduleName)) {
-                tagIndex[tag].push(moduleName);
-            }
+            tagIndex[tag].push(moduleName);
         }
     });
     for (const tag of Object.keys(tagIndex).sort((left, right) => left.localeCompare(right))) {
         tagIndex[tag] = tagIndex[tag].sort((left, right) => left.localeCompare(right));
     }
+    const docsRoot = resolveManagedPath(rootDir, 'docs', layout);
+    if (await exists(docsRoot)) {
+        await walkMarkdownDocuments(rootDir, docsRoot, documents);
+    }
+    const archivedChanges = snapshot?.archivedChanges || await scanArchivedChanges(rootDir, layout);
+    for (const change of archivedChanges) {
+        for (const documentPath of change.project_documents || []) {
+            const document = documents[documentPath];
+            if (!document)
+                continue;
+            document.features = Array.from(new Set([...(document.features || []), change.feature])).sort();
+        }
+    }
+    const activeChanges = await listActiveChanges(rootDir, layout);
     return {
         version: '1.0',
         generated: new Date().toISOString(),
-        git_commit: resolveGitCommit(rootDir),
+        git_commit: null,
+        active_changes: activeChanges,
         stats: {
             totalFiles,
             totalModules: Object.keys(modules).length,
@@ -197,6 +202,449 @@ async function buildIndex(rootDir) {
         },
         modules,
         tagIndex,
+        documents,
+        archived_changes: archivedChanges,
+    };
+}
+async function walkMarkdownDocuments(rootDir, currentDir, documents) {
+    const entries = (await fsp.readdir(currentDir, { withFileTypes: true }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+            await walkMarkdownDocuments(rootDir, fullPath, documents);
+            continue;
+        }
+        if (!entry.name.toLowerCase().endsWith('.md') || entry.name === SKILL_FILE)
+            continue;
+        const relativePath = normalizePath(path.relative(rootDir, fullPath));
+        const content = await fsp.readFile(fullPath, 'utf8');
+        const parsed = parseSkillFile(content);
+        let metadata = {};
+        try {
+            metadata = parseFrontmatter(content).data;
+        }
+        catch {
+            metadata = {};
+        }
+        const kind = inferDocumentKind(relativePath);
+        const tags = Array.from(new Set([...parsed.frontmatter.tags, 'documentation', kind])).sort();
+        documents[relativePath] = {
+            file: relativePath,
+            title: parsed.frontmatter.title || parsed.frontmatter.name || Object.keys(parsed.sections)[0] || entry.name.replace(/\.md$/i, ''),
+            tags,
+            kind,
+            sections: parsed.sections,
+            features: optionalMetadataList(metadata.features),
+            modules: optionalMetadataList(metadata.modules),
+            aliases: optionalMetadataList(metadata.aliases),
+        };
+    }
+}
+function optionalMetadataList(value) {
+    const values = Array.isArray(value) ? value.map(String) : typeof value === 'string' ? value.split(',') : [];
+    const normalized = Array.from(new Set(values.map(item => item.trim()).filter(Boolean))).sort();
+    return normalized.length > 0 ? normalized : undefined;
+}
+function inferDocumentKind(relativePath) {
+    const normalized = normalizePath(relativePath);
+    if (normalized.includes('/docs/project/') || normalized.startsWith('docs/project/'))
+        return 'project';
+    if (normalized.includes('/docs/api/') || normalized.startsWith('docs/api/'))
+        return 'api';
+    if (normalized.includes('/docs/design/') || normalized.startsWith('docs/design/'))
+        return 'design';
+    if (normalized.includes('/docs/planning/') || normalized.startsWith('docs/planning/'))
+        return 'planning';
+    return 'other';
+}
+async function scanArchivedChanges(rootDir, layout) {
+    const archivedRoot = resolveManagedPath(rootDir, 'changes/archived', layout);
+    if (!(await exists(archivedRoot)))
+        return [];
+    const changes = [];
+    const visit = async currentDir => {
+        const entries = (await fsp.readdir(currentDir, { withFileTypes: true }))
+            .sort((left, right) => left.name.localeCompare(right.name));
+        if (entries.some((entry) => entry.isFile() && entry.name === 'state.json')) {
+            const change = await readArchivedChange(rootDir, currentDir);
+            if (change)
+                changes.push(change);
+            return;
+        }
+        for (const entry of entries) {
+            if (entry.isDirectory())
+                await visit(path.join(currentDir, entry.name));
+        }
+    };
+    await visit(archivedRoot);
+    return changes.sort((left, right) => right.archive.localeCompare(left.archive));
+}
+async function readArchivedChange(rootDir, archiveDir) {
+    try {
+        const state = await readJsonIfExists(path.join(archiveDir, 'state.json'));
+        if (state?.status !== 'archived')
+            return null;
+        const proposalPath = path.join(archiveDir, 'proposal.md');
+        let summary = '';
+        let affects = [];
+        if (await exists(proposalPath)) {
+            const proposal = parseFrontmatter(await fsp.readFile(proposalPath, 'utf8'));
+            affects = ensureArray(proposal.data.affects).sort();
+            summary = proposal.body
+                .split(/\r?\n\r?\n/)
+                .map(block => block.trim())
+                .find(block => block && !block.startsWith('#') && !block.startsWith('- '))
+                ?.replace(/\r?\n/g, ' ')
+                .trim() || '';
+        }
+        const documents = [];
+        for (const relativePath of ARCHIVED_DOCUMENTS) {
+            if (await exists(path.join(archiveDir, ...relativePath.split('/'))))
+                documents.push(relativePath);
+        }
+        const projectDocuments = new Set();
+        const targetFiles = new Set();
+        const verificationCommands = new Set();
+        const taskGraph = await readJsonIfExists(path.join(archiveDir, 'artifacts', 'agents', 'task-graph.json'));
+        for (const task of Array.isArray(taskGraph?.tasks) ? taskGraph.tasks : []) {
+            for (const targetFile of Array.isArray(task?.target_files) ? task.target_files : []) {
+                const normalized = normalizePath(String(targetFile || '').trim()).replace(/^\.\//, '');
+                if (normalized)
+                    targetFiles.add(normalized);
+            }
+            for (const command of Array.isArray(task?.verification_commands) ? task.verification_commands : []) {
+                const normalized = String(command || '').trim();
+                if (normalized)
+                    verificationCommands.add(normalized);
+            }
+            for (const documentPath of Array.isArray(task?.documentation_updates) ? task.documentation_updates : []) {
+                const normalized = normalizePath(String(documentPath || '').trim()).replace(/^\.\//, '');
+                if (normalized && await exists(path.join(rootDir, ...normalized.split('/'))))
+                    projectDocuments.add(normalized);
+            }
+        }
+        const archive = normalizePath(path.relative(rootDir, archiveDir));
+        const expectedKnowledgeDocument = getKnowledgeDocumentRelativePath(archive);
+        const knowledgeDocument = expectedKnowledgeDocument
+            && await exists(path.join(rootDir, ...expectedKnowledgeDocument.split('/')))
+            ? expectedKnowledgeDocument
+            : undefined;
+        return {
+            feature: typeof state.feature === 'string' && state.feature.trim() ? state.feature.trim() : path.basename(archiveDir),
+            summary,
+            affects,
+            archive,
+            completed_at: typeof state.completed_at === 'string'
+                ? state.completed_at
+                : typeof state.last_updated === 'string'
+                    ? state.last_updated
+                    : null,
+            documents,
+            project_documents: [...projectDocuments].sort(),
+            knowledge_document: knowledgeDocument,
+            target_files: [...targetFiles].sort(),
+            verification_commands: [...verificationCommands].sort(),
+            workflow_profile: typeof state.workflow_profile_id === 'string' ? state.workflow_profile_id : undefined,
+        };
+    }
+    catch {
+        return null;
+    }
+}
+function getKnowledgeDocumentRelativePath(archive) {
+    const normalized = normalizePath(archive).replace(/^\.\//, '');
+    const marker = 'changes/archived/';
+    const markerIndex = normalized.indexOf(marker);
+    if (markerIndex < 0)
+        return undefined;
+    const prefix = normalized.slice(0, markerIndex);
+    const suffix = normalized.slice(markerIndex + marker.length);
+    return suffix ? `${prefix}docs/project/changes/${suffix}.md` : undefined;
+}
+async function writeArchivedChangeKnowledgeDocuments(rootDir, layout, archivedChanges) {
+    const docsProjectRoot = resolveManagedPath(rootDir, 'docs/project', layout);
+    const archivedRoot = resolveManagedPath(rootDir, 'changes/archived', layout);
+    const knowledgeRoot = path.join(docsProjectRoot, 'changes');
+    const expectedPaths = new Set();
+    const config = await readJsonIfExists(path.join(rootDir, '.skillrc'));
+    const copy = getArchivedKnowledgeCopy(config?.documentLanguage);
+    for (const change of archivedChanges) {
+        const archiveAbsolute = path.join(rootDir, ...change.archive.split('/'));
+        const archiveRelative = path.relative(archivedRoot, archiveAbsolute);
+        if (!archiveRelative || archiveRelative === '..' || archiveRelative.startsWith(`..${path.sep}`) || path.isAbsolute(archiveRelative))
+            continue;
+        const targetPath = path.resolve(knowledgeRoot, `${archiveRelative}.md`);
+        const relativeToKnowledge = path.relative(knowledgeRoot, targetPath);
+        if (!relativeToKnowledge || relativeToKnowledge === '..' || relativeToKnowledge.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToKnowledge))
+            continue;
+        expectedPaths.add(targetPath.toLowerCase());
+        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+        change.knowledge_document = normalizePath(path.relative(rootDir, targetPath));
+        await assertGeneratedKnowledgeDocumentReplaceable(targetPath, change.archive);
+        const archiveLink = normalizePath(path.relative(path.dirname(targetPath), archiveAbsolute));
+        const lines = [
+            '---',
+            `name: ${JSON.stringify(`archived-change-${change.feature}`)}`,
+            `title: ${JSON.stringify(change.feature)}`,
+            'tags: [project, feature, completed, archive, ai-index]',
+            `features: [${JSON.stringify(change.feature)}]`,
+            `archive: ${JSON.stringify(change.archive)}`,
+            `workflow_profile: ${JSON.stringify(change.workflow_profile || 'change')}`,
+            `completed_at: ${JSON.stringify(change.completed_at || '')}`,
+            'generated: true',
+            'generator: ospec-archive-knowledge',
+            '---',
+            '',
+            `# ${change.feature}`,
+            '',
+            `> ${copy.guidance}`,
+            '',
+            `## ${copy.summary}`,
+            '',
+            change.summary || copy.notRecorded,
+            '',
+            `## ${copy.affects}`,
+            '',
+            ...renderKnowledgeList(change.affects, copy.none),
+            '',
+            `## ${copy.targetFiles}`,
+            '',
+            ...renderKnowledgeCodeList(change.target_files || [], copy.none),
+            '',
+            `## ${copy.verification}`,
+            '',
+            ...renderKnowledgeCodeList(change.verification_commands || [], copy.none),
+            '',
+            `## ${copy.projectDocuments}`,
+            '',
+        ];
+        if ((change.project_documents || []).length === 0) {
+            lines.push(copy.none, '');
+        }
+        else {
+            for (const document of change.project_documents || []) {
+                const documentLink = normalizePath(path.relative(path.dirname(targetPath), path.join(rootDir, ...document.split('/'))));
+                lines.push(`- [${document}](${documentLink})`);
+            }
+            lines.push('');
+        }
+        lines.push(`## ${copy.archivedEvidence}`, '');
+        lines.push(`- ${copy.archive}: [${change.archive}](${archiveLink})`);
+        for (const document of change.documents) {
+            const documentLink = normalizePath(path.relative(path.dirname(targetPath), path.join(archiveAbsolute, ...document.split('/'))));
+            lines.push(`- [${document}](${documentLink})`);
+        }
+        lines.push('');
+        const content = `${lines.join('\n').trimEnd()}\n`;
+        const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
+        if (previous !== content)
+            await fsp.writeFile(targetPath, content, 'utf8');
+    }
+    await removeStaleArchivedKnowledgeDocuments(knowledgeRoot, expectedPaths);
+}
+function renderKnowledgeList(items, empty) {
+    return items.length > 0 ? items.map(item => `- ${item}`) : [empty];
+}
+function renderKnowledgeCodeList(items, empty) {
+    return items.length > 0 ? items.map(item => `- \`${item.replace(/`/g, '\\`')}\``) : [empty];
+}
+async function assertGeneratedKnowledgeDocumentReplaceable(targetPath, archive) {
+    if (!(await exists(targetPath)))
+        return;
+    try {
+        const document = parseFrontmatter(await fsp.readFile(targetPath, 'utf8'));
+        const normalizedArchive = normalizePath(String(document.data?.archive || ''));
+        if (document.data?.generated === true
+            && document.data?.generator === 'ospec-archive-knowledge'
+            && normalizedArchive === normalizePath(archive)) {
+            return;
+        }
+    }
+    catch {
+        // Unparseable content is human-owned unless it proves otherwise.
+    }
+    throw new Error(`Refusing to overwrite human-owned archive knowledge document: ${targetPath}`);
+}
+async function removeStaleArchivedKnowledgeDocuments(knowledgeRoot, expectedPaths) {
+    if (!(await exists(knowledgeRoot)))
+        return;
+    const visit = async currentDir => {
+        const entries = await fsp.readdir(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(currentDir, entry.name);
+            if (entry.isDirectory()) {
+                await visit(fullPath);
+                continue;
+            }
+            if (!entry.name.endsWith('.md') || expectedPaths.has(path.resolve(fullPath).toLowerCase()))
+                continue;
+            try {
+                const document = parseFrontmatter(await fsp.readFile(fullPath, 'utf8'));
+                if (document.data.generated === true && document.data.generator === 'ospec-archive-knowledge') {
+                    await fsp.unlink(fullPath);
+                }
+            }
+            catch {
+                // Never remove an unparseable or human-owned document.
+            }
+        }
+    };
+    await visit(knowledgeRoot);
+}
+function getArchivedKnowledgeCopy(documentLanguage) {
+    if (documentLanguage === 'zh-CN')
+        return {
+            guidance: '由 OSpec 在归档时生成，供人和 AI 快速了解这个 change 做了什么以及去哪里查看证据。',
+            summary: '功能摘要',
+            affects: '影响范围',
+            targetFiles: '实现文件',
+            verification: '验证命令',
+            projectDocuments: '长期项目文档',
+            archivedEvidence: '归档证据',
+            archive: '完整归档',
+            none: '- 无',
+            notRecorded: '未记录摘要，请打开归档 proposal 查看。',
+        };
+    if (documentLanguage === 'ja-JP')
+        return {
+            guidance: 'OSpec が archive 時に生成し、この change の内容と evidence の場所を人と AI がすばやく確認できるようにします。',
+            summary: '機能概要',
+            affects: '影響範囲',
+            targetFiles: '実装ファイル',
+            verification: '検証コマンド',
+            projectDocuments: '永続プロジェクト文書',
+            archivedEvidence: 'アーカイブ証跡',
+            archive: '完全なアーカイブ',
+            none: '- なし',
+            notRecorded: '概要は記録されていません。archive の proposal を開いてください。',
+        };
+    if (documentLanguage === 'ar')
+        return {
+            guidance: 'ينشئه OSpec عند الأرشفة كي يعرف الإنسان وAI بسرعة ما الذي أنجزه هذا change وأين توجد الأدلة.',
+            summary: 'ملخص الميزة',
+            affects: 'النطاق المتأثر',
+            targetFiles: 'ملفات التنفيذ',
+            verification: 'أوامر التحقق',
+            projectDocuments: 'وثائق المشروع الدائمة',
+            archivedEvidence: 'أدلة الأرشفة',
+            archive: 'الأرشيف الكامل',
+            none: '- لا يوجد',
+            notRecorded: 'لم يسجل ملخص؛ افتح proposal المؤرشف.',
+        };
+    return {
+        guidance: 'Generated by OSpec at archive time so humans and AI can quickly see what this change delivered and where its evidence lives.',
+        summary: 'Feature Summary',
+        affects: 'Affected Areas',
+        targetFiles: 'Implementation Files',
+        verification: 'Verification Commands',
+        projectDocuments: 'Durable Project Documents',
+        archivedEvidence: 'Archived Evidence',
+        archive: 'Full archive',
+        none: '- None',
+        notRecorded: 'No summary was recorded; open the archived proposal.',
+    };
+}
+async function writeFeatureIndex(rootDir, layout, archivedChanges) {
+    const docsProjectRoot = resolveManagedPath(rootDir, 'docs/project', layout);
+    if (!(await exists(docsProjectRoot)) && archivedChanges.length === 0)
+        return;
+    await fsp.mkdir(docsProjectRoot, { recursive: true });
+    const targetPath = path.join(docsProjectRoot, 'feature-index.md');
+    const config = await readJsonIfExists(path.join(rootDir, '.skillrc'));
+    const copy = getFeatureIndexCopy(config?.documentLanguage);
+    const lines = [
+        '---',
+        'name: project-feature-index',
+        `title: ${copy.title}`,
+        'tags: [project, features, archive, ai-index]',
+        'generated: true',
+        '---',
+        '',
+        `# ${copy.title}`,
+        '',
+        `> ${copy.guidance}`,
+        '',
+    ];
+    if (archivedChanges.length === 0)
+        lines.push(copy.empty, '');
+    for (const change of archivedChanges) {
+        lines.push(`## ${change.feature}`, '');
+        if (change.summary)
+            lines.push(`- ${copy.summary}: ${change.summary}`);
+        if (change.affects.length > 0)
+            lines.push(`- ${copy.affects}: ${change.affects.join(', ')}`);
+        const archiveLink = normalizePath(path.relative(docsProjectRoot, path.join(rootDir, change.archive)));
+        lines.push(`- ${copy.archive}: [${change.archive}](${archiveLink})`);
+        if (change.knowledge_document) {
+            const knowledgeLink = normalizePath(path.relative(docsProjectRoot, path.join(rootDir, ...change.knowledge_document.split('/'))));
+            lines.push(`- ${copy.knowledgeDocument}: [${change.knowledge_document}](${knowledgeLink})`);
+        }
+        for (const document of change.documents) {
+            const documentLink = normalizePath(path.relative(docsProjectRoot, path.join(rootDir, change.archive, ...document.split('/'))));
+            lines.push(`- ${document}: [${copy.open}](${documentLink})`);
+        }
+        for (const document of change.project_documents || []) {
+            const documentLink = normalizePath(path.relative(docsProjectRoot, path.join(rootDir, ...document.split('/'))));
+            lines.push(`- ${copy.projectDocument}: [${document}](${documentLink})`);
+        }
+        lines.push('');
+    }
+    const content = `${lines.join('\n').trimEnd()}\n`;
+    const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
+    if (previous !== content)
+        await fsp.writeFile(targetPath, content, 'utf8');
+}
+function getFeatureIndexCopy(documentLanguage) {
+    if (documentLanguage === 'zh-CN') {
+        return {
+            title: '项目功能索引',
+            guidance: '由 OSpec 自动生成。使用本文件定位已完成功能，并只打开当前任务需要的归档证据或长期项目文档。',
+            empty: '暂无已归档 change。',
+            summary: '摘要',
+            affects: '影响范围',
+            archive: '归档',
+            open: '打开',
+            projectDocument: '长期项目文档',
+            knowledgeDocument: 'change 功能文档',
+        };
+    }
+    if (documentLanguage === 'ja-JP') {
+        return {
+            title: 'プロジェクト機能索引',
+            guidance: 'OSpec により自動生成されます。完了済み機能を特定し、現在のタスクに必要な archive evidence または永続 project document だけを開いてください。',
+            empty: 'archive 済みの change はまだありません。',
+            summary: '概要',
+            affects: '影響範囲',
+            archive: 'アーカイブ',
+            open: '開く',
+            projectDocument: '長期プロジェクト文書',
+            knowledgeDocument: 'change 機能文書',
+        };
+    }
+    if (documentLanguage === 'ar') {
+        return {
+            title: 'فهرس ميزات المشروع',
+            guidance: 'يُنشأ تلقائياً بواسطة OSpec. استخدمه لتحديد السلوك المكتمل، وافتح فقط دليل archive أو وثيقة المشروع الدائمة اللازمة للمهمة الحالية.',
+            empty: 'لا توجد تغييرات مؤرشفة بعد.',
+            summary: 'الملخص',
+            affects: 'النطاق المتأثر',
+            archive: 'الأرشيف',
+            open: 'فتح',
+            projectDocument: 'وثيقة المشروع الدائمة',
+            knowledgeDocument: 'وثيقة change',
+        };
+    }
+    return {
+        title: 'Project Feature Index',
+        guidance: 'Generated by OSpec. Use this file to locate completed behavior; open only the archived evidence or durable project documents needed for the current task.',
+        empty: 'No archived changes yet.',
+        summary: 'Summary',
+        affects: 'Affects',
+        archive: 'Archive',
+        open: 'open',
+        projectDocument: 'Durable project document',
+        knowledgeDocument: 'Change knowledge document',
     };
 }
 async function walk(currentDir, onSkillFile) {
@@ -225,6 +673,7 @@ async function buildChangeSummary(rootDir, changeName, config) {
     const designPath = path.join(featureDir, 'design.md');
     const implementationPlanPath = path.join(featureDir, 'implementation-plan.md');
     const taskGraphPath = path.join(featureDir, 'artifacts', 'agents', 'task-graph.json');
+    const finalReviewPath = path.join(featureDir, 'artifacts', 'reviews', 'final-review.md');
     const specComplianceReviewPath = path.join(featureDir, 'artifacts', 'reviews', 'spec-compliance.md');
     const codeQualityReviewPath = path.join(featureDir, 'artifacts', 'reviews', 'code-quality.md');
     const agentWorkerStatusPath = path.join(featureDir, 'artifacts', 'agents', 'worker-status.md');
@@ -234,6 +683,7 @@ async function buildChangeSummary(rootDir, changeName, config) {
     const designExists = await exists(designPath);
     const implementationPlanExists = await exists(implementationPlanPath);
     const taskGraphExists = await exists(taskGraphPath);
+    const finalReviewExists = await exists(finalReviewPath);
     const specComplianceReviewExists = await exists(specComplianceReviewPath);
     const codeQualityReviewExists = await exists(codeQualityReviewPath);
     const agentWorkerStatusExists = await exists(agentWorkerStatusPath);
@@ -261,18 +711,13 @@ async function buildChangeSummary(rootDir, changeName, config) {
             message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing',
         },
         {
-            name: 'artifacts/reviews/spec-compliance.md',
-            status: specComplianceReviewExists ? 'pass' : 'fail',
-            message: specComplianceReviewExists
-                ? 'Spec compliance review artifact exists'
-                : 'artifacts/reviews/spec-compliance.md is missing',
-        },
-        {
-            name: 'artifacts/reviews/code-quality.md',
-            status: codeQualityReviewExists ? 'pass' : 'fail',
-            message: codeQualityReviewExists
-                ? 'Code quality review artifact exists'
-                : 'artifacts/reviews/code-quality.md is missing',
+            name: 'artifacts/reviews/final-review.md',
+            status: finalReviewExists || (specComplianceReviewExists && codeQualityReviewExists) ? 'pass' : 'fail',
+            message: finalReviewExists
+                ? 'Combined final review artifact exists'
+                : specComplianceReviewExists && codeQualityReviewExists
+                    ? 'Legacy spec and quality review artifacts exist'
+                    : 'artifacts/reviews/final-review.md is missing (legacy dual-review artifacts are also accepted)',
         },
         {
             name: 'artifacts/agents/worker-status.md',
@@ -342,7 +787,15 @@ async function buildChangeSummary(rootDir, changeName, config) {
         });
         checks.push(...taskGraph.checks);
     }
-    if (specComplianceReviewExists) {
+    if (finalReviewExists) {
+        const finalReview = analyzeReviewArtifactDocument(await fsp.readFile(finalReviewPath, 'utf8'), {
+            name: 'artifacts/reviews/final-review.md',
+            expectedReviewerRole: 'code_reviewer',
+            activatedSteps,
+        });
+        checks.push(...finalReview.checks);
+    }
+    else if (specComplianceReviewExists) {
         const specComplianceReview = analyzeReviewArtifactDocument(await fsp.readFile(specComplianceReviewPath, 'utf8'), {
             name: 'artifacts/reviews/spec-compliance.md',
             expectedReviewerRole: 'spec_compliance_reviewer',
@@ -350,7 +803,7 @@ async function buildChangeSummary(rootDir, changeName, config) {
         });
         checks.push(...specComplianceReview.checks);
     }
-    if (codeQualityReviewExists) {
+    if (!finalReviewExists && codeQualityReviewExists) {
         const codeQualityReview = analyzeReviewArtifactDocument(await fsp.readFile(codeQualityReviewPath, 'utf8'), {
             name: 'artifacts/reviews/code-quality.md',
             expectedReviewerRole: 'code_quality_reviewer',
@@ -441,7 +894,14 @@ function isHookRelevantPath(filePath) {
     return filePath === '.skillrc' || isIndexRelevantPath(filePath);
 }
 function isIndexRelevantPath(filePath) {
-    return filePath === SKILL_FILE || /(^|\/)SKILL\.md$/.test(filePath) || filePath.startsWith('changes/active/') || filePath.startsWith('.ospec/changes/active/');
+    return filePath === SKILL_FILE
+        || /(^|\/)SKILL\.md$/.test(filePath)
+        || filePath.startsWith('changes/active/')
+        || filePath.startsWith('.ospec/changes/active/')
+        || filePath.startsWith('changes/archived/')
+        || filePath.startsWith('.ospec/changes/archived/')
+        || filePath.startsWith('docs/')
+        || filePath.startsWith('.ospec/docs/');
 }
 async function listActiveChanges(rootDir, layout) {
     const resolvedLayout = layout || (await getProjectLayout(rootDir));
@@ -506,25 +966,13 @@ function getStagedFiles(rootDir) {
         .map(item => normalizePath(item.trim()))
         .filter(Boolean);
 }
-// Frontmatter name/title derivation MUST match SkillParser (used by IndexBuilder):
-// fall back to the document H1 so both builders key modules and titles identically.
-function extractDocumentTitle(body) {
-    const match = body.match(/^#\s+(.+)$/m);
-    return match?.[1]?.trim() || null;
-}
 function parseSkillFile(content) {
     const normalizedContent = normalizeLineEndings(content);
     const parsed = parseFrontmatter(normalizedContent);
-    const title = typeof parsed.data.title === 'string' && parsed.data.title.trim().length > 0
-        ? parsed.data.title.trim()
-        : extractDocumentTitle(parsed.body);
-    const name = typeof parsed.data.name === 'string' && parsed.data.name.trim().length > 0
-        ? parsed.data.name.trim()
-        : title || 'Unknown';
     return {
         frontmatter: {
-            name,
-            title: title || undefined,
+            name: typeof parsed.data.name === 'string' ? parsed.data.name : undefined,
+            title: typeof parsed.data.title === 'string' ? parsed.data.title : undefined,
             tags: ensureArray(parsed.data.tags),
         },
         sections: extractSections(parsed.body),
@@ -624,6 +1072,7 @@ const TASK_GRAPH_ALLOWED_STATUSES = [
     'PENDING',
 ];
 const TASK_GRAPH_TERMINAL_STATUSES = ['DONE', 'DONE_WITH_CONCERNS'];
+const TASK_REVIEW_TERMINAL_DECISIONS = ['APPROVED', 'APPROVED_WITH_CONCERNS'];
 function analyzeTaskGraphDocument(content, options) {
     const name = 'artifacts/agents/task-graph.json';
     let data = {};
@@ -715,6 +1164,26 @@ function analyzeTaskGraphDocument(content, options) {
             }
             else if (status === 'DONE_WITH_CONCERNS') {
                 concernStatuses.push(taskId);
+            }
+            if (TASK_GRAPH_TERMINAL_STATUSES.includes(status) && task.review && typeof task.review === 'object' && !Array.isArray(task.review)) {
+                const combinedReview = typeof task.review.decision === 'string'
+                    ? task.review.decision.trim().toUpperCase()
+                    : '';
+                if (combinedReview) {
+                    if (!TASK_REVIEW_TERMINAL_DECISIONS.includes(combinedReview)) {
+                        unresolvedStatuses.push(`${taskId}.review.decision=${combinedReview}`);
+                    }
+                }
+                else {
+                    const specReview = typeof task.review.spec === 'string' ? task.review.spec.trim().toUpperCase() : 'PENDING';
+                    const qualityReview = typeof task.review.quality === 'string' ? task.review.quality.trim().toUpperCase() : 'PENDING';
+                    if (!TASK_REVIEW_TERMINAL_DECISIONS.includes(specReview)) {
+                        unresolvedStatuses.push(`${taskId}.review.spec=${specReview}`);
+                    }
+                    if (!TASK_REVIEW_TERMINAL_DECISIONS.includes(qualityReview)) {
+                        unresolvedStatuses.push(`${taskId}.review.quality=${qualityReview}`);
+                    }
+                }
             }
             if (!Array.isArray(task.target_files) || task.target_files.filter((value) => typeof value === 'string' && value.trim().length > 0).length === 0) {
                 executionDetailIssues.push(`${taskId}.target_files`);
@@ -1240,17 +1709,26 @@ function createFrontmatterParseError(message, lineNumber) {
     error.name = 'FrontmatterParseError';
     return error;
 }
-// Index sections record only heading level + title. Byte offsets were dropped in 1.6.0:
-// nothing slices content by them and they were the largest token cost in the index.
 function extractSections(content) {
     const sections = {};
+    const matches = [];
     const headingRegex = /^(#{1,6})\s+(.+?)$/gm;
     let match;
     while ((match = headingRegex.exec(content)) !== null) {
-        const title = match[2].trim();
-        sections[title] = {
+        matches.push({
             level: match[1].length,
-            title,
+            title: match[2].trim(),
+            start: match.index,
+        });
+    }
+    for (let index = 0; index < matches.length; index += 1) {
+        const current = matches[index];
+        const next = matches[index + 1];
+        sections[current.title] = {
+            level: current.level,
+            title: current.title,
+            start: current.start,
+            end: next ? next.start : content.length,
         };
     }
     return sections;
@@ -1273,11 +1751,12 @@ function isSameIndex(left, right) {
 function stripVolatileFields(index) {
     const clone = JSON.parse(JSON.stringify(index));
     delete clone.generated;
-    delete clone.git_commit;
     return clone;
 }
 function printIndexStats(index) {
     console.log(`[ospec] files ${index.stats.totalFiles}, modules ${index.stats.totalModules}, sections ${index.stats.totalSections}`);
+    console.log(`[ospec] active changes: ${index.active_changes.join(', ') || 'none'}`);
+    console.log(`[ospec] knowledge docs: ${Object.keys(index.documents || {}).length}, archived changes: ${(index.archived_changes || []).length}`);
 }
 function normalizePath(filePath) {
     return filePath.replace(/\\/g, '/');
@@ -1335,17 +1814,4 @@ async function readJsonIfExists(targetPath) {
     }
     return JSON.parse(await fsp.readFile(targetPath, 'utf8'));
 }
-// Run as a standalone script (the deployed .ospec/tools/build-index-auto.cjs) only when
-// invoked directly. When required by the package (e.g. IndexBuilder), expose the canonical
-// index algorithm so the writer and the hook share one implementation.
-if (require.main === module) {
-    main();
-}
-module.exports = {
-    buildIndex,
-    writeIndex,
-    computeIndexStatus,
-    resolveGitCommit,
-    getProjectLayout,
-    resolveManagedPath,
-};
+main();

@@ -40,6 +40,7 @@ const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
+const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
 /**
  * Structured verification analysis that NEVER calls process.exit (Contract 3).
  * `VerifyCommand` wraps this for console output + exit code; `LoopService` consumes
@@ -59,19 +60,15 @@ class VerificationService {
         const designPath = path.join(targetPath, constants_1.FILE_NAMES.DESIGN);
         const implementationPlanPath = path.join(targetPath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN);
         const taskGraphPath = path.join(targetPath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
-        const specComplianceReviewPath = path.join(targetPath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
-        const codeQualityReviewPath = path.join(targetPath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
         const agentWorkerStatusPath = path.join(targetPath, 'artifacts', 'agents', constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
         const tasksPath = path.join(targetPath, constants_1.FILE_NAMES.TASKS);
         const verificationPath = path.join(targetPath, constants_1.FILE_NAMES.VERIFICATION);
-        const [stateExists, proposalExists, designExists, implementationPlanExists, taskGraphExists, specComplianceReviewExists, codeQualityReviewExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
+        const [stateExists, proposalExists, designExists, implementationPlanExists, taskGraphExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
             services.fileService.exists(statePath),
             services.fileService.exists(proposalPath),
             services.fileService.exists(designPath),
             services.fileService.exists(implementationPlanPath),
             services.fileService.exists(taskGraphPath),
-            services.fileService.exists(specComplianceReviewPath),
-            services.fileService.exists(codeQualityReviewPath),
             services.fileService.exists(agentWorkerStatusPath),
             services.fileService.exists(tasksPath),
             services.fileService.exists(verificationPath),
@@ -82,6 +79,8 @@ class VerificationService {
         const featureState = await services.fileService.readJSON(statePath);
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(targetPath, featureState);
         const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
+        const reviewArtifactSet = await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(services.fileService, targetPath);
+        const reviewArtifactsReady = reviewArtifactSet.missing.length === 0;
         const projectRoot = await this.findProjectRoot(targetPath);
         const config = await services.configManager.loadConfig(projectRoot);
         const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
@@ -93,7 +92,15 @@ class VerificationService {
         ];
         checks.push({ name: 'workflow_profile', status: 'pass', message: `Workflow profile is ${workflowProfile}` });
         if (isGoalWorkflow) {
-            checks.push({ name: 'design.md', status: designExists ? 'pass' : 'fail', message: designExists ? 'Design file exists' : 'design.md is missing' }, { name: 'implementation-plan.md', status: implementationPlanExists ? 'pass' : 'fail', message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing' }, { name: 'artifacts/agents/task-graph.json', status: taskGraphExists ? 'pass' : 'fail', message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing' }, { name: 'artifacts/reviews/spec-compliance.md', status: specComplianceReviewExists ? 'pass' : 'fail', message: specComplianceReviewExists ? 'Spec compliance review artifact exists' : 'artifacts/reviews/spec-compliance.md is missing' }, { name: 'artifacts/reviews/code-quality.md', status: codeQualityReviewExists ? 'pass' : 'fail', message: codeQualityReviewExists ? 'Code quality review artifact exists' : 'artifacts/reviews/code-quality.md is missing' }, { name: 'artifacts/agents/worker-status.md', status: agentWorkerStatusExists ? 'pass' : 'fail', message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing' });
+            checks.push({ name: 'design.md', status: designExists ? 'pass' : 'fail', message: designExists ? 'Design file exists' : 'design.md is missing' }, { name: 'implementation-plan.md', status: implementationPlanExists ? 'pass' : 'fail', message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing' }, { name: 'artifacts/agents/task-graph.json', status: taskGraphExists ? 'pass' : 'fail', message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing' }, {
+                name: 'artifacts/reviews/final-review.md',
+                status: reviewArtifactsReady ? 'pass' : 'fail',
+                message: reviewArtifactsReady
+                    ? reviewArtifactSet.mode === 'combined'
+                        ? 'Combined final review artifact exists'
+                        : 'Legacy spec and quality review artifacts exist'
+                    : `Review artifact is missing: ${reviewArtifactSet.missing.join(', ')}`,
+            }, { name: 'artifacts/agents/worker-status.md', status: agentWorkerStatusExists ? 'pass' : 'fail', message: agentWorkerStatusExists ? 'Agent worker status file exists' : 'artifacts/agents/worker-status.md is missing' });
         }
         let activatedSteps = [];
         if (proposalExists) {
@@ -115,11 +122,10 @@ class VerificationService {
         if (isGoalWorkflow && taskGraphExists) {
             checks.push(...(await analyzer.analyzeTaskGraphDocument(taskGraphPath, activatedSteps)).checks);
         }
-        if (isGoalWorkflow && specComplianceReviewExists) {
-            checks.push(...(await analyzer.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps)).checks);
-        }
-        if (isGoalWorkflow && codeQualityReviewExists) {
-            checks.push(...(await analyzer.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps)).checks);
+        if (isGoalWorkflow) {
+            for (const reviewArtifact of reviewArtifactSet.artifacts) {
+                checks.push(...(await analyzer.analyzeReviewArtifactDocument(reviewArtifact.path, reviewArtifact.name, reviewArtifact.role, activatedSteps)).checks);
+            }
         }
         if (isGoalWorkflow && agentWorkerStatusExists) {
             checks.push(...(await services.projectService.analyzeAgentWorkerStatusDocument(agentWorkerStatusPath)).checks);

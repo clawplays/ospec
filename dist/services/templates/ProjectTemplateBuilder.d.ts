@@ -26,13 +26,6 @@ export declare class ProjectTemplateBuilder extends TemplateBuilderBase {
     generatePlanningDocTemplate(fallbackName: string, docName: string, input?: ProjectBootstrapInput): string;
     generateAiGuideTemplate(input?: ProjectBootstrapInput): string;
     generateExecutionProtocolTemplate(input?: ProjectBootstrapInput): string;
-    /**
-     * @deprecated Legacy classic-only index generator. NOT used for deployment: the
-     * managed `.ospec/tools/build-index-auto.cjs` is direct-copied from `dist/tools/build-index.js`
-     * (compiled from `src/tools/build-index.ts`), which is the canonical implementation kept in
-     * lockstep with `IndexBuilder`. This template lacks nested-layout, knowledge-doc indexing,
-     * git_commit, and active-changes scanning and should not be revived without reconciling all three.
-     */
     generateBuildIndexScriptTemplate(): string;
     private getProjectContext;
     private getPresetModuleSkillBody;

@@ -39,8 +39,8 @@ AI coding assistants are powerful, but requirements that live only in chat histo
 
 - **Spec-driven work, saved to your repo** — OSpec turns a request into files (proposal, design, plan, tasks, reviews, verification evidence) that live in your repo instead of in chat history, so any assistant (Codex/GPT, Claude Code, Gemini, OpenCode, or plain CLI) can pick up exactly where the last one stopped.
 - **`ospec change` — the everyday fast flow** — one requirement becomes one active change on a short `init -> change -> verify/finalize` path, kept lightweight and easy to review.
-- **`ospec goal` — engineering-grade discipline** — brainstorm and lock the design before any code, split the work into a task graph, dispatch parallel sub-agents, enforce TDD and code review by a separate reviewer, and require durable test/verification evidence before anything counts as done.
-- **`ospec goal` runs as a loop** — it plans, acts, and verifies in rounds until tests prove the work, at a safety level you choose (`--level L1|L2|L3`: report-only → assisted → unattended); drive it with `ospec loop …` and surface findings to a triage inbox with `ospec triage …`.
+- **`ospec goal` for larger or riskier work** — describe the result you need; the AI asks important questions, writes an inspectable plan, implements the work, runs tests, requests an independent review, updates project docs, and continues until the result is proven.
+- **You choose how much it may do automatically** — `L1` only checks, `L2` may edit but pauses for important choices, and `L3` may continue within limits you set. Progress is saved in the repository, so a later session can resume it.
 
 ## Install With npm
 
@@ -181,25 +181,37 @@ Archive notes:
 
 </details>
 
-### Goal Workflow — Full Flow & Hard Enforcement
+### Goal: Use It For Work That Needs More Care
 
-Use `ospec goal <goal-name>` (or just say "OSpec, create and advance a full goal for this requirement") for complex, cross-cutting, or high-risk work that needs the full OSpec workflow: design doc, implementation plan, task graph, parallel worker dispatch, document and code review, and durable TDD / debug / verification evidence.
+Use a goal when the work touches several parts of the project, has important design choices, changes an API or data, carries security or migration risk, or will take several rounds to finish. For a small, well-defined edit, use `ospec new` instead.
 
-**You only start a goal and describe the requirement.** The AI runs every `ospec` command itself; you just answer questions in chat (`Zero-Setup`).
+Start from a terminal:
 
-A goal runs as a **session-bound loop**: it plans, acts, and verifies in rounds until the work is done and proven by tests. You choose a safety level when you start it (`--level L1|L2|L3`, default L1):
+```bash
+ospec goal improve-checkout
+```
 
-- **L1** — report only: findings go to a triage inbox, nothing is changed.
-- **L2** — makes changes but pauses at key decisions for your approval.
-- **L3** — runs unattended within an allowlist you set.
+Then tell the AI what outcome you need in ordinary language. You can also skip the terminal command and say: "Use OSpec goal for this requirement and carry it through to completion."
 
-Drive and watch it with `ospec loop run/watch/status/pause/resume/level`, review findings with `ospec triage list/claim/promote`, and stop it by pausing, dropping a `STOP` file, or closing your session. When the harness has a native `/goal` (Claude, Codex) the loop uses it; otherwise it falls back automatically. `ospec change` stays the classic fast flow. See [docs/loop-engineering.md](docs/loop-engineering.md).
+That is all a normal user needs to operate. The AI will:
 
-Experience contracts the AI follows on every goal:
+1. Ask only the choices that materially change the result.
+2. Write down the agreed approach so you can inspect it before code changes begin.
+3. Split the work into safe pieces and run independent pieces in parallel when useful.
+4. Test the implementation, ask a separate reviewer to check it, and fix the findings.
+5. Update the relevant project documentation and indexes before archiving the completed work.
 
-- **Announce-Before-Act** — the AI states which skill and stage it is in, which `ospec execute …` command it is about to run and the artifact it writes, and how many subagents it dispatches — so you always see what is happening.
-- **Brainstorm-First** — before locking design it surfaces the open decisions (direction, architecture, API, data, UI, risk, scope) and asks you one at a time through the harness-native question UI (Claude Code: AskUserQuestion) instead of silently assuming.
-- **Durable decision gates** — open choices are recorded with `ospec execute decision …`; required decisions block worker dispatch until you answer.
+You remain in control. The AI explains what it is about to do, pauses when it needs a decision, and records progress in the repository so another session can continue without replaying the conversation. You do not need to run the internal `ospec execute` commands yourself.
+
+Choose how much the goal may do on its own with `--level L1|L2|L3` (default L1):
+
+- **L1** checks and reports, but does not change project files.
+- **L2** may make changes and pauses for important decisions.
+- **L3** may continue without waiting, but only inside the limits you configured.
+
+To see progress, run `ospec loop status`. Use `ospec loop pause` and `ospec loop resume` to stop and continue. Closing the current AI session is also safe because progress is stored on disk. Advanced loop and triage commands are documented in [docs/loop-engineering.md](docs/loop-engineering.md).
+
+Internally, OSpec prevents implementation from starting while an important unanswered choice remains, keeps implementation and review separate, and requires test evidence before the goal is considered complete.
 
 Claude Code hard enforcement (one-time; the AI runs this for you automatically in a Claude Code harness):
 
@@ -211,7 +223,7 @@ This writes a hook bundle under `.ospec/hooks/claude/` and merges it into `.clau
 
 - announce every subagent dispatch and every `ospec` command at the tool level,
 - hard-block subagent dispatch while a required decision is still pending,
-- re-affirm the Announce-Before-Act / Brainstorm-First contract on every turn.
+- inject the static Announce-Before-Act / Brainstorm-First contract only on startup, clear, or compact, while prompt submission stays silent unless a required decision is pending.
 
 Hooks load at session start, so they take effect from the next Claude Code session.
 
@@ -301,16 +313,20 @@ If you want to convert an older classic project to the new layout, run `ospec la
 - **Change-ready initialization**: `ospec init` creates the protocol shell and baseline project knowledge docs in one pass.
 - **Guided initialization**: AI-assisted init can ask once for missing summary or tech stack; direct CLI init falls back to placeholder docs when context is missing.
 - **Stable project language**: the chosen document language is stored in `.skillrc` so later guidance and generated change docs stay consistent unless you explicitly change it.
-- **Docs maintenance**: `ospec docs generate` refreshes or repairs project knowledge docs when you need it later.
+- **One indexed document per archived change**: every successful `finalize` or `archive` writes `docs/project/changes/<archive-path>.md`, then links it from `docs/project/feature-index.md`, `SKILL.index.json.documents`, and `SKILL.index.json.archived_changes`. Before moving the active change, archive preflight refuses to overwrite a human-owned file at that path and verifies the managed output directories are writable. Goals still update the relevant human-maintained architecture, API, module, or operational docs; the generated change summary does not replace them.
+- **Scoped review evidence and cost metrics**: task and final review dispatches write `artifacts/agents/review-packages/*.diff` with scoped Git evidence, while `artifacts/agents/execution-metrics.json` records packet/report/package bytes and task duration. Goal task graphs can enable `documentation_updates` so missing or undeclared project docs block archive.
 - **Tracked requirement execution**: small changes keep proposal, tasks, state, verification, and review files aligned; full goals also keep design, implementation plan, task graph, handoff, review, worker status, and evidence artifacts aligned.
 - **Goal experience contracts**: every goal runs with `Announce-Before-Act` (the AI announces its skill and stage, the `ospec execute …` command and the artifact it writes, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, UI, risk, and scope decisions are asked one at a time through the native question UI before design is locked), and `Zero-Setup` (you only start a goal and describe the requirement — the AI runs every `ospec` command itself). In Claude Code, `ospec session hook --target claude --apply` adds hooks that announce every dispatch and hard-block subagent dispatch while a required decision is still pending.
 - **Optional pre-change aids**: `ospec brainstorm` writes durable exploration artifacts under `.ospec/brainstorms/`, with an optional static visual companion; `ospec plan` writes plan drafts under `.ospec/plans/` and only updates `implementation-plan.md` when `--apply` is passed. The default small-change flow starts with `ospec new`; the full workflow starts with `ospec goal`.
-- **Session brief and hooks**: `ospec session` writes `.ospec/session-brief.json` and `.ospec/session-brief.md` so agents or humans entering an existing project can see active changes, queued changes, queue-run state, a cache fingerprint, and the next safe command before touching a change; `ospec session hook --target claude` writes opt-in harness startup artifacts plus a Claude Code hook bundle under `.ospec/hooks/`, and `--apply` idempotently merges it into `.claude/settings.json`.
+- **Session brief and hooks**: `ospec session` writes `.ospec/session-brief.json` and `.ospec/session-brief.md` so agents or humans entering an existing project can see active changes, queued changes, queue-run state, indexed document and archived-feature counts, a cache fingerprint, and the next safe command before touching a change; `ospec session hook --target claude` writes opt-in harness startup artifacts plus a Claude Code hook bundle under `.ospec/hooks/`, and `--apply` idempotently merges it into `.claude/settings.json`.
 - **Task graph controller**: `ospec execute bootstrap` writes a one-change startup/resume snapshot with the project session brief snapshot and next safe action; `handoff` writes a cross-tool worker handoff guide with the project session brief snapshot; `doc-review` creates design and implementation-plan reviewer packets before task execution; `status` and `next` report controller state and safe next task candidates; `workspace` records git workspace safety before worker handoff; `worktree` records an isolated-worktree preparation plan by default, while explicit `--create` or `--cleanup` runs the matching git worktree command and captures `artifacts/agents/worktree-runs/`; `finish` records closeout readiness before finalize, archive, push, merge, or worktree cleanup; `dispatch` and `complete` create parallel-safe worker packets with worker profiles and target tool mapping, then record task results as OSpec artifacts; `review --task` creates one combined per-task code review packet (spec compliance + code quality in a single pass) that blocks dependent tasks until approved, while final `review` creates one combined whole-change code review packet; `launch` writes the native agent launch plan for the current AI harness, including Codex/GPT `spawn_agent`, Claude Code Task, Gemini `@generalist`, and OpenCode `@mention` guidance; `orchestrate` is the final CLI fallback for harnesses without native subagents and runs explicit command templates only; `launch --run --command` is the single-worker CLI fallback; `collect` turns a fallback worker run into task completion state; `retry` reopens blocked, needs-context, or failed task work; explicit review `--run --command` captures `artifacts/agents/review-runs/`; `debug`, `tdd`, and `verify` record durable evidence; `sync` rebuilds `worker-status.md` from execution and review artifacts.
+- **Adaptive review and model routing**: `.skillrc.workflow.document_review_policy` keeps independent document review by default. With `adaptive`, inline preflight still requires an explicit `risk_level: low` (or `none`) declaration and no detected risk signal; `.skillrc.workflow.model_profiles` maps logical roles without provider model names in OSpec defaults.
+- **Measured execution and grouped repair**: command runners can write authoritative usage to `OSPEC_USAGE_FILE` for automatic ingestion, while `--usage-file` remains a manual input. Metrics distinguish complete, partial, and missing coverage. `ospec execute repair` turns all structured `NEEDS_CHANGES` findings into one repair task.
+- **Verified durable documentation**: declared documentation targets capture before/after normalized content hashes, so an unchanged file cannot satisfy a new run. Feature indexes link completed work directly to the durable project documents it updated.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.
 - **Plugin workflow gates**: plugin commands support Stitch design review and Checkpoint automation through npm-installed official plugins.
 - **Skill management**: install and inspect OSpec skills for Codex and Claude Code.
-- **Standard closeout**: `finalize` verifies, rebuilds indexes, and archives the change before manual Git commit.
+- **Standard closeout**: `finalize` verifies and archives the change, then refreshes the generated feature locator and knowledge index before manual Git commit. It never overwrites human-maintained architecture, module, or API prose.
 
 ## Plugin Installation
 

@@ -2,6 +2,12 @@ export type ProjectMode = 'lite' | 'standard' | 'full';
 export type ProjectLayout = 'classic' | 'nested';
 export type WorkflowProfileId = 'change' | 'goal';
 export type HookCheckPolicy = 'off' | 'warn' | 'error';
+export type DocumentReviewPolicy = 'always' | 'adaptive';
+export type AgentModelProfileId = 'mechanical' | 'standard' | 'strong_reasoning' | 'review' | 'final_review';
+export interface AgentModelProfileConfig {
+    default?: string;
+    targets?: Record<string, string>;
+}
 export type ChangeSummaryStatus = 'pass' | 'warn' | 'fail';
 export type FeatureStatus = 'queued' | 'draft' | 'proposed' | 'planned' | 'implementing' | 'verifying' | 'ready_to_archive' | 'archived';
 export interface StitchPageDesignReviewCapabilityConfig {
@@ -133,6 +139,8 @@ export interface SkillrcConfig {
         feature_flags: {
             supported: string[];
         };
+        document_review_policy?: DocumentReviewPolicy;
+        model_profiles?: Partial<Record<AgentModelProfileId, AgentModelProfileConfig>>;
     };
 }
 export interface FeatureState {
@@ -167,6 +175,8 @@ export interface SkillFrontmatter {
 export interface SkillSection {
     level: number;
     title: string;
+    start: number;
+    end: number;
     tags?: string[];
 }
 export interface IndexModule {
@@ -175,10 +185,34 @@ export interface IndexModule {
     tags: string[];
     sections: Record<string, SkillSection>;
 }
+export interface IndexDocument {
+    file: string;
+    title: string;
+    tags: string[];
+    kind: 'project' | 'api' | 'design' | 'planning' | 'other';
+    sections: Record<string, SkillSection>;
+    features?: string[];
+    modules?: string[];
+    aliases?: string[];
+}
+export interface ArchivedChangeIndexEntry {
+    feature: string;
+    summary: string;
+    affects: string[];
+    archive: string;
+    completed_at: string | null;
+    documents: string[];
+    project_documents?: string[];
+    knowledge_document?: string;
+    target_files?: string[];
+    verification_commands?: string[];
+    workflow_profile?: string;
+}
 export interface SkillIndex {
     version: string;
     generated: string;
     git_commit: string | null;
+    active_changes: string[];
     stats: {
         totalFiles: number;
         totalModules: number;
@@ -186,6 +220,8 @@ export interface SkillIndex {
     };
     modules: Record<string, IndexModule>;
     tagIndex: Record<string, string[]>;
+    documents?: Record<string, IndexDocument>;
+    archived_changes?: ArchivedChangeIndexEntry[];
 }
 export interface CommandResult {
     success: boolean;

@@ -22,6 +22,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private sync;
     private review;
     private feedback;
+    private repair;
     private decision;
     private verify;
     private tdd;
@@ -44,6 +45,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private printWorktreeRun;
     private printFinish;
     private printCompletion;
+    private printRepairWave;
     private printSync;
     private printReview;
     private printReviewRun;

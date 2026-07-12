@@ -122,7 +122,12 @@ tags: [conventions, workflow, change, ospec]
 
 ## 执行要求
 
-- 任何 AI 或人工执行 change 时，都必须先读取 `.skillrc`、`SKILL.index.json` 和当前 change 文件
+- 任何 AI 或人工执行 change 时，都必须先读取 `.skillrc` 和 `SKILL.index.json`，再根据当前 brief 或 dispatch packet 按需打开相关 change 文件、目标文件和索引文档
+- 使用 `docs/project/feature-index.md` 和 `SKILL.index.json.archived_changes` 定位已完成功能，不要扫描全部 archived changes
+- 已完成功能条目同时链接归档证据和任务声明的长期项目文档。项目文档 frontmatter 可以增加 `features`、`modules`、`aliases`，让人和 AI 能从功能名或模块名直接定位。
+- 声明的文档更新只有在 dispatch 到 complete 的证据表明确实发生了规范化内容变化时才算完成；文件存在本身不能证明文档已更新。
+- 每个已归档的普通 change 和 goal 都有一份由 OSpec 生成并索引的 `docs/project/changes/<归档路径>.md`。归档消失后可以安全重建或清理由 OSpec 生成的 change 文档，但清理绝不删除人工文档，归档也绝不覆盖同路径人工文档。
+- archive 和 finalize 会刷新自动生成的功能定位文档与知识索引，但不会覆盖人工维护的 architecture、module 或 API 正文
 - 任何 claim 必须以实际文件状态为准，不得凭口头描述跳过门禁
 
 ## Stitch Canonical Project

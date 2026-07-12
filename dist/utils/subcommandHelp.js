@@ -130,7 +130,7 @@ function getExecuteHelpText() {
 Execute Commands:
   ospec execute bootstrap [change-path|project-path] - write a one-change startup/resume snapshot with project session brief context and next safe action
   ospec execute handoff [change-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
-  ospec execute doc-review [change-path|project-path] [--stage design|plan] - create a design or implementation-plan review packet with project session context
+  ospec execute doc-review [change-path|project-path] [--stage design|plan] - apply the configured always/adaptive document-review policy; adaptive stays inline only with an explicit low-risk declaration and no detected risk signal
   ospec execute status [change-path|project-path] - show task graph controller state
   ospec execute next [change-path|project-path]   - show dispatchable next task(s)
   ospec execute route [change-path|project-path]  - write a workflow-route artifact with the next recommended OSpec command
@@ -145,11 +145,12 @@ Execute Commands:
   ospec execute launch [change-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] --run --command "..." [--timeout-ms N] - fallback only: run one explicit local worker command and capture stdout/stderr under artifacts/agents/worker-runs/
   ospec execute collect [change-path|project-path] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - collect a worker run into task completion state
   ospec execute retry [change-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
-  ospec execute complete <task-id> [change-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - record a worker result; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
+  ospec execute complete <task-id> [change-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] [--usage-file usage.json] - record a worker result and ingest the dispatch usage sidecar automatically when present; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
   ospec execute sync [change-path|project-path]   - sync execution-session, task graph, and review results into worker-status.md
   ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] - create the next safe task-level or final review dispatch packet with project session context
-  ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."] - run an explicit local reviewer command and optionally record the decision
+  ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] --run --command "..." [--timeout-ms N] [--usage-file usage.json] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."] - run an explicit local reviewer command, automatically expose OSPEC_USAGE_FILE, and optionally record the decision
   ospec execute feedback [change-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files
+  ospec execute repair [change-path|project-path] - convert all NEEDS_CHANGES final-review findings into one grouped repair task and dispatch
   ospec execute decision [change-path|project-path] --id id --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional] - record a durable user choice gate that can block dispatch until selected
   ospec execute decision [change-path|project-path] --id id --select option-id [--summary "..."] - record the user's selected option and unblock required decision gates
   ospec execute debug [change-path|project-path] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." [--status CONFIRMED|FIXED|BLOCKED|SKIPPED] [--hypothesis "..."] [--command "..."] [--summary "..."] - record staged debugging evidence

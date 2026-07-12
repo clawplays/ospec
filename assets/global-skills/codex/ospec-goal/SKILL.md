@@ -40,29 +40,11 @@ Use `ospec-change` for small routine changes that only need the classic fast flo
 
 1. `.skillrc`
 2. `.ospec/SKILL.index.json` for nested projects, or root `SKILL.index.json`
-3. `.ospec/for-ai/ai-guide.md` and `.ospec/for-ai/execution-protocol.md`, or legacy `for-ai/`
-4. `.ospec/changes/active/<goal>/proposal.md`
-5. `.ospec/changes/active/<goal>/design.md`
-6. `.ospec/changes/active/<goal>/implementation-plan.md`
-7. `.ospec/changes/active/<goal>/artifacts/agents/task-graph.json`
-8. `.ospec/changes/active/<goal>/artifacts/reviews/design-review.md`
-9. `.ospec/changes/active/<goal>/artifacts/reviews/implementation-plan-review.md`
-10. `.ospec/changes/active/<goal>/artifacts/agents/bootstrap.md`
-11. `.ospec/changes/active/<goal>/artifacts/agents/workflow-route.md`
-12. `.ospec/changes/active/<goal>/artifacts/agents/workspace-status.md`
-13. `.ospec/changes/active/<goal>/artifacts/agents/launch-plan.md`
-14. `.ospec/changes/active/<goal>/artifacts/agents/worker-runs/`
-15. `.ospec/changes/active/<goal>/artifacts/agents/review-runs/`
-16. `.ospec/changes/active/<goal>/artifacts/agents/decisions/`
-17. `.ospec/changes/active/<goal>/artifacts/reviews/final-review.md`
-18. `.ospec/changes/active/<goal>/artifacts/agents/worker-status.md`
-20. `.ospec/changes/active/<goal>/artifacts/agents/tdd-evidence.json`
-21. `.ospec/changes/active/<goal>/artifacts/agents/debug-evidence.json`
-22. `.ospec/changes/active/<goal>/artifacts/agents/verification-evidence.json`
-23. `.ospec/changes/active/<goal>/tasks.md`
-24. `.ospec/changes/active/<goal>/state.json`
-25. `.ospec/changes/active/<goal>/verification.md`
-26. `.ospec/changes/active/<goal>/review.md`
+3. `.ospec/session-brief.md` and `ospec execute status [goal] --brief`
+4. the current dispatch, review, decision, or verification packet for the next action
+5. target files and only the project or archived-feature docs routed by `SKILL.index.json` and `docs/project/feature-index.md`
+
+Read `proposal.md`, `design.md`, `implementation-plan.md`, task graph, worker status, evidence, and review artifacts only when the current stage or packet needs their detail. The packet is the default worker context; do not reload every goal artifact on every turn.
 
 For legacy root-layout projects, use the same paths without the `.ospec/` prefix.
 
@@ -86,14 +68,14 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 4. If the matching active goal already exists, continue it instead of duplicating it.
 5. Draft or update `design.md` from the requirement, `proposal.md`, and project context before editing `implementation-plan.md`, deriving `artifacts/agents/task-graph.json`, editing `tasks.md`, or editing code.
 6. Draft or update `implementation-plan.md` from `design.md`; identify target files, expected results, verification commands, dependencies, parallelizable work, and conflicts.
-7. Derive `artifacts/agents/task-graph.json` from `implementation-plan.md`; derive `tasks.md` from the task graph.
-8. Run `ospec execute doc-review [changes/active/<goal>] --stage design`, then approve `artifacts/reviews/design-review.md` before plan review.
-9. Run `ospec execute doc-review [changes/active/<goal>] --stage plan`, then approve `artifacts/reviews/implementation-plan-review.md` before worker dispatch or closeout.
+7. Derive `artifacts/agents/task-graph.json` from `implementation-plan.md`; give every task a `documentation_updates` array (`[]` when none), include every declared docs path in the same task's `target_files`, and require meaningful-change evidence from dispatch to completion; derive `tasks.md` from the task graph. Finalize also generates one indexed `docs/project/changes/<archive-path>.md` for this goal; its preflight refuses to overwrite a human-owned file at that path, and the generated summary does not replace required architecture, API, module, or operational documentation.
+8. Run `ospec execute doc-review [changes/active/<goal>] --stage design`, then approve `artifacts/reviews/design-review.md` before plan review. Respect `.skillrc.workflow.document_review_policy`: `always` is the independent-review default; `adaptive` stays inline only when the target document explicitly declares `risk_level: low` (or `none`) and deterministic preflight finds no risk signal.
+9. Run `ospec execute doc-review [changes/active/<goal>] --stage plan`, then approve `artifacts/reviews/implementation-plan-review.md` before worker dispatch or closeout. Do not use adaptive review to bypass API, security, migration, data, architecture, or scope-risk review.
 10. Use `ospec execute decision` for direction, architecture, API, UI, risk, or scope choices that need explicit user selection.
-11. Use `ospec execute workspace`, `dispatch`, `launch`, `complete`, `review`, `feedback`, `sync`, `tdd`, `debug`, and `verify` as needed for the full workflow.
+11. Use `ospec execute workspace`, `dispatch`, `launch`, `complete`, `review`, `feedback`, `repair`, `sync`, `tdd`, `debug`, and `verify` as needed for the full workflow. Model profiles are logical and resolve through `.skillrc.workflow.model_profiles`; command runners ingest `OSPEC_USAGE_FILE` automatically and `complete --usage-file` remains a manual fallback. Require reviewers to write Markdown plus sibling structured `*.findings.json`. If final review is `NEEDS_CHANGES`, create one grouped repair task instead of one worker per finding.
 12. Do not archive while task graph status, task-level reviews, final reviews, worker status, required user decisions, document reviews, or verification evidence are incomplete.
 13. Use `ospec execute finish` before finalize when the goal used task graph execution or worktree planning.
-14. Use `ospec finalize [changes/active/<goal>]` as the normal closeout path. Closeout is automatic when ready: once the goal is complete and `ospec verify` passes with no required user decision or blocking gate pending, run `ospec finalize` yourself — do not stop at `ospec archive ... --check` (preview only) or wait for the user to ask. **`ospec execute finish` strategy prompts (PR / merge / branch / worktree) are optional with safe defaults (`direct-closeout` + `manual` merge) — do NOT ask the user about them; uncommitted change/OSpec files are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause for a genuine human gate: a pending required decision, an unapproved blocking plugin gate (e.g. Checkpoint), real verify/archive blockers, or an explicit user request to preview or approve first. **Archiving — even when the user explicitly asks you to archive — goes through `ospec finalize` only; never move the change directory manually. `ospec finalize` archives the change's linked brainstorm at the same moment, so a manual move orphans it. If the change needed human/device verification and `ospec finalize` reports not-ready because the review `decision` is not `APPROVED`, record the user's confirmed approval in that review (set `decision: APPROVED`) and rerun `ospec finalize` — do not work around the gate by relocating files.**
+14. Use `ospec finalize [changes/active/<goal>]` as the normal closeout path. Closeout is automatic when ready: once the goal is complete and `ospec verify` passes with no required user decision or blocking gate pending, run `ospec finalize` yourself — do not stop at `ospec archive ... --check` (preview only) or wait for the user to ask. **`ospec execute finish` strategy prompts (PR / merge / branch / worktree) are optional with safe defaults (`direct-closeout` + `manual` merge) — do NOT ask the user about them; uncommitted change/OSpec files are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause for a genuine human gate: a pending required decision, an unapproved blocking plugin gate (e.g. Checkpoint), real verify/archive blockers, or an explicit user request to preview or approve first.
 
 ## Commands
 
@@ -122,8 +104,10 @@ ospec execute workspace [changes/active/<goal>]
 ospec execute dispatch [changes/active/<goal>] [--task task-id] [--limit N]
 ospec execute launch [changes/active/<goal>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute complete <task-id> [changes/active/<goal>] --status DONE --summary "..."
+ospec execute complete <task-id> [changes/active/<goal>] --status DONE --usage-file usage.json
 ospec execute review [changes/active/<goal>] --task task-id   # per-task: one combined code review (spec compliance + code quality)
 ospec execute review [changes/active/<goal>]                  # whole-change: one combined final code review (after all task reviews approved)
+ospec execute repair [changes/active/<goal>]                  # one task for the complete NEEDS_CHANGES findings list
 ospec execute tdd [changes/active/<goal>] --phase red|green|refactor --command "..." --status ...
 ospec execute debug [changes/active/<goal>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --status ...
 ospec execute verify [changes/active/<goal>] --command "..." --status PASSED

@@ -124,5 +124,10 @@ This document fixes the OSpec execution flow inside the project so requirements 
 
 ## Execution Requirements
 
-- Any AI or human advancing a change must read `.skillrc`, `SKILL.index.json`, and the current change files first
+- Any AI or human advancing a change must read `.skillrc` and `SKILL.index.json` first, then use the current brief or dispatch packet to open only the relevant change files, target files, and indexed docs
+- Use `docs/project/feature-index.md` and `SKILL.index.json.archived_changes` to locate completed behavior instead of scanning all archived changes
+- A completed feature entry links its archived evidence and declared durable project documents. Project document frontmatter may add `features`, `modules`, and `aliases` so humans and AI can route directly from a feature or module name.
+- A declared documentation update is complete only when dispatch-to-completion evidence shows a meaningful normalized-content change; file existence alone is not proof of an update.
+- Every archived classic change and goal has one OSpec-generated, indexed document under `docs/project/changes/<archive-path>.md`. Generated change records are safe to rebuild and clean when their archive disappears; human-owned files are never removed by cleanup or overwritten during archive.
+- Archive and finalize refresh the generated feature locator and knowledge index; they do not overwrite human-maintained architecture, module, or API prose
 - Any completion claim must match the real file state instead of skipping gates through narration

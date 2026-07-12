@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.TaskGraphExecutionService = void 0;
 exports.createTaskGraphExecutionService = createTaskGraphExecutionService;
 const path = __importStar(require("path"));
+const fs_1 = require("fs");
+const crypto_1 = require("crypto");
 const childProcess = require("child_process");
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
@@ -71,8 +73,13 @@ const TASK_REVIEWS_DIR = 'tasks';
 const REVIEW_FEEDBACK_PLAN_FILE = 'review-feedback-plan.json';
 const REVIEW_FEEDBACK_PLAN_REPORT_FILE = 'review-feedback-plan.md';
 const DISPATCHES_DIR = 'dispatches';
+const WORKER_REPORTS_DIR = 'worker-reports';
+const REVIEW_PACKAGES_DIR = 'review-packages';
+const EXECUTION_METRICS_FILE = 'execution-metrics.json';
+const USAGE_SIDECARS_DIR = 'usage';
 const REVIEW_DISPATCHES_DIR = 'review-dispatches';
 const DOCUMENT_REVIEW_DISPATCHES_DIR = 'document-review-dispatches';
+const REPAIR_WAVES_DIR = 'repair-waves';
 const DESIGN_DOCUMENT_REVIEW_FILE = 'design-review.md';
 const IMPLEMENTATION_PLAN_DOCUMENT_REVIEW_FILE = 'implementation-plan-review.md';
 const VERIFICATION_EVIDENCE_DIR = 'verification-evidence';
@@ -96,6 +103,47 @@ const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_ORCHESTRATION_MAX_ROUNDS = 10;
 const MAX_CAPTURED_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
+function emptyExecutionUsage() {
+    return {
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        reasoningTokens: null,
+        toolCalls: null,
+        turns: null,
+        elapsedMs: null,
+        observedFields: [],
+        source: 'aggregate',
+        coverage: 'none',
+    };
+}
+function addExecutionUsage(left, right) {
+    const addKnown = (leftValue, rightValue) => {
+        if (leftValue === null)
+            return rightValue;
+        if (rightValue === null)
+            return leftValue;
+        return leftValue + rightValue;
+    };
+    return {
+        inputTokens: addKnown(left.inputTokens, right.inputTokens),
+        cachedInputTokens: addKnown(left.cachedInputTokens, right.cachedInputTokens),
+        outputTokens: addKnown(left.outputTokens, right.outputTokens),
+        reasoningTokens: addKnown(left.reasoningTokens, right.reasoningTokens),
+        toolCalls: addKnown(left.toolCalls, right.toolCalls),
+        turns: addKnown(left.turns, right.turns),
+        elapsedMs: addKnown(left.elapsedMs, right.elapsedMs),
+        observedFields: Array.from(new Set([...left.observedFields, ...right.observedFields])).sort(),
+        source: 'aggregate',
+        coverage: left.coverage === 'none'
+            ? right.coverage
+            : right.coverage === 'none'
+                ? left.coverage
+                : left.coverage === 'complete' && right.coverage === 'complete'
+                    ? 'complete'
+                    : 'partial',
+    };
+}
 function normalizeStatus(value) {
     return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
@@ -210,9 +258,21 @@ function buildWorkerTargetToolMapping(target) {
             recordCompletion: 'Record every task, review, verification, TDD, or debug result back into OSpec artifacts.',
         },
     };
-    return mappings[target];
+    return {
+        ...mappings[target],
+        readContext: 'Read the generated packet first. Use SKILL.index.json and docs/project/feature-index.md to locate existing behavior, then open only the specific source or change document needed to resolve a concrete gap.',
+    };
 }
-function buildWorkerProfile(task) {
+function resolveWorkerModel(profile, target, modelProfiles = {}) {
+    const config = modelProfiles[profile];
+    const configuredModel = config?.targets?.[target]?.trim() || config?.default?.trim() || '';
+    return {
+        modelProfile: profile,
+        model: configuredModel || null,
+        modelSelectionSource: configuredModel ? 'configured' : 'harness-default',
+    };
+}
+function buildWorkerProfile(task, modelProfiles = {}, modelProfileOverride) {
     const role = task.workerRole.trim() || 'implementer';
     const roleKey = role.toLowerCase();
     const searchableText = [
@@ -240,6 +300,7 @@ function buildWorkerProfile(task) {
                 'Do not dispatch implementation workers or edit project source files from this review packet.',
             ],
             targetToolMapping: buildWorkerTargetToolMapping(recommendedTarget),
+            ...resolveWorkerModel(modelProfileOverride || 'review', recommendedTarget, modelProfiles),
         };
     }
     if (roleKey.includes('reviewer')) {
@@ -254,11 +315,12 @@ function buildWorkerProfile(task) {
                 'The worker must produce evidence-backed findings instead of making hidden fixes.',
             ],
             requiredBehavior: [
-                'Read core change docs, task graph, worker status, and recent dispatch records.',
+                'Read the scoped review packet and worker evidence first; open other artifacts only for a named verification gap.',
                 'Update the requested review artifact with findings and a clear decision.',
-                'Do not change implementation files unless a separate implementation task is dispatched.',
+                'Stay independent and read-only: do not change implementation files or accept controller-provided severity downgrades.',
             ],
             targetToolMapping: buildWorkerTargetToolMapping(recommendedTarget),
+            ...resolveWorkerModel(modelProfileOverride || 'review', recommendedTarget, modelProfiles),
         };
     }
     const docsOnly = task.targetFiles.length > 0
@@ -272,32 +334,62 @@ function buildWorkerProfile(task) {
         /\b(architecture|migration|security|auth|database|schema|state|controller|protocol|release|archive|parallel|concurrency|plugin|api|breaking)\b/.test(searchableText),
     ];
     const strongReasoning = complexitySignals.some(Boolean);
+    const mechanical = docsOnly
+        && !strongReasoning
+        && task.targetFiles.length <= 2
+        && task.verificationCommands.length <= 1;
     const recommendedTarget = docsOnly ? 'generic' : 'codex';
+    const capabilityTier = mechanical ? 'mechanical' : strongReasoning ? 'strong-reasoning' : 'standard';
+    const modelProfile = modelProfileOverride
+        || (capabilityTier === 'strong-reasoning' ? 'strong_reasoning' : capabilityTier);
     return {
         role,
         recommendedTarget,
-        capabilityTier: strongReasoning ? 'strong-reasoning' : 'standard',
-        summary: strongReasoning
-            ? 'Implementation worker with stronger reasoning for cross-cutting or risky task boundaries.'
-            : 'Implementation worker for scoped, low-conflict task execution.',
+        capabilityTier,
+        summary: mechanical
+            ? 'Mechanical worker for a narrow documentation-only task with a focused verification boundary.'
+            : strongReasoning
+                ? 'Implementation worker with stronger reasoning for cross-cutting or risky task boundaries.'
+                : 'Implementation worker for scoped, low-conflict task execution.',
         rationale: [
             docsOnly
                 ? 'Target files are documentation-only, so a generic document-capable worker is sufficient.'
                 : 'Target files include implementation or configuration surfaces that benefit from a coding agent.',
-            strongReasoning
-                ? 'The task has dependency, conflict, breadth, or domain-risk signals that require extra reasoning before editing.'
-                : 'The task has a narrow scope and limited coordination risk.',
+            mechanical
+                ? 'The task is documentation-only, narrow, and has no cross-cutting risk signal.'
+                : strongReasoning
+                    ? 'The task has dependency, conflict, breadth, or domain-risk signals that require extra reasoning before editing.'
+                    : 'The task has a narrow scope and limited coordination risk.',
         ],
         requiredBehavior: [
-            'Read proposal.md, design.md, implementation-plan.md, tasks.md, and task-graph.json before editing.',
+            'Read the dispatch packet first; it is the task brief. Open only the specific core document or indexed knowledge file needed to resolve a named ambiguity.',
             'Keep edits scoped to target files unless the packet evidence proves the scope is wrong.',
             'Run the listed verification commands or record why they could not be run before completion.',
             'Self-review the implementation before returning status; use DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED when the result is not clean.',
         ],
         targetToolMapping: buildWorkerTargetToolMapping(recommendedTarget),
+        ...resolveWorkerModel(modelProfile, recommendedTarget, modelProfiles),
     };
 }
-function normalizeTask(rawTask, index) {
+function buildReviewerWorkerProfile(role, modelProfiles, modelProfile = 'review') {
+    return buildWorkerProfile({
+        id: `${modelProfile}-worker`,
+        title: modelProfile === 'final_review' ? 'Combined final review' : 'Independent review',
+        status: 'PENDING',
+        dependsOn: [],
+        parallelizable: false,
+        conflictsWith: [],
+        targetFiles: [],
+        verificationCommands: [],
+        expectedResult: 'Evidence-backed independent review decision',
+        context: '',
+        interfaces: [],
+        documentationUpdates: [],
+        workerRole: role,
+        review: null,
+    }, modelProfiles, modelProfile);
+}
+function normalizeTask(rawTask, index, modelProfiles = {}) {
     const id = typeof rawTask?.id === 'string' && rawTask.id.trim().length > 0
         ? rawTask.id.trim()
         : `tasks[${index}]`;
@@ -311,6 +403,9 @@ function normalizeTask(rawTask, index) {
         targetFiles: stringArray(rawTask?.target_files),
         verificationCommands: stringArray(rawTask?.verification_commands),
         expectedResult: typeof rawTask?.expected_result === 'string' ? rawTask.expected_result.trim() : '',
+        context: typeof rawTask?.context === 'string' ? rawTask.context.trim() : '',
+        interfaces: stringArray(rawTask?.interfaces),
+        documentationUpdates: stringArray(rawTask?.documentation_updates),
         workerRole: typeof rawTask?.worker_role === 'string' && rawTask.worker_role.trim().length > 0
             ? rawTask.worker_role.trim()
             : 'implementer',
@@ -318,7 +413,7 @@ function normalizeTask(rawTask, index) {
     };
     return {
         ...normalizedTask,
-        workerProfile: buildWorkerProfile(normalizedTask),
+        workerProfile: buildWorkerProfile(normalizedTask, modelProfiles),
     };
 }
 function tasksConflict(left, right) {
@@ -342,6 +437,44 @@ function tasksConflict(left, right) {
         return true;
     }
     return rightConflicts.some(conflict => leftTargets.some(target => taskPathsOverlap(conflict, target)));
+}
+function parseGitDispatchSnapshot(output) {
+    const lines = output.split(/\r?\n/).filter(line => line.length > 0);
+    const oidLine = lines.find(line => line.startsWith('# branch.oid '));
+    const rawOid = oidLine?.slice('# branch.oid '.length).trim() || '';
+    if (rawOid === '(initial)') {
+        return { headCommit: null, workspaceDirty: null };
+    }
+    if (!rawOid)
+        return null;
+    return {
+        headCommit: rawOid,
+        workspaceDirty: lines.some(line => /^(?:1 |2 |u |\? )/.test(line)),
+    };
+}
+function parseGitStatusV2Entries(output) {
+    const normalizeCode = (value) => value.replace(/\./g, ' ').trim() || '??';
+    return output
+        .split(/\r?\n/)
+        .map(line => line.trimEnd())
+        .filter(line => line.length > 0 && !line.startsWith('# '))
+        .map(line => {
+        if (line.startsWith('? '))
+            return { code: '??', file: line.slice(2).trim() };
+        if (line.startsWith('! '))
+            return { code: '!!', file: line.slice(2).trim() };
+        const ordinary = line.match(/^1 (\S+) \S+ \S+ \S+ \S+ \S+ \S+ (.+)$/);
+        if (ordinary)
+            return { code: normalizeCode(ordinary[1]), file: ordinary[2].trim() };
+        const renamed = line.match(/^2 (\S+) \S+ \S+ \S+ \S+ \S+ \S+ \S+ (.+)$/);
+        if (renamed)
+            return { code: normalizeCode(renamed[1]), file: renamed[2].split('\t')[0].trim() };
+        const unmerged = line.match(/^u (\S+) \S+ \S+ \S+ \S+ \S+ \S+ \S+ \S+ (.+)$/);
+        if (unmerged)
+            return { code: normalizeCode(unmerged[1]), file: unmerged[2].trim() };
+        return null;
+    })
+        .filter((entry) => Boolean(entry?.file));
 }
 function normalizeTaskPath(filePath) {
     return path.normalize(String(filePath || '').trim())
@@ -396,8 +529,9 @@ class TaskGraphExecutionService {
             throw new Error(`Task graph not found at ${graphPath}`);
         }
         const graph = await this.fileService.readJSON(graphPath);
+        const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
         const tasks = Array.isArray(graph.tasks)
-            ? graph.tasks.map((task, index) => normalizeTask(task, index))
+            ? graph.tasks.map((task, index) => normalizeTask(task, index, executionPolicy.modelProfiles))
             : [];
         const taskById = new Map(tasks.map(task => [task.id, task]));
         const issues = [];
@@ -473,6 +607,7 @@ class TaskGraphExecutionService {
             }
         }
         const feature = typeof graph.feature === 'string' && graph.feature.trim().length > 0 ? graph.feature.trim() : path.basename(resolvedChangePath);
+        const globalConstraints = stringArray(graph.global_constraints);
         const decisions = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
         const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
         const dispatchableTasks = decisions.pendingRequired > 0 || decisions.blockers.length > 0
@@ -482,6 +617,7 @@ class TaskGraphExecutionService {
             changePath: resolvedChangePath,
             graphPath,
             feature,
+            globalConstraints,
             graphStatus: typeof graph.status === 'string' && graph.status.trim().length > 0 ? graph.status.trim() : 'unknown',
             taskCount: tasks.length,
             readyTasks,
@@ -510,6 +646,7 @@ class TaskGraphExecutionService {
     async dispatch(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        await this.ingestReviewUsageSidecars(resolvedChangePath, await this.readFeatureName(resolvedChangePath));
         const report = await this.getReport(resolvedChangePath);
         if (report.issues.length > 0 || report.invalidTasks.length > 0) {
             throw new Error('Cannot dispatch tasks until task graph issues and invalid tasks are resolved.');
@@ -545,7 +682,29 @@ class TaskGraphExecutionService {
         const warnings = [...projectSession.warnings];
         const rawGraph = await this.fileService.readJSON(report.graphPath);
         const createdDispatches = [];
+        const gitStatusResult = this.runGit(projectRoot, [
+            'status',
+            '--porcelain=v2',
+            '--branch',
+            '--untracked-files=normal',
+            '--no-renames',
+            '--no-ahead-behind',
+        ]);
+        const gitSnapshot = gitStatusResult.ok
+            ? parseGitDispatchSnapshot(gitStatusResult.stdout)
+            : null;
+        const fallbackHeadCommit = gitSnapshot ? null : this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
+        const gitBaseCommit = gitSnapshot?.headCommit || fallbackHeadCommit;
+        const workspaceDirtyAtDispatch = gitSnapshot
+            ? gitSnapshot.workspaceDirty
+            : fallbackHeadCommit
+                ? (this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '').length > 0
+                : null;
+        const dispatchMetrics = [];
         for (const task of dispatchableTasks) {
+            if (task.workerProfile.modelSelectionSource === 'harness-default') {
+                warnings.push(`Task ${task.id} model profile ${task.workerProfile.modelProfile} has no configured model for ${task.workerProfile.recommendedTarget}; the harness default will be used.`);
+            }
             const dispatchId = `dispatch-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(task.id)}`;
             const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DISPATCHES_DIR, `${dispatchId}.json`);
             const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', DISPATCHES_DIR, `${dispatchId}.md`);
@@ -562,13 +721,30 @@ class TaskGraphExecutionService {
                 packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
                 recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
                 summary: null,
+                gitBaseCommit,
+                gitHeadAtCompletion: null,
+                workspaceDirtyAtDispatch,
+                documentationBaseline: await this.captureDocumentationSnapshots(projectRoot, task.documentationUpdates),
             };
             await this.fileService.writeJSON(recordPath, record);
             await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDispatchPacket(report, task, record));
+            dispatchMetrics.push({
+                kind: 'dispatch_packet',
+                id: dispatchId,
+                taskId: task.id,
+                path: record.packetPath,
+                recordedAt: now,
+                durationMs: null,
+                capabilityTier: task.workerProfile.capabilityTier,
+                modelProfile: task.workerProfile.modelProfile,
+                model: task.workerProfile.model,
+                workflowStage: task.id.startsWith('repair-final-') ? 'repair' : 'implementation',
+            });
             this.updateRawTaskStatus(rawGraph, task.id, 'IN_PROGRESS');
             session.dispatches.push(record);
             createdDispatches.push(record);
         }
+        await this.recordExecutionMetric(resolvedChangePath, report.feature, dispatchMetrics);
         rawGraph.status = 'in_progress';
         session.status = 'running';
         session.updatedAt = now;
@@ -872,6 +1048,8 @@ class TaskGraphExecutionService {
         if (!selected) {
             throw new Error('Cannot run worker because launch plan did not select exactly one dispatch.');
         }
+        const automaticUsagePath = path.join(path.resolve(changePath), 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${selected.id}.json`);
+        await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
         return this.runWorkerCommand({
             changePath: path.resolve(changePath),
             projectRoot: launch.projectRoot,
@@ -885,7 +1063,11 @@ class TaskGraphExecutionService {
             reviewDispatchId: null,
             launchPlanPath: this.toChangeRelativePath(path.resolve(changePath), launch.artifactPath),
             reviewArtifactPath: null,
-            environment: null,
+            environment: {
+                OSPEC_USAGE_FILE: automaticUsagePath,
+                OSPEC_RUN_ID: selected.id,
+                OSPEC_WORKFLOW_STAGE: selected.taskId.startsWith('repair-final-') ? 'repair' : 'implementation',
+            },
             directoryName: WORKER_RUNS_DIR,
             timeoutMs: options.timeoutMs,
             nextInstruction: (record) => `Worker run ${record.id} finished with exit code ${record.exitCode ?? 'unknown'}. Run ospec execute collect ${this.quoteShellArg(this.toProjectRelativeChangePath(launch.projectRoot, path.resolve(changePath)))} --task ${this.quoteShellArg(selected.taskId)} to record the task result.`,
@@ -1175,6 +1357,8 @@ class TaskGraphExecutionService {
         const review = await this.review(changePath, { stage: options.stage, taskId: options.taskId });
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const automaticUsagePath = path.join(resolvedChangePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${review.dispatch.id}.json`);
+        await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
         const run = await this.runWorkerCommand({
             changePath: resolvedChangePath,
             projectRoot,
@@ -1188,11 +1372,47 @@ class TaskGraphExecutionService {
             reviewDispatchId: review.dispatch.id,
             launchPlanPath: null,
             reviewArtifactPath: review.dispatch.reviewArtifactPath,
-            environment: null,
+            environment: {
+                OSPEC_USAGE_FILE: automaticUsagePath,
+                OSPEC_RUN_ID: review.dispatch.id,
+                OSPEC_WORKFLOW_STAGE: review.dispatch.taskId ? 'task_review' : 'final_review',
+            },
             directoryName: REVIEW_RUNS_DIR,
             timeoutMs: options.timeoutMs,
             nextInstruction: (record) => `Review run ${record.id} finished with exit code ${record.exitCode ?? 'unknown'}. Update ${review.dispatch.reviewArtifactPath}, then run ospec execute sync ${this.quoteShellArg(this.toProjectRelativeChangePath(projectRoot, resolvedChangePath))}.`,
         });
+        const usagePath = options.usageFile
+            || (await this.fileService.exists(automaticUsagePath) ? automaticUsagePath : null);
+        const usage = usagePath ? await this.readExecutionUsageFile(usagePath) : null;
+        const workflowStage = review.dispatch.taskId ? 'task_review' : 'final_review';
+        const metricEntries = [{
+                kind: 'review_run',
+                id: review.dispatch.id,
+                taskId: review.dispatch.taskId || null,
+                path: run.recordPath,
+                recordedAt: run.record.completedAt,
+                durationMs: Math.max(0, Date.parse(run.record.completedAt) - Date.parse(run.record.startedAt)),
+                capabilityTier: review.dispatch.workerProfile?.capabilityTier || 'unknown',
+                modelProfile: review.dispatch.workerProfile?.modelProfile || null,
+                model: review.dispatch.workerProfile?.model || null,
+                workflowStage,
+            }];
+        if (usage) {
+            metricEntries.push({
+                kind: 'usage',
+                id: review.dispatch.id,
+                taskId: review.dispatch.taskId || null,
+                path: null,
+                recordedAt: run.record.completedAt,
+                durationMs: usage.elapsedMs,
+                usage,
+                capabilityTier: review.dispatch.workerProfile?.capabilityTier || 'unknown',
+                modelProfile: review.dispatch.workerProfile?.modelProfile || null,
+                model: review.dispatch.workerProfile?.model || null,
+                workflowStage,
+            });
+        }
+        await this.recordExecutionMetric(resolvedChangePath, await this.readFeatureName(resolvedChangePath), metricEntries);
         let workerStatusPath = review.workerStatusPath;
         const decision = options.decision || null;
         if (decision) {
@@ -1246,10 +1466,19 @@ class TaskGraphExecutionService {
         }
         const summary = options.summary?.trim() || null;
         const dispatch = [...session.dispatches].reverse().find(item => item.taskId === normalizedTaskId && item.completedAt === null);
+        const automaticUsagePath = dispatch
+            ? path.join(resolvedChangePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${dispatch.id}.json`)
+            : null;
+        const usagePath = options.usageFile
+            || (automaticUsagePath && await this.fileService.exists(automaticUsagePath) ? automaticUsagePath : null);
+        const usage = usagePath ? await this.readExecutionUsageFile(usagePath) : null;
         if (dispatch) {
             dispatch.status = completionStatus;
             dispatch.completedAt = now;
             dispatch.summary = summary;
+            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+            dispatch.gitHeadAtCompletion = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
+            dispatch.documentationEvidence = await this.captureDocumentationEvidence(projectRoot, dispatch.documentationBaseline || []);
             await this.fileService.writeJSON(path.join(resolvedChangePath, dispatch.recordPath), dispatch);
         }
         else {
@@ -1273,6 +1502,47 @@ class TaskGraphExecutionService {
         session.updatedAt = now;
         await this.fileService.writeJSON(report.graphPath, rawGraph);
         await this.fileService.writeJSON(sessionPath, session);
+        const completionMetrics = [{
+                kind: 'completion',
+                id: dispatch?.id || `manual-${normalizedTaskId}`,
+                taskId: normalizedTaskId,
+                path: null,
+                recordedAt: now,
+                durationMs: dispatch
+                    ? Math.max(0, Date.parse(now) - Date.parse(dispatch.assignedAt))
+                    : null,
+                capabilityTier: task.workerProfile.capabilityTier,
+                modelProfile: task.workerProfile.modelProfile,
+                model: task.workerProfile.model,
+                workflowStage: normalizedTaskId.startsWith('repair-final-') ? 'repair' : 'implementation',
+            }];
+        if (usage) {
+            completionMetrics.push({
+                kind: 'usage',
+                id: dispatch?.id || `manual-${normalizedTaskId}`,
+                taskId: normalizedTaskId,
+                path: null,
+                recordedAt: now,
+                durationMs: usage.elapsedMs,
+                usage,
+                capabilityTier: task.workerProfile.capabilityTier,
+                modelProfile: task.workerProfile.modelProfile,
+                model: task.workerProfile.model,
+                workflowStage: normalizedTaskId.startsWith('repair-final-') ? 'repair' : 'implementation',
+            });
+        }
+        const workerReportPath = ['artifacts', 'agents', WORKER_REPORTS_DIR, `${this.toFileSafeId(normalizedTaskId) || 'task'}.md`].join('/');
+        if (await this.fileService.exists(path.join(resolvedChangePath, workerReportPath))) {
+            completionMetrics.push({
+                kind: 'worker_report',
+                id: dispatch?.id || `manual-${normalizedTaskId}`,
+                taskId: normalizedTaskId,
+                path: workerReportPath,
+                recordedAt: now,
+                durationMs: null,
+            });
+        }
+        await this.recordExecutionMetric(resolvedChangePath, report.feature, completionMetrics);
         const blockerEscalation = completionStatus === 'NEEDS_CONTEXT' || completionStatus === 'BLOCKED'
             ? await this.writeBlockerEscalation({
                 changePath: resolvedChangePath,
@@ -1295,6 +1565,7 @@ class TaskGraphExecutionService {
             taskId: normalizedTaskId,
             status: completionStatus,
             graphStatus,
+            usage,
             nextInstruction: blockerEscalation
                 ? `Resolve blocker escalation at ${blockerEscalation.reportPath}, then rerun ospec execute status.`
                 : TERMINAL_TASK_STATUSES.has(completionStatus)
@@ -1308,6 +1579,7 @@ class TaskGraphExecutionService {
         const resolvedChangePath = path.resolve(changePath);
         await this.syncTaskReviewStateFromArtifacts(resolvedChangePath);
         const report = await this.getReport(resolvedChangePath);
+        await this.ingestReviewUsageSidecars(resolvedChangePath, report.feature);
         const rawGraph = await this.fileService.readJSON(report.graphPath);
         const tasks = Array.isArray(rawGraph?.tasks)
             ? rawGraph.tasks.map((task, index) => normalizeTask(task, index))
@@ -1406,6 +1678,7 @@ class TaskGraphExecutionService {
         const now = new Date().toISOString();
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
         const warnings = [...projectSession.warnings];
+        const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
         // Per-task review is a single combined code review (spec compliance + code quality in one pass).
         if (taskReview) {
             if (APPROVED_REVIEW_DECISIONS.has(taskReview.decision)) {
@@ -1414,6 +1687,17 @@ class TaskGraphExecutionService {
             const reviewId = `review-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskReview.task.id)}`;
             const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
             const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
+            const session = await this.readSession(this.getSessionPath(resolvedChangePath), report.feature);
+            const taskDispatch = [...session.dispatches]
+                .reverse()
+                .find(item => item.taskId === taskReview.task.id) || null;
+            const reviewPackagePath = await this.writeTaskReviewPackage({
+                projectRoot,
+                changePath: resolvedChangePath,
+                task: taskReview.task,
+                dispatch: taskDispatch,
+                reviewId,
+            });
             const record = {
                 id: reviewId,
                 stage: 'review',
@@ -1426,9 +1710,40 @@ class TaskGraphExecutionService {
                 packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
                 recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
                 reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, taskReview.reviewArtifactPath),
+                reviewPackagePath,
+                workerProfile: buildReviewerWorkerProfile('code_reviewer', executionPolicy.modelProfiles),
             };
+            if (record.workerProfile.modelSelectionSource === 'harness-default') {
+                warnings.push(`Review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
+            }
             await this.fileService.writeJSON(recordPath, record);
             await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+            await this.recordExecutionMetric(resolvedChangePath, report.feature, [
+                {
+                    kind: 'review_packet',
+                    id: reviewId,
+                    taskId: taskReview.task.id,
+                    path: record.packetPath,
+                    recordedAt: now,
+                    durationMs: null,
+                    capabilityTier: record.workerProfile.capabilityTier,
+                    modelProfile: record.workerProfile.modelProfile,
+                    model: record.workerProfile.model,
+                    workflowStage: 'task_review',
+                },
+                {
+                    kind: 'review_package',
+                    id: reviewId,
+                    taskId: taskReview.task.id,
+                    path: reviewPackagePath,
+                    recordedAt: now,
+                    durationMs: null,
+                    capabilityTier: record.workerProfile.capabilityTier,
+                    modelProfile: record.workerProfile.modelProfile,
+                    model: record.workerProfile.model,
+                    workflowStage: 'task_review',
+                },
+            ]);
             const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
             return {
                 changePath: resolvedChangePath,
@@ -1452,6 +1767,19 @@ class TaskGraphExecutionService {
         const reviewId = `review-${this.toFileSafeTimestamp(now)}-final`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
         const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
+        const session = await this.readSession(this.getSessionPath(resolvedChangePath), report.feature);
+        const earliestDispatch = [...session.dispatches]
+            .sort((left, right) => left.assignedAt.localeCompare(right.assignedAt))[0] || null;
+        const reviewPackagePath = await this.writeTaskReviewPackage({
+            projectRoot,
+            changePath: resolvedChangePath,
+            task: {
+                id: 'final',
+                targetFiles: Array.from(new Set(this.flattenReportTasks(report).flatMap(task => task.targetFiles))),
+            },
+            dispatch: earliestDispatch,
+            reviewId,
+        });
         const record = {
             id: reviewId,
             stage: 'review',
@@ -1464,9 +1792,40 @@ class TaskGraphExecutionService {
             packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, finalReviewPath),
+            reviewPackagePath,
+            workerProfile: buildReviewerWorkerProfile('code_reviewer', executionPolicy.modelProfiles, 'final_review'),
         };
+        if (record.workerProfile.modelSelectionSource === 'harness-default') {
+            warnings.push(`Final review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
+        }
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+        await this.recordExecutionMetric(resolvedChangePath, report.feature, [
+            {
+                kind: 'review_packet',
+                id: reviewId,
+                taskId: null,
+                path: record.packetPath,
+                recordedAt: now,
+                durationMs: null,
+                capabilityTier: record.workerProfile.capabilityTier,
+                modelProfile: record.workerProfile.modelProfile,
+                model: record.workerProfile.model,
+                workflowStage: 'final_review',
+            },
+            {
+                kind: 'review_package',
+                id: reviewId,
+                taskId: null,
+                path: reviewPackagePath,
+                recordedAt: now,
+                durationMs: null,
+                capabilityTier: record.workerProfile.capabilityTier,
+                modelProfile: record.workerProfile.modelProfile,
+                model: record.workerProfile.model,
+                workflowStage: 'final_review',
+            },
+        ]);
         const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
@@ -1497,7 +1856,8 @@ class TaskGraphExecutionService {
         const artifactPath = this.getReviewFeedbackPlanPath(resolvedChangePath);
         const reportPath = this.getReviewFeedbackPlanReportPath(resolvedChangePath);
         const reviewArtifactRelativePath = this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath);
-        const findings = this.extractReviewFindings(reviewDocument.content);
+        const findingResult = await this.readReviewFindings(reviewArtifactPath, reviewDocument.content);
+        const findings = findingResult.text;
         const userDecisionGate = await this.createReviewFeedbackDecisionGateIfNeeded({
             changePath: resolvedChangePath,
             stage,
@@ -1520,6 +1880,7 @@ class TaskGraphExecutionService {
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
             summary: options.summary?.trim() || null,
             findings,
+            structuredFindings: findingResult.structured,
             recommendedActions: this.buildReviewFeedbackRecommendedActions(stage, decision, action),
             userDecisionGate,
             nextInstruction: userDecisionGate.status === 'created' || userDecisionGate.status === 'pending'
@@ -1537,6 +1898,99 @@ class TaskGraphExecutionService {
             action,
             userDecisionGate,
             nextInstruction: plan.nextInstruction,
+        };
+    }
+    async createRepairWave(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const report = await this.getReport(resolvedChangePath);
+        if (report.decisions.pendingRequired > 0 || report.decisions.blockers.length > 0) {
+            throw new Error('Cannot create a repair wave while required user decisions are pending or damaged.');
+        }
+        const reviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        if (!(await this.fileService.exists(reviewPath))) {
+            throw new Error(`Final review artifact not found at ${reviewPath}`);
+        }
+        const reviewDocument = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+        const decision = normalizeStatus(reviewDocument.data?.decision) || 'PENDING';
+        if (decision !== 'NEEDS_CHANGES') {
+            throw new Error(`Grouped repair requires final review decision NEEDS_CHANGES (current: ${decision}).`);
+        }
+        const findingResult = await this.readReviewFindings(reviewPath, reviewDocument.content);
+        const findings = findingResult.text;
+        if (findings.length === 0) {
+            throw new Error('Grouped repair requires at least one concrete final-review finding.');
+        }
+        const rawGraph = await this.fileService.readJSON(report.graphPath);
+        const rawTasks = Array.isArray(rawGraph.tasks) ? rawGraph.tasks : [];
+        const activeRepair = rawTasks.find((task) => String(task?.id || '').startsWith('repair-final-')
+            && !TERMINAL_TASK_STATUSES.has(normalizeStatus(task?.status) || 'PENDING'));
+        if (activeRepair) {
+            throw new Error(`Grouped repair task ${activeRepair.id} is already active.`);
+        }
+        if (report.completedTasks.length !== report.taskCount || report.taskCount === 0) {
+            throw new Error('Grouped repair can only be created after the current task graph is completed.');
+        }
+        const priorTasks = this.flattenReportTasks(report);
+        const targetFiles = Array.from(new Set(priorTasks.flatMap(task => task.targetFiles)));
+        const verificationCommands = Array.from(new Set(priorTasks.flatMap(task => task.verificationCommands)));
+        const documentationUpdates = Array.from(new Set(priorTasks.flatMap(task => task.documentationUpdates)));
+        if (targetFiles.length === 0 || verificationCommands.length === 0) {
+            throw new Error('Grouped repair requires existing target files and verification commands in the task graph.');
+        }
+        const waveNumber = rawTasks.filter((task) => String(task?.id || '').startsWith('repair-final-')).length + 1;
+        const taskId = `repair-final-${waveNumber}`;
+        const now = new Date().toISOString();
+        const waveId = `repair-wave-${this.toFileSafeTimestamp(now)}-${waveNumber}`;
+        rawTasks.push({
+            id: taskId,
+            title: `Resolve grouped final-review findings (wave ${waveNumber})`,
+            status: 'PENDING',
+            depends_on: priorTasks.map(task => task.id),
+            parallelizable: false,
+            conflicts_with: [],
+            target_files: targetFiles,
+            verification_commands: verificationCommands,
+            expected_result: 'All final-review findings are resolved together, covering verification passes once, and the change is ready for one final re-review.',
+            context: `Resolve the complete grouped findings list from artifacts/reviews/${constants_1.FILE_NAMES.FINAL_REVIEW}:\n${findings.map(finding => `- ${finding}`).join('\n')}`,
+            interfaces: ['Consumes the combined final-review findings as one repair boundary.', 'Produces one implementation result for one task review and one final re-review.'],
+            documentation_updates: documentationUpdates,
+            worker_role: 'repair_implementer',
+            review: { decision: 'PENDING', review_artifact_path: null },
+        });
+        rawGraph.tasks = rawTasks;
+        rawGraph.status = 'pending';
+        await this.fileService.writeJSON(report.graphPath, rawGraph);
+        const recordPath = ['artifacts', 'agents', REPAIR_WAVES_DIR, `${waveId}.json`].join('/');
+        const packetPath = ['artifacts', 'agents', REPAIR_WAVES_DIR, `${waveId}.md`].join('/');
+        const record = {
+            version: '1.0',
+            id: waveId,
+            feature: report.feature,
+            createdAt: now,
+            status: 'ready',
+            sourceReviewPath: this.toChangeRelativePath(resolvedChangePath, reviewPath),
+            sourceDecision: decision,
+            findings,
+            structuredFindings: findingResult.structured,
+            taskId,
+            targetFiles,
+            verificationCommands,
+            documentationUpdates,
+            recordPath,
+            packetPath,
+            dispatchIds: [],
+        };
+        await this.fileService.writeJSON(path.join(resolvedChangePath, recordPath), record);
+        await this.writeLocalizedReportFile(resolvedChangePath, path.join(resolvedChangePath, packetPath), this.buildRepairWavePacket(record));
+        const dispatch = await this.dispatch(resolvedChangePath, { taskId });
+        record.status = 'dispatched';
+        record.dispatchIds = dispatch.dispatches.map(item => item.id);
+        await this.fileService.writeJSON(path.join(resolvedChangePath, recordPath), record);
+        return {
+            changePath: resolvedChangePath,
+            record,
+            dispatch,
+            nextInstruction: `One grouped repair task (${taskId}) was created and dispatched. Use its launch plan, complete it once, run one combined task review, then run one final review.`,
         };
     }
     async recordUserDecision(changePath, options) {
@@ -1619,6 +2073,7 @@ class TaskGraphExecutionService {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const feature = await this.readFeatureName(resolvedChangePath);
+        await this.ingestReviewUsageSidecars(resolvedChangePath, feature);
         const designReviewPath = this.getDocumentReviewArtifactPath(resolvedChangePath, 'design');
         const planReviewPath = this.getDocumentReviewArtifactPath(resolvedChangePath, 'plan');
         const designDecision = await this.readReviewDecision(designReviewPath);
@@ -1634,6 +2089,7 @@ class TaskGraphExecutionService {
             throw new Error(`Implementation plan review is already ${planDecision}. Continue with task graph or worker dispatch.`);
         }
         const target = this.getDocumentReviewTarget(stage);
+        const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
         const documentStatus = await this.readBootstrapDocumentStatus(resolvedChangePath, target.documentFile);
         if (!documentStatus.exists || documentStatus.readiness === 'missing' || documentStatus.readiness === 'empty') {
             throw new Error(`Cannot dispatch ${target.label} until ${target.documentFile} exists and is non-empty.`);
@@ -1645,6 +2101,14 @@ class TaskGraphExecutionService {
         const now = new Date().toISOString();
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
         const warnings = [...projectSession.warnings];
+        const riskSignals = await this.assessDocumentReviewRisk(resolvedChangePath, stage);
+        const mode = executionPolicy.documentReviewPolicy === 'adaptive' && riskSignals.length === 0
+            ? 'inline_preflight'
+            : 'specialist';
+        const workerProfile = buildReviewerWorkerProfile(target.reviewerRole, executionPolicy.modelProfiles);
+        if (mode === 'specialist' && workerProfile.modelSelectionSource === 'harness-default') {
+            warnings.push(`Document review model profile ${workerProfile.modelProfile} has no configured model; the harness default will be used.`);
+        }
         const reviewId = `doc-review-${this.toFileSafeTimestamp(now)}-${stage}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
         const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
@@ -1653,24 +2117,67 @@ class TaskGraphExecutionService {
             stage,
             reviewerRole: target.reviewerRole,
             projectSession,
-            status: 'DISPATCHED',
+            status: mode === 'inline_preflight' ? 'COMPLETED_INLINE' : 'DISPATCHED',
             assignedAt: now,
             packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             documentPath: this.toChangeRelativePath(resolvedChangePath, path.join(resolvedChangePath, target.documentFile)),
             reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath),
             documentReadiness: documentStatus.readiness,
+            mode,
+            policy: executionPolicy.documentReviewPolicy,
+            riskSignals,
+            workerProfile,
         };
+        if (mode === 'inline_preflight') {
+            const reviewDocument = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            reviewDocument.data = {
+                ...(reviewDocument.data || {}),
+                status: 'reviewed',
+                decision: 'APPROVED',
+                review_policy: executionPolicy.documentReviewPolicy,
+                review_mode: mode,
+                reviewed_at: now,
+            };
+            const inlineFinding = [
+                reviewDocument.content.trimEnd(),
+                '',
+                '## Inline Preflight',
+                '',
+                '- Deterministic readiness checks passed.',
+                '- No configured high-risk document signals were detected.',
+                '- This approval used the adaptive low-risk path; any later API, security, migration, data, architecture, or scope signal must trigger specialist review.',
+                '',
+            ].join('\n');
+            await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(inlineFinding, reviewDocument.data));
+        }
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
+        await this.recordExecutionMetric(resolvedChangePath, feature, [{
+                kind: 'review_packet',
+                id: reviewId,
+                taskId: null,
+                path: record.packetPath,
+                recordedAt: now,
+                durationMs: null,
+                capabilityTier: record.workerProfile.capabilityTier,
+                modelProfile: record.workerProfile.modelProfile,
+                model: record.workerProfile.model,
+                workflowStage: 'document_review',
+                usageExpected: mode === 'specialist',
+            }]);
         return {
             changePath: resolvedChangePath,
             dispatch: record,
             projectSession,
             warnings,
-            nextInstruction: stage === 'design'
-                ? 'Hand the design review packet to a reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
-                : 'Hand the implementation plan review packet to a reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.',
+            nextInstruction: mode === 'inline_preflight'
+                ? stage === 'design'
+                    ? 'Adaptive design preflight approved the low-risk document. Run ospec execute doc-review [change-path] --stage plan.'
+                    : 'Adaptive implementation plan preflight approved the low-risk document. Derive or refresh artifacts/agents/task-graph.json.'
+                : stage === 'design'
+                    ? 'Hand the design review packet to a reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
+                    : 'Hand the implementation plan review packet to a reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.',
         };
     }
     async recordVerification(changePath, options) {
@@ -3414,6 +3921,77 @@ class TaskGraphExecutionService {
             reviewerRole: 'implementation_plan_reviewer',
         };
     }
+    async assessDocumentReviewRisk(changePath, stage) {
+        const target = this.getDocumentReviewTarget(stage);
+        const files = [constants_1.FILE_NAMES.PROPOSAL, target.documentFile];
+        if (stage === 'plan') {
+            files.splice(1, 0, constants_1.FILE_NAMES.DESIGN);
+        }
+        const signals = new Set();
+        const riskPatterns = [
+            [/\b(api|public contract|breaking|compatibility)\b|接口|破坏性|兼容性|公開api|互換性|破壊的|واجهة برمجة|عقد عام|تغيير جذري|توافق/iu, 'public API or compatibility'],
+            [/\b(security|auth|authorization|authentication|permission|secret|payment)\b|安全|鉴权|认证|权限|密钥|支付|セキュリティ|認証|認可|権限|秘密|決済|أمان|مصادقة|تفويض|صلاحية|سر|دفع/iu, 'security or authorization'],
+            [/\b(migration|schema|database|storage|data model|backfill)\b|迁移|数据库|数据模型|回填|移行|スキーマ|データベース|データモデル|バックフィル|ترحيل|مخطط|قاعدة بيانات|نموذج بيانات|تعبئة لاحقة/iu, 'data or migration'],
+            [/\b(architecture|cross[- ]module|protocol|concurrency|parallel|transaction)\b|架构|跨模块|协议|并发|事务|アーキテクチャ|モジュール横断|プロトコル|並行|トランザクション|معمارية|عبر الوحدات|بروتوكول|تزامن|معاملة/iu, 'architecture or concurrency'],
+            [/\b(external|third[- ]party|integration|plugin|provider)\b|外部|第三方|集成|插件|供应商|外部|サードパーティ|統合|プラグイン|プロバイダー|خارجي|طرف ثالث|تكامل|إضافة|مزود/iu, 'external integration'],
+            [/\b(high[- ]risk|irreversible|destructive|scope change)\b|高风险|不可逆|破坏性操作|范围变更|高リスク|不可逆|破壊的操作|スコープ変更|مخاطر عالية|غير قابل للعكس|مدمر|تغيير النطاق/iu, 'explicit high-risk scope'],
+        ];
+        let targetRiskDeclared = false;
+        for (const fileName of files) {
+            const filePath = path.join(changePath, fileName);
+            if (!(await this.fileService.exists(filePath))) {
+                signals.add(`missing required context: ${fileName}`);
+                continue;
+            }
+            const content = await this.fileService.readFile(filePath);
+            if (Buffer.byteLength(content, 'utf8') > 30000) {
+                signals.add(`large review document: ${fileName}`);
+            }
+            let document;
+            try {
+                document = (0, helpers_1.parseFrontmatterDocument)(content);
+            }
+            catch {
+                signals.add(`unparseable review context: ${fileName}`);
+                continue;
+            }
+            const data = (document.data || {});
+            const riskLevel = String(data.risk_level || data.review_risk || '').trim().toLowerCase();
+            if (fileName === target.documentFile) {
+                targetRiskDeclared = ['low', 'none'].includes(riskLevel);
+                if (!targetRiskDeclared) {
+                    signals.add(riskLevel
+                        ? `target document risk is not explicitly low: ${riskLevel}`
+                        : `missing structured low-risk declaration: ${fileName}`);
+                }
+            }
+            if (['medium', 'high', 'critical'].includes(riskLevel)) {
+                signals.add(`declared ${riskLevel} review risk`);
+            }
+            const structuredSignals = [
+                ...stringArray(data.risk_flags),
+                ...stringArray(data.flags),
+                ...stringArray(data.affects),
+                ...stringArray(data.boundaries),
+                ...stringArray(data.api_changes),
+                ...stringArray(data.data_changes),
+            ].join(' ');
+            const searchable = `${structuredSignals}\n${document.content}`;
+            for (const [pattern, label] of riskPatterns) {
+                if (pattern.test(searchable)) {
+                    signals.add(label);
+                }
+            }
+            const affects = Array.isArray(data.affects) ? data.affects : [];
+            if (affects.length >= 4) {
+                signals.add('broad affected surface');
+            }
+        }
+        if (!targetRiskDeclared) {
+            signals.add('adaptive review requires an explicit low-risk declaration');
+        }
+        return [...signals];
+    }
     getDocumentReviewArtifactPath(changePath, stage) {
         return path.join(changePath, 'artifacts', 'reviews', this.getDocumentReviewTarget(stage).reviewArtifactFile);
     }
@@ -3499,6 +4077,7 @@ class TaskGraphExecutionService {
             `- Title: ${task.title}`,
             `- Target files: ${task.targetFiles.length > 0 ? task.targetFiles.join(', ') : 'none'}`,
             `- Expected result: ${task.expectedResult || 'none'}`,
+            `- Documentation updates: ${task.documentationUpdates.join(', ') || 'none'}`,
             '',
             '## Spec Compliance',
             '',
@@ -3607,6 +4186,405 @@ class TaskGraphExecutionService {
         const uncheckedItems = verification.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
         return checklistItems.length > 0 && uncheckedItems.length === 0;
     }
+    async writeTaskReviewPackage(input) {
+        const packagePath = path.join(input.changePath, 'artifacts', 'agents', REVIEW_PACKAGES_DIR, `${input.reviewId}.diff`);
+        const relativePackagePath = this.toChangeRelativePath(input.changePath, packagePath);
+        const targetFiles = input.task.targetFiles
+            .map(filePath => String(filePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, ''))
+            .filter(filePath => filePath.length > 0 && !path.isAbsolute(filePath) && filePath !== '..' && !filePath.startsWith('../'));
+        const targetPathKeys = targetFiles.map(normalizeTaskPath);
+        const statusResult = this.runGit(input.projectRoot, [
+            'status',
+            '--porcelain=v2',
+            '--branch',
+            '--untracked-files=all',
+            '--no-ahead-behind',
+        ]);
+        const statusSnapshot = statusResult.ok ? parseGitDispatchSnapshot(statusResult.stdout) : null;
+        const statusEntries = statusSnapshot
+            ? parseGitStatusV2Entries(statusResult.stdout)
+            : this.parseGitStatusEntries(this.readGitOutput(input.projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '');
+        const inScopeStatus = statusEntries.filter(entry => {
+            const fileKey = normalizeTaskPath(entry.file);
+            return targetPathKeys.some(target => taskPathsOverlap(target, fileKey));
+        });
+        const outOfScopeStatus = statusEntries.filter(entry => !inScopeStatus.includes(entry));
+        const requestedBase = input.dispatch?.gitBaseCommit || null;
+        const baseValid = requestedBase
+            ? this.runGit(input.projectRoot, ['rev-parse', '--verify', `${requestedBase}^{commit}`]).ok
+            : false;
+        const baseCommit = baseValid ? requestedBase : null;
+        const headCommit = statusSnapshot?.headCommit || this.readGitOutput(input.projectRoot, ['rev-parse', 'HEAD']);
+        const diffBase = baseCommit || headCommit;
+        const log = baseCommit && headCommit && baseCommit !== headCommit
+            ? this.runGit(input.projectRoot, ['log', '--oneline', `${baseCommit}..${headCommit}`])
+            : null;
+        const stat = diffBase && targetFiles.length > 0
+            ? this.runGit(input.projectRoot, ['diff', '--stat', diffBase, '--', ...targetFiles])
+            : null;
+        const diff = diffBase && targetFiles.length > 0
+            ? this.runGit(input.projectRoot, ['diff', '--no-ext-diff', '--unified=10', diffBase, '--', ...targetFiles])
+            : null;
+        const lines = [
+            `# Task Review Package: ${input.task.id}`,
+            '',
+            `- Review ID: ${input.reviewId}`,
+            `- Dispatch ID: ${input.dispatch?.id || 'not recorded'}`,
+            `- Base commit: ${baseCommit || 'not available'}`,
+            `- Current HEAD: ${headCommit || 'not available'}`,
+            `- Workspace dirty at dispatch: ${input.dispatch?.workspaceDirtyAtDispatch === true ? 'yes' : input.dispatch?.workspaceDirtyAtDispatch === false ? 'no' : 'unknown'}`,
+            `- Target files: ${targetFiles.join(', ') || 'none'}`,
+            '',
+            '## Attribution Warning',
+            '',
+            input.dispatch?.workspaceDirtyAtDispatch === true
+                ? 'The workspace was already dirty at dispatch. This package shows the current net target-file diff from the recorded commit, but cannot attribute every line exclusively to this task.'
+                : baseCommit
+                    ? 'The package uses the dispatch commit as its baseline and scopes the diff to this task\'s target files.'
+                    : 'No valid dispatch commit was available. Treat this package as scoped current-workspace evidence, not a complete task attribution record.',
+            '',
+            '## Commits',
+            '',
+            log?.ok && log.stdout.trim() ? log.stdout.trimEnd() : '(none or unavailable)',
+            '',
+            '## In-Scope Workspace Status',
+            '',
+            ...this.renderGitStatusEntries(inScopeStatus),
+            '',
+            '## Out-of-Scope Workspace Status',
+            '',
+            ...this.renderGitStatusEntries(outOfScopeStatus),
+            '',
+            '## Files Changed',
+            '',
+            stat?.ok && stat.stdout.trim() ? stat.stdout.trimEnd() : '(none or unavailable)',
+            '',
+            '## Diff',
+            '',
+            diff?.ok && diff.stdout.trim() ? diff.stdout.trimEnd() : '(none or unavailable)',
+        ];
+        const untrackedEntries = inScopeStatus.filter(entry => entry.code === '??');
+        if (untrackedEntries.length > 0) {
+            lines.push('', '## Untracked Target Files', '');
+            for (const entry of untrackedEntries) {
+                const relativePath = entry.file.replace(/\\/g, '/');
+                const absolutePath = path.resolve(input.projectRoot, ...relativePath.split('/'));
+                const relativeToRoot = path.relative(input.projectRoot, absolutePath);
+                if (relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
+                    lines.push(`### ${relativePath}`, '', '(unsafe path omitted)', '');
+                    continue;
+                }
+                try {
+                    const content = await fs_1.promises.readFile(absolutePath);
+                    if (content.length > 256 * 1024) {
+                        lines.push(`### ${relativePath}`, '', `(content omitted: ${content.length} bytes exceeds 262144-byte review limit)`, '');
+                    }
+                    else if (content.includes(0)) {
+                        lines.push(`### ${relativePath}`, '', `(binary content omitted: ${content.length} bytes)`, '');
+                    }
+                    else {
+                        lines.push(`### ${relativePath}`, '', '```text', content.toString('utf8').trimEnd(), '```', '');
+                    }
+                }
+                catch (error) {
+                    lines.push(`### ${relativePath}`, '', `(could not read file: ${error?.message || error})`, '');
+                }
+            }
+        }
+        await this.fileService.writeFile(packagePath, `${lines.join('\n').trimEnd()}\n`);
+        return relativePackagePath;
+    }
+    renderGitStatusEntries(entries, limit = 100) {
+        if (entries.length === 0)
+            return ['- None'];
+        const rendered = entries.slice(0, limit).map(entry => `- ${entry.code} ${entry.file}`);
+        if (entries.length > limit)
+            rendered.push(`- ... ${entries.length - limit} additional entries omitted`);
+        return rendered;
+    }
+    async ingestReviewUsageSidecars(changePath, feature) {
+        const descriptors = [
+            { directory: REVIEW_DISPATCHES_DIR, documentReview: false },
+            { directory: DOCUMENT_REVIEW_DISPATCHES_DIR, documentReview: true },
+        ];
+        const metrics = [];
+        const metricsPath = path.join(changePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
+        const existingUsage = new Map();
+        if (await this.fileService.exists(metricsPath)) {
+            try {
+                const artifact = await this.fileService.readJSON(metricsPath);
+                for (const entry of Array.isArray(artifact?.entries) ? artifact.entries : []) {
+                    if (entry.kind === 'usage')
+                        existingUsage.set(entry.id, entry.recordedAt);
+                }
+            }
+            catch {
+                existingUsage.clear();
+            }
+        }
+        for (const descriptor of descriptors) {
+            const directoryPath = path.join(changePath, 'artifacts', 'agents', descriptor.directory);
+            if (!(await this.fileService.exists(directoryPath)))
+                continue;
+            const entries = (await fs_1.promises.readdir(directoryPath, { withFileTypes: true }))
+                .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+                .sort((left, right) => left.name.localeCompare(right.name));
+            for (const entry of entries) {
+                let record;
+                try {
+                    record = await this.fileService.readJSON(path.join(directoryPath, entry.name));
+                }
+                catch {
+                    continue;
+                }
+                const id = String(record?.id || '').trim();
+                if (!id)
+                    continue;
+                const usagePath = path.join(changePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${id}.json`);
+                if (!(await this.fileService.exists(usagePath)))
+                    continue;
+                const recordedAt = (await fs_1.promises.stat(usagePath)).mtime.toISOString();
+                if (existingUsage.get(id) === recordedAt)
+                    continue;
+                const usage = await this.readExecutionUsageFile(usagePath);
+                metrics.push({
+                    kind: 'usage',
+                    id,
+                    taskId: typeof record.taskId === 'string' ? record.taskId : null,
+                    path: null,
+                    recordedAt,
+                    durationMs: usage.elapsedMs,
+                    usage,
+                    capabilityTier: record.workerProfile?.capabilityTier || 'unknown',
+                    modelProfile: record.workerProfile?.modelProfile || null,
+                    model: record.workerProfile?.model || null,
+                    workflowStage: descriptor.documentReview
+                        ? 'document_review'
+                        : record.taskId
+                            ? 'task_review'
+                            : 'final_review',
+                });
+            }
+        }
+        if (metrics.length > 0)
+            await this.recordExecutionMetric(changePath, feature, metrics);
+    }
+    async readExecutionUsageFile(usageFile) {
+        const resolvedPath = path.resolve(String(usageFile || '').trim());
+        if (!usageFile || !(await this.fileService.exists(resolvedPath))) {
+            throw new Error(`Usage file not found: ${resolvedPath}`);
+        }
+        let raw;
+        try {
+            raw = await this.fileService.readJSON(resolvedPath);
+        }
+        catch {
+            throw new Error(`Usage file must contain valid JSON: ${resolvedPath}`);
+        }
+        const usage = raw?.usage && typeof raw.usage === 'object'
+            ? { ...raw, ...raw.usage }
+            : raw;
+        if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
+            throw new Error('Usage file must contain an object or a top-level usage object.');
+        }
+        const readMetric = (names, nested) => {
+            for (const name of names) {
+                if (Object.prototype.hasOwnProperty.call(usage, name)) {
+                    const value = Number(usage[name]);
+                    if (!Number.isFinite(value) || value < 0) {
+                        throw new Error(`Usage metric ${name} must be a non-negative number.`);
+                    }
+                    return { value: Math.floor(value), found: true };
+                }
+            }
+            if (nested !== undefined) {
+                const value = Number(nested);
+                if (!Number.isFinite(value) || value < 0) {
+                    throw new Error('Nested usage metric must be a non-negative number.');
+                }
+                return { value: Math.floor(value), found: true };
+            }
+            return { value: null, found: false };
+        };
+        const input = readMetric(['input_tokens', 'inputTokens', 'prompt_tokens', 'promptTokens']);
+        const cached = readMetric(['cached_input_tokens', 'cachedInputTokens', 'cache_read_input_tokens'], usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens);
+        const output = readMetric(['output_tokens', 'outputTokens', 'completion_tokens', 'completionTokens']);
+        const reasoning = readMetric(['reasoning_tokens', 'reasoningTokens'], usage.output_tokens_details?.reasoning_tokens ?? usage.completion_tokens_details?.reasoning_tokens);
+        const toolCalls = readMetric(['tool_calls', 'toolCalls']);
+        const turns = readMetric(['turns', 'turn_count', 'turnCount']);
+        const elapsed = readMetric(['elapsed_ms', 'elapsedMs', 'duration_ms', 'durationMs']);
+        if (![input, cached, output, reasoning, toolCalls, turns, elapsed].some(metric => metric.found)) {
+            throw new Error('Usage file does not contain any supported usage metrics.');
+        }
+        const observedFields = [
+            input.found ? 'inputTokens' : null,
+            cached.found ? 'cachedInputTokens' : null,
+            output.found ? 'outputTokens' : null,
+            reasoning.found ? 'reasoningTokens' : null,
+            toolCalls.found ? 'toolCalls' : null,
+            turns.found ? 'turns' : null,
+            elapsed.found ? 'elapsedMs' : null,
+        ].filter((field) => field !== null);
+        return {
+            inputTokens: input.value,
+            cachedInputTokens: cached.value,
+            outputTokens: output.value,
+            reasoningTokens: reasoning.value,
+            toolCalls: toolCalls.value,
+            turns: turns.value,
+            elapsedMs: elapsed.value,
+            observedFields,
+            source: String(raw?.source || raw?.provider || usage?.source || usage?.provider || 'usage-file'),
+            coverage: observedFields.length === 7 ? 'complete' : 'partial',
+        };
+    }
+    async captureDocumentationSnapshots(projectRoot, documentPaths) {
+        const snapshots = [];
+        for (const rawPath of documentPaths) {
+            const documentPath = String(rawPath || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+            if (!documentPath)
+                continue;
+            const absolutePath = path.resolve(projectRoot, ...documentPath.split('/'));
+            const relative = path.relative(projectRoot, absolutePath);
+            if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+                snapshots.push({ path: documentPath, exists: false, contentHash: null });
+                continue;
+            }
+            if (!(await this.fileService.exists(absolutePath))) {
+                snapshots.push({ path: documentPath, exists: false, contentHash: null });
+                continue;
+            }
+            const content = await this.fileService.readFile(absolutePath);
+            snapshots.push({
+                path: documentPath,
+                exists: true,
+                contentHash: this.hashMeaningfulDocumentation(content),
+            });
+        }
+        return snapshots;
+    }
+    async captureDocumentationEvidence(projectRoot, baseline) {
+        const current = await this.captureDocumentationSnapshots(projectRoot, baseline.map(item => item.path));
+        const currentByPath = new Map(current.map(item => [item.path.toLowerCase(), item]));
+        return baseline.map(item => {
+            const completed = currentByPath.get(item.path.toLowerCase()) || {
+                path: item.path,
+                exists: false,
+                contentHash: null,
+            };
+            return {
+                ...completed,
+                baselineExists: item.exists,
+                baselineContentHash: item.contentHash,
+                meaningfullyChanged: completed.exists
+                    && (!item.exists || completed.contentHash !== item.contentHash),
+            };
+        });
+    }
+    hashMeaningfulDocumentation(content) {
+        const normalized = String(content || '')
+            .replace(/\r\n?/g, '\n')
+            .split('\n')
+            .map(line => line.trimEnd())
+            .join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+        return (0, crypto_1.createHash)('sha256').update(normalized, 'utf8').digest('hex');
+    }
+    async recordExecutionMetric(changePath, feature, entries) {
+        if (entries.length === 0)
+            return;
+        const metricsPath = path.join(changePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
+        const nextEntries = await Promise.all(entries.map(async (entry) => {
+            let bytes = 0;
+            if (entry.path) {
+                try {
+                    bytes = (await fs_1.promises.stat(path.join(changePath, entry.path))).size;
+                }
+                catch {
+                    bytes = 0;
+                }
+            }
+            return { ...entry, bytes };
+        }));
+        const updatedAt = nextEntries
+            .map(entry => entry.recordedAt)
+            .sort((left, right) => left.localeCompare(right))
+            .at(-1);
+        let artifact = {
+            version: '1.1',
+            feature,
+            updatedAt,
+            totalBytes: 0,
+            totalUsage: emptyExecutionUsage(),
+            usageByCapabilityTier: {},
+            usageByStage: {},
+            usageByModelProfile: {},
+            usageCoverage: { expectedRuns: 0, recordedRuns: 0, completeRuns: 0, partialRuns: 0, missingRuns: 0 },
+            entries: [],
+        };
+        if (await this.fileService.exists(metricsPath)) {
+            try {
+                const existing = await this.fileService.readJSON(metricsPath);
+                artifact = {
+                    version: '1.1',
+                    feature: typeof existing.feature === 'string' ? existing.feature : feature,
+                    updatedAt,
+                    totalBytes: 0,
+                    totalUsage: emptyExecutionUsage(),
+                    usageByCapabilityTier: {},
+                    usageByStage: {},
+                    usageByModelProfile: {},
+                    usageCoverage: { expectedRuns: 0, recordedRuns: 0, completeRuns: 0, partialRuns: 0, missingRuns: 0 },
+                    entries: Array.isArray(existing.entries) ? existing.entries : [],
+                };
+            }
+            catch {
+                // Replace a damaged metrics file; metrics must not block execution.
+            }
+        }
+        for (const nextEntry of nextEntries) {
+            artifact.entries = artifact.entries
+                .filter(item => !(item.kind === nextEntry.kind && item.id === nextEntry.id))
+                .concat(nextEntry);
+        }
+        artifact.entries.sort((left, right) => left.recordedAt.localeCompare(right.recordedAt));
+        artifact.totalBytes = artifact.entries.reduce((total, item) => total + item.bytes, 0);
+        artifact.totalUsage = emptyExecutionUsage();
+        artifact.usageByCapabilityTier = {};
+        artifact.usageByStage = {};
+        artifact.usageByModelProfile = {};
+        for (const entry of artifact.entries) {
+            if (!entry.usage)
+                continue;
+            artifact.totalUsage = addExecutionUsage(artifact.totalUsage, entry.usage);
+            const capability = entry.capabilityTier || 'unknown';
+            artifact.usageByCapabilityTier[capability] = addExecutionUsage(artifact.usageByCapabilityTier[capability] || emptyExecutionUsage(), entry.usage);
+            const stage = entry.workflowStage || 'implementation';
+            artifact.usageByStage[stage] = addExecutionUsage(artifact.usageByStage[stage] || emptyExecutionUsage(), entry.usage);
+            const modelProfile = entry.modelProfile || 'unknown';
+            artifact.usageByModelProfile[modelProfile] = addExecutionUsage(artifact.usageByModelProfile[modelProfile] || emptyExecutionUsage(), entry.usage);
+        }
+        const expectedIds = new Set(artifact.entries
+            .filter(entry => entry.kind === 'completion'
+            || entry.kind === 'review_run'
+            || (entry.kind === 'review_packet' && entry.usageExpected !== false))
+            .map(entry => entry.id));
+        const usageEntries = artifact.entries.filter(entry => entry.kind === 'usage' && entry.usage);
+        const recordedIds = new Set(usageEntries.map(entry => entry.id));
+        artifact.usageCoverage = {
+            expectedRuns: expectedIds.size,
+            recordedRuns: [...expectedIds].filter(id => recordedIds.has(id)).length,
+            completeRuns: usageEntries.filter(entry => entry.usage?.coverage === 'complete').length,
+            partialRuns: usageEntries.filter(entry => entry.usage?.coverage === 'partial').length,
+            missingRuns: [...expectedIds].filter(id => !recordedIds.has(id)).length,
+        };
+        artifact.updatedAt = artifact.entries
+            .map(entry => entry.recordedAt)
+            .sort((left, right) => left.localeCompare(right))
+            .at(-1) || updatedAt;
+        await this.fileService.writeJSON(metricsPath, artifact);
+    }
     async readSession(sessionPath, feature) {
         if (!(await this.fileService.exists(sessionPath))) {
             return {
@@ -3623,6 +4601,9 @@ class TaskGraphExecutionService {
             feature: typeof session.feature === 'string' && session.feature.trim() ? session.feature : feature,
             status: this.isSessionStatus(session.status) ? session.status : 'running',
             updatedAt: typeof session.updatedAt === 'string' ? session.updatedAt : new Date().toISOString(),
+            projectSession: session.projectSession && typeof session.projectSession === 'object'
+                ? session.projectSession
+                : undefined,
             dispatches: Array.isArray(session.dispatches)
                 ? session.dispatches.filter(this.isDispatchRecord)
                 : [],
@@ -3647,6 +4628,8 @@ class TaskGraphExecutionService {
             taskId: input.task.id,
             taskTitle: input.task.title,
             status: input.status,
+            judgmentRequired: true,
+            escalationReason: input.status === 'NEEDS_CONTEXT' ? 'missing_context' : 'external_blocker',
             createdAt: input.createdAt,
             workerRole: input.task.workerRole,
             workerProfile: input.task.workerProfile,
@@ -4055,6 +5038,41 @@ class TaskGraphExecutionService {
         };
         return sentences[line] || line;
     }
+    async readWorkflowExecutionPolicy(startPath) {
+        const projectRoot = await this.findProjectRootForOptionalSession(startPath);
+        const configPath = path.join(projectRoot, constants_1.FILE_NAMES.SKILLRC);
+        let config = {};
+        try {
+            config = await this.fileService.readJSON(configPath);
+        }
+        catch {
+            config = {};
+        }
+        const rawProfiles = config?.workflow?.model_profiles;
+        const modelProfiles = {};
+        if (rawProfiles && typeof rawProfiles === 'object' && !Array.isArray(rawProfiles)) {
+            for (const profile of ['mechanical', 'standard', 'strong_reasoning', 'review', 'final_review']) {
+                const rawProfile = rawProfiles[profile];
+                if (!rawProfile || typeof rawProfile !== 'object' || Array.isArray(rawProfile)) {
+                    continue;
+                }
+                const targets = rawProfile.targets && typeof rawProfile.targets === 'object' && !Array.isArray(rawProfile.targets)
+                    ? Object.fromEntries(Object.entries(rawProfile.targets)
+                        .map(([target, model]) => [String(target).trim(), String(model || '').trim()])
+                        .filter(([target, model]) => target.length > 0 && model.length > 0))
+                    : {};
+                const defaultModel = typeof rawProfile.default === 'string' ? rawProfile.default.trim() : '';
+                modelProfiles[profile] = {
+                    ...(defaultModel ? { default: defaultModel } : {}),
+                    ...(Object.keys(targets).length > 0 ? { targets } : {}),
+                };
+            }
+        }
+        return {
+            documentReviewPolicy: config?.workflow?.document_review_policy === 'adaptive' ? 'adaptive' : 'always',
+            modelProfiles,
+        };
+    }
     async findProjectRoot(startPath) {
         let currentPath = path.resolve(startPath);
         while (true) {
@@ -4198,6 +5216,10 @@ class TaskGraphExecutionService {
                 cacheKey: null,
                 activeChangeCount: 0,
                 queuedChangeCount: 0,
+                knowledgeIndexPath: null,
+                featureIndexPath: null,
+                indexedDocumentCount: 0,
+                archivedChangeCount: 0,
                 recommendedCommands: [],
                 nextInstruction: null,
                 warnings: ['Project session brief is missing; run ospec session before relying on project re-entry context.'],
@@ -4229,6 +5251,10 @@ class TaskGraphExecutionService {
                     : null,
                 activeChangeCount: Array.isArray(artifact?.activeChanges) ? artifact.activeChanges.length : 0,
                 queuedChangeCount: Array.isArray(artifact?.queuedChanges) ? artifact.queuedChanges.length : 0,
+                knowledgeIndexPath: typeof artifact?.knowledge?.indexPath === 'string' ? artifact.knowledge.indexPath : null,
+                featureIndexPath: typeof artifact?.knowledge?.featureIndexPath === 'string' ? artifact.knowledge.featureIndexPath : null,
+                indexedDocumentCount: Number.isFinite(artifact?.knowledge?.documentCount) ? artifact.knowledge.documentCount : 0,
+                archivedChangeCount: Number.isFinite(artifact?.knowledge?.archivedChangeCount) ? artifact.knowledge.archivedChangeCount : 0,
                 recommendedCommands,
                 nextInstruction: typeof artifact?.nextInstruction === 'string' && artifact.nextInstruction.trim().length > 0
                     ? artifact.nextInstruction.trim()
@@ -4246,6 +5272,10 @@ class TaskGraphExecutionService {
                 cacheKey: null,
                 activeChangeCount: 0,
                 queuedChangeCount: 0,
+                knowledgeIndexPath: null,
+                featureIndexPath: null,
+                indexedDocumentCount: 0,
+                archivedChangeCount: 0,
                 recommendedCommands: [],
                 nextInstruction: null,
                 warnings: [`Project session brief could not be read: ${error?.message || error}`],
@@ -4476,22 +5506,11 @@ class TaskGraphExecutionService {
                 status: 'needs_review',
                 blockers,
                 warnings,
-                nextInstruction: `Run ospec execute review ${this.quoteShellArg(relativeChangePath)} --stage spec and complete artifacts/reviews/spec-compliance.md.`,
-            };
-        }
-        if (!APPROVED_REVIEW_DECISIONS.has(input.execution.reviews.quality)) {
-            return {
-                status: 'needs_review',
-                blockers,
-                warnings,
-                nextInstruction: `Run ospec execute review ${this.quoteShellArg(relativeChangePath)} --stage quality and complete artifacts/reviews/code-quality.md.`,
+                nextInstruction: `Run ospec execute review ${this.quoteShellArg(relativeChangePath)} and complete the single artifacts/reviews/final-review.md decision.`,
             };
         }
         if (input.execution.reviews.spec === 'APPROVED_WITH_CONCERNS') {
-            warnings.push('Spec compliance review was approved with concerns; review the concerns before closeout.');
-        }
-        if (input.execution.reviews.quality === 'APPROVED_WITH_CONCERNS') {
-            warnings.push('Code quality review was approved with concerns; review the concerns before closeout.');
+            warnings.push('Combined final review was approved with concerns; review the concerns before closeout.');
         }
         if (!input.execution.worker.verificationChecklistComplete || input.execution.evidence.verification !== 'passed') {
             if (!input.execution.worker.verificationChecklistComplete) {
@@ -4803,11 +5822,7 @@ class TaskGraphExecutionService {
         }
         if (artifact.execution.taskGraph.completed > 0 && artifact.execution.taskGraph.completed === artifact.execution.taskGraph.taskCount) {
             if (!APPROVED_REVIEW_DECISIONS.has(artifact.execution.reviews.spec)) {
-                add('dispatch final spec review', `ospec execute review ${changeArg} --stage spec`, `Final spec review is ${artifact.execution.reviews.spec}.`);
-                return recommendations;
-            }
-            if (!APPROVED_REVIEW_DECISIONS.has(artifact.execution.reviews.quality)) {
-                add('dispatch final quality review', `ospec execute review ${changeArg} --stage quality`, `Final quality review is ${artifact.execution.reviews.quality}.`);
+                add('dispatch combined final review', `ospec execute review ${changeArg}`, `Combined final review is ${artifact.execution.reviews.spec}.`);
                 return recommendations;
             }
         }
@@ -5175,6 +6190,12 @@ class TaskGraphExecutionService {
             changePath: input.changePath,
             projectRoot: input.projectRoot,
         });
+        const automaticUsagePath = path.join(input.changePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${input.dispatch.id}.json`);
+        environment.OSPEC_USAGE_FILE = automaticUsagePath;
+        environment.OSPEC_RUN_ID = input.dispatch.id;
+        environment.OSPEC_WORKFLOW_STAGE = input.dispatch.taskId.startsWith('repair-final-') ? 'repair' : 'implementation';
+        if (!input.dryRun)
+            await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
         const command = this.renderHarnessCommandTemplate(input.commandTemplate, {
             taskId: input.dispatch.taskId,
             taskTitle: input.dispatch.taskTitle,
@@ -5534,7 +6555,7 @@ class TaskGraphExecutionService {
                 instructions: [
                     `Dispatch @generalist for task ${task}.`,
                     `Pass the full launch prompt and dispatch packet path: ${packet}.`,
-                    'Use @generalist for implementer, spec reviewer, and code quality reviewer prompts unless a more specific Gemini agent is configured.',
+                    'Use @generalist for implementer and combined code-review prompts unless a more specific Gemini agent is configured.',
                     'Require the subagent to return the OSpec worker status contract.',
                 ],
                 parallelInstructions: [
@@ -5878,7 +6899,9 @@ class TaskGraphExecutionService {
             input.dryRun ? 'Mode: dry run. Inspect context and report readiness; do not edit files.' : 'Mode: implementation. Edit only within the packet scope unless evidence proves the scope is wrong.',
             '',
             'Required behavior:',
-            '- Read proposal.md, design.md, implementation-plan.md, tasks.md, task-graph.json, worker-status.md, and the dispatch packet before editing.',
+            '- Read the dispatch packet first; it is the self-contained task brief.',
+            '- Open only the target files and the indexed project or archive documents named by the packet when more context is needed.',
+            '- Do not reload proposal.md, design.md, implementation-plan.md, tasks.md, or task-graph.json unless the packet identifies a missing decision or contradiction.',
             '- Keep tool-specific plan state secondary to OSpec artifacts.',
             '- Run the packet verification commands or record why they could not run.',
             '- Use NEEDS_CONTEXT or BLOCKED instead of guessing when requirements, dependencies, or environment are missing.',
@@ -6461,8 +7484,7 @@ class TaskGraphExecutionService {
             '## Checklist',
             '',
             '- [ ] Implementer returned `DONE` or `DONE_WITH_CONCERNS`',
-            '- [ ] Spec compliance review completed',
-            '- [ ] Code quality review completed',
+            '- [ ] Combined code review completed (spec compliance + code quality)',
             '- [ ] Controller resolved concerns, context requests, or blockers',
             '- [ ] Final verification commands are recorded in `verification.md`',
             '',
@@ -6471,7 +7493,7 @@ class TaskGraphExecutionService {
     updateWorkerStatusBody(body, input) {
         const bodyWithChecklist = /^\s*-\s+\[(?: |x|X)\]\s+.+$/m.test(body)
             ? body
-            : `${body.trim()}\n\n## Checklist\n\n- [ ] Implementer returned \`DONE\` or \`DONE_WITH_CONCERNS\`\n- [ ] Spec compliance review completed\n- [ ] Code quality review completed\n- [ ] Controller resolved concerns, context requests, or blockers\n- [ ] Final verification commands are recorded in \`verification.md\`\n`;
+            : `${body.trim()}\n\n## Checklist\n\n- [ ] Implementer returned \`DONE\` or \`DONE_WITH_CONCERNS\`\n- [ ] Combined code review completed (spec compliance + code quality)\n- [ ] Controller resolved concerns, context requests, or blockers\n- [ ] Final verification commands are recorded in \`verification.md\`\n`;
         const checklistUpdated = bodyWithChecklist
             .split(/\r?\n/)
             .map(line => this.updateWorkerStatusChecklistLine(line, input))
@@ -6489,6 +7511,9 @@ class TaskGraphExecutionService {
         const unchecked = line.replace(/\[(?: |x|X)\]/, '[ ]');
         if (/implementer/i.test(line)) {
             return TERMINAL_TASK_STATUSES.has(input.implementerStatus) ? checked : unchecked;
+        }
+        if (/combined code review/i.test(line)) {
+            return TERMINAL_TASK_STATUSES.has(input.specReviewerStatus) ? checked : unchecked;
         }
         if (/spec compliance review/i.test(line)) {
             return TERMINAL_TASK_STATUSES.has(input.specReviewerStatus) ? checked : unchecked;
@@ -6536,8 +7561,7 @@ class TaskGraphExecutionService {
             `- Blocked tasks: ${input.report.blockedTasks.length}`,
             `- Invalid tasks: ${input.report.invalidTasks.length}`,
             `- Implementer status: \`${input.implementerStatus}\``,
-            `- Spec reviewer status: \`${input.specReviewerStatus}\``,
-            `- Quality reviewer status: \`${input.qualityReviewerStatus}\``,
+            `- Combined reviewer status: \`${input.specReviewerStatus}\``,
             `- Controller status: \`${input.controllerStatus}\``,
             `- Verification checklist complete: ${input.verificationChecklistComplete ? 'yes' : 'no'}`,
             `- TDD evidence status: \`${input.tddEvidence.status}\``,
@@ -6584,6 +7608,10 @@ class TaskGraphExecutionService {
             `- Cache key: ${projectSession?.cacheKey || 'not recorded'}`,
             `- Active changes: ${projectSession?.activeChangeCount ?? 0}`,
             `- Queued changes: ${projectSession?.queuedChangeCount ?? 0}`,
+            `- Knowledge index: ${projectSession?.knowledgeIndexPath || 'not recorded'}`,
+            `- Feature index: ${projectSession?.featureIndexPath || 'not recorded'}`,
+            `- Indexed docs: ${projectSession?.indexedDocumentCount ?? 0}`,
+            `- Archived features: ${projectSession?.archivedChangeCount ?? 0}`,
             `- Next: ${projectSession?.nextInstruction || 'not recorded'}`,
             '',
             '### Recommended Commands',
@@ -6600,6 +7628,13 @@ class TaskGraphExecutionService {
         const targetToolMapping = profile.targetToolMapping ?? buildWorkerTargetToolMapping(profile.recommendedTarget);
         const rationale = profile.rationale.map(item => `- ${item}`).join('\n');
         const requiredBehavior = profile.requiredBehavior.map(item => `- ${item}`).join('\n');
+        const globalConstraints = report.globalConstraints.length > 0
+            ? report.globalConstraints.map(item => `- ${item}`).join('\n')
+            : '- None recorded.';
+        const interfaces = task.interfaces.length > 0
+            ? task.interfaces.map(item => `- ${item}`).join('\n')
+            : '- None recorded.';
+        const workerReportPath = ['artifacts', 'agents', WORKER_REPORTS_DIR, `${this.toFileSafeId(task.id) || 'task'}.md`].join('/');
         return [
             `# Agent Dispatch: ${task.id}`,
             '',
@@ -6607,12 +7642,16 @@ class TaskGraphExecutionService {
             `- Change: ${report.feature}`,
             `- Worker role: ${task.workerRole}`,
             `- Capability tier: ${profile.capabilityTier}`,
+            `- Model profile: ${profile.modelProfile}`,
+            `- Model: ${profile.model || 'harness default (not explicitly configured)'}`,
+            `- Model selection: ${profile.modelSelectionSource}`,
             `- Recommended target: ${profile.recommendedTarget}`,
             `- Status: ${record.status}`,
             `- Parallelizable: ${task.parallelizable ? 'yes' : 'no'}`,
             `- Target files: ${task.targetFiles.join(', ') || 'none'}`,
             `- Verification commands: ${task.verificationCommands.join(' && ') || 'none'}`,
             `- Expected result: ${task.expectedResult || 'none'}`,
+            `- Usage sidecar: artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json (optional; automatically ingested when present)`,
             '',
             '## Worker Profile',
             '',
@@ -6634,25 +7673,36 @@ class TaskGraphExecutionService {
             `- Read context: ${targetToolMapping.readContext}`,
             `- Edit files: ${targetToolMapping.editFiles}`,
             `- Run commands: ${targetToolMapping.runCommands}`,
-            `- Track plan: ${targetToolMapping.trackPlan}`,
-            `- Dispatch workers: ${targetToolMapping.dispatchWorkers}`,
             `- Record completion: ${targetToolMapping.recordCompletion}`,
             '',
             '## Task',
             '',
             task.title,
             '',
+            task.context || 'No additional task context recorded.',
+            '',
+            '## Global Constraints',
+            '',
+            globalConstraints,
+            '',
+            '## Interfaces',
+            '',
+            interfaces,
+            '',
             '## Required Context',
             '',
-            '- Read `proposal.md`, `design.md`, `implementation-plan.md`, `tasks.md`, and `artifacts/agents/task-graph.json` before editing.',
+            '- Treat this packet as the task brief and start from the target files listed above.',
+            '- Do not load every core change document by default. Open a specific section of `proposal.md`, `design.md`, `implementation-plan.md`, or `tasks.md` only when this packet leaves a named ambiguity.',
+            '- For existing project behavior, consult `SKILL.index.json` and `docs/project/feature-index.md`, then open only the indexed document needed for this task.',
             '- Keep changes scoped to the target files unless implementation proves a listed file is wrong.',
             '- Run the verification command(s) listed above or record why they could not be run.',
             '- Perform an implementer self-review before reporting status; record any concern as `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` instead of hiding it.',
-            '- Expect a separate task-level spec review followed by a task-level quality review before dependent work can proceed.',
+            '- Expect one task-level review covering both spec compliance and code quality before dependent work can proceed.',
             '',
             '## Completion',
             '',
-            `When finished, record the result with:`,
+            `Write detailed implementation and test evidence to \`${workerReportPath}\`; keep the controller summary short. Then record the result with:`,
+            `When the harness exposes authoritative usage, write its normalized counters to \`artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json\`; do not estimate missing token fields.`,
             '',
             '```bash',
             `ospec execute complete ${task.id} [change-path] --status DONE --summary "..."`,
@@ -6671,6 +7721,8 @@ class TaskGraphExecutionService {
             `- Change: ${report.feature}`,
             `- Task: ${record.taskTitle}`,
             `- Status: ${record.status}`,
+            `- Judgment required: ${record.judgmentRequired ? 'yes' : 'no'}`,
+            `- Escalation reason: ${record.escalationReason}`,
             `- Created at: ${record.createdAt}`,
             `- Worker role: ${record.workerRole}`,
             `- Capability tier: ${record.workerProfile?.capabilityTier || 'not recorded'}`,
@@ -6710,10 +7762,16 @@ class TaskGraphExecutionService {
                 : isTaskReview
                     ? '- Check this task implementation against the task packet, accepted design, implementation plan, and expected result.'
                     : '- Check implementation against `proposal.md`, `design.md`, `implementation-plan.md`, and `tasks.md` before deciding whether it satisfies the spec.';
+        const reviewedTask = record.taskId ? this.flattenReportTasks(report).find(task => task.id === record.taskId) : null;
+        const workerReportPath = record.taskId
+            ? ['artifacts', 'agents', WORKER_REPORTS_DIR, `${this.toFileSafeId(record.taskId) || 'task'}.md`].join('/')
+            : null;
         const taskScope = isTaskReview
             ? [
                 `- Task ID: ${record.taskId}`,
                 `- Task title: ${record.taskTitle || 'not recorded'}`,
+                `- Target files: ${reviewedTask?.targetFiles.join(', ') || 'not recorded'}`,
+                `- Worker report: ${workerReportPath}`,
                 '- Review only this task and its direct integration effects; do not turn this into a whole-change final review.',
             ]
             : [
@@ -6727,23 +7785,42 @@ class TaskGraphExecutionService {
             `- Review: ${reviewName}`,
             ...taskScope,
             `- Reviewer role: ${record.reviewerRole}`,
+            `- Model profile: ${record.workerProfile?.modelProfile || 'review'}`,
+            `- Model: ${record.workerProfile?.model || 'harness default (not explicitly configured)'}`,
+            `- Model selection: ${record.workerProfile?.modelSelectionSource || 'harness-default'}`,
             `- Status: ${record.status}`,
             `- Review artifact: ${record.reviewArtifactPath}`,
+            `- Review package: ${record.reviewPackagePath || 'not available'}`,
             `- Task graph: ${this.toChangeRelativePath(report.changePath, report.graphPath)}`,
             '',
             ...this.buildProjectSessionBriefLines(record.projectSession),
             '',
             '## Required Context',
             '',
-            '- Read `proposal.md`, `design.md`, `implementation-plan.md`, `tasks.md`, and `artifacts/agents/task-graph.json`.',
-            '- Read `artifacts/agents/worker-status.md` and recent dispatch records before deciding.',
+            ...(isTaskReview
+                ? [
+                    `- Read the task's dispatch packet under \`artifacts/agents/dispatches/\` and \`${workerReportPath}\` first.`,
+                    `- Read \`${record.reviewPackagePath || 'the generated review package'}\` once for commit metadata, scoped status, stat, and diff evidence. Do not rerun broad Git discovery commands.`,
+                    '- Review the task target files and their direct integration effects. Do not crawl the repository or reload every change document.',
+                    '- Open a core change document only to resolve a concrete requirement that the task packet does not contain; name that gap in the review.',
+                    '- Do not rerun broad test suites already recorded in the worker report. Run only a focused check for a specific unresolved doubt.',
+                ]
+                : [
+                    `- Read \`${record.reviewPackagePath || 'the generated review package'}\` first for whole-change commit, status, stat, and diff evidence.`,
+                    '- Read `proposal.md`, `design.md`, `implementation-plan.md`, `tasks.md`, `artifacts/agents/task-graph.json`, worker reports, and task review artifacts.',
+                    '- This is the one broad whole-change review; check cross-task integration and regression risk here.',
+                ]),
             priorReview,
             '- Do not accept implementer self-review as a substitute for independent review.',
+            '- Review independently and read-only. The controller must not tell you to ignore a finding, pre-downgrade its severity, or skip it because the plan requested the behavior.',
+            '- Cite file and line evidence for each actionable finding.',
+            '- If a requirement depends on unchanged or out-of-scope code that this task package cannot establish, record `CANNOT_VERIFY_FROM_TASK_SCOPE` and hand the judgment to the controller instead of guessing.',
             '',
             '## Review Output',
             '',
             `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
             '- Record concrete findings and evidence in the review artifact body.',
+            `- Also write structured findings to \`${this.getReviewFindingsRelativePath(record.reviewArtifactPath)}\` as \`{"version":"1.0","findings":[{"id":"F-001","severity":"high|medium|low|info","category":"correctness","message":"...","file":"src/file.ts","line":42,"evidence":"...","requirement_refs":["REQ-1"],"repair_scope":["src/file.ts"]}]}\`. Use an empty findings array only when there are no findings.`,
             '- Use `APPROVED_WITH_CONCERNS` only when the change can continue and the controller can accept the concern.',
             '',
             '## Completion',
@@ -6757,14 +7834,125 @@ class TaskGraphExecutionService {
         ].join('\n');
     }
     extractReviewFindings(body) {
-        const lines = body
+        const findings = [];
+        let collecting = false;
+        let sawFindingSection = false;
+        for (const rawLine of body.split(/\r?\n/)) {
+            const line = rawLine.trim();
+            const heading = line.match(/^##+\s+(.+)$/);
+            if (heading) {
+                const title = heading[1].toLowerCase();
+                collecting = /findings?|spec compliance|code quality|required changes?|issues?|发现|问题|修复|符合性|代码质量|指摘|品質|الملاحظات|المشكلات/iu.test(title)
+                    && !/decision|checklist|summary|结论|决定|清单|決定|判定|القرار|القائمة/iu.test(title);
+                sawFindingSection || (sawFindingSection = collecting);
+                continue;
+            }
+            if (!collecting || !line || /^#/.test(line) || /^(-\s*)?TBD\.?$/i.test(line) || /^- \[(?: |x|X)\]/.test(line)) {
+                continue;
+            }
+            findings.push(line);
+        }
+        if (sawFindingSection) {
+            return findings.slice(0, 50);
+        }
+        return body
             .split(/\r?\n/)
             .map(line => line.trim())
             .filter(line => line.length > 0)
             .filter(line => !/^#+\s+/.test(line))
             .filter(line => !/^- \[(?: |x|X)\]/.test(line))
-            .filter(line => !/^(-\s*)?TBD\.?$/i.test(line));
-        return lines.slice(0, 20);
+            .filter(line => !/^(-\s*)?TBD\.?$/i.test(line))
+            .slice(0, 50);
+    }
+    getReviewFindingsRelativePath(reviewArtifactPath) {
+        return reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+    }
+    async readReviewFindings(reviewArtifactPath, body) {
+        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+        if (await this.fileService.exists(findingsPath)) {
+            let raw;
+            try {
+                raw = await this.fileService.readJSON(findingsPath);
+            }
+            catch {
+                throw new Error(`Structured review findings must contain valid JSON: ${findingsPath}`);
+            }
+            if (!raw || !Array.isArray(raw.findings)) {
+                throw new Error(`Structured review findings must contain a findings array: ${findingsPath}`);
+            }
+            const seen = new Set();
+            const structured = raw.findings.map((finding, index) => {
+                const id = String(finding?.id || '').trim();
+                const message = String(finding?.message || '').trim();
+                const evidence = String(finding?.evidence || '').trim();
+                const severity = String(finding?.severity || '').trim().toLowerCase();
+                if (!id || seen.has(id))
+                    throw new Error(`Structured review finding ${index + 1} has a missing or duplicate id.`);
+                if (!message || !evidence)
+                    throw new Error(`Structured review finding ${id} requires message and evidence.`);
+                if (!['critical', 'high', 'medium', 'low', 'info', 'unknown'].includes(severity)) {
+                    throw new Error(`Structured review finding ${id} has unsupported severity: ${severity || '(empty)'}.`);
+                }
+                const line = finding?.line === null || finding?.line === undefined
+                    ? null
+                    : Number(finding.line);
+                if (line !== null && (!Number.isInteger(line) || line <= 0)) {
+                    throw new Error(`Structured review finding ${id} line must be a positive integer or null.`);
+                }
+                seen.add(id);
+                return {
+                    id,
+                    severity: severity,
+                    category: String(finding?.category || 'unspecified').trim() || 'unspecified',
+                    message,
+                    file: typeof finding?.file === 'string' && finding.file.trim() ? finding.file.trim() : null,
+                    line,
+                    evidence,
+                    requirementRefs: stringArray(finding?.requirement_refs),
+                    repairScope: stringArray(finding?.repair_scope),
+                };
+            });
+            return {
+                text: structured.map(finding => this.renderReviewFinding(finding)),
+                structured,
+                path: findingsPath,
+                source: 'structured',
+            };
+        }
+        const text = this.extractReviewFindings(body);
+        const structured = text.map((message, index) => ({
+            id: `F-${String(index + 1).padStart(3, '0')}`,
+            severity: 'unknown',
+            category: 'legacy-markdown',
+            message: message.replace(/^[-*]\s+/, '').trim(),
+            file: null,
+            line: null,
+            evidence: message,
+            requirementRefs: [],
+            repairScope: [],
+        }));
+        await this.fileService.writeJSON(findingsPath, {
+            version: '1.0',
+            source: 'markdown_fallback',
+            findings: structured.map(finding => ({
+                id: finding.id,
+                severity: finding.severity,
+                category: finding.category,
+                message: finding.message,
+                file: finding.file,
+                line: finding.line,
+                evidence: finding.evidence,
+                requirement_refs: finding.requirementRefs,
+                repair_scope: finding.repairScope,
+            })),
+        });
+        return { text, structured, path: findingsPath, source: 'markdown_fallback' };
+    }
+    renderReviewFinding(finding) {
+        const location = finding.file
+            ? `${finding.file}${finding.line ? `:${finding.line}` : ''}`
+            : 'no file location';
+        return `[${finding.id}] [${finding.severity}] ${finding.message} (${location}) Evidence: ${finding.evidence}`;
     }
     async createReviewFeedbackDecisionGateIfNeeded(input) {
         const reason = this.getReviewFeedbackDecisionGateReason(input);
@@ -6913,6 +8101,9 @@ class TaskGraphExecutionService {
     }
     getTaskReviewRunDecisionNextInstruction(taskId, stage, decision) {
         if (decision === 'APPROVED' || decision === 'APPROVED_WITH_CONCERNS') {
+            if (stage === 'review') {
+                return `Task ${taskId} combined code review is recorded. Run ospec execute status to dispatch newly unblocked work.`;
+            }
             if (stage === 'spec') {
                 return `Task ${taskId} spec review is recorded. Run ospec execute review [change-path] --task ${taskId} --stage quality next.`;
             }
@@ -6983,6 +8174,34 @@ class TaskGraphExecutionService {
             '',
         ].join('\n');
     }
+    buildRepairWavePacket(record) {
+        return [
+            `# Grouped Repair Wave: ${record.id}`,
+            '',
+            `- Change: ${record.feature}`,
+            `- Source review: ${record.sourceReviewPath}`,
+            `- Source decision: ${record.sourceDecision}`,
+            `- Repair task: ${record.taskId}`,
+            `- Target files: ${record.targetFiles.join(', ')}`,
+            `- Documentation updates: ${record.documentationUpdates.join(', ') || 'none'}`,
+            '',
+            '## Complete Findings List',
+            '',
+            ...record.findings.map(finding => `- ${finding}`),
+            '',
+            '## Verification Boundary',
+            '',
+            ...record.verificationCommands.map(command => `- \`${command}\``),
+            '',
+            '## Repair Contract',
+            '',
+            '- Use one worker for this complete findings list; do not create one worker per finding.',
+            '- Resolve compatible findings in one coherent edit pass and record any scope conflict as NEEDS_CONTEXT.',
+            '- Run the covering verification commands once after the complete repair set is applied.',
+            '- Complete the generated repair task, run one combined task review, then run one combined final re-review.',
+            '',
+        ].join('\n');
+    }
     buildDocumentReviewArtifact(feature, target) {
         const created = new Date().toISOString().split('T')[0];
         const checklist = target.reviewerRole === 'design_reviewer'
@@ -7042,6 +8261,8 @@ class TaskGraphExecutionService {
                 '- Confirm `artifacts/reviews/design-review.md` is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing the plan.',
                 '- Read `proposal.md`, `design.md`, and `implementation-plan.md` before deciding.',
                 '- Check task order, dependencies, target files, verification commands, parallel safety, and conflicts.',
+                '- Reject internal plan contradictions, missing cross-task interfaces or global constraints, and designs that would predictably fail a later code review.',
+                '- Check task right-sizing: each task should be the smallest unit worth its own focused verification and review gate; merge setup, config, or docs work into the task that consumes it when separate dispatch adds no independent value.',
                 '- Do not dispatch implementation workers from this packet.',
             ];
         return [
@@ -7050,10 +8271,16 @@ class TaskGraphExecutionService {
             `- Dispatch ID: ${record.id}`,
             `- Change: ${feature}`,
             `- Reviewer role: ${record.reviewerRole}`,
+            `- Review policy: ${record.policy}`,
+            `- Review mode: ${record.mode}`,
+            `- Risk signals: ${record.riskSignals.join(', ') || 'none'}`,
+            `- Model profile: ${record.workerProfile.modelProfile}`,
+            `- Model: ${record.workerProfile.model || 'harness default (not explicitly configured)'}`,
             `- Status: ${record.status}`,
             `- Document: ${record.documentPath}`,
             `- Document readiness: ${record.documentReadiness}`,
             `- Review artifact: ${record.reviewArtifactPath}`,
+            `- Usage sidecar: artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json (optional; automatically ingested on the next controller action)`,
             `- Record: ${record.recordPath}`,
             '',
             ...this.buildProjectSessionBriefLines(record.projectSession),
@@ -7064,15 +8291,27 @@ class TaskGraphExecutionService {
             '',
             '## Review Output',
             '',
-            `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
-            '- Record concrete findings and required corrections in the review artifact body.',
-            '- Use `APPROVED_WITH_CONCERNS` only when execution may continue and the concern is explicit.',
+            ...(record.mode === 'inline_preflight'
+                ? [
+                    `- Adaptive low-risk preflight recorded \`APPROVED\` in \`${record.reviewArtifactPath}\`.`,
+                    '- Redispatch to a specialist if later work reveals any risk signal listed by policy.',
+                ]
+                : [
+                    `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
+                    '- Record concrete findings and required corrections in the review artifact body.',
+                    `- Also write the same findings as structured JSON to \`${this.getReviewFindingsRelativePath(record.reviewArtifactPath)}\` using stable IDs, severity, category, message, file/line when applicable, evidence, requirement_refs, and repair_scope.`,
+                    '- Use `APPROVED_WITH_CONCERNS` only when execution may continue and the concern is explicit.',
+                ]),
             '',
             '## Completion',
             '',
-            record.stage === 'design'
-                ? 'After approving the design, run `ospec execute doc-review [change-path] --stage plan` before deriving or dispatching implementation tasks.'
-                : 'After approving the implementation plan, derive or refresh `artifacts/agents/task-graph.json`, then continue with `ospec execute status` or `ospec execute next`.',
+            record.mode === 'inline_preflight'
+                ? record.stage === 'design'
+                    ? 'Continue with `ospec execute doc-review [change-path] --stage plan`.'
+                    : 'Derive or refresh `artifacts/agents/task-graph.json`, then continue with `ospec execute status`.'
+                : record.stage === 'design'
+                    ? 'After approving the design, run `ospec execute doc-review [change-path] --stage plan` before deriving or dispatching implementation tasks.'
+                    : 'After approving the implementation plan, derive or refresh `artifacts/agents/task-graph.json`, then continue with `ospec execute status` or `ospec execute next`.',
             '',
         ].join('\n');
     }
@@ -7729,6 +8968,9 @@ class TaskGraphExecutionService {
                 `- Record: ${artifact.selectedDispatch.recordPath}`,
                 `- Capability tier: ${artifact.selectedDispatch.workerProfile?.capabilityTier || 'not recorded'}`,
                 `- Recommended target: ${artifact.selectedDispatch.workerProfile?.recommendedTarget || 'not recorded'}`,
+                `- Model profile: ${artifact.selectedDispatch.workerProfile?.modelProfile || 'not recorded'}`,
+                `- Model: ${artifact.selectedDispatch.workerProfile?.model || 'harness default (not explicitly configured)'}`,
+                `- Model selection: ${artifact.selectedDispatch.workerProfile?.modelSelectionSource || 'harness-default'}`,
             ].join('\n')
             : '- None';
         const targetToolMapping = artifact.selectedDispatch?.targetToolMapping
@@ -7872,6 +9114,9 @@ class TaskGraphExecutionService {
                 `  - Role: ${item.workerRole}`,
                 `  - Capability tier: ${item.profile.capabilityTier}`,
                 `  - Recommended target: ${item.profile.recommendedTarget}`,
+                `  - Model profile: ${item.profile.modelProfile}`,
+                `  - Model: ${item.profile.model || 'harness default (not explicitly configured)'}`,
+                `  - Model selection: ${item.profile.modelSelectionSource}`,
                 `  - Target tool mapping: embedded in the profile JSON and task dispatch packet`,
                 `  - Summary: ${item.profile.summary}`,
             ].join('\n'))

@@ -14,6 +14,7 @@ const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const helpers_1 = require("../utils/helpers");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
+const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
 const AGENT_WORKER_ALLOWED_STATUSES = [
     'DONE',
     'DONE_WITH_CONCERNS',
@@ -93,6 +94,10 @@ class ProjectService {
         await this.writeProjectKnowledgeLayer(rootDir, mode, normalized, config);
         const scaffoldResult = await this.applyProjectScaffoldPhase(rootDir, normalized);
         const directCopyResult = await this.projectAssetService.installDirectCopyAssets(rootDir, normalized.documentLanguage, this.getProjectLayout(config));
+        await this.projectAssetService.syncDirectCopyAssets(rootDir, normalized.documentLanguage, {
+            targetRelativePaths: [constants_1.FILE_NAMES.BUILD_INDEX_SCRIPT],
+            projectLayout: this.getProjectLayout(config),
+        });
         const hookResult = await this.projectAssetService.installGitHooks(rootDir, config.hooks);
         const commandPlan = this.projectScaffoldCommandService.getPlan(normalized, scaffoldResult.plan);
         const bootstrapSummaryRelativePath = `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/bootstrap-summary.md`;
@@ -194,6 +199,10 @@ class ProjectService {
         await this.syncConfigDocumentLanguage(rootDir, config, normalized.documentLanguage);
         const writeSummary = await this.writeProjectKnowledgeLayer(rootDir, config.mode, normalized, config);
         const directCopyResult = await this.projectAssetService.installDirectCopyAssets(rootDir, normalized.documentLanguage, this.getProjectLayout(config));
+        await this.projectAssetService.syncDirectCopyAssets(rootDir, normalized.documentLanguage, {
+            targetRelativePaths: [constants_1.FILE_NAMES.BUILD_INDEX_SCRIPT],
+            projectLayout: this.getProjectLayout(config),
+        });
         const hookResult = await this.projectAssetService.installGitHooks(rootDir, config.hooks);
         try {
             await this.indexBuilder.write(rootDir);
@@ -545,7 +554,11 @@ class ProjectService {
         const existingSkillPaths = allSkills
             .filter(skill => skill.exists)
             .map(skill => skill.path);
-        latestSourceUpdatedAt = await this.getLatestUpdatedAt(existingSkillPaths);
+        const knowledgeIndexSourcePaths = await this.collectKnowledgeIndexSourcePaths(rootDir, config);
+        latestSourceUpdatedAt = await this.getLatestUpdatedAt([
+            ...existingSkillPaths,
+            ...knowledgeIndexSourcePaths,
+        ]);
         const indexNeedsRebuild = this.shouldRebuildIndex(skillIndexUpdatedAt, latestSourceUpdatedAt, allSkills);
         const indexReasons = this.getIndexRebuildReasons(skillIndexPath, skillIndexUpdatedAt, latestSourceUpdatedAt, allSkills);
         return {
@@ -678,6 +691,7 @@ class ProjectService {
             pending: (featureState.pending || []).filter(step => step !== 'archived'),
             blocked_by: [],
         };
+        await this.preflightArchivedKnowledgeWrite(projectRoot, archivePath);
         await this.fileService.move(resolvedFeaturePath, archivePath);
         await this.fileService.writeJSON(path_1.default.join(archivePath, constants_1.FILE_NAMES.STATE), nextState);
         const archivedProposalPath = path_1.default.join(archivePath, constants_1.FILE_NAMES.PROPOSAL);
@@ -689,6 +703,7 @@ class ProjectService {
         await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
         await this.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
         await this.rebuildIndex(projectRoot);
+        await this.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
         return {
             archivePath: this.toRelativePath(projectRoot, archivePath),
             change: item,
@@ -733,96 +748,6 @@ class ProjectService {
             const destDir = path_1.default.join(archivePath, 'artifacts', 'brainstorm', name);
             await this.fileService.ensureDir(path_1.default.dirname(destDir));
             await this.fileService.move(sourceDir, destDir);
-            moved.push(name);
-        }
-        return moved;
-    }
-    // Safety net for the archive-moment linking: if a change was moved into archived/ without
-    // running `ospec finalize`/`ospec archive` (e.g. a manual directory move), or a brainstorm was
-    // linked after its change was archived, the brainstorm is left behind in .ospec/brainstorms/.
-    // This sweep moves any brainstorm whose linked change (by recorded changeName, or by matching
-    // brainstorm id when unlinked) is already archived into that archived change's artifacts/brainstorm/.
-    async reconcileArchivedBrainstorms(projectRoot) {
-        const brainstormsDir = path_1.default.join(projectRoot, '.ospec', 'brainstorms');
-        if (!(await this.fileService.exists(brainstormsDir))) {
-            return [];
-        }
-        const brainstormEntries = await this.fileService.readDir(brainstormsDir).catch(() => []);
-        const candidates = [];
-        for (const name of brainstormEntries) {
-            const jsonPath = path_1.default.join(brainstormsDir, name, 'brainstorm.json');
-            if (!(await this.fileService.exists(jsonPath))) {
-                continue;
-            }
-            let changeName = '';
-            try {
-                const data = await this.fileService.readJSON(jsonPath);
-                changeName = typeof data?.changeName === 'string' ? data.changeName.trim() : '';
-            }
-            catch {
-                changeName = '';
-            }
-            candidates.push({ name, changeName });
-        }
-        if (candidates.length === 0) {
-            return [];
-        }
-        // Mirror archiveLinkedBrainstorms, which also reads the managed tree under .ospec/.
-        const archivedRoot = path_1.default.join(projectRoot, '.ospec', constants_1.DIR_NAMES.CHANGES, constants_1.DIR_NAMES.ARCHIVED);
-        if (!(await this.fileService.exists(archivedRoot))) {
-            return [];
-        }
-        const isDir = async (target) => {
-            try {
-                return (await this.fileService.stat(target)).isDirectory();
-            }
-            catch {
-                return false;
-            }
-        };
-        // Map archived change feature -> archive directory (archived/<month>/<day>/<feature>).
-        const archivedByFeature = new Map();
-        for (const month of await this.fileService.readDir(archivedRoot).catch(() => [])) {
-            const monthDir = path_1.default.join(archivedRoot, month);
-            if (!(await isDir(monthDir))) {
-                continue;
-            }
-            for (const day of await this.fileService.readDir(monthDir).catch(() => [])) {
-                const dayDir = path_1.default.join(monthDir, day);
-                if (!(await isDir(dayDir))) {
-                    continue;
-                }
-                for (const feature of await this.fileService.readDir(dayDir).catch(() => [])) {
-                    if (archivedByFeature.has(feature)) {
-                        continue;
-                    }
-                    const changeDir = path_1.default.join(dayDir, feature);
-                    if (await this.fileService.exists(path_1.default.join(changeDir, constants_1.FILE_NAMES.STATE))
-                        || await this.fileService.exists(path_1.default.join(changeDir, constants_1.FILE_NAMES.PROPOSAL))) {
-                        archivedByFeature.set(feature, changeDir);
-                    }
-                }
-            }
-        }
-        if (archivedByFeature.size === 0) {
-            return [];
-        }
-        const moved = [];
-        for (const { name, changeName } of candidates) {
-            // Confident resolution only: an explicit changeName that is archived, or (when unlinked)
-            // a brainstorm id that equals an archived feature. An active linked change is left alone.
-            const targetFeature = changeName && archivedByFeature.has(changeName)
-                ? changeName
-                : (!changeName && archivedByFeature.has(name) ? name : '');
-            if (!targetFeature) {
-                continue;
-            }
-            const destDir = path_1.default.join(archivedByFeature.get(targetFeature), 'artifacts', 'brainstorm', name);
-            if (await this.fileService.exists(destDir)) {
-                continue;
-            }
-            await this.fileService.ensureDir(path_1.default.dirname(destDir));
-            await this.fileService.move(path_1.default.join(brainstormsDir, name), destDir);
             moved.push(name);
         }
         return moved;
@@ -1358,26 +1283,102 @@ class ProjectService {
             ],
         };
     }
-    async rebuildIndex(rootDir, options = {}) {
-        // Callers that already refreshed managed assets (e.g. `ospec update`) can skip the
-        // direct-copy asset sync and only regenerate the index.
-        if (options.syncAssets !== false) {
-            const documentLanguage = (await this.getBootstrapUpgradePlan(rootDir)).documentLanguage || 'en-US';
-            const config = await this.configManager.loadConfig(rootDir).catch(() => null);
-            await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage, this.getProjectLayout(config));
-        }
+    async rebuildIndex(rootDir) {
+        const documentLanguage = (await this.getBootstrapUpgradePlan(rootDir)).documentLanguage || 'en-US';
+        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage, this.getProjectLayout(config));
+        await this.projectAssetService.syncDirectCopyAssets(rootDir, documentLanguage, {
+            targetRelativePaths: [constants_1.FILE_NAMES.BUILD_INDEX_SCRIPT],
+            projectLayout: this.getProjectLayout(config),
+        });
         await this.indexBuilder.write(rootDir);
-        // Safety net: re-home any brainstorm whose change is already archived (e.g. the change was
-        // archived by a manual move that bypassed `ospec finalize`). Never let this break the index.
-        await this.reconcileArchivedBrainstorms(rootDir).catch(() => []);
         return this.getIndexStatus(rootDir);
     }
-    // Resolve the owning project root from any path (a change dir or the root itself), then
-    // regenerate the index. `write()` is a no-op when the index is already current, so this is
-    // safe to call from read-mostly commands like `ospec verify` for index freshness.
-    async rebuildIndexForPath(targetPath, options = {}) {
-        const rootDir = await this.findProjectRootFromPath(path_1.default.resolve(targetPath));
-        return this.rebuildIndex(rootDir, options);
+    async preflightArchivedKnowledgeWrite(projectRoot, archivePath) {
+        const config = await this.configManager.loadConfig(projectRoot);
+        const archivedRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
+        const archiveRelative = path_1.default.relative(archivedRoot, path_1.default.resolve(archivePath));
+        if (!archiveRelative || archiveRelative === '..' || archiveRelative.startsWith(`..${path_1.default.sep}`) || path_1.default.isAbsolute(archiveRelative)) {
+            throw new Error('Archive knowledge preflight failed: archive target is outside the managed archive directory.');
+        }
+        const knowledgeRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/changes`, config);
+        const knowledgePath = path_1.default.resolve(knowledgeRoot, `${archiveRelative}.md`);
+        const relativeToKnowledge = path_1.default.relative(knowledgeRoot, knowledgePath);
+        if (!relativeToKnowledge || relativeToKnowledge === '..' || relativeToKnowledge.startsWith(`..${path_1.default.sep}`) || path_1.default.isAbsolute(relativeToKnowledge)) {
+            throw new Error('Archive knowledge preflight failed: generated document target is outside docs/project/changes.');
+        }
+        const normalizedArchive = path_1.default.relative(projectRoot, path_1.default.resolve(archivePath)).replace(/\\/g, '/');
+        if (await this.fileService.exists(knowledgePath)) {
+            let replaceable = false;
+            try {
+                const document = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(knowledgePath));
+                replaceable = document.data?.generated === true
+                    && document.data?.generator === 'ospec-archive-knowledge'
+                    && String(document.data?.archive || '').replace(/\\/g, '/') === normalizedArchive;
+            }
+            catch {
+                replaceable = false;
+            }
+            if (!replaceable) {
+                throw new Error(`Archive knowledge preflight failed: refusing to overwrite human-owned document ${this.toRelativePath(projectRoot, knowledgePath)}.`);
+            }
+        }
+        const probeDirectories = Array.from(new Set([
+            path_1.default.dirname(archivePath),
+            path_1.default.dirname(knowledgePath),
+            path_1.default.dirname(this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config)),
+            path_1.default.dirname(this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/feature-index.md`, config)),
+        ]));
+        const probes = [];
+        try {
+            for (const [index, directory] of probeDirectories.entries()) {
+                await this.fileService.ensureDir(directory);
+                const probe = path_1.default.join(directory, `.ospec-write-probe-${process.pid}-${Date.now()}-${index}`);
+                await fs_1.promises.writeFile(probe, '', { encoding: 'utf8', flag: 'wx' });
+                probes.push(probe);
+            }
+        }
+        catch (error) {
+            throw new Error(`Archive knowledge preflight failed: ${error?.message || error}`);
+        }
+        finally {
+            await Promise.all(probes.map(probe => fs_1.promises.unlink(probe).catch(() => undefined)));
+        }
+    }
+    async assertArchivedKnowledgeIndexed(projectRoot, archivePath) {
+        const config = await this.configManager.loadConfig(projectRoot);
+        const indexPath = this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config);
+        const featureIndexPath = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/feature-index.md`, config);
+        const normalizedArchive = path_1.default.relative(projectRoot, path_1.default.resolve(archivePath)).replace(/\\/g, '/');
+        if (!(await this.fileService.exists(indexPath))) {
+            throw new Error(`Archive knowledge verification failed: ${constants_1.FILE_NAMES.SKILL_INDEX} was not generated.`);
+        }
+        const index = await this.fileService.readJSON(indexPath);
+        const archivedChange = (Array.isArray(index?.archived_changes) ? index.archived_changes : [])
+            .find((item) => item?.archive === normalizedArchive);
+        if (!archivedChange) {
+            throw new Error(`Archive knowledge verification failed: ${normalizedArchive} is missing from archived_changes.`);
+        }
+        const knowledgeDocument = typeof archivedChange.knowledge_document === 'string'
+            ? archivedChange.knowledge_document
+            : '';
+        if (!knowledgeDocument) {
+            throw new Error(`Archive knowledge verification failed: ${normalizedArchive} has no generated change knowledge document.`);
+        }
+        const knowledgePath = path_1.default.join(projectRoot, ...knowledgeDocument.split('/'));
+        if (!(await this.fileService.exists(knowledgePath))) {
+            throw new Error(`Archive knowledge verification failed: generated document does not exist at ${knowledgeDocument}.`);
+        }
+        if (!index?.documents || !index.documents[knowledgeDocument]) {
+            throw new Error(`Archive knowledge verification failed: ${knowledgeDocument} is missing from SKILL.index.json documents.`);
+        }
+        if (!(await this.fileService.exists(featureIndexPath))) {
+            throw new Error('Archive knowledge verification failed: docs/project/feature-index.md was not generated.');
+        }
+        const featureIndex = await this.fileService.readFile(featureIndexPath);
+        if (!featureIndex.includes(knowledgeDocument)) {
+            throw new Error(`Archive knowledge verification failed: feature-index.md does not link ${knowledgeDocument}.`);
+        }
     }
     getDirectorySkeleton(rootDir, config = null) {
         return [
@@ -2415,25 +2416,23 @@ ${formatSuggestion()}
         const designPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.DESIGN);
         const implementationPlanPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN);
         const taskGraphPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
-        const specComplianceReviewPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW);
-        const codeQualityReviewPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.CODE_QUALITY_REVIEW);
         const agentWorkerStatusPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
         const tasksPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.TASKS);
         const verificationPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.VERIFICATION);
-        const [state, proposalExists, designExists, implementationPlanExists, taskGraphExists, specComplianceReviewExists, codeQualityReviewExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
+        const [state, proposalExists, designExists, implementationPlanExists, taskGraphExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
             this.fileService.readJSON(statePath),
             this.fileService.exists(proposalPath),
             this.fileService.exists(designPath),
             this.fileService.exists(implementationPlanPath),
             this.fileService.exists(taskGraphPath),
-            this.fileService.exists(specComplianceReviewPath),
-            this.fileService.exists(codeQualityReviewPath),
             this.fileService.exists(agentWorkerStatusPath),
             this.fileService.exists(tasksPath),
             this.fileService.exists(verificationPath),
         ]);
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(featureDir, state);
         const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
+        const reviewArtifactSet = await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(this.fileService, featureDir);
+        const reviewArtifactsReady = reviewArtifactSet.missing.length === 0;
         let flags = [];
         let description = 'No description yet';
         let activatedSteps = [];
@@ -2465,17 +2464,14 @@ ${formatSuggestion()}
                     : 'Not required for change workflow',
             },
             {
-                name: 'artifacts/reviews/spec-compliance.md',
-                status: !isGoalWorkflow || specComplianceReviewExists ? 'pass' : 'fail',
+                name: 'artifacts/reviews/final-review.md',
+                status: !isGoalWorkflow || reviewArtifactsReady ? 'pass' : 'fail',
                 message: isGoalWorkflow
-                    ? specComplianceReviewExists ? 'Spec compliance review artifact exists' : 'artifacts/reviews/spec-compliance.md is missing'
-                    : 'Not required for change workflow',
-            },
-            {
-                name: 'artifacts/reviews/code-quality.md',
-                status: !isGoalWorkflow || codeQualityReviewExists ? 'pass' : 'fail',
-                message: isGoalWorkflow
-                    ? codeQualityReviewExists ? 'Code quality review artifact exists' : 'artifacts/reviews/code-quality.md is missing'
+                    ? reviewArtifactsReady
+                        ? reviewArtifactSet.mode === 'combined'
+                            ? 'Combined final review artifact exists'
+                            : 'Legacy spec and quality review artifacts exist'
+                        : `Review artifact is missing: ${reviewArtifactSet.missing.join(', ')}`
                     : 'Not required for change workflow',
             },
             {
@@ -2537,17 +2533,15 @@ ${formatSuggestion()}
         if (taskGraphAnalysis) {
             checks.push(...taskGraphAnalysis.checks);
         }
-        const specComplianceReviewAnalysis = isGoalWorkflow && specComplianceReviewExists
-            ? await this.analyzeReviewArtifactDocument(specComplianceReviewPath, 'artifacts/reviews/spec-compliance.md', 'spec_compliance_reviewer', activatedSteps)
-            : null;
-        if (specComplianceReviewAnalysis) {
-            checks.push(...specComplianceReviewAnalysis.checks);
+        if (taskGraphExists) {
+            const documentationUpdateAnalysis = await this.analyzeDocumentationUpdates(featureDir);
+            checks.push(...documentationUpdateAnalysis.checks);
         }
-        const codeQualityReviewAnalysis = isGoalWorkflow && codeQualityReviewExists
-            ? await this.analyzeReviewArtifactDocument(codeQualityReviewPath, 'artifacts/reviews/code-quality.md', 'code_quality_reviewer', activatedSteps)
-            : null;
-        if (codeQualityReviewAnalysis) {
-            checks.push(...codeQualityReviewAnalysis.checks);
+        if (isGoalWorkflow) {
+            for (const reviewArtifact of reviewArtifactSet.artifacts) {
+                const analysis = await this.analyzeReviewArtifactDocument(reviewArtifact.path, reviewArtifact.name, reviewArtifact.role, activatedSteps);
+                checks.push(...analysis.checks);
+            }
         }
         const agentWorkerStatusAnalysis = isGoalWorkflow && agentWorkerStatusExists
             ? await this.analyzeAgentWorkerStatusDocument(agentWorkerStatusPath)
@@ -2580,29 +2574,10 @@ ${formatSuggestion()}
         if (isGoalWorkflow) {
             checks.push(...await this.getGoalDocumentReviewChecks(featureDir));
         }
-        // Detect a state.json that drifted off the OSpec vocabulary — the tell-tale sign a change
-        // was progressed by hand instead of through the ospec CLI. Such a change never reaches
-        // `ready_to_archive`, so finalize/auto-archive silently never fires. Surface the root cause.
-        const validStatuses = Object.keys(constants_1.STATE_TRANSITIONS);
-        const knownSteps = new Set([...constants_1.WORKFLOW_STEPS, 'write_proposal']);
-        const statusRecognized = validStatuses.includes(state.status);
-        const unknownSteps = [
-            ...(Array.isArray(state.completed) ? state.completed : []),
-            ...(Array.isArray(state.pending) ? state.pending : []),
-        ].filter(step => typeof step === 'string' && !knownSteps.has(step));
-        const stateDrifted = !statusRecognized || unknownSteps.length > 0;
-        const stateDriftDetail = [
-            !statusRecognized
-                ? `status "${state.status}" is not a recognized OSpec state (expected one of: ${validStatuses.join(', ')})`
-                : null,
-            unknownSteps.length > 0 ? `unknown workflow steps: ${unknownSteps.join(', ')}` : null,
-        ].filter(Boolean).join('; ');
         checks.push({
             name: 'state.json',
-            status: stateDrifted ? 'warn' : 'pass',
-            message: stateDrifted
-                ? `${stateDriftDetail}. This change looks progressed outside the ospec CLI, so its state never reached ready_to_archive and finalize/auto-archive cannot trigger. Drive it through ospec commands (or reset state.json to a valid status/steps) to close it out.`
-                : `Status is ${state.status}, current step is ${state.current_step}`,
+            status: 'pass',
+            message: `Status is ${state.status}, current step is ${state.current_step}`,
         });
         const archiveResult = await ArchiveGate_1.archiveGate.checkArchiveReadiness(state, workflow.getArchiveGate(), {
             activatedSteps,
@@ -2896,13 +2871,23 @@ ${formatSuggestion()}
                     concernStatuses.push(taskId);
                 }
                 if (TASK_GRAPH_TERMINAL_STATUS_SET.has(status) && task.review && typeof task.review === 'object' && !Array.isArray(task.review)) {
-                    const specReview = typeof task.review.spec === 'string' ? task.review.spec.trim().toUpperCase() : 'PENDING';
-                    const qualityReview = typeof task.review.quality === 'string' ? task.review.quality.trim().toUpperCase() : 'PENDING';
-                    if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(specReview)) {
-                        unresolvedStatuses.push(`${taskId}.review.spec=${specReview || 'PENDING'}`);
+                    const combinedReview = typeof task.review.decision === 'string'
+                        ? task.review.decision.trim().toUpperCase()
+                        : '';
+                    if (combinedReview) {
+                        if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(combinedReview)) {
+                            unresolvedStatuses.push(`${taskId}.review.decision=${combinedReview}`);
+                        }
                     }
-                    if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(qualityReview)) {
-                        unresolvedStatuses.push(`${taskId}.review.quality=${qualityReview || 'PENDING'}`);
+                    else {
+                        const specReview = typeof task.review.spec === 'string' ? task.review.spec.trim().toUpperCase() : 'PENDING';
+                        const qualityReview = typeof task.review.quality === 'string' ? task.review.quality.trim().toUpperCase() : 'PENDING';
+                        if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(specReview)) {
+                            unresolvedStatuses.push(`${taskId}.review.spec=${specReview || 'PENDING'}`);
+                        }
+                        if (!REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(qualityReview)) {
+                            unresolvedStatuses.push(`${taskId}.review.quality=${qualityReview || 'PENDING'}`);
+                        }
                     }
                 }
                 if (!Array.isArray(task.target_files) || task.target_files.filter((value) => typeof value === 'string' && value.trim().length > 0).length === 0) {
@@ -3066,6 +3051,123 @@ ${formatSuggestion()}
                     message: executionDetailsMessage,
                 },
             ],
+        };
+    }
+    async analyzeDocumentationUpdates(featureDir) {
+        const taskGraphPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
+        if (!(await this.fileService.exists(taskGraphPath))) {
+            return { enabled: false, declared: [], checks: [] };
+        }
+        const graph = await this.fileService.readJSON(taskGraphPath);
+        const tasks = Array.isArray(graph?.tasks) ? graph.tasks : [];
+        const enabled = Object.prototype.hasOwnProperty.call(graph || {}, 'documentation_updates')
+            || tasks.some((task) => task && Object.prototype.hasOwnProperty.call(task, 'documentation_updates'));
+        if (!enabled) {
+            return { enabled: false, declared: [], checks: [] };
+        }
+        const projectRoot = await this.findProjectRootFromPath(featureDir);
+        const executionSessionPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, 'execution-session.json');
+        let dispatches = [];
+        if (await this.fileService.exists(executionSessionPath)) {
+            try {
+                const executionSession = await this.fileService.readJSON(executionSessionPath);
+                dispatches = Array.isArray(executionSession?.dispatches) ? executionSession.dispatches : [];
+            }
+            catch {
+                dispatches = [];
+            }
+        }
+        const checks = [];
+        const declared = new Set();
+        const normalize = (value) => String(value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+        const resolveSafeProjectPath = (value) => {
+            if (!value || path_1.default.isAbsolute(value))
+                return null;
+            const resolved = path_1.default.resolve(projectRoot, ...value.split('/'));
+            const relative = path_1.default.relative(projectRoot, resolved);
+            return relative && relative !== '..' && !relative.startsWith(`..${path_1.default.sep}`) && !path_1.default.isAbsolute(relative)
+                ? resolved
+                : null;
+        };
+        const isManagedDocumentationPath = (value) => {
+            const normalized = value.toLowerCase();
+            return normalized.startsWith('docs/') || normalized.startsWith('.ospec/docs/');
+        };
+        for (const [index, task] of tasks.entries()) {
+            const taskId = typeof task?.id === 'string' && task.id.trim() ? task.id.trim() : `tasks[${index}]`;
+            const rawUpdates = task?.documentation_updates;
+            if (!Array.isArray(rawUpdates)) {
+                checks.push({
+                    name: `documentation_updates.${taskId}`,
+                    status: 'fail',
+                    message: `${taskId}.documentation_updates must be an array when the documentation contract is enabled`,
+                });
+                continue;
+            }
+            const targetFiles = Array.isArray(task.target_files)
+                ? task.target_files.map(normalize).filter(Boolean)
+                : [];
+            const updates = rawUpdates.map(normalize).filter(Boolean);
+            for (const update of updates)
+                declared.add(update);
+            const updateKeys = new Set(updates.map((update) => update.toLowerCase()));
+            const targetKeys = new Set(targetFiles.map((target) => target.toLowerCase()));
+            const undeclaredTargets = targetFiles
+                .filter(isManagedDocumentationPath)
+                .filter((target) => !updateKeys.has(target.toLowerCase()));
+            if (undeclaredTargets.length > 0) {
+                checks.push({
+                    name: `documentation_updates.${taskId}.coverage`,
+                    status: 'fail',
+                    message: `${taskId} documentation targets are not declared in documentation_updates: ${undeclaredTargets.join(', ')}`,
+                });
+            }
+            for (const update of updates) {
+                const resolvedUpdatePath = resolveSafeProjectPath(update);
+                const safe = resolvedUpdatePath !== null;
+                const targeted = targetKeys.has(update.toLowerCase());
+                const exists = resolvedUpdatePath ? await this.fileService.exists(resolvedUpdatePath) : false;
+                checks.push({
+                    name: `documentation_updates.${taskId}.${update}`,
+                    status: safe && targeted && exists ? 'pass' : 'fail',
+                    message: !safe
+                        ? `Unsafe documentation update path: ${update}`
+                        : !targeted
+                            ? `${update} is declared but missing from ${taskId}.target_files`
+                            : !exists
+                                ? `Declared documentation update does not exist: ${update}`
+                                : `Declared documentation update is present and task-scoped: ${update}`,
+                });
+                if (safe && targeted && exists) {
+                    const completedDispatch = [...dispatches]
+                        .reverse()
+                        .find((item) => item?.taskId === taskId && item?.completedAt);
+                    const evidence = Array.isArray(completedDispatch?.documentationEvidence)
+                        ? completedDispatch.documentationEvidence.find((item) => normalize(item?.path).toLowerCase() === update.toLowerCase())
+                        : null;
+                    checks.push({
+                        name: `documentation_updates.${taskId}.${update}.meaningful_change`,
+                        status: evidence ? (evidence.meaningfullyChanged ? 'pass' : 'fail') : 'warn',
+                        message: evidence
+                            ? evidence.meaningfullyChanged
+                                ? `Declared documentation update contains a meaningful content change: ${update}`
+                                : `Declared documentation update did not change meaningfully from its dispatch baseline: ${update}`
+                            : `Documentation baseline evidence is unavailable for ${update}; existence was verified for backward compatibility`,
+                    });
+                }
+            }
+        }
+        if (checks.length === 0) {
+            checks.push({
+                name: 'documentation_updates',
+                status: 'pass',
+                message: 'Documentation update contract is enabled with no required documentation changes',
+            });
+        }
+        return {
+            enabled: true,
+            declared: Array.from(declared).sort((left, right) => left.localeCompare(right)),
+            checks,
         };
     }
     async analyzeReviewArtifactDocument(filePath, name, expectedReviewerRole, activatedSteps) {
@@ -3513,6 +3615,7 @@ ${formatSuggestion()}
             }
             const latestReviewOrGraphUpdate = await this.getLatestUpdatedAt([
                 path_1.default.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
+                path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW),
                 path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW),
                 path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW),
             ]);
@@ -3747,6 +3850,43 @@ ${formatSuggestion()}
         }
         timestamps.sort();
         return timestamps[timestamps.length - 1] ?? null;
+    }
+    async collectKnowledgeIndexSourcePaths(rootDir, config) {
+        const collected = [];
+        const archivedDocumentNames = new Set([
+            constants_1.FILE_NAMES.STATE,
+            constants_1.FILE_NAMES.PROPOSAL,
+            constants_1.FILE_NAMES.DESIGN,
+            constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
+            constants_1.FILE_NAMES.TASKS,
+            constants_1.FILE_NAMES.VERIFICATION,
+            constants_1.FILE_NAMES.REVIEW,
+        ]);
+        const scan = async (currentDir, mode) => {
+            if (!(await this.fileService.exists(currentDir)))
+                return;
+            const entries = await fs_1.promises.readdir(currentDir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path_1.default.join(currentDir, entry.name);
+                if (entry.isDirectory()) {
+                    if (mode === 'archives' && entry.name === constants_1.DIR_NAMES.ARTIFACTS) {
+                        const finalReviewPath = path_1.default.join(fullPath, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.FINAL_REVIEW);
+                        if (await this.fileService.exists(finalReviewPath))
+                            collected.push(finalReviewPath);
+                        continue;
+                    }
+                    await scan(fullPath, mode);
+                    continue;
+                }
+                if ((mode === 'docs' && entry.name.toLowerCase().endsWith('.md'))
+                    || (mode === 'archives' && archivedDocumentNames.has(entry.name))) {
+                    collected.push(fullPath);
+                }
+            }
+        };
+        await scan(this.resolveManagedPath(rootDir, constants_1.DIR_NAMES.DOCS, config), 'docs');
+        await scan(this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config), 'archives');
+        return collected.sort((left, right) => left.localeCompare(right));
     }
     async getLatestUpdatedAt(filePaths) {
         const timestamps = await Promise.all(filePaths.map(async (filePath) => (await this.fileService.exists(filePath)
