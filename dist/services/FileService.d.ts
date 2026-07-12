@@ -5,6 +5,7 @@ import { Stats } from 'fs';
 export declare class FileService {
     readFile(filePath: string): Promise<string>;
     writeFile(filePath: string, content: string): Promise<void>;
+    appendFile(filePath: string, content: string): Promise<void>;
     readJSON<T = any>(filePath: string): Promise<T>;
     writeJSON(filePath: string, data: any): Promise<void>;
     readYAML<T = any>(filePath: string): Promise<T>;

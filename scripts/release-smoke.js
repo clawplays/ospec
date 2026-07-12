@@ -120,82 +120,33 @@ function toPosixRelative(from, to) {
   return path.relative(from, to).replace(/\\/g, '/');
 }
 
-const smokeCreatedDate = '2026-06-11';
-
 async function ensureDir(targetPath) {
   await fsp.mkdir(targetPath, { recursive: true });
 }
 
-function reviewArtifactContent({
-  feature,
-  reviewerRole,
-  title,
-  taskId = null,
-}) {
-  const taskFrontmatter = taskId ? [`task_id: ${taskId}`] : [];
-
-  return [
-    '---',
-    `feature: ${feature}`,
-    ...taskFrontmatter,
-    `created: ${smokeCreatedDate}`,
-    'status: reviewed',
-    `reviewer_role: ${reviewerRole}`,
-    'decision: APPROVED',
-    'optional_steps: []',
-    '---',
-    '',
-    `# ${title}`,
-    '',
-    '## Checklist',
-    '- [x] Acceptance criteria are checked against the completed work',
-    '- [x] Design and implementation boundaries are checked',
-    '- [x] Verification expectations are covered by recorded evidence',
-    '- [x] No unresolved blockers or required fixes remain',
-    '- [x] Final decision is written to frontmatter `decision`',
-    '',
-    '## Decision',
-    '',
-    'APPROVED for the release smoke fixture.',
-    '',
-  ].join('\n');
-}
-
-function workerStatusContent(feature) {
-  return [
-    '---',
-    `feature: ${feature}`,
-    `created: ${smokeCreatedDate}`,
-    'status: completed',
-    'implementer_status: DONE',
-    'spec_reviewer_status: DONE',
-    'quality_reviewer_status: DONE',
-    'controller_status: DONE',
-    '---',
-    '',
-    '# Agent Worker Status',
-    '',
-    '## Checklist',
-    '- [x] Implementer returned `DONE` or `DONE_WITH_CONCERNS`',
-    '- [x] Spec compliance review completed',
-    '- [x] Code quality review completed',
-    '- [x] Controller resolved concerns, context requests, or blockers',
-    '',
-  ].join('\n');
+async function approveDispatchedReview(featureDir, dispatch) {
+  const reviewPath = path.join(featureDir, dispatch.reviewArtifactPath);
+  const content = await fs.readFile(reviewPath, 'utf8');
+  await fs.writeFile(
+    reviewPath,
+    content
+      .replace('decision: PENDING', 'decision: APPROVED')
+      .replace(
+        /reviewed_at:\s*(?:null)?/,
+        `reviewed_at: ${new Date().toISOString()}`,
+      ),
+    'utf8',
+  );
+  await fs.writeJson(reviewPath.replace(/\.md$/i, '.findings.json'), {
+    version: '1.0',
+    findings: [],
+  });
 }
 
 async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
   const agentsDir = path.join(featureDir, 'artifacts', 'agents');
-  const finalReviewsDir = path.join(featureDir, 'artifacts', 'reviews');
-  const taskReviewsDir = path.join(finalReviewsDir, 'tasks', 'task-1');
-  const evidenceDir = path.join(agentsDir, 'verification-evidence');
-  const taskSpecArtifact = 'artifacts/reviews/tasks/task-1/spec-compliance.md';
-  const taskQualityArtifact = 'artifacts/reviews/tasks/task-1/code-quality.md';
 
   await ensureDir(agentsDir);
-  await ensureDir(finalReviewsDir);
-  await ensureDir(taskReviewsDir);
-  await ensureDir(evidenceDir);
 
   await fs.writeJson(
     path.join(agentsDir, 'task-graph.json'),
@@ -223,12 +174,13 @@ async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
             'node dist/cli.js verify .ospec/changes/active/release-smoke',
           ],
           expected_result: 'Release smoke change verifies and archives cleanly',
+          context: 'Exercise release closeout with real provenance artifacts.',
+          interfaces: [],
+          documentation_updates: ['.ospec/docs/project/overview.md'],
           worker_role: 'implementer',
           review: {
-            spec: 'APPROVED',
-            quality: 'APPROVED',
-            spec_artifact: taskSpecArtifact,
-            quality_artifact: taskQualityArtifact,
+            decision: 'PENDING',
+            review_artifact_path: null,
           },
         },
       ],
@@ -236,111 +188,39 @@ async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
     { spaces: 2 },
   );
 
-  await fs.writeFile(
-    path.join(taskReviewsDir, 'spec-compliance.md'),
-    reviewArtifactContent({
-      feature,
-      reviewerRole: 'spec_compliance_reviewer',
-      title: 'Task Spec Compliance Review',
-      taskId: 'task-1',
-    }),
-    'utf8',
+  const { FileService } = require(
+    path.join(rootDir, 'dist', 'services', 'FileService.js'),
   );
-  await fs.writeFile(
-    path.join(taskReviewsDir, 'code-quality.md'),
-    reviewArtifactContent({
-      feature,
-      reviewerRole: 'code_quality_reviewer',
-      title: 'Task Code Quality Review',
-      taskId: 'task-1',
-    }),
-    'utf8',
+  const { TaskGraphExecutionService } = require(
+    path.join(rootDir, 'dist', 'services', 'TaskGraphExecutionService.js'),
   );
-  await fs.writeFile(
-    path.join(finalReviewsDir, 'spec-compliance.md'),
-    reviewArtifactContent({
-      feature,
-      reviewerRole: 'spec_compliance_reviewer',
-      title: 'Final Spec Compliance Review',
-    }),
-    'utf8',
-  );
-  await fs.writeFile(
-    path.join(finalReviewsDir, 'code-quality.md'),
-    reviewArtifactContent({
-      feature,
-      reviewerRole: 'code_quality_reviewer',
-      title: 'Final Code Quality Review',
-    }),
-    'utf8',
-  );
-  await fs.writeFile(
-    path.join(finalReviewsDir, 'design-review.md'),
-    reviewArtifactContent({
-      feature,
-      reviewerRole: 'design_reviewer',
-      title: 'Design Review',
-    }),
-    'utf8',
-  );
-  await fs.writeFile(
-    path.join(finalReviewsDir, 'implementation-plan-review.md'),
-    reviewArtifactContent({
-      feature,
-      reviewerRole: 'implementation_plan_reviewer',
-      title: 'Implementation Plan Review',
-    }),
-    'utf8',
-  );
-  await fs.writeFile(
-    path.join(agentsDir, 'worker-status.md'),
-    workerStatusContent(feature),
-    'utf8',
-  );
+  const execution = new TaskGraphExecutionService(new FileService());
 
-  const verifiedAt = new Date().toISOString();
-  const verificationRecord = {
-    id: 'verification-1',
+  const designReview = await execution.reviewDocument(featureDir, {
+    stage: 'design',
+  });
+  await approveDispatchedReview(featureDir, designReview.dispatch);
+  const planReview = await execution.reviewDocument(featureDir, {
+    stage: 'plan',
+  });
+  await approveDispatchedReview(featureDir, planReview.dispatch);
+
+  const taskReview = await execution.review(featureDir, {
+    taskId: 'task-1',
+  });
+  await approveDispatchedReview(featureDir, taskReview.dispatch);
+  await execution.syncWorkerStatus(featureDir);
+  const finalReview = await execution.review(featureDir);
+  await approveDispatchedReview(featureDir, finalReview.dispatch);
+  await execution.syncWorkerStatus(featureDir);
+
+  await execution.recordVerification(featureDir, {
     command: 'node dist/cli.js verify .ospec/changes/active/release-smoke',
     status: 'PASSED',
     exitCode: 0,
-    recordedAt: verifiedAt,
-    recordPath: 'artifacts/agents/verification-evidence/verification-1.json',
-    reportPath: 'artifacts/agents/verification-evidence/verification-1.md',
     summary: 'Release smoke fixture verification passed.',
-  };
-
-  await fs.writeJson(
-    path.join(agentsDir, 'verification-evidence.json'),
-    {
-      version: '1.0',
-      feature,
-      status: 'passed',
-      updatedAt: verifiedAt,
-      records: [verificationRecord],
-    },
-    { spaces: 2 },
-  );
-  await fs.writeJson(
-    path.join(evidenceDir, 'verification-1.json'),
-    verificationRecord,
-    { spaces: 2 },
-  );
-  await fs.writeFile(
-    path.join(evidenceDir, 'verification-1.md'),
-    [
-      '# Verification Evidence: verification-1',
-      '',
-      `- Command: \`${verificationRecord.command}\``,
-      '- Status: PASSED',
-      '- Exit code: 0',
-      `- Recorded at: ${verifiedAt}`,
-      '',
-      'Release smoke fixture verification passed.',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
+  });
+  await execution.syncWorkerStatus(featureDir);
 }
 
 async function findArchivedChangeDir(archivedRoot, changeName) {
@@ -619,7 +499,22 @@ async function main() {
     // Use the goal workflow for the full-lifecycle smoke so the goal-only
     // artifacts (design.md, implementation-plan.md, task-graph.json) exist;
     // the classic change flow intentionally omits them.
-    output = run('node', [cliPath, 'goal', 'release-smoke', projectDir]);
+    output = run('node', [
+      cliPath,
+      'goal',
+      'release-smoke',
+      projectDir,
+      '--level',
+      'L2',
+      '--target',
+      'shell',
+      '--execution-model',
+      'cli-driven',
+      '--harness-interactive',
+      'false',
+      '--native-subagents',
+      'unsupported',
+    ]);
 
     assertContains(
       output,

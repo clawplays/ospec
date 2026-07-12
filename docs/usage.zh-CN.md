@@ -15,12 +15,14 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec new <change-name> [path]
-ospec goal <goal-name> [path]
+ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller|cli-driven]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute doc-review [changes/active/<change>] [--stage design|plan]
+ospec execute doc-review [changes/active/<change>] --stage design|plan --claim-executor <child-id>
+ospec execute doc-review [changes/active/<change>] --stage design|plan --complete-executor <child-id>
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
 ospec execute route [changes/active/<change>]
@@ -114,7 +116,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ospec init [path]
 ospec new <change-name> [path]
 # 全流程工作使用：
-ospec goal <goal-name> [path]
+ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller|cli-driven]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
@@ -123,7 +125,7 @@ ospec finalize [changes/active/<change>]
 
 `ospec new <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
 
-goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、验证，直到工作被测试证明完成。创建时选定安全级——`ospec goal <name> --level L1|L2|L3`（默认 L1）：**L1** 只把发现项写入 triage 收件箱、不改任何代码；**L2** 会改代码但在关键决策处暂停等你确认；**L3** 在你设定的 allowlist 内无人值守运行。用 `ospec loop run/watch/status/pause/resume/level` 驱动，用 `ospec triage list/claim/promote` 处理发现项，用 pause / `STOP` 文件 / 关闭会话来停止。`ospec change` 保持不变。详见 [loop-engineering.md](loop-engineering.md)。
+goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报告真实 harness，例如 `--target codex --execution-model controller --harness-interactive true --native-subagents supported`；target 名称本身不再授权子 agent。`ospec loop run --once` 输出有界 fresh-context action，IDE controller 逐个记录 child heartbeat 和 result；lease 过期或明确释放的 orphan 会重新排队，已完成 sibling 不会重复执行。provider usage sidecar 会进入 token budget，verification 失败会撤销旧 final approval 并先经过独立复审和 grouped repair。L1 只报告，L2 允许辅助执行，L3 还要求 canonical path 与 shell-safe command allowlist。详见 [loop-engineering.md](loop-engineering.md)。
 
 - 每个 goal 都遵守三条体验契约：`Announce-Before-Act`（AI 宣告当前 skill 与阶段、每条 `ospec execute …` 命令及产物、每次子 agent 派发）、`Brainstorm-First`（锁定设计前，把方向、架构、API、数据、UI、风险、范围等未决问题逐个用原生提问 UI——Claude Code 用 AskUserQuestion——询问）、`Zero-Setup`（每一条 `ospec` 命令都由 AI 自己执行，你只需起一个 goal 并描述需求）。
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
@@ -135,11 +137,12 @@ goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、�
 - 在 `ospec-goal` 中，用 `design.md` 在实现前记录选定方案、关键取舍、影响边界、风险和未决问题。
 - 在 `ospec-goal` 中，用 `implementation-plan.md` 把设计转成 agent 可执行步骤，明确文件、预期结果、验证命令、依赖和冲突。
 - 在 `ospec-goal` 中，用 `artifacts/agents/task-graph.json` 保存机器可读执行图：task ID、依赖、并行安全性、冲突、目标文件、验证命令、预期结果、worker 角色和 task 状态。
+- 把每个 loop action 引用的 dispatch、review 或 verification packet path 当作权威上下文，不要把整个 goal 内嵌到每个 worker。持久化 task 状态与 review/verification evidence 会驱动 fresh retry、一次合并的最终 review repair wave 和下一次 tick。
 - 使用显式队列 runner 时，可用 `ospec run status [path]` 同时查看当前 queue run 和 active change task graph 快照，包括已完成、运行中、可分派、阻塞、无效任务数量和下一步动作。
 - `ospec run start`、`run resume`、`run step` 和 `run status` 的下一步提示会参考 active task graph；如果有可分派任务，会提示 `ospec execute dispatch ...`。runner 仍然不会自动派发 worker，也不会编辑源码。
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`。它会记录 project session brief snapshot、目标工具映射、命令序列、安全规则和缺失上下文警告。
-- 实现派发前，可用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 生成带 project session brief snapshot 的 `artifacts/agents/document-review-dispatches/*` 交接包，以及 `artifacts/reviews/design-review.md` 或 `artifacts/reviews/implementation-plan-review.md`；design review 通过后才能派发 plan review。
+- 实现派发前，用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 生成评审包。specialist review 启动原生子 agent 后，IDE controller 必须立即记录 `--claim-executor <child-id>`，等待 Markdown 与结构化 findings 写完后再记录 `--complete-executor <child-id>`。批准会绑定该子 agent、controller session、文档哈希和评审时间；design review 通过后才能派发 plan review。
 - 用 `ospec execute status [changes/active/<change>]` 或 `ospec execute next [changes/active/<change>]` 查看控制器状态和下一批安全可分派任务。需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<change>]` 写入 `artifacts/agents/workflow-route.json` 和 `workflow-route.md`。
 - 当方向、架构、API、UI、风险或范围需要用户明确选择时，用 `ospec execute decision [changes/active/<change>] ...` 记录决策门。required pending decision 会出现在 `bootstrap`、`status` 和 `finish` 中，并阻止 worker dispatch，直到用 `--select <option-id>` 记录选择，或明确 `--skip`。
 - 派发 worker 前，用 `ospec execute workspace [changes/active/<change>]` 写入 `artifacts/agents/workspace-status.json` 和 `artifacts/agents/workspace-status.md`；如果状态是 `needs_isolation`，先清理当前工作区或转到隔离 git worktree，再做并行派发。
@@ -148,7 +151,7 @@ goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、�
 - 只有明确希望 OSpec 执行 `git worktree remove` 时，才用 `ospec execute worktree [changes/active/<change>] --cleanup [--path path]`；cleanup 只移除 worktree，不删除分支、不 push、不 merge、不归档、不运行测试。
 - 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`。它会检查 task graph、review、verification evidence、worker status 和 git 清洁度，只记录建议命令，以及 PR、merge、branch retention、worktree cleanup 的决策提示，不会执行。当 finish plan 已 ready 且没有 required pending decision 时，继续执行 `ospec finalize [changes/active/<change>]`；`ospec archive ... --check` 只是可选 dry-run 预览。
 - 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成一批并行安全的 `artifacts/agents/dispatches/*` worker 任务包和 `artifacts/agents/execution-session.json`。每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior，方便把复杂任务交给更强的 worker，把简单任务保持轻量，并明确不同目标工具如何读取上下文、编辑文件、运行验证和记录完成。再用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制批次大小。required pending user decision 会阻止 dispatch。这两个命令也会同步 `artifacts/agents/worker-status.md`；当 completion 记录 `NEEDS_CONTEXT` 或 `BLOCKED` 时，OSpec 会写入 `artifacts/agents/blockers/` 升级记录，供 controller 跟进。
-- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]` 写入 native agent 启动计划。它会记录当前控制 AI 应该如何使用所在 harness 的原生 agent 机制：Codex/GPT 用 `spawn_agent` / `wait_agent` / `close_agent`，Claude Code 用 Task，Gemini 用 `@generalist`，OpenCode 用 `@mention`，Cursor 用 Agent/task chat，Copilot 用 CLI/coding-agent task。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在一个 active dispatch 且 workspace 状态为 ready，但不会自己启动 worker 或运行 shell 命令。
+- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]` 写入 native agent 启动计划。它会记录当前控制 AI 应该如何使用所在 harness 的原生 agent 机制：Codex/GPT 用 `spawn_agent` 加当前 harness 的等待机制，仅在提供 close API 时关闭，Claude Code 用 Task，Gemini 用 `@generalist`，OpenCode 用 `@mention`，Cursor 用 Agent/task chat，Copilot 用 CLI/coding-agent task。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在一个 active dispatch 且 workspace 状态为 ready，但不会自己启动 worker 或运行 shell 命令。
 - 默认多 worker 执行路径是当前 harness 的原生 subagent：先用 `ospec execute dispatch` 生成并行安全 batch，查看 `launch-plan.md`，再由当前 AI 会话为每个安全 packet 启动一个原生 worker agent。每个结果都用 `ospec execute complete` 记录。
 - 只有当前 AI harness 不支持原生 subagent 时，才把 `ospec execute orchestrate [changes/active/<change>] --command "..."` 当作最后 CLI fallback。fallback 模式下，OSpec 会读取或创建当前并行安全 dispatch batch，为每个 packet 渲染 harness 命令模板并发执行，写入 `artifacts/agents/orchestration-runs/`，然后把 worker run collect 回 task graph。
 - 只有原生 subagent 不可用或被明确绕过时，才用 `ospec execute launch ... --run --command "..."` 作为单 worker CLI fallback。OSpec 会把 stdout/stderr、退出码、timeout 和 run 记录写入 `artifacts/agents/worker-runs/`；随后用 `ospec execute collect ...` 把这次 run 收集为 task 完成状态。
@@ -167,7 +170,7 @@ goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、�
 - 在 AI / `/ospec-change` 流程中，AI 只保持小流程所需的 `proposal.md`、`tasks.md`、实现、`verification.md` 和 `review.md` 对齐。
 - 在 AI / `/ospec-goal` 流程中，AI 会基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`、`implementation-plan.md` 与 `artifacts/agents/task-graph.json`；你只需要审阅假设，或修正关键决策。
 - Task graph 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；归档前顶层 `status` 必须为 `"completed"`，且所有 task 必须为 `DONE` 或 `DONE_WITH_CONCERNS`。
-- `ospec execute bootstrap`、`handoff`、`doc-review`、`status`、`next` 和 `route` 都不会编辑项目源码；其中 `bootstrap`、`handoff`、`doc-review` 与 `route` 会写自己的 artifacts。`workspace`、plan 模式的 `worktree` 与 `finish` 只检查 git/artifact 状态并写 workspace/worktree/finish artifacts；`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`feedback`、`decision`、`debug`、`tdd`、`verify` 和 `sync` 只更新 OSpec artifacts、task graph、decisions、launch-plan、worker-runs、review-runs、retries、review-dispatch、review-feedback-plan、debug-evidence、tdd-evidence、verification-evidence 或 worker-status 状态，不会直接编辑项目源码。原生 subagent 由当前 AI harness 启动；只有显式传入 `execute worktree --create`、`execute worktree --cleanup`、fallback `execute orchestrate --command "..."`、fallback `execute launch --run --command "..."` 或 `execute review --run --command "..."` 时才会运行 shell 命令。
+- `ospec execute bootstrap`、`handoff`、`doc-review`、`status`、`next` 和 `route` 都不会编辑项目源码；其中 `bootstrap`、`handoff`、`doc-review` 与 `route` 会写自己的 artifacts。`workspace`、plan 模式的 `worktree` 与 `finish` 只检查 git/artifact 状态并写 workspace/worktree/finish artifacts；`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`feedback`、`decision`、`debug`、`tdd`、`verify` 和 `sync` 只更新 OSpec artifacts 与相关状态，不会直接编辑项目源码。原生 subagent 由当前 AI harness 启动；shell 只会通过显式 worktree create/cleanup、fallback `orchestrate --command`、`launch --run --command`、`review --run --command`，或已配置的 CLI-driven `ospec loop watch` 执行。
 - Worker 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；完成前必须解决 worker 状态，且 `controller_status` 必须为 `DONE`。
 - 对 `change` profile，`ospec verify [changes/active/<change>]` 只强制经典快速流程文件。对 `goal` profile，它还会强制 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence 和 `artifacts/agents/worker-status.md`。
 - 保持 `design.md` 简洁；它的作用是提高任务拆解准确性，不是替代长期项目文档。
@@ -197,7 +200,7 @@ goal 以**会话内循环**的方式运行：它一轮轮地规划、执行、�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.7.0
+npm install -g @clawplays/ospec-cli@1.8.0
 ospec update [path]
 ```
 

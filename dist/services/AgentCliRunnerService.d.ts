@@ -26,6 +26,20 @@ export interface AgentCliRunResult {
     stdout: string;
     stderr: string;
 }
+export interface AgentCliAsyncRunResult extends AgentCliRunResult {
+    durationMs: number;
+    timedOut: boolean;
+    outputTruncated: boolean;
+}
+export interface AgentCliRunOptions {
+    target: AgentCliTarget;
+    prompt: string;
+    dryRun?: boolean;
+    timeoutMs?: number;
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    maxOutputBytes?: number;
+}
 export declare class AgentCliRunnerService {
     /**
      * Build the exact external command for a target. Pure; never emits `claude --goal`.
@@ -37,13 +51,13 @@ export declare class AgentCliRunnerService {
      * Resolve the command for a target+prompt and, unless dry-run, execute it.
      * Detection failures and dry-run both return without throwing.
      */
-    run(options: {
-        target: AgentCliTarget;
-        prompt: string;
-        dryRun?: boolean;
-        timeoutMs?: number;
-        cwd?: string;
-    }): AgentCliRunResult;
+    run(options: AgentCliRunOptions): AgentCliRunResult;
+    /**
+     * Asynchronously run an external agent in a fresh process. The binary and argument vector are
+     * passed directly to spawn, so prompt text is never interpreted by a shell.
+     */
+    runAsync(options: AgentCliRunOptions): Promise<AgentCliAsyncRunResult>;
+    private terminateProcessTree;
     private quote;
 }
 export declare function createAgentCliRunnerService(): AgentCliRunnerService;

@@ -38,6 +38,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.fileService = exports.FileService = void 0;
 const fs_1 = require("fs");
+const crypto_1 = require("crypto");
 const path = __importStar(require("path"));
 const yaml = __importStar(require("js-yaml"));
 const errors_1 = require("../core/errors");
@@ -48,6 +49,45 @@ async function pathExists(targetPath) {
     }
     catch {
         return false;
+    }
+}
+const ATOMIC_REPLACE_RETRY_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+const ATOMIC_REPLACE_MAX_RETRIES = 50;
+const atomicReplaceQueues = new Map();
+async function atomicReplace(sourcePath, targetPath) {
+    for (let attempt = 0;; attempt += 1) {
+        try {
+            await fs_1.promises.rename(sourcePath, targetPath);
+            return;
+        }
+        catch (error) {
+            const code = error?.code;
+            if (!code || !ATOMIC_REPLACE_RETRY_CODES.has(code) || attempt >= ATOMIC_REPLACE_MAX_RETRIES) {
+                throw error;
+            }
+            const delayMs = Math.min(10 * (attempt + 1), 100);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+    }
+}
+async function queuedAtomicReplace(sourcePath, targetPath) {
+    const queueKey = process.platform === 'win32' ? path.resolve(targetPath).toLowerCase() : path.resolve(targetPath);
+    const previous = atomicReplaceQueues.get(queueKey) ?? Promise.resolve();
+    let release = () => undefined;
+    const turn = new Promise(resolve => {
+        release = resolve;
+    });
+    const queueTail = previous.catch(() => undefined).then(() => turn);
+    atomicReplaceQueues.set(queueKey, queueTail);
+    await previous.catch(() => undefined);
+    try {
+        await atomicReplace(sourcePath, targetPath);
+    }
+    finally {
+        release();
+        if (atomicReplaceQueues.get(queueKey) === queueTail) {
+            atomicReplaceQueues.delete(queueKey);
+        }
     }
 }
 class FileService {
@@ -68,6 +108,15 @@ class FileService {
             throw new errors_1.FileOperationError(`Failed to write file: ${filePath}`, { error });
         }
     }
+    async appendFile(filePath, content) {
+        try {
+            await fs_1.promises.mkdir(path.dirname(filePath), { recursive: true });
+            await fs_1.promises.appendFile(filePath, content, 'utf-8');
+        }
+        catch (error) {
+            throw new errors_1.FileOperationError(`Failed to append file: ${filePath}`, { error });
+        }
+    }
     async readJSON(filePath) {
         try {
             const content = await this.readFile(filePath);
@@ -78,12 +127,22 @@ class FileService {
         }
     }
     async writeJSON(filePath, data) {
+        let tempPath;
         try {
             const content = JSON.stringify(data, null, 2);
-            await this.writeFile(filePath, content);
+            const directory = path.dirname(filePath);
+            await fs_1.promises.mkdir(directory, { recursive: true });
+            tempPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${(0, crypto_1.randomUUID)()}.tmp`);
+            await fs_1.promises.writeFile(tempPath, content, { encoding: 'utf-8', flag: 'wx' });
+            await queuedAtomicReplace(tempPath, filePath);
         }
         catch (error) {
             throw new errors_1.FileOperationError(`Failed to write JSON: ${filePath}`, { error });
+        }
+        finally {
+            if (tempPath) {
+                await fs_1.promises.rm(tempPath, { force: true }).catch(() => undefined);
+            }
         }
     }
     async readYAML(filePath) {

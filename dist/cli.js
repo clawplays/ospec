@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.7.0';
+const CLI_VERSION = '1.8.0';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -154,7 +154,7 @@ function parseInitCommandArgs(commandArgs) {
 }
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
-        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3]'
+        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--execution-model controller|cli-driven] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
         : 'Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]';
 }
 function parseNewCommandArgs(commandArgs, commandName = 'new') {
@@ -162,6 +162,11 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
     let rootDir;
     const flags = [];
     let level;
+    let target;
+    let executionModel;
+    let harnessInteractive;
+    let nativeSubagentCapability;
+    let nativeGoalCapability;
     for (let index = 1; index < commandArgs.length; index += 1) {
         const arg = commandArgs[index];
         if (arg === '--flags') {
@@ -200,6 +205,76 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
             }
             continue;
         }
+        const goalOnlyValue = (flag) => arg === flag
+            ? commandArgs[index + 1]
+            : arg.startsWith(`${flag}=`)
+                ? arg.slice(flag.length + 1)
+                : undefined;
+        const requireGoalOption = (flag, value) => {
+            if (value === undefined)
+                return undefined;
+            if (commandName !== 'goal') {
+                console.error(`Unknown option for ${commandName}: ${flag} (only valid for ospec goal)`);
+                console.error(getNewLikeUsage(commandName));
+                process.exit(1);
+            }
+            if (!value || value.startsWith('--')) {
+                console.error(`${flag} requires a value.`);
+                console.error(getNewLikeUsage(commandName));
+                process.exit(1);
+            }
+            if (arg === flag)
+                index += 1;
+            return value.trim().toLowerCase();
+        };
+        const targetValue = requireGoalOption('--target', goalOnlyValue('--target'));
+        if (targetValue !== undefined) {
+            const allowed = new Set(['codex', 'gpt', 'claude', 'gemini', 'opencode', 'cursor', 'copilot', 'shell', 'generic']);
+            if (!allowed.has(targetValue)) {
+                console.error(`Invalid --target value for goal: ${targetValue}`);
+                process.exit(1);
+            }
+            target = targetValue;
+            continue;
+        }
+        const executionModelValue = requireGoalOption('--execution-model', goalOnlyValue('--execution-model'));
+        if (executionModelValue !== undefined) {
+            if (executionModelValue !== 'controller' && executionModelValue !== 'cli-driven') {
+                console.error(`Invalid --execution-model value for goal: ${executionModelValue} (expected controller or cli-driven)`);
+                process.exit(1);
+            }
+            executionModel = executionModelValue;
+            continue;
+        }
+        const interactiveValue = requireGoalOption('--harness-interactive', goalOnlyValue('--harness-interactive'));
+        if (interactiveValue !== undefined) {
+            if (interactiveValue !== 'true' && interactiveValue !== 'false') {
+                console.error(`Invalid --harness-interactive value for goal: ${interactiveValue} (expected true or false)`);
+                process.exit(1);
+            }
+            harnessInteractive = interactiveValue === 'true';
+            continue;
+        }
+        const parseCapability = (flag, value) => {
+            const normalized = requireGoalOption(flag, value);
+            if (normalized === undefined)
+                return undefined;
+            if (normalized !== 'supported' && normalized !== 'unknown' && normalized !== 'unsupported') {
+                console.error(`Invalid ${flag} value for goal: ${normalized} (expected supported, unknown, or unsupported)`);
+                process.exit(1);
+            }
+            return normalized;
+        };
+        const subagentsValue = parseCapability('--native-subagents', goalOnlyValue('--native-subagents'));
+        if (subagentsValue !== undefined) {
+            nativeSubagentCapability = subagentsValue;
+            continue;
+        }
+        const goalCapabilityValue = parseCapability('--native-goal', goalOnlyValue('--native-goal'));
+        if (goalCapabilityValue !== undefined) {
+            nativeGoalCapability = goalCapabilityValue;
+            continue;
+        }
         if (arg.startsWith('--')) {
             console.error(`Unknown option for ${commandName}: ${arg}`);
             console.error(getNewLikeUsage(commandName));
@@ -218,6 +293,11 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         rootDir,
         flags: Array.from(new Set(flags)),
         level,
+        target,
+        executionModel,
+        harnessInteractive,
+        nativeSubagentCapability,
+        nativeGoalCapability,
     };
 }
 async function main() {
@@ -250,12 +330,20 @@ async function main() {
             case 'goal': {
                 if (commandArgs.length === 0) {
                     console.error('Error: goal name is required');
-                    console.log('Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2]');
+                    console.log(getNewLikeUsage('goal'));
                     process.exit(1);
                 }
-                const { featureName, rootDir, flags, level } = parseNewCommandArgs(commandArgs, 'goal');
+                const { featureName, rootDir, flags, level, target, executionModel, harnessInteractive, nativeSubagentCapability, nativeGoalCapability, } = parseNewCommandArgs(commandArgs, 'goal');
                 const goalCmd = new GoalCommand_1.GoalCommand();
-                await goalCmd.execute(featureName, rootDir, { flags, level });
+                await goalCmd.execute(featureName, rootDir, {
+                    flags,
+                    level,
+                    target,
+                    executionModel,
+                    harnessInteractive,
+                    nativeSubagentCapability,
+                    nativeGoalCapability,
+                });
                 break;
             }
             case 'brainstorm': {
@@ -424,7 +512,7 @@ Commands:
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
   execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, orchestrate, complete, repair)
-  loop [action] [path]      Session-bound goal loop helpers (run, watch, status, pause, resume, level, tick-plan)
+  loop [action] [path]      Goal loop controller (run, status, heartbeat, result, recover, configure, pause, resume)
   triage [action] [path]    Triage inbox helpers (list, claim, promote)
   docs [action] [path]      Docs helpers (status, generate)
   skills [action] [path]    Skills status helpers (status)
@@ -443,6 +531,7 @@ Examples:
   ospec new onboarding-flow
   ospec new landing-refresh . --flags ui_change,page_design
   ospec goal billing-refactor . --flags complex_feature,multi_file_change
+  ospec goal billing-refactor . --level L2 --target codex --execution-model controller --harness-interactive true --native-subagents supported
   ospec brainstorm . --topic "Improve onboarding conversion" --change onboarding-flow
   ospec brainstorm . --topic "Explore dashboard UX" --visual
   ospec plan ./changes/active/onboarding-flow
@@ -476,6 +565,9 @@ Examples:
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --summary "Implemented and verified"
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --usage-file ./usage.json
   ospec execute repair ./changes/active/onboarding-flow
+  ospec loop heartbeat ./changes/active/onboarding-flow --action-item worker-1 --executor child-1
+  ospec loop result ./changes/active/onboarding-flow --action-item worker-1 --executor child-1 --exit-code 0 --summary "completed"
+  ospec loop recover ./changes/active/onboarding-flow --force
   ospec docs status
   ospec docs generate
   ospec docs sync-protocol

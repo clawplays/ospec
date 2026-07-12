@@ -106,7 +106,9 @@ class ServiceContainer {
         this.runService = (0, RunService_2.createRunService)(FileService_2.fileService, this.projectService, this.queueService);
         this.taskGraphExecutionService = (0, TaskGraphExecutionService_2.createTaskGraphExecutionService)(FileService_2.fileService);
         this.claudeHookService = (0, ClaudeHookService_2.createClaudeHookService)(FileService_2.fileService);
-        this.loopService = (0, LoopService_2.createLoopService)(FileService_2.fileService);
+        this.loopService = (0, LoopService_2.createLoopService)(FileService_2.fileService, {
+            taskGraphExecutionService: this.taskGraphExecutionService,
+        });
         this.triageService = (0, TriageService_2.createTriageService)(FileService_2.fileService);
         Object.defineProperty(this, 'pluginRegistryService', {
             value: (0, PluginRegistryService_1.createPluginRegistryService)(FileService_2.fileService),

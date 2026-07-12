@@ -79,10 +79,12 @@ const EXECUTION_METRICS_FILE = 'execution-metrics.json';
 const USAGE_SIDECARS_DIR = 'usage';
 const REVIEW_DISPATCHES_DIR = 'review-dispatches';
 const DOCUMENT_REVIEW_DISPATCHES_DIR = 'document-review-dispatches';
+const CURRENT_REVIEW_DISPATCHES_FILE = 'current-review-dispatches.json';
 const REPAIR_WAVES_DIR = 'repair-waves';
 const DESIGN_DOCUMENT_REVIEW_FILE = 'design-review.md';
 const IMPLEMENTATION_PLAN_DOCUMENT_REVIEW_FILE = 'implementation-plan-review.md';
 const VERIFICATION_EVIDENCE_DIR = 'verification-evidence';
+const VERIFICATION_ACTIONS_DIR = 'verification-actions';
 const TDD_EVIDENCE_DIR = 'tdd-evidence';
 const DEBUG_EVIDENCE_DIR = 'debug-evidence';
 const BLOCKERS_DIR = 'blockers';
@@ -102,6 +104,9 @@ const KNOWN_TASK_STATUSES = new Set([
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_ORCHESTRATION_MAX_ROUNDS = 10;
+const TASK_GRAPH_MUTATION_LOCK_FILE = 'task-graph-mutation.lock';
+const TASK_GRAPH_MUTATION_LOCK_TIMEOUT_MS = 30 * 1000;
+const STALE_TASK_GRAPH_MUTATION_LOCK_MS = 2 * 60 * 1000;
 const MAX_CAPTURED_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
 function emptyExecutionUsage() {
     return {
@@ -182,7 +187,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Spawn a worker agent for scoped edits; keep the worker write scope limited to the dispatch packet target files unless the packet evidence proves the scope is wrong.',
             runCommands: 'Let the worker run only the verification commands required for the task or change, then record evidence with ospec execute tdd/debug/verify as appropriate.',
             trackPlan: 'Use the active task graph and visible plan tracking; keep OSpec artifacts synchronized with ospec execute sync after manual artifact edits.',
-            dispatchWorkers: 'Default to Codex native multi-agent dispatch: call spawn_agent for each parallel-safe packet, wait_agent for results, then close_agent. If multi-agent support is unavailable, use the fallback CLI command runner only after recording that limitation.',
+            dispatchWorkers: 'Default to Codex native multi-agent dispatch: call spawn_agent for each parallel-safe packet and use the harness wait mechanism for results; release or close workers only when that API is exposed. If multi-agent support is unavailable, record a capability blocker instead of silently using CLI fallback.',
             recordCompletion: 'Record each worker outcome with ospec execute complete <task-id> and one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
         },
         gpt: {
@@ -191,7 +196,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Spawn a native worker agent when the harness exposes agent tools; keep edits scoped to the dispatch packet target files unless evidence proves the scope is wrong.',
             runCommands: 'Let the worker run only task-required verification commands and report evidence back to the controller.',
             trackPlan: 'Use the active OSpec task graph as durable state even if the harness has its own plan UI.',
-            dispatchWorkers: 'Default to the current GPT-family harness native agent tool. In Codex-compatible sessions this means spawn_agent, wait_agent, and close_agent. Use CLI fallback only when no native agent tool exists.',
+            dispatchWorkers: 'Default to the current GPT-family harness native agent tool. In Codex-compatible sessions this means spawn_agent plus the harness wait lifecycle; close only when that API exists. Record a capability blocker before any explicit CLI fallback.',
             recordCompletion: 'Record worker outcomes with ospec execute complete <task-id> and one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
         },
         claude: {
@@ -534,6 +539,10 @@ class TaskGraphExecutionService {
             ? graph.tasks.map((task, index) => normalizeTask(task, index, executionPolicy.modelProfiles))
             : [];
         const taskById = new Map(tasks.map(task => [task.id, task]));
+        const taskIdCounts = tasks.reduce((counts, task) => {
+            counts.set(task.id, (counts.get(task.id) || 0) + 1);
+            return counts;
+        }, new Map());
         const issues = [];
         const invalidTasks = [];
         const blockedTasks = [];
@@ -552,6 +561,12 @@ class TaskGraphExecutionService {
         }
         for (const task of tasks) {
             const reasons = [];
+            if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/.test(task.id)) {
+                reasons.push(`invalid_task_id:${task.id || '(missing)'}`);
+            }
+            if ((taskIdCounts.get(task.id) || 0) > 1) {
+                reasons.push(`duplicate_task_id:${task.id}`);
+            }
             if (!KNOWN_TASK_STATUSES.has(task.status)) {
                 reasons.push(`invalid_status:${task.status || '(missing)'}`);
             }
@@ -588,7 +603,7 @@ class TaskGraphExecutionService {
                     reasons.push(`waiting_for_task_review:${task.id}`);
                 }
             }
-            if (reasons.some(reason => reason.startsWith('invalid_status:') || reason.startsWith('unknown_dependency:') || reason.startsWith('missing_'))) {
+            if (reasons.some(reason => reason.startsWith('invalid_') || reason.startsWith('duplicate_') || reason.startsWith('unknown_dependency:') || reason.startsWith('missing_'))) {
                 invalidTasks.push({ task, reasons });
                 continue;
             }
@@ -644,6 +659,9 @@ class TaskGraphExecutionService {
         };
     }
     async dispatch(changePath, options = {}) {
+        return this.withTaskGraphMutationLease(changePath, () => this.dispatchUnlocked(changePath, options));
+    }
+    async dispatchUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         await this.ingestReviewUsageSidecars(resolvedChangePath, await this.readFeatureName(resolvedChangePath));
@@ -695,17 +713,24 @@ class TaskGraphExecutionService {
             : null;
         const fallbackHeadCommit = gitSnapshot ? null : this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
         const gitBaseCommit = gitSnapshot?.headCommit || fallbackHeadCommit;
+        // Porcelain paths are relative to the command cwd, including when the
+        // initialized OSpec project is nested below the repository root.
+        const changeRelativeToGit = path.relative(projectRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
+        const outsideCurrentChange = (entry) => {
+            const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
+            return files.some(file => file !== changeRelativeToGit && !file.startsWith(`${changeRelativeToGit}/`));
+        };
         const workspaceDirtyAtDispatch = gitSnapshot
-            ? gitSnapshot.workspaceDirty
+            ? parseGitStatusV2Entries(gitStatusResult.stdout).some(outsideCurrentChange)
             : fallbackHeadCommit
-                ? (this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '').length > 0
+                ? this.parseGitStatusEntries(this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '').some(outsideCurrentChange)
                 : null;
         const dispatchMetrics = [];
         for (const task of dispatchableTasks) {
             if (task.workerProfile.modelSelectionSource === 'harness-default') {
                 warnings.push(`Task ${task.id} model profile ${task.workerProfile.modelProfile} has no configured model for ${task.workerProfile.recommendedTarget}; the harness default will be used.`);
             }
-            const dispatchId = `dispatch-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(task.id)}`;
+            const dispatchId = `dispatch-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(task.id)}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
             const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DISPATCHES_DIR, `${dispatchId}.json`);
             const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', DISPATCHES_DIR, `${dispatchId}.md`);
             const record = {
@@ -751,14 +776,14 @@ class TaskGraphExecutionService {
         session.projectSession = projectSession;
         await this.fileService.writeJSON(report.graphPath, rawGraph);
         await this.fileService.writeJSON(sessionPath, session);
-        const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
         // Fold the launch step into dispatch for a single task: generate its native agent launch
         // plan now so the controller can spawn the worker directly without a separate
         // `ospec execute launch` round-trip. Batches keep per-task launch (one plan file per task).
         let nextInstruction = `Run ospec execute launch for each active dispatch, start native harness worker agent(s) from the launch plan, then record results with ospec execute complete <task-id>. Use CLI fallback only when native subagents are unavailable.`;
         if (createdDispatches.length === 1) {
             try {
-                await this.planLaunch(resolvedChangePath, { taskId: createdDispatches[0].taskId });
+                await this.planLaunchUnlocked(resolvedChangePath, { taskId: createdDispatches[0].taskId });
                 const launchReportPath = this.toChangeRelativePath(resolvedChangePath, this.getLaunchPlanReportPath(resolvedChangePath));
                 nextInstruction = `Launch plan for ${createdDispatches[0].taskId} is already generated at ${launchReportPath} (no separate ospec execute launch step needed). Start the native harness worker agent directly from it, then record the result with ospec execute complete ${createdDispatches[0].taskId}. Use CLI fallback only when native subagents are unavailable.`;
             }
@@ -779,6 +804,9 @@ class TaskGraphExecutionService {
         };
     }
     async planLaunch(changePath, options = {}) {
+        return this.withTaskGraphMutationLease(changePath, () => this.planLaunchUnlocked(changePath, options));
+    }
+    async planLaunchUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const generatedAt = new Date().toISOString();
@@ -922,7 +950,7 @@ class TaskGraphExecutionService {
         }
         const status = blockers.length > 0 ? 'blocked' : 'ready';
         const nextInstruction = status === 'ready'
-            ? `Review ${this.toChangeRelativePath(resolvedChangePath, reportPath)}, dispatch the ${target} worker with the current harness native agent mechanism, then record the result with ospec execute complete ${selected?.taskId || '<task-id>'} ${this.quoteShellArg(relativeChangePath)} --status DONE --summary "...". Use CLI fallback only if native subagents are unavailable.`
+            ? `Review ${this.toChangeRelativePath(resolvedChangePath, reportPath)}, dispatch the ${target} worker with the current harness native agent mechanism, then record the result with ospec execute complete ${selected?.taskId || '<task-id>'} ${this.quoteShellArg(relativeChangePath)} --dispatch ${selected?.id || '<dispatch-id>'} --status DONE --summary "...". Use CLI fallback only if native subagents are unavailable.`
             : `Resolve launch blockers, then rerun ospec execute launch ${this.quoteShellArg(relativeChangePath)}${options.taskId ? ` --task ${this.quoteShellArg(options.taskId)}` : ''} --target ${target}.`;
         const artifact = {
             version: '1.0',
@@ -1035,15 +1063,31 @@ class TaskGraphExecutionService {
         if (!command) {
             throw new Error('Worker launch --run requires --command.');
         }
-        const launch = await this.planLaunch(changePath, {
-            taskId: options.taskId,
-            target: options.target,
-            dryRun: options.dryRun,
+        const preparedLaunch = await this.withTaskGraphMutationLease(changePath, async () => {
+            const launch = await this.planLaunchUnlocked(changePath, {
+                taskId: options.taskId,
+                target: options.target,
+                dryRun: options.dryRun,
+            });
+            if (launch.status !== 'ready') {
+                throw new Error(`Cannot run worker until launch plan is ready: ${launch.blockers.join('; ') || 'launch blocked'}`);
+            }
+            const artifact = await this.fileService.readJSON(launch.artifactPath);
+            if (artifact.selectedDispatch?.id !== launch.dispatchId) {
+                throw new Error('Cannot run worker because the shared launch plan changed before it could be consumed.');
+            }
+            const immutableId = `launch-${this.toFileSafeId(launch.dispatchId || artifact.selectedDispatch.id)}-${this.toFileSafeTimestamp(new Date().toISOString())}`;
+            const immutableDir = path.join(path.resolve(changePath), 'artifacts', 'agents', 'launch-plans');
+            const immutableArtifactPath = path.join(immutableDir, `${immutableId}.json`);
+            const immutableReportPath = path.join(immutableDir, `${immutableId}.md`);
+            await this.fileService.writeJSON(immutableArtifactPath, artifact);
+            await this.writeLocalizedReportFile(path.resolve(changePath), immutableReportPath, this.buildWorkerLaunchPlanReport(artifact));
+            return {
+                launch: { ...launch, artifactPath: immutableArtifactPath, reportPath: immutableReportPath },
+                artifact,
+            };
         });
-        if (launch.status !== 'ready') {
-            throw new Error(`Cannot run worker until launch plan is ready: ${launch.blockers.join('; ') || 'launch blocked'}`);
-        }
-        const launchArtifact = await this.fileService.readJSON(launch.artifactPath);
+        const { launch, artifact: launchArtifact } = preparedLaunch;
         const selected = launchArtifact.selectedDispatch;
         if (!selected) {
             throw new Error('Cannot run worker because launch plan did not select exactly one dispatch.');
@@ -1074,6 +1118,9 @@ class TaskGraphExecutionService {
         });
     }
     async collectWorkerRun(changePath, options = {}) {
+        return this.withTaskGraphMutationLease(changePath, () => this.collectWorkerRunUnlocked(changePath, options));
+    }
+    async collectWorkerRunUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const record = await this.findWorkerRunRecord(resolvedChangePath, {
             taskId: options.taskId,
@@ -1094,9 +1141,10 @@ class TaskGraphExecutionService {
         const summary = options.summary?.trim()
             || record.summary
             || `Collected worker run ${record.id} with exit code ${record.exitCode ?? 'unknown'}.`;
-        const completion = await this.complete(resolvedChangePath, record.taskId, {
+        const completion = await this.completeUnlocked(resolvedChangePath, record.taskId, {
             status: completionStatus,
             summary,
+            dispatchId: record.dispatchId || undefined,
         });
         record.collectedAt = new Date().toISOString();
         record.completionStatus = completionStatus;
@@ -1117,6 +1165,9 @@ class TaskGraphExecutionService {
         };
     }
     async retryWorkerRun(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, () => this.retryWorkerRunUnlocked(changePath, options));
+    }
+    async retryWorkerRunUnlocked(changePath, options) {
         const resolvedChangePath = path.resolve(changePath);
         const taskId = options.taskId?.trim();
         if (!taskId) {
@@ -1140,12 +1191,27 @@ class TaskGraphExecutionService {
         if (!options.force && !taskRetryable && !runRetryable) {
             throw new Error(`Task ${taskId} is not retryable from status ${task.status}; retry requires BLOCKED/NEEDS_CONTEXT task state, a failed run, or --force.`);
         }
+        const now = new Date().toISOString();
+        const retryId = `retry-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskId)}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
+        const sessionPath = this.getSessionPath(resolvedChangePath);
+        const session = await this.readSession(sessionPath, report.feature);
+        const supersededDispatches = session.dispatches.filter(dispatch => dispatch.taskId === taskId && dispatch.completedAt === null);
+        for (const dispatch of supersededDispatches) {
+            dispatch.status = 'BLOCKED';
+            dispatch.completedAt = now;
+            dispatch.summary = `Superseded by retry ${retryId} before the prior attempt was collected.`;
+            if (dispatch.recordPath) {
+                await this.fileService.writeJSON(path.resolve(resolvedChangePath, dispatch.recordPath), dispatch);
+            }
+        }
+        if (supersededDispatches.length > 0) {
+            session.updatedAt = now;
+            await this.fileService.writeJSON(sessionPath, session);
+        }
         const rawGraph = await this.fileService.readJSON(report.graphPath);
         this.updateRawTaskStatus(rawGraph, taskId, 'PENDING');
         rawGraph.status = 'pending';
         await this.fileService.writeJSON(report.graphPath, rawGraph);
-        const now = new Date().toISOString();
-        const retryId = `retry-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskId)}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', RETRIES_DIR, `${retryId}.json`);
         const reportPath = path.join(resolvedChangePath, 'artifacts', 'agents', RETRIES_DIR, `${retryId}.md`);
         const retryRecord = {
@@ -1161,7 +1227,7 @@ class TaskGraphExecutionService {
         };
         await this.fileService.writeJSON(recordPath, retryRecord);
         await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorkerRetryReport(retryRecord));
-        const dispatch = await this.dispatch(resolvedChangePath, { taskId });
+        const dispatch = await this.dispatchUnlocked(resolvedChangePath, { taskId });
         return {
             changePath: resolvedChangePath,
             retryRecord,
@@ -1354,8 +1420,12 @@ class TaskGraphExecutionService {
         if (!command) {
             throw new Error('Review --run requires --command.');
         }
-        const review = await this.review(changePath, { stage: options.stage, taskId: options.taskId });
         const resolvedChangePath = path.resolve(changePath);
+        const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
+        if (loopControllerSession.controllerMode) {
+            throw new Error('Review --run CLI fallback is unavailable for controller goals; dispatch the review through the current IDE native-subagent Loop lifecycle or explicitly reconfigure cli-driven execution.');
+        }
+        const review = await this.review(changePath, { stage: options.stage, taskId: options.taskId });
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const automaticUsagePath = path.join(resolvedChangePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${review.dispatch.id}.json`);
         await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
@@ -1412,16 +1482,24 @@ class TaskGraphExecutionService {
                 workflowStage,
             });
         }
-        await this.recordExecutionMetric(resolvedChangePath, await this.readFeatureName(resolvedChangePath), metricEntries);
+        await this.withTaskGraphMutationLease(resolvedChangePath, async () => this.recordExecutionMetric(resolvedChangePath, await this.readFeatureName(resolvedChangePath), metricEntries));
         let workerStatusPath = review.workerStatusPath;
         const decision = options.decision || null;
         if (decision) {
-            await this.applyReviewRunDecision(resolvedChangePath, review.dispatch.reviewArtifactPath, {
-                decision,
-                summary: options.summary,
-                run,
+            const sync = await this.withTaskGraphMutationLease(resolvedChangePath, async () => {
+                const reviewArtifactPath = path.resolve(resolvedChangePath, review.dispatch.reviewArtifactPath);
+                const current = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+                await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(review.dispatch.taskId || null), review.dispatch.id);
+                if (String(current.data?.review_dispatch_id || '') !== review.dispatch.id) {
+                    throw new Error(`Review run ${run.record.id} is stale because a newer review dispatch replaced ${review.dispatch.id}.`);
+                }
+                await this.applyReviewRunDecision(resolvedChangePath, review.dispatch.reviewArtifactPath, {
+                    decision,
+                    summary: options.summary,
+                    run,
+                });
+                return this.syncWorkerStatusUnlocked(resolvedChangePath);
             });
-            const sync = await this.syncWorkerStatus(resolvedChangePath);
             workerStatusPath = sync.workerStatusPath;
         }
         return {
@@ -1438,6 +1516,9 @@ class TaskGraphExecutionService {
         };
     }
     async complete(changePath, taskId, options = {}) {
+        return this.withTaskGraphMutationLease(changePath, () => this.completeUnlocked(changePath, taskId, options));
+    }
+    async completeUnlocked(changePath, taskId, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const normalizedTaskId = String(taskId || '').trim();
         if (!normalizedTaskId) {
@@ -1459,13 +1540,37 @@ class TaskGraphExecutionService {
         const now = new Date().toISOString();
         const sessionPath = this.getSessionPath(resolvedChangePath);
         const session = await this.readSession(sessionPath, report.feature);
+        const taskDispatches = session.dispatches.filter(item => item.taskId === normalizedTaskId);
+        if (!options.dispatchId && taskDispatches.length > 1) {
+            throw new Error(`Task ${normalizedTaskId} has multiple dispatch attempts; completion requires the exact --dispatch id.`);
+        }
+        const dispatch = options.dispatchId
+            ? session.dispatches.find(item => item.id === options.dispatchId)
+            : [...taskDispatches].reverse().find(item => item.completedAt === null);
+        if (!options.dispatchId && taskDispatches.length > 0 && !dispatch) {
+            throw new Error(`Task ${normalizedTaskId} has dispatch history but no active attempt; completion requires a new dispatch and its exact --dispatch id.`);
+        }
+        if (options.dispatchId && (!dispatch || dispatch.taskId !== normalizedTaskId)) {
+            throw new Error(`Dispatch ${options.dispatchId} does not belong to task ${normalizedTaskId}.`);
+        }
+        if (options.dispatchId && dispatch?.completedAt !== null) {
+            throw new Error(`Dispatch ${options.dispatchId} is already settled and cannot complete a newer attempt.`);
+        }
+        const currentActiveDispatch = [...taskDispatches].reverse().find(item => item.completedAt === null);
+        if (options.dispatchId && dispatch && currentActiveDispatch?.id !== dispatch.id) {
+            throw new Error(`Dispatch ${options.dispatchId} is stale; current active attempt is ${currentActiveDispatch?.id || '(none)'}.`);
+        }
         const rawGraph = await this.fileService.readJSON(report.graphPath);
         this.updateRawTaskStatus(rawGraph, normalizedTaskId, completionStatus);
         if (TERMINAL_TASK_STATUSES.has(completionStatus)) {
             this.resetRawTaskReview(rawGraph, task);
+            const taskReviewPath = path.join(resolvedChangePath, this.getTaskCombinedReviewArtifactRelativePath(task.id));
+            if (await this.fileService.exists(taskReviewPath)) {
+                await this.writeLocalizedReportFile(resolvedChangePath, taskReviewPath, this.buildDefaultTaskReviewArtifact(report.feature, task));
+                await this.fileService.remove(taskReviewPath.replace(/\.md$/i, '.findings.json'));
+            }
         }
         const summary = options.summary?.trim() || null;
-        const dispatch = [...session.dispatches].reverse().find(item => item.taskId === normalizedTaskId && item.completedAt === null);
         const automaticUsagePath = dispatch
             ? path.join(resolvedChangePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${dispatch.id}.json`)
             : null;
@@ -1555,7 +1660,7 @@ class TaskGraphExecutionService {
                 sessionPath,
             })
             : null;
-        const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
             sessionPath,
@@ -1576,6 +1681,9 @@ class TaskGraphExecutionService {
         };
     }
     async syncWorkerStatus(changePath) {
+        return this.withTaskGraphMutationLease(changePath, () => this.syncWorkerStatusUnlocked(changePath));
+    }
+    async syncWorkerStatusUnlocked(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         await this.syncTaskReviewStateFromArtifacts(resolvedChangePath);
         const report = await this.getReport(resolvedChangePath);
@@ -1662,6 +1770,9 @@ class TaskGraphExecutionService {
         };
     }
     async review(changePath, options = {}) {
+        return this.withTaskGraphMutationLease(changePath, () => this.reviewUnlocked(changePath, options));
+    }
+    async reviewUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const report = await this.getReport(resolvedChangePath);
@@ -1679,25 +1790,31 @@ class TaskGraphExecutionService {
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
         const warnings = [...projectSession.warnings];
         const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
+        const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
+        if (loopControllerSession.controllerMode && !loopControllerSession.current) {
+            throw new Error('Cannot dispatch a code review with an expired or unavailable IDE controller capability session. Refresh the goal harness capability first.');
+        }
         // Per-task review is a single combined code review (spec compliance + code quality in one pass).
         if (taskReview) {
             if (APPROVED_REVIEW_DECISIONS.has(taskReview.decision)) {
                 throw new Error(`Task ${taskReview.task.id} code review is already ${taskReview.decision}. Continue with dependent task dispatch.`);
             }
-            const reviewId = `review-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskReview.task.id)}`;
+            const reviewId = `review-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskReview.task.id)}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
             const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
             const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
             const session = await this.readSession(this.getSessionPath(resolvedChangePath), report.feature);
             const taskDispatch = [...session.dispatches]
                 .reverse()
                 .find(item => item.taskId === taskReview.task.id) || null;
-            const reviewPackagePath = await this.writeTaskReviewPackage({
+            const reviewPackage = await this.writeTaskReviewPackage({
                 projectRoot,
                 changePath: resolvedChangePath,
                 task: taskReview.task,
                 dispatch: taskDispatch,
                 reviewId,
             });
+            const targetFiles = this.normalizeTargetFiles(taskReview.task.targetFiles);
+            const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
             const record = {
                 id: reviewId,
                 stage: 'review',
@@ -1710,13 +1827,21 @@ class TaskGraphExecutionService {
                 packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
                 recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
                 reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, taskReview.reviewArtifactPath),
-                reviewPackagePath,
+                reviewPackagePath: reviewPackage.path,
                 workerProfile: buildReviewerWorkerProfile('code_reviewer', executionPolicy.modelProfiles),
+                gitHead: reviewPackage.gitHead,
+                targetFiles,
+                targetSnapshots,
+                targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
+                requiresNativeExecutorProvenance: loopControllerSession.current,
+                controllerSessionReportedAt: loopControllerSession.current ? loopControllerSession.reportedAt : null,
             };
             if (record.workerProfile.modelSelectionSource === 'harness-default') {
                 warnings.push(`Review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
             }
             await this.fileService.writeJSON(recordPath, record);
+            await this.setCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(taskReview.task.id), reviewId);
+            await this.prepareReviewArtifactForDispatch(resolvedChangePath, record);
             await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
             await this.recordExecutionMetric(resolvedChangePath, report.feature, [
                 {
@@ -1735,7 +1860,7 @@ class TaskGraphExecutionService {
                     kind: 'review_package',
                     id: reviewId,
                     taskId: taskReview.task.id,
-                    path: reviewPackagePath,
+                    path: reviewPackage.path,
                     recordedAt: now,
                     durationMs: null,
                     capabilityTier: record.workerProfile.capabilityTier,
@@ -1744,7 +1869,7 @@ class TaskGraphExecutionService {
                     workflowStage: 'task_review',
                 },
             ]);
-            const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+            const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
             return {
                 changePath: resolvedChangePath,
                 graphPath: report.graphPath,
@@ -1764,13 +1889,13 @@ class TaskGraphExecutionService {
         if (!(await this.fileService.exists(finalReviewPath))) {
             await this.writeLocalizedReportFile(resolvedChangePath, finalReviewPath, this.buildDefaultFinalReviewArtifact(report.feature));
         }
-        const reviewId = `review-${this.toFileSafeTimestamp(now)}-final`;
+        const reviewId = `review-${this.toFileSafeTimestamp(now)}-final-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
         const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
         const session = await this.readSession(this.getSessionPath(resolvedChangePath), report.feature);
         const earliestDispatch = [...session.dispatches]
             .sort((left, right) => left.assignedAt.localeCompare(right.assignedAt))[0] || null;
-        const reviewPackagePath = await this.writeTaskReviewPackage({
+        const reviewPackage = await this.writeTaskReviewPackage({
             projectRoot,
             changePath: resolvedChangePath,
             task: {
@@ -1780,6 +1905,8 @@ class TaskGraphExecutionService {
             dispatch: earliestDispatch,
             reviewId,
         });
+        const targetFiles = this.normalizeTargetFiles(Array.from(new Set(this.flattenReportTasks(report).flatMap(task => task.targetFiles))));
+        const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
         const record = {
             id: reviewId,
             stage: 'review',
@@ -1792,13 +1919,21 @@ class TaskGraphExecutionService {
             packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, finalReviewPath),
-            reviewPackagePath,
+            reviewPackagePath: reviewPackage.path,
             workerProfile: buildReviewerWorkerProfile('code_reviewer', executionPolicy.modelProfiles, 'final_review'),
+            gitHead: reviewPackage.gitHead,
+            targetFiles,
+            targetSnapshots,
+            targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
+            requiresNativeExecutorProvenance: loopControllerSession.current,
+            controllerSessionReportedAt: loopControllerSession.current ? loopControllerSession.reportedAt : null,
         };
         if (record.workerProfile.modelSelectionSource === 'harness-default') {
             warnings.push(`Final review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
         }
         await this.fileService.writeJSON(recordPath, record);
+        await this.setCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(null), reviewId);
+        await this.prepareReviewArtifactForDispatch(resolvedChangePath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
         await this.recordExecutionMetric(resolvedChangePath, report.feature, [
             {
@@ -1817,7 +1952,7 @@ class TaskGraphExecutionService {
                 kind: 'review_package',
                 id: reviewId,
                 taskId: null,
-                path: reviewPackagePath,
+                path: reviewPackage.path,
                 recordedAt: now,
                 durationMs: null,
                 capabilityTier: record.workerProfile.capabilityTier,
@@ -1826,7 +1961,7 @@ class TaskGraphExecutionService {
                 workflowStage: 'final_review',
             },
         ]);
-        const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
             graphPath: report.graphPath,
@@ -1836,6 +1971,104 @@ class TaskGraphExecutionService {
             warnings,
             nextInstruction: `Hand the combined final code review packet to one reviewer (spec compliance + code quality in a single pass), then update ${record.reviewArtifactPath} with one decision and run ospec execute sync.`,
         };
+    }
+    async bindReviewLoopAction(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(options.dispatchId)}.json`);
+            if (!(await this.fileService.exists(recordPath))) {
+                throw new Error(`Review dispatch record not found for Loop binding (${options.dispatchId}).`);
+            }
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.id !== options.dispatchId)
+                throw new Error(`Review dispatch identity mismatch for ${options.dispatchId}.`);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
+            if (!controllerSession.current || controllerSession.reportedAt !== options.controllerSessionReportedAt) {
+                throw new Error(`Review dispatch ${options.dispatchId} does not match the current IDE controller session.`);
+            }
+            if ((record.loopActionId && record.loopActionId !== options.actionId)
+                || (record.loopActionItemId && record.loopActionItemId !== options.actionItemId)) {
+                throw new Error(`Review dispatch ${options.dispatchId} is already bound to another Loop action.`);
+            }
+            record.requiresNativeExecutorProvenance = true;
+            record.loopActionId = options.actionId;
+            record.loopActionItemId = options.actionItemId;
+            record.controllerSessionReportedAt = options.controllerSessionReportedAt;
+            record.reviewerExecutorId = null;
+            record.reviewerClaimedAt = null;
+            record.reviewerCompletedAt = null;
+            record.reviewerSucceeded = null;
+            await this.fileService.writeJSON(recordPath, record);
+            await this.updateReviewLoopProvenance(resolvedChangePath, record);
+        });
+    }
+    async claimReviewLoopExecutor(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(options.dispatchId)}.json`);
+            const record = await this.fileService.readJSON(recordPath);
+            this.assertReviewLoopBinding(record, options);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
+            if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
+                throw new Error(`Review dispatch ${options.dispatchId} executor claim does not match the current IDE controller session.`);
+            }
+            if (record.reviewerExecutorId && record.reviewerExecutorId !== options.executorId) {
+                throw new Error(`Review dispatch ${options.dispatchId} is claimed by another executor.`);
+            }
+            record.reviewerExecutorId = options.executorId;
+            record.reviewerClaimedAt = record.reviewerClaimedAt || options.claimedAt;
+            await this.fileService.writeJSON(recordPath, record);
+            await this.updateReviewLoopProvenance(resolvedChangePath, record);
+        });
+    }
+    async completeReviewLoopExecutor(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(options.dispatchId)}.json`);
+            const record = await this.fileService.readJSON(recordPath);
+            this.assertReviewLoopBinding(record, options);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
+            if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
+                throw new Error(`Review dispatch ${options.dispatchId} completion does not match the current IDE controller session.`);
+            }
+            if (!record.reviewerExecutorId || record.reviewerExecutorId !== options.executorId) {
+                throw new Error(`Review dispatch ${options.dispatchId} completion does not match its claimed executor.`);
+            }
+            record.reviewerCompletedAt = options.completedAt;
+            record.reviewerSucceeded = options.succeeded;
+            await this.fileService.writeJSON(recordPath, record);
+            await this.updateReviewLoopProvenance(resolvedChangePath, record);
+            await this.syncWorkerStatusUnlocked(resolvedChangePath);
+        });
+    }
+    assertReviewLoopBinding(record, options) {
+        if (record.id !== options.dispatchId
+            || record.loopActionId !== options.actionId
+            || record.loopActionItemId !== options.actionItemId) {
+            throw new Error(`Review dispatch ${options.dispatchId} does not match the current Loop action.`);
+        }
+    }
+    async updateReviewLoopProvenance(changePath, record) {
+        await this.assertCurrentReviewDispatch(changePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        if (String(review.data?.review_dispatch_id || '') !== record.id) {
+            throw new Error(`Review dispatch ${record.id} is stale because its artifact no longer names the current dispatch.`);
+        }
+        review.data = {
+            ...(review.data || {}),
+            loop_action_id: record.loopActionId || null,
+            loop_action_item_id: record.loopActionItemId || null,
+            controller_session_reported_at: record.controllerSessionReportedAt || null,
+            reviewer_executor_id: record.reviewerExecutorId || null,
+            reviewer_claimed_at: record.reviewerClaimedAt || null,
+            reviewer_completed_at: record.reviewerCompletedAt || null,
+            reviewer_succeeded: record.reviewerSucceeded,
+        };
+        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, review.data));
     }
     async planReviewFeedback(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
@@ -1901,6 +2134,9 @@ class TaskGraphExecutionService {
         };
     }
     async createRepairWave(changePath) {
+        return this.withTaskGraphMutationLease(changePath, () => this.createRepairWaveUnlocked(changePath));
+    }
+    async createRepairWaveUnlocked(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
         if (report.decisions.pendingRequired > 0 || report.decisions.blockers.length > 0) {
@@ -1982,7 +2218,9 @@ class TaskGraphExecutionService {
         };
         await this.fileService.writeJSON(path.join(resolvedChangePath, recordPath), record);
         await this.writeLocalizedReportFile(resolvedChangePath, path.join(resolvedChangePath, packetPath), this.buildRepairWavePacket(record));
-        const dispatch = await this.dispatch(resolvedChangePath, { taskId });
+        await this.writeLocalizedReportFile(resolvedChangePath, reviewPath, this.buildDefaultFinalReviewArtifact(report.feature));
+        await this.fileService.remove(reviewPath.replace(/\.md$/i, '.findings.json'));
+        const dispatch = await this.dispatchUnlocked(resolvedChangePath, { taskId });
         record.status = 'dispatched';
         record.dispatchIds = dispatch.dispatches.map(item => item.id);
         await this.fileService.writeJSON(path.join(resolvedChangePath, recordPath), record);
@@ -2070,23 +2308,18 @@ class TaskGraphExecutionService {
         };
     }
     async reviewDocument(changePath, options = {}) {
+        return this.withTaskGraphMutationLease(changePath, () => this.reviewDocumentUnlocked(changePath, options));
+    }
+    async reviewDocumentUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const feature = await this.readFeatureName(resolvedChangePath);
         await this.ingestReviewUsageSidecars(resolvedChangePath, feature);
         const designReviewPath = this.getDocumentReviewArtifactPath(resolvedChangePath, 'design');
-        const planReviewPath = this.getDocumentReviewArtifactPath(resolvedChangePath, 'plan');
         const designDecision = await this.readReviewDecision(designReviewPath);
-        const planDecision = await this.readReviewDecision(planReviewPath);
         const stage = options.stage || this.selectNextDocumentReviewStage(designDecision);
-        if (stage === 'design' && APPROVED_REVIEW_DECISIONS.has(designDecision)) {
-            throw new Error(`Design document review is already ${designDecision}. Dispatch implementation plan review next.`);
-        }
         if (stage === 'plan' && !APPROVED_REVIEW_DECISIONS.has(designDecision)) {
             throw new Error(`Cannot dispatch implementation plan review before design document review is approved (current: ${designDecision || 'PENDING'}).`);
-        }
-        if (stage === 'plan' && APPROVED_REVIEW_DECISIONS.has(planDecision)) {
-            throw new Error(`Implementation plan review is already ${planDecision}. Continue with task graph or worker dispatch.`);
         }
         const target = this.getDocumentReviewTarget(stage);
         const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
@@ -2094,6 +2327,8 @@ class TaskGraphExecutionService {
         if (!documentStatus.exists || documentStatus.readiness === 'missing' || documentStatus.readiness === 'empty') {
             throw new Error(`Cannot dispatch ${target.label} until ${target.documentFile} exists and is non-empty.`);
         }
+        const documentContent = await this.fileService.readFile(path.join(resolvedChangePath, target.documentFile));
+        const documentHash = this.hashMeaningfulDocumentation(documentContent);
         const reviewArtifactPath = this.getDocumentReviewArtifactPath(resolvedChangePath, stage);
         if (!(await this.fileService.exists(reviewArtifactPath))) {
             await this.writeLocalizedReportFile(resolvedChangePath, reviewArtifactPath, this.buildDocumentReviewArtifact(feature, target));
@@ -2105,11 +2340,15 @@ class TaskGraphExecutionService {
         const mode = executionPolicy.documentReviewPolicy === 'adaptive' && riskSignals.length === 0
             ? 'inline_preflight'
             : 'specialist';
+        const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
+        if (mode === 'specialist' && loopControllerSession.controllerMode && !loopControllerSession.current) {
+            throw new Error('Cannot dispatch a specialist document review with an expired or unavailable IDE controller capability session. Refresh the goal harness capability first.');
+        }
         const workerProfile = buildReviewerWorkerProfile(target.reviewerRole, executionPolicy.modelProfiles);
         if (mode === 'specialist' && workerProfile.modelSelectionSource === 'harness-default') {
             warnings.push(`Document review model profile ${workerProfile.modelProfile} has no configured model; the harness default will be used.`);
         }
-        const reviewId = `doc-review-${this.toFileSafeTimestamp(now)}-${stage}`;
+        const reviewId = `doc-review-${this.toFileSafeTimestamp(now)}-${stage}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
         const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
         const record = {
@@ -2122,21 +2361,39 @@ class TaskGraphExecutionService {
             packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             documentPath: this.toChangeRelativePath(resolvedChangePath, path.join(resolvedChangePath, target.documentFile)),
+            documentHash,
             reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath),
             documentReadiness: documentStatus.readiness,
             mode,
             policy: executionPolicy.documentReviewPolicy,
             riskSignals,
             workerProfile,
+            requiresNativeExecutorProvenance: mode === 'specialist' && loopControllerSession.current,
+            controllerSessionReportedAt: mode === 'specialist' && loopControllerSession.current ? loopControllerSession.reportedAt : null,
+            reviewerExecutorId: null,
+            reviewerClaimedAt: null,
+            reviewerCompletedAt: null,
+            reviewerSucceeded: null,
+        };
+        const reviewDocument = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        reviewDocument.data = {
+            ...(reviewDocument.data || {}),
+            reviewer_role: target.reviewerRole,
+            review_dispatch_id: reviewId,
+            document_hash: documentHash,
+            review_policy: executionPolicy.documentReviewPolicy,
+            review_mode: mode,
+            controller_session_reported_at: record.controllerSessionReportedAt || null,
+            reviewer_executor_id: null,
+            reviewer_claimed_at: null,
+            reviewer_completed_at: null,
+            reviewer_succeeded: null,
         };
         if (mode === 'inline_preflight') {
-            const reviewDocument = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
             reviewDocument.data = {
                 ...(reviewDocument.data || {}),
                 status: 'reviewed',
                 decision: 'APPROVED',
-                review_policy: executionPolicy.documentReviewPolicy,
-                review_mode: mode,
                 reviewed_at: now,
             };
             const inlineFinding = [
@@ -2150,8 +2407,23 @@ class TaskGraphExecutionService {
                 '',
             ].join('\n');
             await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(inlineFinding, reviewDocument.data));
+            await this.fileService.writeJSON(reviewArtifactPath.replace(/\.md$/i, '.findings.json'), {
+                version: '1.0',
+                findings: [],
+            });
+        }
+        else {
+            reviewDocument.data = {
+                ...(reviewDocument.data || {}),
+                status: 'pending',
+                decision: 'PENDING',
+                reviewed_at: null,
+            };
+            await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(reviewDocument.content, reviewDocument.data));
+            await this.fileService.remove(reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
         }
         await this.fileService.writeJSON(recordPath, record);
+        await this.setCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), reviewId);
         await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
         await this.recordExecutionMetric(resolvedChangePath, feature, [{
                 kind: 'review_packet',
@@ -2175,12 +2447,284 @@ class TaskGraphExecutionService {
                 ? stage === 'design'
                     ? 'Adaptive design preflight approved the low-risk document. Run ospec execute doc-review [change-path] --stage plan.'
                     : 'Adaptive implementation plan preflight approved the low-risk document. Derive or refresh artifacts/agents/task-graph.json.'
-                : stage === 'design'
-                    ? 'Hand the design review packet to a reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
-                    : 'Hand the implementation plan review packet to a reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.',
+                : record.requiresNativeExecutorProvenance
+                    ? `Spawn one fresh native ${target.reviewerRole} child, immediately run ospec execute doc-review [change-path] --stage ${stage} --claim-executor <child-id>, wait for its review artifacts, then run ospec execute doc-review [change-path] --stage ${stage} --complete-executor <child-id>.`
+                    : stage === 'design'
+                        ? 'Hand the design review packet to a reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
+                        : 'Hand the implementation plan review packet to a reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.',
         };
     }
+    async claimDocumentReviewExecutor(changePath, stage, executorId) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
+            if (!record.requiresNativeExecutorProvenance || !record.controllerSessionReportedAt) {
+                throw new Error(`Document review ${record.id} does not require a native controller executor claim.`);
+            }
+            const session = await this.readLoopControllerSession(resolvedChangePath);
+            if (!session.current || session.reportedAt !== record.controllerSessionReportedAt) {
+                throw new Error('Document review executor claim does not match the current IDE controller session.');
+            }
+            const normalizedExecutor = String(executorId || '').trim();
+            if (!normalizedExecutor)
+                throw new Error('Document review executor ID must be non-empty.');
+            if (record.reviewerExecutorId && record.reviewerExecutorId !== normalizedExecutor) {
+                throw new Error(`Document review ${record.id} is already claimed by another executor.`);
+            }
+            record.reviewerExecutorId = normalizedExecutor;
+            record.reviewerClaimedAt = record.reviewerClaimedAt || new Date().toISOString();
+            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
+            await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
+            return record;
+        });
+    }
+    async completeDocumentReviewExecutor(changePath, stage, executorId) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
+            const normalizedExecutor = String(executorId || '').trim();
+            if (!record.requiresNativeExecutorProvenance
+                || !record.reviewerExecutorId
+                || record.reviewerExecutorId !== normalizedExecutor
+                || !record.reviewerClaimedAt) {
+                throw new Error(`Document review ${record.id} completion does not match its claimed native executor.`);
+            }
+            const session = await this.readLoopControllerSession(resolvedChangePath);
+            if (!session.current || session.reportedAt !== record.controllerSessionReportedAt) {
+                throw new Error('Document review completion does not match the current IDE controller session.');
+            }
+            record.reviewerCompletedAt = new Date().toISOString();
+            record.reviewerSucceeded = true;
+            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
+            await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
+            return record;
+        });
+    }
+    async readCurrentDocumentReviewDispatch(changePath, stage) {
+        const reviewArtifactPath = this.getDocumentReviewArtifactPath(changePath, stage);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+        if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId) {
+            throw new Error(`Document review ${stage} has no valid dispatch to claim.`);
+        }
+        const recordPath = path.join(changePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+        const record = await this.fileService.readJSON(recordPath);
+        if (record.id !== dispatchId || record.stage !== stage || record.mode !== 'specialist') {
+            throw new Error(`Document review ${stage} dispatch provenance is invalid.`);
+        }
+        await this.assertCurrentReviewDispatch(changePath, this.documentReviewScopeKey(stage), dispatchId);
+        return record;
+    }
+    async updateDocumentReviewExecutorProvenance(changePath, record) {
+        await this.assertCurrentReviewDispatch(changePath, this.documentReviewScopeKey(record.stage), record.id);
+        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        if (String(review.data?.review_dispatch_id || '') !== record.id) {
+            throw new Error(`Document review ${record.id} is stale because its artifact no longer names the current dispatch.`);
+        }
+        review.data = {
+            ...(review.data || {}),
+            controller_session_reported_at: record.controllerSessionReportedAt || null,
+            reviewer_executor_id: record.reviewerExecutorId || null,
+            reviewer_claimed_at: record.reviewerClaimedAt || null,
+            reviewer_completed_at: record.reviewerCompletedAt || null,
+            reviewer_succeeded: record.reviewerSucceeded,
+        };
+        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, review.data));
+    }
+    taskReviewScopeKey(taskId) {
+        return taskId ? `task:${taskId}` : 'final';
+    }
+    documentReviewScopeKey(stage) {
+        return `document:${stage}`;
+    }
+    getCurrentReviewDispatchIndexPath(changePath) {
+        return path.join(changePath, 'artifacts', 'agents', CURRENT_REVIEW_DISPATCHES_FILE);
+    }
+    async setCurrentReviewDispatch(changePath, scope, dispatchId) {
+        const indexPath = this.getCurrentReviewDispatchIndexPath(changePath);
+        let index = {
+            version: '1.0',
+            updatedAt: new Date().toISOString(),
+            dispatches: {},
+        };
+        if (await this.fileService.exists(indexPath)) {
+            const existing = await this.fileService.readJSON(indexPath);
+            index = {
+                version: '1.0',
+                updatedAt: new Date().toISOString(),
+                dispatches: existing.dispatches && typeof existing.dispatches === 'object'
+                    ? { ...existing.dispatches }
+                    : {},
+            };
+        }
+        index.dispatches[scope] = dispatchId;
+        await this.fileService.writeJSON(indexPath, index);
+    }
+    async assertCurrentReviewDispatch(changePath, scope, dispatchId) {
+        const indexPath = this.getCurrentReviewDispatchIndexPath(changePath);
+        if (!(await this.fileService.exists(indexPath))) {
+            throw new Error(`Review dispatch ${dispatchId} has no current-dispatch index provenance.`);
+        }
+        const index = await this.fileService.readJSON(indexPath);
+        const currentDispatchId = index.dispatches?.[scope];
+        if (currentDispatchId !== dispatchId) {
+            throw new Error(`Review dispatch ${dispatchId} is stale; current dispatch for ${scope} is ${currentDispatchId || '(missing)'}.`);
+        }
+    }
+    async readLoopControllerSession(changePath) {
+        const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
+        if (!(await this.fileService.exists(configPath)))
+            return { controllerMode: false, current: false, reportedAt: null };
+        try {
+            const config = await this.fileService.readJSON(configPath);
+            const controllerMode = config?.executionModel === 'controller';
+            const reportedAt = String(config?.capability?.reportedAt || '').trim() || null;
+            const expiresAt = Date.parse(String(config?.capability?.expiresAt || ''));
+            const current = controllerMode
+                && config?.capability?.controllerAvailable === true
+                && Boolean(reportedAt)
+                && Number.isFinite(expiresAt)
+                && expiresAt > Date.now();
+            return { controllerMode, current, reportedAt };
+        }
+        catch {
+            return { controllerMode: false, current: false, reportedAt: null };
+        }
+    }
+    async bindVerificationLoopAction(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const report = await this.getReport(resolvedChangePath);
+            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+            const targetFiles = this.normalizeTargetFiles(Array.from(new Set(this.flattenReportTasks(report).flatMap(task => task.targetFiles))));
+            const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+            const binding = {
+                expectedCommand: options.expectedCommand?.trim() || null,
+                gitHead: this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
+                targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
+            };
+            const record = {
+                version: '1.0',
+                actionId: options.actionId,
+                actionItemId: options.actionItemId,
+                issuedAt: options.issuedAt,
+                status: 'active',
+                binding,
+                executorId: null,
+                claimedAt: null,
+                completedAt: null,
+            };
+            await this.fileService.writeJSON(this.getVerificationLoopActionPath(resolvedChangePath, options.actionId, options.actionItemId), record);
+            return binding;
+        });
+    }
+    async claimVerificationLoopExecutor(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const recordPath = this.getVerificationLoopActionPath(path.resolve(changePath), options.actionId, options.actionItemId);
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.actionId !== options.actionId || record.actionItemId !== options.actionItemId || record.status !== 'active') {
+                throw new Error('Verification action is no longer active for executor claim.');
+            }
+            if (record.executorId && record.executorId !== options.executorId) {
+                throw new Error(`Verification action ${options.actionItemId} is claimed by another executor.`);
+            }
+            record.executorId = options.executorId;
+            record.claimedAt = record.claimedAt || options.claimedAt;
+            await this.fileService.writeJSON(recordPath, record);
+        });
+    }
+    async cancelVerificationLoopAction(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const recordPath = this.getVerificationLoopActionPath(path.resolve(changePath), options.actionId, options.actionItemId);
+            if (!(await this.fileService.exists(recordPath)))
+                return;
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.status === 'completed')
+                return;
+            record.status = 'cancelled';
+            await this.fileService.writeJSON(recordPath, record);
+        });
+    }
     async recordVerification(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, () => this.recordVerificationUnlocked(changePath, options));
+    }
+    async validateVerificationLoopProvenance(changePath, options, current) {
+        const supplied = [options.loopActionId, options.loopActionItemId, options.executorId]
+            .map(value => String(value || '').trim());
+        if (supplied.every(value => value.length === 0)) {
+            const statePath = path.join(changePath, 'artifacts', 'loop', 'state.json');
+            if (await this.fileService.exists(statePath)) {
+                const state = await this.fileService.readJSON(statePath);
+                if (state?.pendingControllerAction?.status === 'awaiting-evidence'
+                    && state.pendingControllerAction.kind === 'verification') {
+                    throw new Error('Active Loop verification requires action, item, and executor provenance.');
+                }
+            }
+            return {
+                current,
+                loopActionId: null,
+                loopActionItemId: null,
+                executorId: null,
+                issuanceTargetSnapshotHash: null,
+                actionRecordPath: null,
+            };
+        }
+        if (supplied.some(value => value.length === 0)) {
+            throw new Error('Loop verification evidence requires --loop-action, --action-item, and --executor together.');
+        }
+        const [loopActionId, loopActionItemId, executorId] = supplied;
+        const actionRecordPath = this.getVerificationLoopActionPath(changePath, loopActionId, loopActionItemId);
+        if (!(await this.fileService.exists(actionRecordPath))) {
+            throw new Error('Loop verification action binding is missing.');
+        }
+        const actionRecord = await this.fileService.readJSON(actionRecordPath);
+        if (actionRecord.actionId !== loopActionId
+            || actionRecord.actionItemId !== loopActionItemId
+            || actionRecord.status !== 'active'
+            || actionRecord.executorId !== executorId
+            || !actionRecord.claimedAt) {
+            throw new Error('Loop verification action is not active for the claimed executor.');
+        }
+        const statePath = path.join(changePath, 'artifacts', 'loop', 'state.json');
+        if (!(await this.fileService.exists(statePath))) {
+            throw new Error('Loop verification evidence cannot be bound because Loop state is missing.');
+        }
+        const state = await this.fileService.readJSON(statePath);
+        const pending = state?.pendingControllerAction;
+        const item = Array.isArray(pending?.items)
+            ? pending.items.find((candidate) => candidate?.id === loopActionItemId)
+            : null;
+        const itemState = Array.isArray(pending?.itemStates)
+            ? pending.itemStates.find((candidate) => candidate?.actionItemId === loopActionItemId)
+            : null;
+        const binding = actionRecord.binding;
+        if (pending?.actionId !== loopActionId
+            || pending?.kind !== 'verification'
+            || item?.kind !== 'verification'
+            || !binding) {
+            throw new Error('Loop verification evidence does not match the current verification action.');
+        }
+        if (itemState?.status !== 'running' || itemState?.executorId !== executorId) {
+            throw new Error(`Loop verification evidence executor ${executorId} has not claimed the current action item.`);
+        }
+        if (binding.expectedCommand && binding.expectedCommand !== current.command) {
+            throw new Error('Loop verification evidence command does not match the command issued for this action.');
+        }
+        if (binding.targetSnapshotHash !== current.targetSnapshotHash
+            || (binding.gitHead && binding.gitHead !== current.gitHead)) {
+            throw new Error('Loop verification target files changed after this verification action was issued.');
+        }
+        return {
+            current,
+            loopActionId,
+            loopActionItemId,
+            executorId,
+            issuanceTargetSnapshotHash: binding.targetSnapshotHash,
+            actionRecordPath,
+        };
+    }
+    async recordVerificationUnlocked(changePath, options) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
         const command = options.command?.trim();
@@ -2194,6 +2738,16 @@ class TaskGraphExecutionService {
         const evidenceId = `verification-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(status.toLowerCase())}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_DIR, `${evidenceId}.json`);
         const reportPath = path.join(resolvedChangePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_DIR, `${evidenceId}.md`);
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const targetFiles = this.normalizeTargetFiles(Array.from(new Set(this.flattenReportTasks(report).flatMap(task => task.targetFiles))));
+        const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+        const loopProvenance = await this.validateVerificationLoopProvenance(resolvedChangePath, options, {
+            command,
+            gitHead: this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
+            targetFiles,
+            targetSnapshots,
+            targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
+        });
         const record = {
             id: evidenceId,
             command,
@@ -2203,6 +2757,14 @@ class TaskGraphExecutionService {
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
             summary: options.summary?.trim() || null,
+            gitHead: loopProvenance.current.gitHead,
+            targetFiles,
+            targetSnapshots,
+            targetSnapshotHash: loopProvenance.current.targetSnapshotHash,
+            loopActionId: loopProvenance.loopActionId,
+            loopActionItemId: loopProvenance.loopActionItemId,
+            executorId: loopProvenance.executorId,
+            issuanceTargetSnapshotHash: loopProvenance.issuanceTargetSnapshotHash,
         };
         evidence.records.push(record);
         evidence.status = this.deriveVerificationEvidenceStatus(evidence.records);
@@ -2210,7 +2772,13 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildVerificationEvidenceReport(report, record));
         await this.fileService.writeJSON(evidencePath, evidence);
-        const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        if (loopProvenance.actionRecordPath) {
+            const actionRecord = await this.fileService.readJSON(loopProvenance.actionRecordPath);
+            actionRecord.status = 'completed';
+            actionRecord.completedAt = now;
+            await this.fileService.writeJSON(loopProvenance.actionRecordPath, actionRecord);
+        }
+        const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
             evidencePath,
@@ -2222,6 +2790,9 @@ class TaskGraphExecutionService {
         };
     }
     async recordTddEvidence(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, () => this.recordTddEvidenceUnlocked(changePath, options));
+    }
+    async recordTddEvidenceUnlocked(changePath, options) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
         const phase = this.normalizeTddEvidencePhase(options.phase);
@@ -2259,7 +2830,7 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildTddEvidenceReport(report, record));
         await this.fileService.writeJSON(evidencePath, evidence);
-        const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
             evidencePath,
@@ -2269,6 +2840,9 @@ class TaskGraphExecutionService {
         };
     }
     async recordDebugEvidence(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, () => this.recordDebugEvidenceUnlocked(changePath, options));
+    }
+    async recordDebugEvidenceUnlocked(changePath, options) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
         const symptom = options.symptom?.trim();
@@ -2313,7 +2887,7 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildDebugEvidenceReport(report, record));
         await this.fileService.writeJSON(evidencePath, evidence);
-        const workerStatusSync = await this.syncWorkerStatus(resolvedChangePath);
+        const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
             evidencePath,
@@ -2363,7 +2937,11 @@ class TaskGraphExecutionService {
             const branch = this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
             const head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
             const statusOutput = this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '';
-            const statusEntries = this.parseGitStatusEntries(statusOutput);
+            const changeRelative = path.relative(gitRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
+            const statusEntries = this.parseGitStatusEntries(statusOutput).filter(entry => {
+                const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
+                return files.some(file => file !== changeRelative && !file.startsWith(`${changeRelative}/`));
+            });
             const worktreesOutput = this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '';
             const worktrees = this.parseGitWorktrees(worktreesOutput);
             const currentWorktree = this.findCurrentWorktree(gitRoot, worktrees);
@@ -2419,6 +2997,274 @@ class TaskGraphExecutionService {
             warnings: artifact.warnings,
             nextInstruction: artifact.nextInstruction,
         };
+    }
+    async validateDocumentReviewEvidence(changePath, stage) {
+        const resolvedChangePath = path.resolve(changePath);
+        const target = this.getDocumentReviewTarget(stage);
+        const documentPath = path.join(resolvedChangePath, target.documentFile);
+        const reviewArtifactPath = this.getDocumentReviewArtifactPath(resolvedChangePath, stage);
+        if (!(await this.fileService.exists(documentPath)) || !(await this.fileService.exists(reviewArtifactPath))) {
+            return { ready: false, reason: `${target.label} evidence is missing.` };
+        }
+        try {
+            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            const decision = this.normalizeReviewRunDecision(review.data?.decision);
+            if (!APPROVED_REVIEW_DECISIONS.has(decision)) {
+                return { ready: false, reason: `${target.label} review decision is ${decision || 'PENDING'}.` };
+            }
+            const currentHash = this.hashMeaningfulDocumentation(await this.fileService.readFile(documentPath));
+            const recordedHash = String(review.data?.document_hash || '').trim();
+            if (!recordedHash || recordedHash !== currentHash) {
+                return { ready: false, reason: `${target.label} changed after its review; dispatch a fresh document review.` };
+            }
+            const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+            if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId) {
+                return { ready: false, reason: `${target.label} review has no valid dispatch provenance.` };
+            }
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+            if (!(await this.fileService.exists(recordPath))) {
+                return { ready: false, reason: `${target.label} review dispatch record is missing.` };
+            }
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.id !== dispatchId || record.stage !== stage || record.documentHash !== currentHash || record.reviewerRole !== target.reviewerRole) {
+                return { ready: false, reason: `${target.label} review provenance does not match the current document.` };
+            }
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), dispatchId);
+            if (record.mode === 'specialist' && !String(review.data?.reviewed_at || '').trim()) {
+                return { ready: false, reason: `${target.label} specialist review is missing reviewed_at evidence.` };
+            }
+            if (record.requiresNativeExecutorProvenance) {
+                const reviewedAtValue = review.data?.reviewed_at;
+                const reviewedAtMs = reviewedAtValue instanceof Date
+                    ? reviewedAtValue.getTime()
+                    : Date.parse(String(reviewedAtValue || ''));
+                const claimedAtMs = Date.parse(String(record.reviewerClaimedAt || ''));
+                const completedAtMs = Date.parse(String(record.reviewerCompletedAt || ''));
+                const validNativeProvenance = record.controllerSessionReportedAt
+                    && record.reviewerExecutorId
+                    && record.reviewerSucceeded === true
+                    && Number.isFinite(reviewedAtMs)
+                    && Number.isFinite(claimedAtMs)
+                    && Number.isFinite(completedAtMs)
+                    && reviewedAtMs >= claimedAtMs
+                    && completedAtMs >= reviewedAtMs
+                    && String(review.data?.controller_session_reported_at || '') === record.controllerSessionReportedAt
+                    && String(review.data?.reviewer_executor_id || '') === record.reviewerExecutorId
+                    && Date.parse(String(review.data?.reviewer_claimed_at || '')) === claimedAtMs
+                    && Date.parse(String(review.data?.reviewer_completed_at || '')) === completedAtMs
+                    && review.data?.reviewer_succeeded === true;
+                if (!validNativeProvenance) {
+                    return { ready: false, reason: `${target.label} specialist review is not bound to its claimed native child executor and controller session.` };
+                }
+            }
+            const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+            if (!(await this.fileService.exists(findingsPath))) {
+                return { ready: false, reason: `${target.label} structured findings are missing.` };
+            }
+            const findings = await this.fileService.readJSON(findingsPath);
+            if (!Array.isArray(findings.findings)) {
+                return { ready: false, reason: `${target.label} structured findings are invalid.` };
+            }
+            return { ready: true, reason: null };
+        }
+        catch (error) {
+            return { ready: false, reason: `${target.label} review evidence could not be validated (${error?.message || error}).` };
+        }
+    }
+    async validateTaskReviewEvidence(changePath, taskId) {
+        const resolvedChangePath = path.resolve(changePath);
+        const reviewArtifactPath = taskId
+            ? path.join(resolvedChangePath, this.getTaskCombinedReviewArtifactRelativePath(taskId))
+            : path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        const label = taskId ? `Task ${taskId} code review` : 'Final code review';
+        if (!(await this.fileService.exists(reviewArtifactPath))) {
+            return { ready: false, reason: `${label} evidence is missing.` };
+        }
+        try {
+            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            const decision = this.normalizeReviewRunDecision(review.data?.decision);
+            if (decision === 'PENDING') {
+                return { ready: false, reason: `${label} decision is PENDING.` };
+            }
+            const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+            if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId) {
+                return { ready: false, reason: `${label} has no valid dispatch provenance.` };
+            }
+            const dispatchPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+            if (!(await this.fileService.exists(dispatchPath))) {
+                return { ready: false, reason: `${label} dispatch record is missing.` };
+            }
+            const dispatch = await this.fileService.readJSON(dispatchPath);
+            const expectedArtifact = this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath);
+            if (dispatch.id !== dispatchId
+                || (dispatch.taskId || null) !== taskId
+                || dispatch.reviewerRole !== 'code_reviewer'
+                || dispatch.reviewArtifactPath.replace(/\\/g, '/') !== expectedArtifact.replace(/\\/g, '/')) {
+                return { ready: false, reason: `${label} dispatch provenance does not match this artifact.` };
+            }
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(taskId), dispatchId);
+            const reviewedAtValue = review.data?.reviewed_at;
+            const reviewedAt = String(reviewedAtValue || '').trim();
+            const reviewedAtMs = reviewedAtValue instanceof Date
+                ? reviewedAtValue.getTime()
+                : Date.parse(reviewedAt);
+            const assignedAtMs = Date.parse(dispatch.assignedAt);
+            if (!reviewedAt
+                || !Number.isFinite(reviewedAtMs)
+                || !Number.isFinite(assignedAtMs)
+                || reviewedAtMs < assignedAtMs) {
+                return { ready: false, reason: `${label} has no valid reviewed_at at or after dispatch.` };
+            }
+            if (dispatch.requiresNativeExecutorProvenance || dispatch.loopActionId) {
+                const claimedAtMs = Date.parse(String(dispatch.reviewerClaimedAt || ''));
+                const completedAtMs = Date.parse(String(dispatch.reviewerCompletedAt || ''));
+                const loopProvenanceMatches = dispatch.loopActionId
+                    && dispatch.loopActionItemId
+                    && dispatch.controllerSessionReportedAt
+                    && dispatch.reviewerExecutorId
+                    && Number.isFinite(claimedAtMs)
+                    && Number.isFinite(completedAtMs)
+                    && dispatch.reviewerSucceeded === true
+                    && String(review.data?.loop_action_id || '') === dispatch.loopActionId
+                    && String(review.data?.loop_action_item_id || '') === dispatch.loopActionItemId
+                    && String(review.data?.controller_session_reported_at || '') === dispatch.controllerSessionReportedAt
+                    && String(review.data?.reviewer_executor_id || '') === dispatch.reviewerExecutorId
+                    && Date.parse(String(review.data?.reviewer_claimed_at || '')) === claimedAtMs
+                    && Date.parse(String(review.data?.reviewer_completed_at || '')) === completedAtMs
+                    && review.data?.reviewer_succeeded === true
+                    && reviewedAtMs >= claimedAtMs
+                    && completedAtMs >= reviewedAtMs;
+                if (!loopProvenanceMatches) {
+                    return { ready: false, reason: `${label} is not bound to the claimed Loop reviewer executor and controller session.` };
+                }
+            }
+            const recordedSnapshotHash = String(review.data?.target_snapshot_hash || '').trim();
+            if (!Array.isArray(dispatch.targetFiles)
+                || !Array.isArray(dispatch.targetSnapshots)
+                || !dispatch.targetSnapshotHash
+                || recordedSnapshotHash !== dispatch.targetSnapshotHash
+                || this.hashTargetSnapshots(dispatch.targetSnapshots) !== dispatch.targetSnapshotHash) {
+                return { ready: false, reason: `${label} target-file snapshot provenance is invalid.` };
+            }
+            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+            const currentSnapshots = await this.captureTargetSnapshots(projectRoot, dispatch.targetFiles);
+            if (this.hashTargetSnapshots(currentSnapshots) !== dispatch.targetSnapshotHash) {
+                return { ready: false, reason: `${label} target files changed after review dispatch; dispatch a fresh review.` };
+            }
+            const currentHead = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null;
+            if (dispatch.gitHead && currentHead !== dispatch.gitHead) {
+                return { ready: false, reason: `${label} Git HEAD changed after review dispatch; dispatch a fresh review.` };
+            }
+            const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+            if (!(await this.fileService.exists(findingsPath))) {
+                return { ready: false, reason: `${label} structured findings are missing.` };
+            }
+            await this.readReviewFindings(reviewArtifactPath, review.content);
+            return { ready: true, reason: null };
+        }
+        catch (error) {
+            return { ready: false, reason: `${label} evidence could not be validated (${error?.message || error}).` };
+        }
+    }
+    async readValidatedFinalReviewDecision(changePath) {
+        const reviewPath = path.join(path.resolve(changePath), 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        if (!(await this.fileService.exists(reviewPath)))
+            return 'PENDING';
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+        const decision = this.normalizeReviewRunDecision(review.data?.decision);
+        if (decision === 'PENDING')
+            return decision;
+        const validation = await this.validateTaskReviewEvidence(changePath, null);
+        return validation.ready ? decision : 'PENDING';
+    }
+    async validateLatestVerificationEvidence(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const report = await this.getReport(resolvedChangePath);
+        const evidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), report.feature);
+        return evidence.status === 'passed'
+            ? { ready: true, reason: null }
+            : { ready: false, reason: `Latest verification evidence is not fresh and passing (current: ${evidence.status}).` };
+    }
+    async validateWorkspaceEvidence(changePath, allowedTaskPaths = []) {
+        const resolvedChangePath = path.resolve(changePath);
+        const artifactPath = this.getWorkspaceStatusPath(resolvedChangePath);
+        if (!(await this.fileService.exists(artifactPath))) {
+            return { ready: false, reason: 'Workspace safety evidence is missing.' };
+        }
+        try {
+            const artifact = await this.fileService.readJSON(artifactPath);
+            if (String(artifact?.status || '').toLowerCase() !== 'ready') {
+                return { ready: false, reason: `Workspace safety status is ${artifact?.status || 'unknown'}.` };
+            }
+            if (!artifact?.git?.repository || !artifact.git.root || !artifact.git.head) {
+                return { ready: false, reason: 'Workspace safety evidence lacks a Git fingerprint; rerun workspace inspection.' };
+            }
+            const projectRoot = await this.findProjectRoot(resolvedChangePath);
+            const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
+            if (!gitRootResult.ok || !gitRootResult.stdout.trim()) {
+                return { ready: false, reason: 'Workspace Git repository can no longer be inspected.' };
+            }
+            const gitRoot = path.resolve(gitRootResult.stdout.trim());
+            const head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
+            const branch = this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
+            const statusOutput = this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '';
+            const changeRelative = path.relative(gitRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
+            const projectRelative = path.relative(gitRoot, projectRoot).replace(/\\/g, '/').replace(/\/$/, '');
+            const outsideChange = (entry) => {
+                const file = entry.file.replace(/\\/g, '/');
+                return file !== changeRelative && !file.startsWith(`${changeRelative}/`);
+            };
+            const allowed = allowedTaskPaths
+                .map(item => String(item || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, ''))
+                .filter(item => item.length > 0
+                && !path.posix.isAbsolute(item)
+                && item !== '..'
+                && !item.startsWith('../')
+                && !item.includes('/../'))
+                .map(item => projectRelative && projectRelative !== '.' ? `${projectRelative}/${item}` : item);
+            const isExpectedTaskChange = (entry) => {
+                const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
+                return files.every(file => allowed.some(target => file === target || file.startsWith(`${target}/`)));
+            };
+            const statusEntries = this.parseGitStatusEntries(statusOutput).filter(outsideChange).filter(entry => !isExpectedTaskChange(entry));
+            const recordedStatusEntries = (Array.isArray(artifact.git.statusEntries) ? artifact.git.statusEntries : []).filter(outsideChange);
+            if (gitRoot !== path.resolve(artifact.git.root)
+                || head !== artifact.git.head
+                || branch !== (artifact.git.branch || null)
+                || JSON.stringify(statusEntries) !== JSON.stringify(recordedStatusEntries)) {
+                return { ready: false, reason: 'Workspace changed after safety inspection; rerun workspace inspection before dispatch.' };
+            }
+            return { ready: true, reason: null };
+        }
+        catch (error) {
+            return { ready: false, reason: `Workspace safety evidence could not be validated (${error?.message || error}).` };
+        }
+    }
+    async readAuthoritativeTokenUsage(changePath) {
+        return (await this.readAuthoritativeUsageSnapshot(changePath)).totalTokens;
+    }
+    async readAuthoritativeUsageSnapshot(changePath) {
+        return this.withTaskGraphMutationLease(changePath, () => this.readAuthoritativeUsageSnapshotUnlocked(changePath));
+    }
+    async readAuthoritativeUsageSnapshotUnlocked(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const feature = await this.readFeatureName(resolvedChangePath);
+        await this.ingestReviewUsageSidecars(resolvedChangePath, feature);
+        const metricsPath = path.join(resolvedChangePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
+        if (!(await this.fileService.exists(metricsPath)))
+            return { totalTokens: 0, byId: {} };
+        const artifact = await this.fileService.readJSON(metricsPath);
+        const byId = {};
+        for (const entry of Array.isArray(artifact.entries) ? artifact.entries : []) {
+            if (entry.kind !== 'usage' || !entry.id || !entry.usage)
+                continue;
+            const observed = new Set(Array.isArray(entry.usage.observedFields) ? entry.usage.observedFields : []);
+            if (!observed.has('inputTokens') && !observed.has('outputTokens'))
+                continue;
+            byId[entry.id] = Math.max(0, Number(entry.usage.inputTokens) || 0)
+                + Math.max(0, Number(entry.usage.outputTokens) || 0);
+        }
+        return { totalTokens: Object.values(byId).reduce((total, value) => total + value, 0), byId };
     }
     async planWorktree(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
@@ -3432,6 +4278,10 @@ class TaskGraphExecutionService {
     getVerificationEvidencePath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_FILE);
     }
+    getVerificationLoopActionPath(changePath, actionId, actionItemId) {
+        const fileName = `${this.toFileSafeId(actionId)}-${this.toFileSafeId(actionItemId)}.json`;
+        return path.join(changePath, 'artifacts', 'agents', VERIFICATION_ACTIONS_DIR, fileName);
+    }
     getTddEvidencePath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', TDD_EVIDENCE_FILE);
     }
@@ -3659,13 +4509,46 @@ class TaskGraphExecutionService {
         const records = Array.isArray(evidence.records)
             ? evidence.records.filter(record => this.isVerificationEvidenceRecord(record))
             : [];
+        let status = this.deriveVerificationEvidenceStatus(records);
+        const latest = records[records.length - 1];
+        if (latest?.status === 'PASSED') {
+            const changePath = path.dirname(path.dirname(path.dirname(evidencePath)));
+            if (!(await this.isPassingVerificationRecordFresh(changePath, latest))) {
+                status = 'pending';
+            }
+        }
         return {
             version: typeof evidence.version === 'string' ? evidence.version : '1.0',
             feature: typeof evidence.feature === 'string' && evidence.feature.trim() ? evidence.feature : feature,
-            status: this.isVerificationEvidenceSessionStatus(evidence.status) ? evidence.status : this.deriveVerificationEvidenceStatus(records),
+            status,
             updatedAt: typeof evidence.updatedAt === 'string' ? evidence.updatedAt : new Date().toISOString(),
             records,
         };
+    }
+    async isPassingVerificationRecordFresh(changePath, record) {
+        if (!Array.isArray(record.targetFiles)
+            || !Array.isArray(record.targetSnapshots)
+            || !record.targetSnapshotHash
+            || this.hashTargetSnapshots(record.targetSnapshots) !== record.targetSnapshotHash) {
+            return false;
+        }
+        try {
+            const report = await this.getReport(changePath);
+            const currentTargetFiles = this.normalizeTargetFiles(Array.from(new Set(this.flattenReportTasks(report).flatMap(task => task.targetFiles))));
+            if (JSON.stringify(currentTargetFiles) !== JSON.stringify(this.normalizeTargetFiles(record.targetFiles))) {
+                return false;
+            }
+            const projectRoot = await this.findProjectRootForOptionalSession(changePath);
+            const currentSnapshots = await this.captureTargetSnapshots(projectRoot, currentTargetFiles);
+            if (this.hashTargetSnapshots(currentSnapshots) !== record.targetSnapshotHash) {
+                return false;
+            }
+            const currentHead = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null;
+            return !record.gitHead || currentHead === record.gitHead;
+        }
+        catch {
+            return false;
+        }
     }
     isVerificationEvidenceSessionStatus(status) {
         return status === 'pending' || status === 'passed' || status === 'failed' || status === 'blocked' || status === 'skipped';
@@ -3870,7 +4753,36 @@ class TaskGraphExecutionService {
             return 'PENDING';
         }
         const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
-        return normalizeStatus(review.data?.decision) || 'PENDING';
+        const decision = normalizeStatus(review.data?.decision) || 'PENDING';
+        if (decision === 'PENDING')
+            return decision;
+        const normalizedPath = reviewPath.replace(/\\/g, '/');
+        const marker = '/artifacts/reviews/';
+        const markerIndex = normalizedPath.lastIndexOf(marker);
+        if (markerIndex < 0)
+            return decision;
+        const relativeReviewPath = normalizedPath.slice(markerIndex + marker.length);
+        const isFinalReview = relativeReviewPath === constants_1.FILE_NAMES.FINAL_REVIEW;
+        const isTaskReview = relativeReviewPath.startsWith(`${TASK_REVIEWS_DIR}/`)
+            && relativeReviewPath.endsWith(`/${constants_1.FILE_NAMES.REVIEW}`);
+        if (!isFinalReview && !isTaskReview)
+            return decision;
+        const changePath = reviewPath.slice(0, markerIndex);
+        let taskId = null;
+        if (isTaskReview) {
+            const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+            if (!dispatchId)
+                return 'PENDING';
+            const dispatchPath = path.join(changePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+            if (!(await this.fileService.exists(dispatchPath)))
+                return 'PENDING';
+            const dispatch = await this.fileService.readJSON(dispatchPath);
+            taskId = typeof dispatch.taskId === 'string' && dispatch.taskId.trim() ? dispatch.taskId.trim() : null;
+            if (!taskId)
+                return 'PENDING';
+        }
+        const validation = await this.validateTaskReviewEvidence(changePath, taskId);
+        return validation.ready ? decision : 'PENDING';
     }
     selectNextReviewStage(specDecision, qualityDecision) {
         if (!APPROVED_REVIEW_DECISIONS.has(specDecision)) {
@@ -4292,7 +5204,7 @@ class TaskGraphExecutionService {
             }
         }
         await this.fileService.writeFile(packagePath, `${lines.join('\n').trimEnd()}\n`);
-        return relativePackagePath;
+        return { path: relativePackagePath, gitHead: headCommit || null };
     }
     renderGitStatusEntries(entries, limit = 100) {
         if (entries.length === 0)
@@ -4463,6 +5375,71 @@ class TaskGraphExecutionService {
         }
         return snapshots;
     }
+    normalizeTargetFiles(targetFiles) {
+        return Array.from(new Set(targetFiles
+            .map(filePath => String(filePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, ''))
+            .filter(filePath => filePath.length > 0
+            && !path.posix.isAbsolute(filePath)
+            && filePath !== '..'
+            && !filePath.startsWith('../')
+            && !filePath.includes('/../'))))
+            .sort();
+    }
+    async captureTargetSnapshots(projectRoot, targetFiles) {
+        const snapshots = [];
+        for (const targetPath of this.normalizeTargetFiles(targetFiles)) {
+            const absolutePath = path.resolve(projectRoot, ...targetPath.split('/'));
+            const relative = path.relative(projectRoot, absolutePath);
+            if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+                snapshots.push({ path: targetPath, exists: false, contentHash: null });
+                continue;
+            }
+            try {
+                const content = await fs_1.promises.readFile(absolutePath);
+                snapshots.push({
+                    path: targetPath,
+                    exists: true,
+                    contentHash: (0, crypto_1.createHash)('sha256').update(content).digest('hex'),
+                });
+            }
+            catch {
+                snapshots.push({ path: targetPath, exists: false, contentHash: null });
+            }
+        }
+        return snapshots;
+    }
+    hashTargetSnapshots(snapshots) {
+        const normalized = [...snapshots]
+            .map(snapshot => ({
+            path: String(snapshot.path || '').replace(/\\/g, '/'),
+            exists: snapshot.exists === true,
+            contentHash: snapshot.contentHash || null,
+        }))
+            .sort((left, right) => left.path.localeCompare(right.path));
+        return (0, crypto_1.createHash)('sha256').update(JSON.stringify(normalized), 'utf8').digest('hex');
+    }
+    async prepareReviewArtifactForDispatch(changePath, record) {
+        const reviewArtifactPath = path.join(changePath, record.reviewArtifactPath);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        const data = {
+            ...review.data,
+            status: 'pending',
+            decision: 'PENDING',
+            reviewer_role: record.reviewerRole,
+            review_dispatch_id: record.id,
+            target_snapshot_hash: record.targetSnapshotHash,
+            reviewed_at: null,
+            loop_action_id: record.loopActionId || null,
+            loop_action_item_id: record.loopActionItemId || null,
+            controller_session_reported_at: record.controllerSessionReportedAt || null,
+            reviewer_executor_id: record.reviewerExecutorId || null,
+            reviewer_claimed_at: record.reviewerClaimedAt || null,
+            reviewer_completed_at: record.reviewerCompletedAt || null,
+            reviewer_succeeded: record.reviewerSucceeded,
+        };
+        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, data));
+        await this.fileService.remove(reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
+    }
     async captureDocumentationEvidence(projectRoot, baseline) {
         const current = await this.captureDocumentationSnapshots(projectRoot, baseline.map(item => item.path));
         const currentByPath = new Map(current.map(item => [item.path.toLowerCase(), item]));
@@ -4584,6 +5561,103 @@ class TaskGraphExecutionService {
             .sort((left, right) => left.localeCompare(right))
             .at(-1) || updatedAt;
         await this.fileService.writeJSON(metricsPath, artifact);
+    }
+    async withTaskGraphMutationLease(changePath, operation) {
+        const resolvedChangePath = path.resolve(changePath);
+        const lockPath = path.join(resolvedChangePath, 'artifacts', 'agents', TASK_GRAPH_MUTATION_LOCK_FILE);
+        await fs_1.promises.mkdir(path.dirname(lockPath), { recursive: true });
+        const startedAt = Date.now();
+        const nonce = (0, crypto_1.randomBytes)(16).toString('hex');
+        let handle = null;
+        while (!handle) {
+            try {
+                const candidate = await fs_1.promises.open(lockPath, 'wx');
+                try {
+                    await candidate.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), nonce }));
+                    handle = candidate;
+                }
+                catch (error) {
+                    await candidate.close().catch(() => undefined);
+                    await this.removeTaskGraphLockIfOwned(lockPath, nonce);
+                    throw error;
+                }
+            }
+            catch (error) {
+                if (error?.code !== 'EEXIST')
+                    throw error;
+                const owner = await this.readTaskGraphLockOwner(lockPath);
+                const stat = await fs_1.promises.stat(lockPath).catch(() => null);
+                if (stat
+                    && Date.now() - stat.mtimeMs >= STALE_TASK_GRAPH_MUTATION_LOCK_MS
+                    && (owner
+                        ? !this.isProcessAlive(owner.pid) && await this.removeTaskGraphLockIfOwned(lockPath, owner.nonce)
+                        : await this.removeCorruptTaskGraphLockIfUnchanged(lockPath, stat))) {
+                    continue;
+                }
+                if (Date.now() - startedAt >= TASK_GRAPH_MUTATION_LOCK_TIMEOUT_MS) {
+                    throw new Error(`Timed out waiting for task graph mutation lease at ${lockPath}.`);
+                }
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+        try {
+            return await operation();
+        }
+        finally {
+            await handle.close().catch(() => undefined);
+            await this.removeTaskGraphLockIfOwned(lockPath, nonce);
+        }
+    }
+    async readTaskGraphLockOwner(lockPath) {
+        try {
+            const value = JSON.parse(await fs_1.promises.readFile(lockPath, 'utf8'));
+            return Number.isInteger(value?.pid) && value.pid > 0 && typeof value?.nonce === 'string' && value.nonce.length > 0
+                ? { pid: value.pid, nonce: value.nonce }
+                : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    isProcessAlive(pid) {
+        try {
+            process.kill(pid, 0);
+            return true;
+        }
+        catch (error) {
+            return error?.code !== 'ESRCH' && error?.code !== 'EINVAL';
+        }
+    }
+    async removeTaskGraphLockIfOwned(lockPath, nonce) {
+        const owner = await this.readTaskGraphLockOwner(lockPath);
+        if (owner?.nonce !== nonce)
+            return false;
+        try {
+            await fs_1.promises.unlink(lockPath);
+            return true;
+        }
+        catch (error) {
+            if (error?.code === 'ENOENT')
+                return false;
+            throw error;
+        }
+    }
+    async removeCorruptTaskGraphLockIfUnchanged(lockPath, observed) {
+        const current = await fs_1.promises.stat(lockPath).catch(() => null);
+        if (!current
+            || current.size !== observed.size
+            || current.mtimeMs !== observed.mtimeMs
+            || await this.readTaskGraphLockOwner(lockPath))
+            return false;
+        try {
+            await fs_1.promises.unlink(lockPath);
+            return true;
+        }
+        catch (error) {
+            if (error?.code === 'ENOENT')
+                return false;
+            throw error;
+        }
     }
     async readSession(sessionPath, feature) {
         if (!(await this.fileService.exists(sessionPath))) {
@@ -6460,7 +7534,7 @@ class TaskGraphExecutionService {
     buildNativeAgentLaunchPlan(input) {
         const packet = input.selected.packetPath;
         const task = `${input.selected.taskId} - ${input.selected.taskTitle}`;
-        const completionCommand = `ospec execute complete ${input.selected.taskId} ${input.relativeChangePath} --status DONE --summary "..."`;
+        const completionCommand = `ospec execute complete ${input.selected.taskId} ${input.relativeChangePath} --dispatch ${input.selected.id} --status DONE --summary "..."`;
         const fallbackInstructions = [
             'Use CLI fallback only after confirming the current AI harness has no native Task/subagent/agent dispatch capability.',
             'Fallback worker commands must consume the dispatch packet path and must still report DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
@@ -6479,13 +7553,13 @@ class TaskGraphExecutionService {
                 target: input.target,
                 supported: true,
                 adapterId: 'codex-gpt-native-subagent',
-                agentPrimitive: 'spawn_agent / wait_agent / close_agent',
+                agentPrimitive: 'spawn_agent + harness wait lifecycle',
                 dispatchMode: 'native-subagent',
                 requiresControllerAction: true,
                 promptTransport: 'Controller passes launchPrompt as the worker message and includes the dispatch packet path.',
                 resultCollection: 'Controller waits for worker output with wait_agent, closes finished workers, then records ospec execute complete.',
                 fallbackOnly: false,
-                mechanism: 'Codex/GPT native multi-agent tools: spawn_agent, wait_agent, close_agent',
+                mechanism: 'Codex/GPT native multi-agent tools: spawn_agent plus the harness wait lifecycle; close only if exposed',
                 defaultPath: true,
                 instructions: [
                     `Spawn a worker agent for task ${task} using agent_type "worker".`,
@@ -6495,7 +7569,7 @@ class TaskGraphExecutionService {
                 ],
                 parallelInstructions: [
                     'For multiple parallel-safe packets, call spawn_agent once per packet in the same controller turn.',
-                    'Use wait_agent on the spawned agent ids, integrate completed results as they arrive, and close_agent when each worker is no longer needed.',
+                    'Use the harness wait mechanism on spawned agent ids, integrate completed results as they arrive, and close/release workers only if the harness exposes that API.',
                     'Do not spawn workers for conflicting target files in the same round.',
                 ],
                 completionInstructions: [
@@ -6814,7 +7888,7 @@ class TaskGraphExecutionService {
     }
     getNativeAgentPrimitive(target) {
         if (target === 'codex' || target === 'gpt') {
-            return 'spawn_agent / wait_agent / close_agent';
+            return 'spawn_agent + harness wait lifecycle';
         }
         if (target === 'claude') {
             return 'Task';
@@ -6883,7 +7957,7 @@ class TaskGraphExecutionService {
             commands.push(`# Hand ${input.selected.packetPath} and ${input.reportPath} to the selected worker tool only if it has no native agent mechanism.`);
         }
         commands.push(`ospec execute launch ${quotedChangePath} --task ${quotedTaskId} --target ${input.target} --run --command "<explicit worker command that reads ${input.selected.packetPath}>"`);
-        commands.push(`ospec execute complete ${quotedTaskId} ${quotedChangePath} --status DONE --summary "..."`);
+        commands.push(`ospec execute complete ${quotedTaskId} ${quotedChangePath} --dispatch ${this.quoteShellArg(input.selected.id)} --status DONE --summary "..."`);
         return commands;
     }
     buildWorkerLaunchPrompt(input) {
@@ -6907,7 +7981,7 @@ class TaskGraphExecutionService {
             '- Use NEEDS_CONTEXT or BLOCKED instead of guessing when requirements, dependencies, or environment are missing.',
             '',
             'Completion command:',
-            `ospec execute complete ${input.selected.taskId} ${input.relativeChangePath} --status DONE --summary "..."`,
+            `ospec execute complete ${input.selected.taskId} ${input.relativeChangePath} --dispatch ${input.selected.id} --status DONE --summary "..."`,
         ].join('\n');
     }
     async runWorkerCommand(input) {
@@ -7143,6 +8217,7 @@ class TaskGraphExecutionService {
         const document = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
         document.data.decision = decision;
         document.data.status = decision === 'PENDING' ? 'pending' : 'reviewed';
+        document.data.reviewed_at = input.run.record.completedAt;
         const runNote = [
             '',
             '## Automated Review Run',
@@ -7156,6 +8231,10 @@ class TaskGraphExecutionService {
             '',
         ].join('\n');
         await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(`${document.content.trimEnd()}\n${runNote}`, document.data));
+        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+        if (!(await this.fileService.exists(findingsPath))) {
+            await this.fileService.writeJSON(findingsPath, { version: '1.0', findings: [] });
+        }
     }
     normalizeReviewRunDecision(value) {
         const normalized = normalizeStatus(value);
@@ -7705,7 +8784,7 @@ class TaskGraphExecutionService {
             `When the harness exposes authoritative usage, write its normalized counters to \`artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json\`; do not estimate missing token fields.`,
             '',
             '```bash',
-            `ospec execute complete ${task.id} [change-path] --status DONE --summary "..."`,
+            `ospec execute complete ${task.id} [change-path] --dispatch ${record.id} --status DONE --summary "..."`,
             '```',
             '',
             'Use `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` when the result is not cleanly complete.',
@@ -7819,6 +8898,8 @@ class TaskGraphExecutionService {
             '## Review Output',
             '',
             `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
+            '- Preserve the controller-written review dispatch, target snapshot, Loop action, controller session, and reviewer executor provenance fields unchanged.',
+            '- Set frontmatter `reviewed_at` to the actual completion timestamp. Preserve `review_dispatch_id` and `target_snapshot_hash` exactly as written by the controller.',
             '- Record concrete findings and evidence in the review artifact body.',
             `- Also write structured findings to \`${this.getReviewFindingsRelativePath(record.reviewArtifactPath)}\` as \`{"version":"1.0","findings":[{"id":"F-001","severity":"high|medium|low|info","category":"correctness","message":"...","file":"src/file.ts","line":42,"evidence":"...","requirement_refs":["REQ-1"],"repair_scope":["src/file.ts"]}]}\`. Use an empty findings array only when there are no findings.`,
             '- Use `APPROVED_WITH_CONCERNS` only when the change can continue and the controller can accept the concern.',
@@ -8278,6 +9359,7 @@ class TaskGraphExecutionService {
             `- Model: ${record.workerProfile.model || 'harness default (not explicitly configured)'}`,
             `- Status: ${record.status}`,
             `- Document: ${record.documentPath}`,
+            `- Document hash: ${record.documentHash}`,
             `- Document readiness: ${record.documentReadiness}`,
             `- Review artifact: ${record.reviewArtifactPath}`,
             `- Usage sidecar: artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json (optional; automatically ingested on the next controller action)`,
@@ -8298,6 +9380,7 @@ class TaskGraphExecutionService {
                 ]
                 : [
                     `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
+                    '- Set frontmatter `reviewed_at` to the actual completion time. Preserve the controller-written dispatch, document hash, reviewer role, policy/mode, controller session, and reviewer executor provenance fields unchanged.',
                     '- Record concrete findings and required corrections in the review artifact body.',
                     `- Also write the same findings as structured JSON to \`${this.getReviewFindingsRelativePath(record.reviewArtifactPath)}\` using stable IDs, severity, category, message, file/line when applicable, evidence, requirement_refs, and repair_scope.`,
                     '- Use `APPROVED_WITH_CONCERNS` only when execution may continue and the concern is explicit.',
@@ -8324,6 +9407,10 @@ class TaskGraphExecutionService {
             `- Recorded at: ${record.recordedAt}`,
             `- Exit code: ${record.exitCode === null ? 'not recorded' : record.exitCode}`,
             `- Command: \`${record.command}\``,
+            `- Loop action: ${record.loopActionId || 'not bound'}`,
+            `- Loop action item: ${record.loopActionItemId || 'not bound'}`,
+            `- Executor: ${record.executorId || 'not bound'}`,
+            `- Issuance target snapshot: ${record.issuanceTargetSnapshotHash || 'not bound'}`,
             '',
             '## Summary',
             '',

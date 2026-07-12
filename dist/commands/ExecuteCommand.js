@@ -157,6 +157,15 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     async docReview(args) {
         const parsed = this.parseDocumentReviewArgs(args);
         const changePath = await this.resolveChangePath(parsed.inputPath);
+        if (parsed.claimExecutor || parsed.completeExecutor) {
+            if (!parsed.stage)
+                throw new Error('Execute doc-review executor lifecycle requires --stage design|plan.');
+            const record = parsed.claimExecutor
+                ? await services_1.services.taskGraphExecutionService.claimDocumentReviewExecutor(changePath, parsed.stage, parsed.claimExecutor)
+                : await services_1.services.taskGraphExecutionService.completeDocumentReviewExecutor(changePath, parsed.stage, parsed.completeExecutor);
+            this.success(`Document review ${record.id} ${parsed.claimExecutor ? 'claimed' : 'completed'} by ${parsed.claimExecutor || parsed.completeExecutor}.`);
+            return;
+        }
         const result = await services_1.services.taskGraphExecutionService.reviewDocument(changePath, {
             stage: parsed.stage,
         });
@@ -288,6 +297,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             status: parsed.status,
             summary: parsed.summary,
             usageFile: parsed.usageFile,
+            dispatchId: parsed.dispatchId,
         });
         this.printCompletion(result);
     }
@@ -358,6 +368,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             status: parsed.status,
             exitCode: parsed.exitCode,
             summary: parsed.summary,
+            loopActionId: parsed.loopActionId,
+            loopActionItemId: parsed.loopActionItemId,
+            executorId: parsed.executorId,
         });
         this.printVerificationEvidence(result);
     }
@@ -1314,7 +1327,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         return blocked.slice(0, 3).map(item => `${item.task.id}: ${item.reasons.join(', ')}`);
     }
     quoteCommandArg(value) {
-        if (/^[A-Za-z0-9_./:@\\-]+$/.test(value)) {
+        if (/^[-A-Za-z0-9_./:@\\]+$/.test(value)) {
             return value;
         }
         return `"${value.replace(/"/g, '\\"')}"`;
@@ -1738,6 +1751,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     parseDocumentReviewArgs(args) {
         let inputPath;
         let stage;
+        let claimExecutor;
+        let completeExecutor;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--stage') {
@@ -1753,6 +1768,25 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 stage = this.normalizeDocumentReviewStage(arg.slice('--stage='.length));
                 continue;
             }
+            if (arg === '--claim-executor' || arg === '--complete-executor') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--'))
+                    throw new Error(`Execute doc-review requires a value after ${arg}.`);
+                if (arg === '--claim-executor')
+                    claimExecutor = value;
+                else
+                    completeExecutor = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--claim-executor=')) {
+                claimExecutor = arg.slice('--claim-executor='.length).trim();
+                continue;
+            }
+            if (arg.startsWith('--complete-executor=')) {
+                completeExecutor = arg.slice('--complete-executor='.length).trim();
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute doc-review flag: ${arg}`);
             }
@@ -1762,7 +1796,11 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             }
             throw new Error(`Unexpected execute doc-review argument: ${arg}`);
         }
-        return { inputPath, stage };
+        if (claimExecutor && completeExecutor)
+            throw new Error('Execute doc-review cannot claim and complete an executor in the same command.');
+        if (claimExecutor === '' || completeExecutor === '')
+            throw new Error('Document review executor ID must be non-empty.');
+        return { inputPath, stage, claimExecutor, completeExecutor };
     }
     parseFinishArgs(args) {
         let inputPath;
@@ -1820,6 +1858,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let status;
         let summary;
         let usageFile;
+        let dispatchId;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--status') {
@@ -1861,6 +1900,20 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 usageFile = arg.slice('--usage-file='.length);
                 continue;
             }
+            if (arg === '--dispatch') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--'))
+                    throw new Error('Execute complete requires a value after --dispatch.');
+                dispatchId = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--dispatch=')) {
+                dispatchId = arg.slice('--dispatch='.length).trim();
+                if (!dispatchId)
+                    throw new Error('Execute complete requires a non-empty --dispatch id.');
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute complete flag: ${arg}`);
             }
@@ -1877,7 +1930,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (!taskId) {
             throw new Error('Execute complete requires a task id.');
         }
-        return { taskId, inputPath, status, summary, usageFile };
+        return { taskId, inputPath, status, summary, usageFile, dispatchId };
     }
     parseCollectArgs(args) {
         let inputPath;
@@ -2338,6 +2391,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let status;
         let exitCode;
         let summary;
+        let loopActionId;
+        let loopActionItemId;
+        let executorId;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--command') {
@@ -2392,6 +2448,32 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 summary = arg.slice('--summary='.length);
                 continue;
             }
+            if (arg === '--loop-action' || arg === '--action-item' || arg === '--executor') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error(`Execute verify requires a value after ${arg}.`);
+                }
+                if (arg === '--loop-action')
+                    loopActionId = value;
+                else if (arg === '--action-item')
+                    loopActionItemId = value;
+                else
+                    executorId = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--loop-action=')) {
+                loopActionId = arg.slice('--loop-action='.length).trim();
+                continue;
+            }
+            if (arg.startsWith('--action-item=')) {
+                loopActionItemId = arg.slice('--action-item='.length).trim();
+                continue;
+            }
+            if (arg.startsWith('--executor=')) {
+                executorId = arg.slice('--executor='.length).trim();
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute verify flag: ${arg}`);
             }
@@ -2404,7 +2486,11 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (!command?.trim()) {
             throw new Error('Execute verify requires --command.');
         }
-        return { inputPath, command, status, exitCode, summary };
+        const loopValues = [loopActionId, loopActionItemId, executorId];
+        if (loopValues.some(value => value !== undefined) && loopValues.some(value => !value?.trim())) {
+            throw new Error('Execute verify requires --loop-action, --action-item, and --executor together.');
+        }
+        return { inputPath, command, status, exitCode, summary, loopActionId, loopActionItemId, executorId };
     }
     parseTddArgs(args) {
         let inputPath;

@@ -37,9 +37,10 @@ exports.LoopCommand = void 0;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const AgentCliRunnerService_1 = require("../services/AgentCliRunnerService");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'tick-plan'];
+const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'tick-plan', 'heartbeat', 'result', 'recover'];
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
@@ -66,6 +67,18 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 case 'level':
                     await this.level(args);
                     return;
+                case 'configure':
+                    await this.configure(args);
+                    return;
+                case 'heartbeat':
+                    await this.heartbeat(args);
+                    return;
+                case 'result':
+                    await this.recordResult(args);
+                    return;
+                case 'recover':
+                    await this.recover(args);
+                    return;
                 default:
                     this.info(`Usage: ospec loop <${LOOP_ACTIONS.join('|')}> [path] [--level L1|L2|L3]`);
             }
@@ -76,7 +89,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
     }
     async run(args) {
-        const inputPath = args.find(arg => !arg.startsWith('--'));
+        const inputPath = this.parseOptionalPath(args, [], ['--once', '--json']);
         const changePath = await this.resolveChangePath(inputPath);
         const project = await this.resolveProjectRoot(changePath);
         const result = await services_1.services.loopService.runOnce(changePath, {
@@ -84,14 +97,31 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             projectRoot: project.projectRoot,
             layoutConfig: project.config,
         });
+        if (args.includes('--json')) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
         console.log('\nLoop Tick');
         console.log('=========\n');
         console.log(`Change path: ${result.changePath}`);
         console.log(`Iteration: ${result.iteration}`);
         console.log(`Status: ${result.status}`);
         console.log(`Step: ${result.currentStep}`);
+        console.log(`Progress: tokens=${result.metrics.tokensUsed} elapsed=${result.metrics.elapsedMinutes.toFixed(1)}m no-progress=${result.metrics.noProgressCount}`);
         if (result.pending) {
             console.log(`Pending action: ${result.pending.actionId} (${result.pending.status})`);
+        }
+        if (result.actions.length > 0) {
+            console.log('\nAction items:');
+            for (const action of result.actions) {
+                console.log(`  - ${action.id}: ${action.kind} target=${action.target} task=${action.taskId || 'n/a'}`);
+                console.log(`    packet=${action.packetPath || 'none'}`);
+                console.log(`    prompt=${action.prompt.replace(/\s+/g, ' ')}`);
+                if (action.heartbeatCommand)
+                    console.log(`    heartbeat=${action.heartbeatCommand}`);
+                if (action.resultCommand)
+                    console.log(`    result=${action.resultCommand}`);
+            }
         }
         if (result.stopped) {
             console.log(`Stopped: ${result.stopReason || 'yes'}`);
@@ -115,12 +145,14 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     /**
-     * Session-bound in-process watcher (CLI-driven). Runs ticks on an interval until the loop
+     * Session-bound in-process watcher (CLI-driven). Executes emitted fresh-context agent actions
+     * in parallel, then immediately observes their durable evidence. It waits only when no action
+     * is ready, and ends when the loop
      * stops/pauses/finishes, a STOP sentinel appears, max ticks is reached, or the process exits
      * (closing the session). It is NOT persistent — it dies with this process.
      */
     async watch(args) {
-        const inputPath = args.find(arg => !arg.startsWith('--'));
+        const inputPath = this.parseOptionalPath(args, ['--interval', '--max-ticks', '--timeout-ms', '--target'], ['--dry-run']);
         const changePath = await this.resolveChangePath(inputPath);
         const project = await this.resolveProjectRoot(changePath);
         const config = await services_1.services.loopService.readConfig(changePath);
@@ -128,7 +160,24 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const intervalLabel = intervalOverride || config.schedule.interval;
         const intervalMs = this.parseIntervalMs(intervalLabel);
         const maxTicks = this.parseMaxTicks(args);
-        this.info(`Watching loop (session-bound, interval ${intervalLabel}). Press Ctrl-C or close the session to stop.`);
+        const dryRun = args.includes('--dry-run');
+        const timeoutMs = this.parseOptionalPositiveNumber(this.parseFlagValue(args, '--timeout-ms'), '--timeout-ms');
+        const targetOverride = this.parseFlagValue(args, '--target');
+        if (config.executionModel !== 'cli-driven') {
+            throw new Error('Loop watch is only available for cli-driven goals. Controller goals must be driven by the current IDE native-subagent session.');
+        }
+        if (targetOverride && targetOverride !== config.target) {
+            throw new Error(`Loop watch --target must match the persisted goal target (${config.target}); reconfigure the goal explicitly before changing executors.`);
+        }
+        const runner = (0, AgentCliRunnerService_1.createAgentCliRunnerService)();
+        if (dryRun) {
+            const plan = await services_1.services.loopService.buildControllerTickPlan(changePath);
+            this.info('Loop watch dry-run: no tick, task dispatch, state update, or external process was executed.');
+            for (const instruction of plan.instructions)
+                console.log(`  - ${instruction}`);
+            return;
+        }
+        this.info(`Watching loop (session-bound, interval ${intervalLabel}, executor ${targetOverride || config.target}${dryRun ? ', dry-run' : ''}). Press Ctrl-C or close the session to stop.`);
         let ticks = 0;
         let active = true;
         const stop = () => { active = false; };
@@ -140,7 +189,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 layoutConfig: project.config,
             });
             ticks += 1;
-            console.log(`[tick ${ticks}] iteration=${result.iteration} status=${result.status} step=${result.currentStep}`);
+            console.log(`[tick ${ticks}] iteration=${result.iteration} status=${result.status} step=${result.currentStep} actions=${result.actions.length} tokens=${result.metrics.tokensUsed} no-progress=${result.metrics.noProgressCount}`);
             if (result.stopped || result.status === 'done' || result.status === 'paused' || result.status === 'stopped') {
                 this.info(`Watch ending: loop status is ${result.status}.`);
                 break;
@@ -148,6 +197,39 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             if (maxTicks !== null && ticks >= maxTicks) {
                 this.info(`Watch reached --max-ticks ${maxTicks}.`);
                 break;
+            }
+            if (result.actions.length > 0) {
+                const actionTimeoutMs = this.getActionTimeoutMs(config, result, timeoutMs);
+                const executions = await Promise.all(result.actions.map(async (action) => {
+                    const target = this.toAgentCliTarget(targetOverride || action.target || config.target);
+                    const executorId = `cli-watch:${process.pid}:${action.id}`;
+                    await services_1.services.loopService.heartbeatExecution(changePath, {
+                        actionItemId: action.id,
+                        executorId,
+                        leaseMs: actionTimeoutMs,
+                    });
+                    const run = await runner.runAsync({
+                        target,
+                        prompt: action.prompt,
+                        dryRun: false,
+                        timeoutMs: actionTimeoutMs,
+                        cwd: project.projectRoot,
+                    });
+                    console.log(`[action ${action.id}] target=${target} executed=${run.executed} exit=${run.exitCode ?? 'n/a'} timeout=${run.timedOut ? 'yes' : 'no'} truncated=${run.outputTruncated ? 'yes' : 'no'} duration=${run.durationMs}ms`);
+                    const summary = run.executed
+                        ? (run.exitCode === 0 ? `${action.id} completed; observing durable evidence.` : `${action.id} failed: ${run.stderr.trim().slice(0, 500)}`)
+                        : `${action.id} was not executed${run.available ? ' (dry-run)' : ` (${run.command.bin} unavailable)`}.`;
+                    return {
+                        actionItemId: action.id,
+                        executorId,
+                        exitCode: run.exitCode,
+                        timedOut: run.timedOut,
+                        tokensUsed: 0,
+                        summary,
+                    };
+                }));
+                await services_1.services.loopService.recordExecutionResults(changePath, executions);
+                continue;
             }
             await new Promise(resolve => setTimeout(resolve, intervalMs));
         }
@@ -162,6 +244,30 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const unit = (match[2] || 'm').toLowerCase();
         const factor = unit === 'ms' ? 1 : unit === 's' ? 1000 : unit === 'h' ? 3600000 : 60000;
         return Math.max(1, value * factor);
+    }
+    parseOptionalPath(args, valueFlags, booleanFlags) {
+        const valueSet = new Set(valueFlags);
+        const booleanSet = new Set(booleanFlags);
+        let inputPath;
+        for (let index = 0; index < args.length; index += 1) {
+            const arg = args[index];
+            if (booleanSet.has(arg))
+                continue;
+            const equalsIndex = arg.indexOf('=');
+            const flag = equalsIndex >= 0 ? arg.slice(0, equalsIndex) : arg;
+            if (valueSet.has(flag)) {
+                const value = equalsIndex >= 0 ? arg.slice(equalsIndex + 1) : args[++index];
+                if (!value || value.startsWith('--'))
+                    throw new Error(`${flag} requires a non-empty value.`);
+                continue;
+            }
+            if (arg.startsWith('--'))
+                throw new Error(`Unknown loop flag: ${arg}`);
+            if (inputPath)
+                throw new Error(`Unexpected extra loop path argument: ${arg}`);
+            inputPath = arg;
+        }
+        return inputPath;
     }
     parseFlagValue(args, flag) {
         for (let index = 0; index < args.length; index += 1) {
@@ -184,6 +290,31 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             }
         }
         return null;
+    }
+    toAgentCliTarget(target) {
+        if (target === 'claude' || target === 'codex' || target === 'gpt')
+            return target;
+        throw new Error(`Loop watch cannot execute target "${target}" directly. Configure claude/codex/gpt or use controller mode with the harness-native ${target} subagent adapter.`);
+    }
+    parseOptionalPositiveNumber(value, flag) {
+        if (value === undefined)
+            return undefined;
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed <= 0)
+            throw new Error(`${flag} must be a positive number.`);
+        return parsed;
+    }
+    getActionTimeoutMs(config, result, requested) {
+        const limits = [];
+        if (requested !== undefined)
+            limits.push(requested);
+        if (config.stopConditions.budgetMinutes !== null) {
+            limits.push(Math.max(1, (config.stopConditions.budgetMinutes - result.metrics.elapsedMinutes) * 60000));
+        }
+        if (config.stopConditions.expiresAt) {
+            limits.push(Math.max(1, Date.parse(config.stopConditions.expiresAt) - Date.now()));
+        }
+        return limits.length > 0 ? Math.floor(Math.min(...limits)) : undefined;
     }
     async resolveProjectRoot(changePath) {
         let current = path.resolve(changePath);
@@ -212,15 +343,27 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log(`Change path: ${changePath}`);
         console.log(`Level: ${config.level}`);
         console.log(`Primitive: ${config.primitive}`);
+        console.log(`Target: ${config.target}`);
         console.log(`Execution model: ${config.executionModel}`);
         console.log(`Schedule: ${config.schedule.interval} (${config.schedule.lifecycle})`);
+        console.log(`Concurrency: ${config.efficiency.maxParallel} fresh-context=${config.efficiency.freshContext ? 'yes' : 'no'}`);
+        console.log(`Guards: no-progress=${config.efficiency.noProgressLimit} review-every=${config.efficiency.comprehensionReviewEvery}`);
+        console.log(`Budgets: iterations=${config.stopConditions.maxIterations ?? 'unbounded'} tokens=${config.stopConditions.budgetTokens ?? 'unbounded'} minutes=${config.stopConditions.budgetMinutes ?? 'unbounded'} expires=${config.stopConditions.expiresAt || 'never'}`);
         console.log(`Status: ${state.status}`);
         console.log(`Iteration: ${state.iteration}`);
         console.log(`Current step: ${state.currentStep}`);
         console.log(`Last tick: ${state.lastTickTs || 'never'}`);
         console.log(`Pending action: ${state.pendingControllerAction ? state.pendingControllerAction.actionId : 'none'}`);
+        console.log(`Pending items: ${state.pendingControllerAction?.items?.length || 0}`);
+        for (const item of state.pendingControllerAction?.itemStates || []) {
+            console.log(`  - ${item.actionItemId}: ${item.status} executor=${item.executorId || 'unclaimed'} heartbeat=${item.heartbeatAt || 'never'} lease=${item.leaseExpiresAt}`);
+        }
+        console.log(`Usage: tokens=${state.tokensUsed} executor=${state.executorTokensUsed} artifacts=${state.artifactTokensUsed} no-progress=${state.noProgressCount} comprehension-debt=${state.comprehensionDebtCounter}`);
+        if (state.lastFeedback)
+            console.log(`Last feedback: ${state.lastFeedback}`);
         if (config.capability) {
             console.log(`Native loop capability: ${config.capability.nativeLoopCapability} (${config.capability.probeSource})`);
+            console.log(`Harness: interactive=${config.capability.interactive ? 'yes' : 'no'} native-subagents=${config.capability.nativeSubagentCapability} controller=${config.capability.controllerAvailable ? 'available' : 'blocked'}`);
         }
         console.log('');
     }
@@ -264,6 +407,155 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const changePath = await this.resolveChangePath(inputPath);
         const config = await services_1.services.loopService.setLevel(changePath, normalized);
         this.success(`Loop level set to ${config.level}.`);
+    }
+    async configure(args) {
+        const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
+        const options = {};
+        const values = (flag) => {
+            const found = [];
+            for (let index = inputPath ? 1 : 0; index < args.length; index += 1) {
+                if (args[index] === flag && args[index + 1] !== undefined) {
+                    found.push(args[index + 1]);
+                    index += 1;
+                }
+                else if (args[index].startsWith(`${flag}=`)) {
+                    found.push(args[index].slice(flag.length + 1));
+                }
+            }
+            return found;
+        };
+        const scalar = (flag) => values(flag).at(-1);
+        const nullableNumber = (flag) => {
+            const value = scalar(flag);
+            if (value === undefined)
+                return undefined;
+            if (value.toLowerCase() === 'none')
+                return null;
+            const parsed = Number(value);
+            if (!Number.isInteger(parsed) || parsed <= 0)
+                throw new Error(`${flag} must be a positive integer or "none".`);
+            return parsed;
+        };
+        const target = scalar('--target');
+        if (target) {
+            const allowed = new Set(['codex', 'gpt', 'claude', 'gemini', 'opencode', 'cursor', 'copilot', 'shell', 'generic']);
+            if (!allowed.has(target))
+                throw new Error(`Unsupported loop target: ${target}.`);
+            options.target = target;
+        }
+        const model = scalar('--execution-model');
+        if (model) {
+            if (model !== 'controller' && model !== 'cli-driven')
+                throw new Error('--execution-model must be controller or cli-driven.');
+            options.executionModel = model;
+        }
+        const harnessInteractive = scalar('--harness-interactive');
+        if (harnessInteractive !== undefined) {
+            if (harnessInteractive !== 'true' && harnessInteractive !== 'false')
+                throw new Error('--harness-interactive must be true or false.');
+            options.interactive = harnessInteractive === 'true';
+        }
+        const capability = (flag) => {
+            const value = scalar(flag);
+            if (value === undefined)
+                return undefined;
+            if (value !== 'supported' && value !== 'unknown' && value !== 'unsupported') {
+                throw new Error(`${flag} must be supported, unknown, or unsupported.`);
+            }
+            return value;
+        };
+        options.nativeSubagentCapability = capability('--native-subagents');
+        options.nativeLoopCapability = capability('--native-goal');
+        options.interval = scalar('--interval');
+        options.maxIterations = nullableNumber('--max-iterations');
+        const expiresAt = scalar('--expires-at');
+        options.expiresAt = expiresAt?.toLowerCase() === 'none' ? null : expiresAt;
+        options.budgetTokens = nullableNumber('--budget-tokens');
+        options.budgetMinutes = nullableNumber('--budget-minutes');
+        const testCommands = values('--test-command');
+        const allowPaths = values('--allow-path');
+        const allowCommands = values('--allow-command');
+        if (testCommands.length > 0)
+            options.testCommands = testCommands;
+        if (allowPaths.length > 0)
+            options.allowPaths = allowPaths;
+        if (allowCommands.length > 0)
+            options.allowCommands = allowCommands;
+        options.maxParallel = nullableNumber('--max-parallel') ?? undefined;
+        options.noProgressLimit = nullableNumber('--no-progress-limit') ?? undefined;
+        const reviewEvery = scalar('--review-every');
+        if (reviewEvery !== undefined) {
+            const parsed = Number(reviewEvery);
+            if (!Number.isInteger(parsed) || parsed < 0)
+                throw new Error('--review-every must be a non-negative integer.');
+            options.comprehensionReviewEvery = parsed;
+        }
+        const freshContext = scalar('--fresh-context');
+        if (freshContext !== undefined) {
+            if (freshContext !== 'true' && freshContext !== 'false')
+                throw new Error('--fresh-context must be true or false.');
+            options.freshContext = freshContext === 'true';
+        }
+        options.promptMaxChars = nullableNumber('--prompt-max-chars') ?? undefined;
+        const changePath = await this.resolveChangePath(inputPath);
+        const config = await services_1.services.loopService.configure(changePath, options);
+        this.success(`Loop configured: target=${config.target}, model=${config.executionModel}, parallel=${config.efficiency.maxParallel}, interval=${config.schedule.interval}.`);
+    }
+    async heartbeat(args) {
+        const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
+        const actionItemId = this.parseFlagValue(args, '--action-item');
+        if (!actionItemId)
+            throw new Error('loop heartbeat requires --action-item <id>.');
+        const executorId = this.parseFlagValue(args, '--executor');
+        if (!executorId)
+            throw new Error('loop heartbeat requires --executor <child-id>.');
+        const leaseValue = this.parseFlagValue(args, '--lease-ms');
+        const leaseMs = leaseValue === undefined ? undefined : Number(leaseValue);
+        if (leaseMs !== undefined && (!Number.isInteger(leaseMs) || leaseMs <= 0)) {
+            throw new Error('--lease-ms must be a positive integer.');
+        }
+        const changePath = await this.resolveChangePath(inputPath);
+        const heartbeat = {
+            actionItemId,
+            executorId,
+            leaseMs,
+        };
+        const state = await services_1.services.loopService.heartbeatExecution(changePath, heartbeat);
+        this.success(`Loop heartbeat recorded for ${actionItemId}; pending=${state.pendingControllerAction?.actionId || 'none'}.`);
+    }
+    async recordResult(args) {
+        const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
+        const actionItemId = this.parseFlagValue(args, '--action-item');
+        if (!actionItemId)
+            throw new Error('loop result requires --action-item <id>.');
+        const executorId = this.parseFlagValue(args, '--executor');
+        if (!executorId)
+            throw new Error('loop result requires --executor <child-id>.');
+        const exitValue = this.parseFlagValue(args, '--exit-code');
+        const exitCode = exitValue === undefined ? null : Number(exitValue);
+        if (exitCode !== null && !Number.isInteger(exitCode))
+            throw new Error('--exit-code must be an integer.');
+        const tokenValue = this.parseFlagValue(args, '--tokens-used');
+        const tokensUsed = tokenValue === undefined ? undefined : Number(tokenValue);
+        if (tokensUsed !== undefined && (!Number.isFinite(tokensUsed) || tokensUsed < 0)) {
+            throw new Error('--tokens-used must be a non-negative number.');
+        }
+        const changePath = await this.resolveChangePath(inputPath);
+        const state = await services_1.services.loopService.recordExecutionResults(changePath, [{
+                actionItemId,
+                executorId,
+                exitCode,
+                timedOut: args.includes('--timed-out'),
+                tokensUsed,
+                summary: this.parseFlagValue(args, '--summary'),
+            }]);
+        this.success(`Loop result recorded for ${actionItemId}; pending=${state.pendingControllerAction?.actionId || 'none'}.`);
+    }
+    async recover(args) {
+        const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
+        const changePath = await this.resolveChangePath(inputPath);
+        const state = await services_1.services.loopService.recoverExpiredActions(changePath, { force: args.includes('--force') });
+        this.success(`Loop recovery complete; pending=${state.pendingControllerAction?.actionId || 'none'}, no-progress=${state.noProgressCount}.`);
     }
     async resolveChangePath(inputPath) {
         const cwd = process.cwd();

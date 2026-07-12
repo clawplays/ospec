@@ -1,7 +1,6 @@
 ---
 name: ospec-goal
 description: Create or advance a full OSpec goal using the current document, task graph, worker, review, and evidence workflow.
-tags: [ospec, cli, workflow, goal]
 ---
 
 # OSpec Goal
@@ -12,11 +11,17 @@ Use this skill for complex work that needs the full OSpec workflow. A goal is in
 
 `ospec goal` creates a **session-bound Loop** automatically (`artifacts/loop/loop.json` + `state.json` + `run-log.jsonl`). You do not run a separate init step. Key contracts:
 
-- **ospec is a state-machine brain; it does not execute agents.** `ospec loop run --once` performs a two-phase tick — it first observes the previous pending action's verification evidence, then plans/produces the next controller instruction. The controller (you) executes the instruction and records completion + verification.
+- **OSpec is the durable state-machine brain.** `ospec loop run --once` first observes the previous task, review, or verification evidence, then emits a bounded batch of action items from `task-graph.json`. In controller mode, you launch one fresh native subagent per action item and record durable evidence. In CLI-driven mode, `ospec loop watch` executes the emitted actions in fresh external agent processes.
+- **IDE controller auto-dispatch is mandatory for executable L2/L3 goals.** L1 is report-only and never starts implementation/review/verifier action batches; for implementation, present the safety-level decision first and wait for the user to choose L2 or L3. After creating or resuming an executable goal, do not stop at "Loop initialized", ask the user to run Loop commands, or wait for another prompt. Continue the document and gate workflow in the same AI session; once actions are ready, run `ospec loop run <goal-path> --once --json`, immediately launch every returned action through the current IDE's native subagent API, wait for the batch, record durable evidence, and tick again. Stop only for an actual required user decision, blocking safety/plugin gate, configured guard/STOP, terminal failure that needs user authority, explicit user pause, or `done`.
+- **Harness capability is explicit and fail-closed.** In Codex create executable work with `--target codex --execution-model controller --harness-interactive true --native-subagents supported`; use the equivalent actual target in other IDEs. A target name alone never proves that native children exist. Do not claim or start controller dispatch when `controllerAvailable` is false.
+- **Native child lifecycle is durable.** After `spawn_agent`, record `ospec loop heartbeat <goal> --action-item <id> --executor <child-id>` and refresh the lease while waiting. Record each child independently with `ospec loop result ...`; do not wait for the whole batch before persisting completed siblings. Use `ospec loop recover --force` only when the prior IDE session or child is known to be gone. Expired items requeue; completed siblings do not.
+- **Independent document reviewers are bound to their native child.** After spawning a specialist design or plan reviewer, immediately run `ospec execute doc-review <goal> --stage design|plan --claim-executor <child-id>`. After its Markdown and structured findings are written, run the matching `--complete-executor <child-id>`. Approval is rejected when the dispatch, controller session, child executor, review timestamp, document hash, or findings provenance does not match.
 - **Safety level chosen at creation via a decision gate.** Prefer presenting an `AskUserQuestion` for L1/L2/L3 as the first decision; otherwise pass `ospec goal <name> --level L1|L2|L3` (default L1). L1 = report-only (findings go to triage, no code changes); L2 = assisted (real changes but required-decision gates hard-block); L3 = unattended within an allowlist.
-- **The level gates auto-advance.** At **L1/L2**, `ospec loop run` hard-blocks while any required user decision is pending — present each one to the user (never auto-select the recommended option) and record the answer with `ospec execute decision ... --select` before the loop proceeds. Only **L3** may auto-advance within its allowlist. The level is not a hint; it decides whether you may proceed without asking.
-- **`/goal` is capability-probed, not hardcoded.** `ospec execute launch --primitive goal` produces a native-`/goal` instruction when the target supports it (claude, codex), otherwise an emulated-goal verify-driven plan. CLI-driven targets use `claude -p` / `codex exec` (never `claude --goal`).
-- **Scheduling is session-bound.** Controller-driven loops re-run `loop run --once` on the controller's tick cadence (`ospec loop tick-plan`); CLI-driven loops use `ospec loop watch` (dies with the session). Stop with `ospec loop pause` / a `STOP` file / closing the session.
+- **Required decisions block every level.** Present each required decision to the user, never auto-select the recommendation, and record the answer with `ospec execute decision ... --select` before the loop proceeds. L3 additionally requires non-empty path and command allowlists; it does not bypass human decision gates.
+- **`/goal` is capability-probed, not inferred from a target name.** `ospec execute launch --primitive goal` produces a native-`/goal` instruction only when the current harness explicitly reports support; otherwise it emits an emulated verify-driven plan. CLI-driven targets use `claude -p` / `codex exec` (never `claude --goal`).
+- **Scheduling is session-bound.** Controller mode re-runs `loop run --once` and dispatches the emitted native subagent batch. CLI-driven `loop watch` executes supported external CLIs, re-observes evidence immediately after a batch, and waits only when no action is ready. Both die with the session.
+- **Progress and feedback are artifact-backed.** Task status, task/final review decisions, grouped repair waves, verification evidence, `state.json`, and `run-log.jsonl` carry progress between fresh contexts. Process exit alone does not complete an action. Dispatch only items returned in `actions`; a durable `pending` record with an empty action list is observation state and must not be relaunched.
+- **Guards are enforced before new work.** Pause/STOP, iteration/deadline/token/time budgets, no-progress limits, comprehension-review checkpoints, required decisions, approved document reviews, ready workspace evidence, and L3 allowlists can stop or pause the loop.
 - **Stop condition is three-stage:** run the project's real tests, record evidence with `ospec execute verify --status`, then confirm with `ospec verify`.
 
 ## Scope
@@ -27,6 +32,7 @@ This skill covers the full lifecycle inside an initialized OSpec project:
 - goal naming or matching
 - proposal, design, implementation-plan, task graph, and task refinement
 - document review for design and implementation plan
+- independent approval artifacts at `artifacts/reviews/design-review.md` and `artifacts/reviews/implementation-plan-review.md`
 - worker dispatch, launch, collection, retry, and review packets
 - user decision gates
 - workspace and worktree planning
@@ -56,7 +62,7 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 
 ## Visibility & Decisions
 
-- `Announce-Before-Act`: never run the goal workflow silently. Announce in one line which skill you are using (`ospec-goal`) and the current stage; say which `ospec execute ...` command you are about to run and the artifact it writes; when you dispatch native subagents, announce how many workers you launch, which task each takes, and the mechanism (`Task` for Claude Code, `spawn_agent`/`wait_agent`/`close_agent` for Codex/GPT, `@generalist` for Gemini, `@mention` for OpenCode); when a gate blocks progress, tell the user what is blocked and what unblocks it.
+- `Announce-Before-Act`: never run the goal workflow silently. Announce in one line which skill you are using (`ospec-goal`) and the current stage; say which `ospec execute ...` command you are about to run and the artifact it writes; when you dispatch native subagents, announce how many workers you launch, which task each takes, and the mechanism (`Task` for Claude Code, `spawn_agent` plus the harness wait mechanism for Codex/GPT, `@generalist` for Gemini, `@mention` for OpenCode; close only if the harness exposes it); when a gate blocks progress, tell the user what is blocked and what unblocks it.
 - `Brainstorm-First`: open each goal with a short brainstorming pass before locking design. Surface the open questions for direction, architecture, API, data, UI, risk, and scope, and ask the user one question at a time instead of silently assuming. **NEVER auto-select the recommended option or resolve a decision gate yourself — `recommended` is only a hint to show the user. Present every gate to the user and wait for their actual choice; required gates block implementation and dispatch until the user answers. Do not run the whole goal in one shot without asking.** Persist exploration with `ospec brainstorm [path] --topic "..."` when useful, and do not leave a brainstorm as an unanswered template — ask the user its decision gates and record each answer with `ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id>` so it has a result. Resolve the brainstorm while its change is the active change (or pass `--change <name>`) so it links to that change and archives together with it — the brainstorm directory name need not match the change name. When any of those is genuinely open, prefer raising a durable decision gate over guessing: `ospec execute decision [changes/active/<goal>] --id <id> --question "..." --option id:label:impact --required`, present the decision report `Chat Prompt` or `artifacts/agents/decisions/index.md`, then record the answer with `--select <option-id>`. Only record an autonomous assumption in `design.md` when the user explicitly defers or is unavailable, and label it as an assumption to confirm. Present options using the best interactive mechanism your harness has: a native question UI (Claude Code `AskUserQuestion`, Gemini `ask_user`) if available, otherwise your plan/approval UI (Codex Plan mode) if available, otherwise the decision report `Chat Prompt` as plain chat text. `ospec session hook --target claude --apply` installs hooks that re-affirm this contract and hard-block subagent dispatch while a required decision is pending. On harnesses without a native picker or plan UI present the decision report `Chat Prompt` in chat instead — the asking step and the `ospec execute dispatch` block on required pending decisions are identical on every harness, so you always ask the user, only the presentation differs.
 - `Zero-Setup`: the user only starts a goal and describes the requirement — never make them run setup or `ospec execute ...` commands; you run every OSpec command yourself and the user only answers questions in chat. In a Claude Code harness at goal entry, if `.claude/settings.json` does not yet reference `.ospec/hooks/claude/ospec-claude-hook.cjs`, run `ospec session hook --target claude --apply` once (idempotent) so hard enforcement is active for the next session.
 
@@ -64,15 +70,15 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 
 1. Inspect repository state first when posture is unclear.
 2. If the repo is not initialized, stop at initialization guidance instead of forcing a goal.
-3. If the request is new complex work, derive a concise kebab-case goal name and create it with `ospec goal <goal-name> [path]`.
+3. If the request is new complex work, derive a concise kebab-case goal name and create it with `ospec goal <goal-name> [path]`; for executable Codex work pass `--level L2|L3 --target codex --execution-model controller --harness-interactive true --native-subagents supported` so the persisted capability snapshot represents this IDE session.
 4. If the matching active goal already exists, continue it instead of duplicating it.
 5. Draft or update `design.md` from the requirement, `proposal.md`, and project context before editing `implementation-plan.md`, deriving `artifacts/agents/task-graph.json`, editing `tasks.md`, or editing code.
 6. Draft or update `implementation-plan.md` from `design.md`; identify target files, expected results, verification commands, dependencies, parallelizable work, and conflicts.
 7. Derive `artifacts/agents/task-graph.json` from `implementation-plan.md`; give every task a `documentation_updates` array (`[]` when none), include every declared docs path in the same task's `target_files`, and require meaningful-change evidence from dispatch to completion; derive `tasks.md` from the task graph. Finalize also generates one indexed `docs/project/changes/<archive-path>.md` for this goal; its preflight refuses to overwrite a human-owned file at that path, and the generated summary does not replace required architecture, API, module, or operational documentation.
-8. Run `ospec execute doc-review [changes/active/<goal>] --stage design`, then approve `artifacts/reviews/design-review.md` before plan review. Respect `.skillrc.workflow.document_review_policy`: `always` is the independent-review default; `adaptive` stays inline only when the target document explicitly declares `risk_level: low` (or `none`) and deterministic preflight finds no risk signal.
-9. Run `ospec execute doc-review [changes/active/<goal>] --stage plan`, then approve `artifacts/reviews/implementation-plan-review.md` before worker dispatch or closeout. Do not use adaptive review to bypass API, security, migration, data, architecture, or scope-risk review.
+8. Run `ospec execute doc-review [changes/active/<goal>] --stage design`, spawn one fresh independent IDE-native design-reviewer subagent from the emitted packet, immediately claim it with `--stage design --claim-executor <child-id>`, wait for its Markdown plus structured findings, then record `--stage design --complete-executor <child-id>`. Approval must validate before plan review. Respect `.skillrc.workflow.document_review_policy`: `always` is the independent-review default; `adaptive` stays inline only when the target document explicitly declares `risk_level: low` (or `none`) and deterministic preflight finds no risk signal.
+9. Run `ospec execute doc-review [changes/active/<goal>] --stage plan`, spawn one fresh independent IDE-native implementation-plan-reviewer subagent, immediately claim it with `--stage plan --claim-executor <child-id>`, wait for its findings, then record `--stage plan --complete-executor <child-id>` before worker dispatch or closeout. The controlling AI must not self-approve either independent review. Do not use adaptive review to bypass API, security, migration, data, architecture, or scope-risk review.
 10. Use `ospec execute decision` for direction, architecture, API, UI, risk, or scope choices that need explicit user selection.
-11. Use `ospec execute workspace`, `dispatch`, `launch`, `complete`, `review`, `feedback`, `repair`, `sync`, `tdd`, `debug`, and `verify` as needed for the full workflow. Model profiles are logical and resolve through `.skillrc.workflow.model_profiles`; command runners ingest `OSPEC_USAGE_FILE` automatically and `complete --usage-file` remains a manual fallback. Require reviewers to write Markdown plus sibling structured `*.findings.json`. If final review is `NEEDS_CHANGES`, create one grouped repair task instead of one worker per finding.
+11. Use `ospec execute workspace`, `dispatch`, `launch`, `complete`, `review`, `feedback`, `repair`, `sync`, `tdd`, `debug`, and `verify` as needed for the full workflow. In controller mode, native IDE subagent execution is the required default: run `ospec loop run <goal-path> --once --json`, dispatch every emitted action item immediately as one fresh native subagent batch, give each worker only its referenced packet, wait for results, record the required completion/review evidence, and tick again without waiting for another user prompt. Model profiles are logical and resolve through `.skillrc.workflow.model_profiles`; command runners ingest `OSPEC_USAGE_FILE` automatically and `complete --usage-file` remains a manual fallback. Require reviewers to write Markdown plus sibling structured `*.findings.json`. If final review is `NEEDS_CHANGES`, create one grouped repair task instead of one worker per finding.
 12. Do not archive while task graph status, task-level reviews, final reviews, worker status, required user decisions, document reviews, or verification evidence are incomplete.
 13. Use `ospec execute finish` before finalize when the goal used task graph execution or worktree planning.
 14. Use `ospec finalize [changes/active/<goal>]` as the normal closeout path. Closeout is automatic when ready: once the goal is complete and `ospec verify` passes with no required user decision or blocking gate pending, run `ospec finalize` yourself — do not stop at `ospec archive ... --check` (preview only) or wait for the user to ask. **`ospec execute finish` strategy prompts (PR / merge / branch / worktree) are optional with safe defaults (`direct-closeout` + `manual` merge) — do NOT ask the user about them; uncommitted change/OSpec files are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause for a genuine human gate: a pending required decision, an unapproved blocking plugin gate (e.g. Checkpoint), real verify/archive blockers, or an explicit user request to preview or approve first.
@@ -83,15 +89,21 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 
 ```bash
 ospec status [path]
-ospec goal <goal-name> [path] [--flags flag1,flag2] [--level L1|L2|L3]
+ospec goal <goal-name> [path] [--flags flag1,flag2] [--level L1|L2|L3] [--target ...] [--execution-model controller|cli-driven] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported]
 ospec execute status [changes/active/<goal>] --brief
 ospec loop status [changes/active/<goal>]
-ospec loop run [changes/active/<goal>] [--once]
-ospec loop watch [changes/active/<goal>] [--interval 10m] [--max-ticks N]
+ospec loop run [changes/active/<goal>] [--once] [--json]  # prefer JSON when dispatching native subagents
+ospec loop watch [changes/active/<goal>] [--target claude|codex|gpt] [--interval 10m] [--max-ticks N] [--timeout-ms N] [--dry-run]
 ospec loop tick-plan [changes/active/<goal>]
 ospec loop level [changes/active/<goal>] <L1|L2|L3>
+ospec loop configure [changes/active/<goal>] --execution-model controller|cli-driven --max-parallel N --fresh-context true
+ospec loop configure [changes/active/<goal>] --max-iterations N --budget-tokens N --budget-minutes N --expires-at <ISO-8601>
+ospec loop configure [changes/active/<goal>] --allow-path <path> --allow-command <prefix> --test-command <command>
 ospec loop pause [changes/active/<goal>]
 ospec loop resume [changes/active/<goal>]
+ospec loop heartbeat [changes/active/<goal>] --action-item <id> --executor <child-id> [--lease-ms N]
+ospec loop result [changes/active/<goal>] --action-item <id> --executor <child-id> --exit-code N [--tokens-used N] [--summary "..."] [--timed-out]
+ospec loop recover [changes/active/<goal>] [--force]
 ospec triage list [path]
 ospec triage claim [path] --id <id> --by <name>
 ospec triage promote [path] --id <id>
@@ -99,6 +111,8 @@ ospec execute launch [changes/active/<goal>] [--task task-id] [--target ...] [--
 ospec execute bootstrap [changes/active/<goal>]
 ospec execute doc-review [changes/active/<goal>] --stage design
 ospec execute doc-review [changes/active/<goal>] --stage plan
+ospec execute doc-review [changes/active/<goal>] --stage design|plan --claim-executor <child-id>
+ospec execute doc-review [changes/active/<goal>] --stage design|plan --complete-executor <child-id>
 ospec execute decision [changes/active/<goal>] --id <id> --question "..." --option id:label:impact --required
 ospec execute workspace [changes/active/<goal>]
 ospec execute dispatch [changes/active/<goal>] [--task task-id] [--limit N]
@@ -121,6 +135,9 @@ ospec finalize [changes/active/<goal>]
 ## Guardrails
 
 - Do not use the goal workflow for routine one-file or low-risk changes unless the user asks for it.
-- Native subagent dispatch is performed by the current AI harness; shell commands only run through explicit fallback commands such as `launch --run --command`, `orchestrate --command`, or `review --run --command`.
+- In controller mode, native subagent dispatch is performed by the current AI harness. In CLI-driven mode, `loop watch` executes only supported external agent CLIs (`claude`, `codex`, or `gpt`); other shell commands still require explicit fallback commands such as `launch --run --command`, `orchestrate --command`, or `review --run --command`.
+- When the IDE exposes native subagents, never replace controller auto-dispatch with CLI-driven execution and never hand the emitted commands back to the user. The controlling AI owns the tick-dispatch-wait-evidence loop.
+- If the current IDE does not expose a native subagent API and the user has not explicitly opted into CLI-driven fallback, stop with a clear capability blocker. Never claim that OSpec or the IDE launched a child agent when it did not.
+- Treat the emitted packet path as authoritative context. Do not paste the whole goal into each worker or reuse a reviewer context for implementation.
 - Do not claim goal closeout while document reviews, task graph, final reviews, worker status, required user decisions, or verification evidence are incomplete.
 - If real project tests exist, run them separately before recording verification evidence.

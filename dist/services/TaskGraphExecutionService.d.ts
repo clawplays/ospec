@@ -185,6 +185,18 @@ export interface TaskReviewDispatchRecord {
     reviewArtifactPath: string;
     reviewPackagePath?: string | null;
     workerProfile?: TaskWorkerProfile;
+    gitHead: string | null;
+    targetFiles: string[];
+    targetSnapshots: TaskDocumentationSnapshot[];
+    targetSnapshotHash: string;
+    loopActionId?: string | null;
+    loopActionItemId?: string | null;
+    controllerSessionReportedAt?: string | null;
+    reviewerExecutorId?: string | null;
+    reviewerClaimedAt?: string | null;
+    reviewerCompletedAt?: string | null;
+    reviewerSucceeded?: boolean | null;
+    requiresNativeExecutorProvenance?: boolean;
 }
 export interface TaskExecutionUsage {
     inputTokens: number | null;
@@ -266,12 +278,27 @@ export interface TaskDocumentReviewDispatchRecord {
     packetPath: string;
     recordPath: string;
     documentPath: string;
+    documentHash: string;
     reviewArtifactPath: string;
     documentReadiness: TaskBootstrapDocumentReadiness;
     mode: 'specialist' | 'inline_preflight';
     policy: DocumentReviewPolicy;
     riskSignals: string[];
     workerProfile: TaskWorkerProfile;
+    requiresNativeExecutorProvenance?: boolean;
+    controllerSessionReportedAt?: string | null;
+    reviewerExecutorId?: string | null;
+    reviewerClaimedAt?: string | null;
+    reviewerCompletedAt?: string | null;
+    reviewerSucceeded?: boolean | null;
+}
+export interface TaskLoopReadinessResult {
+    ready: boolean;
+    reason: string | null;
+}
+export interface TaskAuthoritativeUsageSnapshot {
+    totalTokens: number;
+    byId: Record<string, number>;
 }
 export interface TaskDocumentReviewDispatchResult {
     changePath: string;
@@ -313,6 +340,19 @@ export interface TaskVerificationEvidenceRecord {
     recordPath: string;
     reportPath: string;
     summary: string | null;
+    gitHead: string | null;
+    targetFiles: string[];
+    targetSnapshots: TaskDocumentationSnapshot[];
+    targetSnapshotHash: string;
+    loopActionId?: string | null;
+    loopActionItemId?: string | null;
+    executorId?: string | null;
+    issuanceTargetSnapshotHash?: string | null;
+}
+export interface TaskVerificationLoopBinding {
+    expectedCommand: string | null;
+    gitHead: string | null;
+    targetSnapshotHash: string;
 }
 export interface TaskVerificationEvidenceSession {
     version: string;
@@ -1197,6 +1237,7 @@ export declare class TaskGraphExecutionService {
         taskId?: string;
         limit?: number;
     }): Promise<TaskDispatchResult>;
+    private dispatchUnlocked;
     planLaunch(changePath: string, options?: {
         taskId?: string;
         target?: TaskWorkerToolTarget;
@@ -1206,6 +1247,7 @@ export declare class TaskGraphExecutionService {
         maxIterations?: number;
         interval?: string;
     }): Promise<TaskWorkerLaunchPlanResult>;
+    private planLaunchUnlocked;
     /**
      * Build the loop/agent-primitive plan for a goal|loop launch (Execution-Model Contracts 1–3).
      * Controller-driven => produce instructions; cli-driven => provide a `claude -p`/`codex exec`
@@ -1225,12 +1267,14 @@ export declare class TaskGraphExecutionService {
         status?: TaskGraphCompletionStatus;
         summary?: string;
     }): Promise<TaskWorkerCollectResult>;
+    private collectWorkerRunUnlocked;
     retryWorkerRun(changePath: string, options: {
         taskId: string;
         runId?: string;
         summary?: string;
         force?: boolean;
     }): Promise<TaskWorkerRetryResult>;
+    private retryWorkerRunUnlocked;
     orchestrate(changePath: string, options?: {
         command?: string;
         target?: TaskWorkerToolTarget;
@@ -1254,17 +1298,45 @@ export declare class TaskGraphExecutionService {
         status?: TaskGraphCompletionStatus;
         summary?: string;
         usageFile?: string;
+        dispatchId?: string;
     }): Promise<TaskCompletionResult>;
+    private completeUnlocked;
     syncWorkerStatus(changePath: string): Promise<TaskWorkerStatusSyncResult>;
+    private syncWorkerStatusUnlocked;
     review(changePath: string, options?: {
         stage?: TaskReviewStage;
         taskId?: string;
     }): Promise<TaskReviewDispatchResult>;
+    private reviewUnlocked;
+    bindReviewLoopAction(changePath: string, options: {
+        dispatchId: string;
+        actionId: string;
+        actionItemId: string;
+        controllerSessionReportedAt: string;
+    }): Promise<void>;
+    claimReviewLoopExecutor(changePath: string, options: {
+        dispatchId: string;
+        actionId: string;
+        actionItemId: string;
+        executorId: string;
+        claimedAt: string;
+    }): Promise<void>;
+    completeReviewLoopExecutor(changePath: string, options: {
+        dispatchId: string;
+        actionId: string;
+        actionItemId: string;
+        executorId: string;
+        completedAt: string;
+        succeeded: boolean;
+    }): Promise<void>;
+    private assertReviewLoopBinding;
+    private updateReviewLoopProvenance;
     planReviewFeedback(changePath: string, options?: {
         stage?: TaskReviewStage;
         summary?: string;
     }): Promise<TaskReviewFeedbackPlanResult>;
     createRepairWave(changePath: string): Promise<TaskRepairWaveResult>;
+    private createRepairWaveUnlocked;
     recordUserDecision(changePath: string, options: {
         id?: string;
         question?: string;
@@ -1278,12 +1350,44 @@ export declare class TaskGraphExecutionService {
     reviewDocument(changePath: string, options?: {
         stage?: TaskDocumentReviewStage;
     }): Promise<TaskDocumentReviewDispatchResult>;
+    private reviewDocumentUnlocked;
+    claimDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
+    completeDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
+    private readCurrentDocumentReviewDispatch;
+    private updateDocumentReviewExecutorProvenance;
+    private taskReviewScopeKey;
+    private documentReviewScopeKey;
+    private getCurrentReviewDispatchIndexPath;
+    private setCurrentReviewDispatch;
+    private assertCurrentReviewDispatch;
+    private readLoopControllerSession;
+    bindVerificationLoopAction(changePath: string, options: {
+        actionId: string;
+        actionItemId: string;
+        issuedAt: string;
+        expectedCommand: string | null;
+    }): Promise<TaskVerificationLoopBinding>;
+    claimVerificationLoopExecutor(changePath: string, options: {
+        actionId: string;
+        actionItemId: string;
+        executorId: string;
+        claimedAt: string;
+    }): Promise<void>;
+    cancelVerificationLoopAction(changePath: string, options: {
+        actionId: string;
+        actionItemId: string;
+    }): Promise<void>;
     recordVerification(changePath: string, options: {
         command?: string;
         status?: TaskVerificationEvidenceStatus;
         exitCode?: number;
         summary?: string;
+        loopActionId?: string;
+        loopActionItemId?: string;
+        executorId?: string;
     }): Promise<TaskVerificationEvidenceResult>;
+    private validateVerificationLoopProvenance;
+    private recordVerificationUnlocked;
     recordTddEvidence(changePath: string, options: {
         phase?: TaskTddEvidencePhase;
         command?: string;
@@ -1292,6 +1396,7 @@ export declare class TaskGraphExecutionService {
         testName?: string;
         summary?: string;
     }): Promise<TaskTddEvidenceResult>;
+    private recordTddEvidenceUnlocked;
     recordDebugEvidence(changePath: string, options: {
         phase?: TaskDebugEvidencePhase;
         symptom?: string;
@@ -1301,7 +1406,16 @@ export declare class TaskGraphExecutionService {
         status?: TaskDebugEvidenceStatus;
         summary?: string;
     }): Promise<TaskDebugEvidenceResult>;
+    private recordDebugEvidenceUnlocked;
     inspectWorkspace(changePath: string): Promise<TaskWorkspaceInspectionResult>;
+    validateDocumentReviewEvidence(changePath: string, stage: TaskDocumentReviewStage): Promise<TaskLoopReadinessResult>;
+    validateTaskReviewEvidence(changePath: string, taskId: string | null): Promise<TaskLoopReadinessResult>;
+    readValidatedFinalReviewDecision(changePath: string): Promise<TaskReviewRunDecision>;
+    validateLatestVerificationEvidence(changePath: string): Promise<TaskLoopReadinessResult>;
+    validateWorkspaceEvidence(changePath: string, allowedTaskPaths?: string[]): Promise<TaskLoopReadinessResult>;
+    readAuthoritativeTokenUsage(changePath: string): Promise<number>;
+    readAuthoritativeUsageSnapshot(changePath: string): Promise<TaskAuthoritativeUsageSnapshot>;
+    private readAuthoritativeUsageSnapshotUnlocked;
     planWorktree(changePath: string, options?: {
         branch?: string;
         targetPath?: string;
@@ -1340,6 +1454,7 @@ export declare class TaskGraphExecutionService {
     private getWorktreeRunDir;
     private getOrchestrationRunDir;
     private getVerificationEvidencePath;
+    private getVerificationLoopActionPath;
     private getTddEvidencePath;
     private getDebugEvidencePath;
     private getFinishPlanPath;
@@ -1366,6 +1481,7 @@ export declare class TaskGraphExecutionService {
     private normalizeUserDecisionOptions;
     private getUserDecisionNextInstruction;
     private readVerificationEvidence;
+    private isPassingVerificationRecordFresh;
     private isVerificationEvidenceSessionStatus;
     private isVerificationEvidenceRecord;
     private isVerificationEvidenceStatus;
@@ -1405,9 +1521,18 @@ export declare class TaskGraphExecutionService {
     private ingestReviewUsageSidecars;
     private readExecutionUsageFile;
     private captureDocumentationSnapshots;
+    private normalizeTargetFiles;
+    private captureTargetSnapshots;
+    private hashTargetSnapshots;
+    private prepareReviewArtifactForDispatch;
     private captureDocumentationEvidence;
     private hashMeaningfulDocumentation;
     private recordExecutionMetric;
+    private withTaskGraphMutationLease;
+    private readTaskGraphLockOwner;
+    private isProcessAlive;
+    private removeTaskGraphLockIfOwned;
+    private removeCorruptTaskGraphLockIfUnchanged;
     private readSession;
     private isSessionStatus;
     private isDispatchRecord;

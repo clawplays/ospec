@@ -149,6 +149,39 @@ class VerificationService {
         }
         if (isGoalWorkflow) {
             await this.addGoalDocumentReviewChecks(targetPath, checks);
+            const verificationFreshness = await services.taskGraphExecutionService
+                .validateLatestVerificationEvidence(targetPath)
+                .catch((error) => ({ ready: false, reason: error?.message || String(error) }));
+            checks.push({
+                name: 'goal.verification_evidence.freshness',
+                status: verificationFreshness.ready ? 'pass' : 'fail',
+                message: verificationFreshness.ready
+                    ? 'Latest verification evidence matches the current Git and target-file snapshot'
+                    : verificationFreshness.reason || 'Latest verification evidence is stale',
+            });
+            const finalReviewFreshness = await services.taskGraphExecutionService
+                .validateTaskReviewEvidence(targetPath, null)
+                .catch((error) => ({ ready: false, reason: error?.message || String(error) }));
+            checks.push({
+                name: 'goal.final_review.freshness',
+                status: finalReviewFreshness.ready ? 'pass' : 'fail',
+                message: finalReviewFreshness.ready
+                    ? 'Final review matches its dispatch and target-file snapshot'
+                    : finalReviewFreshness.reason || 'Final review evidence is stale',
+            });
+            const taskReport = await services.taskGraphExecutionService.getReport(targetPath).catch(() => null);
+            for (const task of taskReport ? [...taskReport.completedTasks, ...taskReport.concernTasks] : []) {
+                const taskReviewFreshness = await services.taskGraphExecutionService
+                    .validateTaskReviewEvidence(targetPath, task.id)
+                    .catch((error) => ({ ready: false, reason: error?.message || String(error) }));
+                checks.push({
+                    name: `goal.task_review.${task.id}.freshness`,
+                    status: taskReviewFreshness.ready ? 'pass' : 'fail',
+                    message: taskReviewFreshness.ready
+                        ? `Task ${task.id} review matches its dispatch and target-file snapshot`
+                        : taskReviewFreshness.reason || `Task ${task.id} review evidence is stale`,
+                });
+            }
         }
         await this.addPluginChecks(targetPath, activatedSteps, workflow, checks);
         checks.push({
@@ -247,28 +280,23 @@ class VerificationService {
     }
     async addGoalDocumentReviewChecks(targetPath, checks) {
         const services = await this.deps();
-        const approvedDecisions = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
         for (const review of [
-            { name: 'artifacts/reviews/design-review.md', path: path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, 'design-review.md') },
-            { name: 'artifacts/reviews/implementation-plan-review.md', path: path.join(targetPath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, 'implementation-plan-review.md') },
+            { name: 'artifacts/reviews/design-review.md', stage: 'design' },
+            { name: 'artifacts/reviews/implementation-plan-review.md', stage: 'plan' },
         ]) {
-            const exists = await services.fileService.exists(review.path);
+            const reviewPath = path.join(targetPath, review.name);
+            const exists = await services.fileService.exists(reviewPath);
             checks.push({ name: review.name, status: exists ? 'pass' : 'fail', message: exists ? `${review.name} exists` : `${review.name} is missing` });
-            if (!exists) {
-                continue;
-            }
-            try {
-                const document = (0, helpers_1.parseFrontmatterDocument)(await services.fileService.readFile(review.path));
-                const decision = typeof document.data.decision === 'string' ? document.data.decision.trim().toUpperCase() : 'PENDING';
-                checks.push({
-                    name: `${review.name}.decision`,
-                    status: approvedDecisions.has(decision) ? 'pass' : 'fail',
-                    message: approvedDecisions.has(decision) ? `${review.name} is ${decision}` : `${review.name} must be approved before goal closeout (current: ${decision})`,
-                });
-            }
-            catch (error) {
-                checks.push({ name: `${review.name}.decision`, status: 'fail', message: `${review.name} cannot be parsed: ${error.message || error}` });
-            }
+            const evidence = await services.taskGraphExecutionService
+                .validateDocumentReviewEvidence(targetPath, review.stage)
+                .catch((error) => ({ ready: false, reason: error?.message || String(error) }));
+            checks.push({
+                name: `${review.name}.evidence`,
+                status: evidence.ready ? 'pass' : 'fail',
+                message: evidence.ready
+                    ? `${review.name} is bound to the current document review dispatch`
+                    : evidence.reason || `${review.name} evidence is stale or invalid`,
+            });
         }
     }
     async findProjectRoot(startPath) {

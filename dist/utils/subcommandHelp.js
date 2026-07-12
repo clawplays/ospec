@@ -130,7 +130,7 @@ function getExecuteHelpText() {
 Execute Commands:
   ospec execute bootstrap [change-path|project-path] - write a one-change startup/resume snapshot with project session brief context and next safe action
   ospec execute handoff [change-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
-  ospec execute doc-review [change-path|project-path] [--stage design|plan] - apply the configured always/adaptive document-review policy; adaptive stays inline only with an explicit low-risk declaration and no detected risk signal
+  ospec execute doc-review [change-path|project-path] [--stage design|plan] [--claim-executor id|--complete-executor id] - dispatch a document review or record its native specialist child lifecycle
   ospec execute status [change-path|project-path] - show task graph controller state
   ospec execute next [change-path|project-path]   - show dispatchable next task(s)
   ospec execute route [change-path|project-path]  - write a workflow-route artifact with the next recommended OSpec command

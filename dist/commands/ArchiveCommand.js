@@ -210,6 +210,17 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 }
                 await this.addGoalDocumentReviewBlockers(targetPath, result.blockers);
                 await this.addGoalVerificationEvidenceBlocker(targetPath, result.blockers);
+                const finalReviewEvidence = await services_1.services.taskGraphExecutionService.validateTaskReviewEvidence(targetPath, null);
+                if (!finalReviewEvidence.ready) {
+                    result.blockers.push(finalReviewEvidence.reason || 'Final review evidence is stale or invalid.');
+                }
+                const taskReport = await services_1.services.taskGraphExecutionService.getReport(targetPath);
+                for (const task of [...taskReport.completedTasks, ...taskReport.concernTasks]) {
+                    const taskReviewEvidence = await services_1.services.taskGraphExecutionService.validateTaskReviewEvidence(targetPath, task.id);
+                    if (!taskReviewEvidence.ready) {
+                        result.blockers.push(taskReviewEvidence.reason || `Task ${task.id} review evidence is stale or invalid.`);
+                    }
+                }
             }
             const documentationUpdateAnalysis = await services_1.services.projectService.analyzeDocumentationUpdates(targetPath);
             for (const check of documentationUpdateAnalysis.checks) {
@@ -368,33 +379,24 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
         }
     }
     async addGoalDocumentReviewBlockers(targetPath, blockers) {
-        const approvedDecisions = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
         for (const review of [
             {
                 label: 'design document review',
-                relativePath: path.join(constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, 'design-review.md'),
+                stage: 'design',
             },
             {
                 label: 'implementation plan review',
-                relativePath: path.join(constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, 'implementation-plan-review.md'),
+                stage: 'plan',
             },
         ]) {
-            const reviewPath = path.join(targetPath, review.relativePath);
-            if (!(await services_1.services.fileService.exists(reviewPath))) {
-                blockers.push(`${review.relativePath.replace(/\\/g, '/')} is required before archiving a goal`);
-                continue;
-            }
             try {
-                const document = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(reviewPath));
-                const decision = typeof document.data.decision === 'string'
-                    ? document.data.decision.trim().toUpperCase()
-                    : 'PENDING';
-                if (!approvedDecisions.has(decision)) {
-                    blockers.push(`${review.label} must be approved before archiving a goal (current: ${decision})`);
+                const evidence = await services_1.services.taskGraphExecutionService.validateDocumentReviewEvidence(targetPath, review.stage);
+                if (!evidence.ready) {
+                    blockers.push(evidence.reason || `${review.label} evidence is stale or invalid.`);
                 }
             }
             catch (error) {
-                blockers.push(`${review.relativePath.replace(/\\/g, '/')} cannot be parsed: ${error.message || error}`);
+                blockers.push(`${review.label} evidence could not be validated: ${error.message || error}`);
             }
         }
     }
@@ -411,6 +413,10 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             const status = typeof latest?.status === 'string' ? latest.status.trim().toUpperCase() : '';
             if (status !== 'PASSED') {
                 blockers.push(`Latest goal verification evidence must be PASSED before archive (current: ${status || 'missing'})`);
+            }
+            const freshness = await services_1.services.taskGraphExecutionService.validateLatestVerificationEvidence(targetPath);
+            if (!freshness.ready) {
+                blockers.push(freshness.reason || 'Latest goal verification evidence is stale.');
             }
         }
         catch (error) {

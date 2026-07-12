@@ -86,6 +86,8 @@ export declare class ExecuteCommand extends BaseCommand {
     parseDocumentReviewArgs(args: string[]): {
         inputPath?: string;
         stage?: TaskDocumentReviewStage;
+        claimExecutor?: string;
+        completeExecutor?: string;
     };
     private parseFinishArgs;
     private parsePositiveInteger;

@@ -1,0 +1,40 @@
+{
+  "title_suffix": "IDE-native goal loops, durable subagent recovery, and provenance-bound execution",
+  "summary": "OSpec 1.8.0 turns goal execution into an observable IDE-native Loop instead of a set of disconnected CLI steps. The managed goal skill can now drive bounded controller action batches and launch native child agents through the active IDE harness, while OSpec persists every worker and reviewer lifecycle transition. Heartbeats, result reporting, recovery, leases, immutable launch plans, and dispatch/session/executor/snapshot provenance prevent stale or duplicated agents from silently advancing a goal. Token reservations and scoped parallel batches preserve the 1.7.0 context-efficiency work, and fail-closed document, decision, workspace, review, and verification gates keep L1/L2/L3 behavior explicit. CLI watch remains available only as an explicitly configured fallback; controller goals do not quietly fall back to hidden background processes.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.7.0...1.8.0",
+  "new": [
+    "Added IDE-native Loop controller action batches for goal workflows. ospec loop run <path> --once --json returns bounded, persisted actions that the managed ospec-goal skill maps to the harness native spawn_agent mechanism, so workers and reviewers appear as real IDE child agents.",
+    "Added the native child lifecycle commands ospec loop heartbeat, ospec loop result, and ospec loop recover. They persist liveness, completion, usage, retry, and recovery state across controller turns and interrupted IDE sessions.",
+    "Added explicit harness capability and execution-model negotiation. Goal state records target, interactivity, native-subagent support, controller versus cli-driven execution, and the capability evidence used to select the path.",
+    "Added provenance-bound reviewer claims and completions for design, implementation-plan, task, and final reviews, including Loop action, action item, controller session, reviewer executor, and target snapshot identity.",
+    "Added richer Loop status and controller summaries covering active actions, worker/reviewer leases, heartbeats, token reservations, recovery candidates, blockers, and the next safe action.",
+    "Added native controller recovery for interrupted worker and reviewer attempts without losing dispatch history or accepting late results from replaced attempts."
+  ],
+  "improved": [
+    "Goal execution now covers the complete task-graph lifecycle: bootstrap, document reviews, decision gates, workspace readiness, dispatch, native child execution, combined task review, final review, verification, repair, and archive readiness.",
+    "Parallel batches reserve tokens before dispatch and remain bounded by configured batch, concurrency, action, and token limits. Usage is deduplicated across result, completion, and provider sidecar reporting so retries do not double count budget.",
+    "Worker and reviewer actions carry scoped packets, immutable launch plans, logical model profiles, target files, verification commands, dependencies, documentation obligations, and exact completion instructions.",
+    "Task graph, document review, TDD, debugging, review metrics, and Loop state mutations use leases plus atomic writes. Expired and corrupt locks are recovered conservatively while current owners remain protected.",
+    "L3 execution validates task IDs, change-relative paths, command inputs, targets, and immutable fallback plans before launching work. Controller goals reject executable legacy and local review-run fallbacks.",
+    "Verification failures route back into bounded repair work with fresh task review, final review, and verification evidence instead of allowing stale approvals to remain archive-ready.",
+    "Workspace readiness handles nested repositories and worktrees, records the active Git identity, and blocks dispatch when isolation or required decision gates are unresolved.",
+    "Controller status and action payloads are intentionally compact and stage-scoped, extending the token and latency reductions introduced in 1.7.0 instead of reloading the complete goal history on every turn."
+  ],
+  "fixed": [
+    "Late worker completions can no longer settle a newer attempt. Completion requires the current dispatch identity when history is ambiguous, and a task with only settled history must be dispatched again.",
+    "Stale task, final, design, and implementation-plan reviews can no longer approve changed files or documents. Review evidence must match the current dispatch, document hash, Git state, target snapshot, controller session, and claimed reviewer executor.",
+    "A reviewer result without a successful native executor completion no longer satisfies Loop readiness, and local review --run is rejected before dispatch for controller goals.",
+    "Expired controller sessions, action leases, worker claims, reviewer claims, and mutation locks no longer leave goals permanently stuck; recovery preserves attempt history and rejects results from superseded owners.",
+    "Missing token fields and zero-valued sidecars no longer overwrite authoritative executor usage, while repeated lifecycle reports no longer inflate aggregate usage.",
+    "Stale or corrupt lock files are recovered without deleting a newly replaced owner lock, and atomic JSON/report writes avoid partially persisted controller state.",
+    "Launch plans and fallback execution commands are bound to their dispatch snapshot and cannot be changed after assignment.",
+    "Goal, document, workspace, decision, review, verification, and documentation readiness now fail closed when required provenance is missing or malformed instead of silently advancing."
+  ],
+  "docs": [
+    "Updated README and the English, Chinese, Japanese, and Arabic usage guides with IDE-native goal Loop behavior, native child agents, lifecycle commands, controller status, and explicit CLI fallback semantics.",
+    "Updated the managed ospec-goal skill and its Codex metadata so a goal conversation consumes controller actions, launches native child agents, reports their lifecycle, and resumes from durable Loop state.",
+    "Expanded the Loop engineering guide and execution-model contract with capability negotiation, controller invariants, action batches, leases, provenance, recovery, token budgeting, and failure handling.",
+    "Updated all four managed AI guides and execution protocols to keep worker and reviewer dispatch aligned with the new Loop controller contract.",
+    "Bumped the package, CLI, lockfile, and English, Chinese, Japanese, and Arabic installation examples to 1.8.0."
+  ]
+}

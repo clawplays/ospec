@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentCliRunnerService = void 0;
 exports.createAgentCliRunnerService = createAgentCliRunnerService;
 const child_process_1 = require("child_process");
+const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 class AgentCliRunnerService {
     /**
      * Build the exact external command for a target. Pure; never emits `claude --goal`.
@@ -36,6 +38,7 @@ class AgentCliRunnerService {
             encoding: 'utf8',
             timeout: options.timeoutMs,
             cwd: options.cwd,
+            env: options.env ? { ...process.env, ...options.env } : process.env,
         });
         return {
             command,
@@ -46,6 +49,114 @@ class AgentCliRunnerService {
             stdout: String(result.stdout || ''),
             stderr: String(result.stderr || ''),
         };
+    }
+    /**
+     * Asynchronously run an external agent in a fresh process. The binary and argument vector are
+     * passed directly to spawn, so prompt text is never interpreted by a shell.
+     */
+    async runAsync(options) {
+        const startedAt = Date.now();
+        const command = this.buildCommand(options.target, options.prompt);
+        const dryRun = options.dryRun !== false;
+        const available = this.isAvailable(command.bin);
+        if (dryRun || !available) {
+            return {
+                command,
+                dryRun,
+                executed: false,
+                available,
+                exitCode: null,
+                stdout: '',
+                stderr: '',
+                durationMs: Math.max(0, Date.now() - startedAt),
+                timedOut: false,
+                outputTruncated: false,
+            };
+        }
+        return new Promise(resolve => {
+            const child = (0, child_process_1.spawn)(command.bin, command.args, {
+                cwd: options.cwd,
+                env: options.env ? { ...process.env, ...options.env } : process.env,
+                shell: false,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                detached: process.platform !== 'win32',
+                windowsHide: true,
+            });
+            const stdoutChunks = [];
+            const stderrChunks = [];
+            let capturedBytes = 0;
+            let outputTruncated = false;
+            let timedOut = false;
+            let spawnError = null;
+            const timeoutMs = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+                ? options.timeoutMs
+                : DEFAULT_AGENT_TIMEOUT_MS;
+            const maxOutputBytes = typeof options.maxOutputBytes === 'number' && options.maxOutputBytes > 0
+                ? Math.floor(options.maxOutputBytes)
+                : DEFAULT_MAX_OUTPUT_BYTES;
+            const capture = (target, chunk) => {
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+                const remaining = Math.max(0, maxOutputBytes - capturedBytes);
+                if (remaining > 0)
+                    target.push(buffer.subarray(0, remaining));
+                capturedBytes += Math.min(buffer.length, remaining);
+                if (buffer.length > remaining)
+                    outputTruncated = true;
+            };
+            const timeout = setTimeout(() => {
+                timedOut = true;
+                this.terminateProcessTree(child.pid, () => child.kill());
+            }, timeoutMs);
+            child.stdout?.on('data', chunk => {
+                capture(stdoutChunks, chunk);
+            });
+            child.stderr?.on('data', chunk => {
+                capture(stderrChunks, chunk);
+            });
+            child.once('error', error => {
+                spawnError = error;
+            });
+            child.once('close', exitCode => {
+                clearTimeout(timeout);
+                const truncationMarker = outputTruncated ? '\n[output truncated]' : '';
+                const stdout = `${Buffer.concat(stdoutChunks).toString('utf8')}${truncationMarker}`;
+                const capturedStderr = Buffer.concat(stderrChunks).toString('utf8');
+                resolve({
+                    command,
+                    dryRun: false,
+                    executed: true,
+                    available: true,
+                    exitCode: typeof exitCode === 'number' ? exitCode : null,
+                    stdout,
+                    stderr: spawnError
+                        ? `${capturedStderr}${capturedStderr && !capturedStderr.endsWith('\n') ? '\n' : ''}${spawnError.message}`
+                        : capturedStderr,
+                    durationMs: Math.max(0, Date.now() - startedAt),
+                    timedOut,
+                    outputTruncated,
+                });
+            });
+        });
+    }
+    terminateProcessTree(pid, fallback) {
+        if (!pid) {
+            fallback();
+            return;
+        }
+        try {
+            if (process.platform === 'win32') {
+                const killer = (0, child_process_1.spawn)('taskkill', ['/pid', String(pid), '/T', '/F'], {
+                    stdio: 'ignore',
+                    windowsHide: true,
+                });
+                killer.once('error', fallback);
+                return;
+            }
+            process.kill(-pid, 'SIGTERM');
+        }
+        catch {
+            fallback();
+        }
     }
     quote(value) {
         if (/^[A-Za-z0-9_./:@-]+$/.test(value)) {
