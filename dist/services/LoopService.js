@@ -42,6 +42,7 @@ const constants_1 = require("../core/constants");
 const VerificationService_1 = require("./VerificationService");
 const CapabilityProbeService_1 = require("./CapabilityProbeService");
 const TriageService_1 = require("./TriageService");
+const RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
 const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
 const LOOP_DIR = ['artifacts', 'loop'];
 const LOOP_CONFIG_FILE = 'loop.json';
@@ -65,6 +66,7 @@ class LoopService {
         this.fileService = fileService;
         this.taskGraph = dependencies.taskGraphExecutionService || (0, TaskGraphExecutionService_1.createTaskGraphExecutionService)(fileService);
         this.verification = dependencies.verificationService || (0, VerificationService_1.createVerificationService)();
+        this.runtimeAdapter = dependencies.runtimeAdapterService || new RuntimeExecutionAdapterService_1.RuntimeExecutionAdapterService();
         this.now = dependencies.now || (() => new Date());
     }
     loopDir(changePath) {
@@ -188,6 +190,7 @@ class LoopService {
     }
     async configureUnlocked(changePath, options) {
         const config = await this.readConfig(changePath);
+        const targetChanged = options.target !== undefined && options.target !== config.target;
         if (options.target)
             config.target = options.target;
         const capabilityChanged = options.target !== undefined
@@ -195,14 +198,20 @@ class LoopService {
             || options.nativeLoopCapability !== undefined
             || options.nativeSubagentCapability !== undefined;
         if (capabilityChanged) {
-            config.capability = (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({
-                target: config.target,
-                primitive: config.primitive,
-                interactive: options.interactive,
-                nativeLoopCapability: options.nativeLoopCapability,
-                nativeSubagentCapability: options.nativeSubagentCapability,
-                now: this.now(),
-            });
+            const now = this.now();
+            if (this.isSameCurrentCapabilityAssertion(config, options, now, targetChanged)) {
+                config.capability.expiresAt = new Date(now.getTime() + CapabilityProbeService_1.DEFAULT_CAPABILITY_SESSION_TTL_MS).toISOString();
+            }
+            else {
+                config.capability = (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({
+                    target: config.target,
+                    primitive: config.primitive,
+                    interactive: options.interactive,
+                    nativeLoopCapability: options.nativeLoopCapability,
+                    nativeSubagentCapability: options.nativeSubagentCapability,
+                    now,
+                });
+            }
         }
         if (options.executionModel)
             config.executionModel = options.executionModel;
@@ -221,8 +230,12 @@ class LoopService {
         }
         if (options.allowPaths)
             config.allowlist.paths = this.uniqueNonEmpty(options.allowPaths).map(item => item.replace(/\\/g, '/'));
-        if (options.allowCommands)
-            config.allowlist.commands = this.uniqueNonEmpty(options.allowCommands);
+        if (options.allowCommands || options.allowCommandPolicies) {
+            config.allowlist.commands = [
+                ...this.uniqueNonEmpty(options.allowCommands || []),
+                ...this.normalizeCommandPolicies(options.allowCommandPolicies || []),
+            ];
+        }
         if (options.maxParallel !== undefined)
             config.efficiency.maxParallel = this.positiveInteger(options.maxParallel, 'maxParallel');
         if (options.noProgressLimit !== undefined)
@@ -264,9 +277,6 @@ class LoopService {
             const executorId = this.requireExecutorId(heartbeat.executorId);
             const config = await this.readConfig(changePath);
             const heartbeatNow = this.now();
-            if (config.executionModel === 'controller' && !this.isControllerCapabilityCurrent(config, heartbeatNow)) {
-                throw new Error('Cannot heartbeat with an expired controller capability session; refresh explicit harness capability flags first.');
-            }
             const state = await this.readState(changePath);
             const pending = state.pendingControllerAction;
             if (!pending || pending.status !== 'awaiting-evidence') {
@@ -278,6 +288,14 @@ class LoopService {
                 throw new Error(`Unknown action item for the current pending action (${heartbeat.actionItemId}).`);
             const actionItem = (pending.items || []).find(item => item.id === heartbeat.actionItemId);
             const now = heartbeatNow;
+            const controllerCurrent = this.isControllerCapabilityCurrent(config, heartbeatNow);
+            const fallbackAuthorized = actionItem?.runtimeAdapter?.selected
+                && actionItem.runtimeAdapter.selected.kind !== 'native';
+            if (config.executionModel === 'controller'
+                && !controllerCurrent
+                && (!fallbackAuthorized || actionItem?.controllerProvenanceRequired)) {
+                throw new Error('Cannot heartbeat this action with an expired controller capability session; refresh the native session or reissue it through a verified non-native runtime adapter.');
+            }
             if (itemState.executorId && itemState.executorId !== executorId
                 && Date.parse(itemState.leaseExpiresAt) > now.getTime()) {
                 throw new Error(`Action item ${heartbeat.actionItemId} is leased by another executor.`);
@@ -295,7 +313,8 @@ class LoopService {
             itemState.heartbeatAt = now.toISOString();
             itemState.leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
             itemState.executorId = executorId;
-            if (actionItem?.usageKey && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
+            if (actionItem?.usageKey
+                && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
                 await this.taskGraph.claimReviewLoopExecutor(changePath, {
                     dispatchId: actionItem.usageKey,
                     actionId: pending.actionId,
@@ -312,7 +331,8 @@ class LoopService {
                     claimedAt: now.toISOString(),
                 });
             }
-            await this.extendControllerCapabilitySession(changePath, now);
+            if (controllerCurrent)
+                await this.extendControllerCapabilitySession(changePath, now);
             await this.writeState(changePath, state);
             return state;
         });
@@ -341,9 +361,7 @@ class LoopService {
         this.ensurePendingItemStates(pending);
         const config = await this.readConfig(changePath);
         const resultNow = this.now();
-        if (config.executionModel === 'controller' && !this.isControllerCapabilityCurrent(config, resultNow)) {
-            throw new Error('Cannot record executor results with an expired controller capability session; refresh explicit harness capability flags and requeue the action.');
-        }
+        const controllerCurrent = this.isControllerCapabilityCurrent(config, resultNow);
         const expectedIds = new Set((pending.items || []).map(item => item.id));
         const resultIds = results.map(result => result.actionItemId);
         if (results.length === 0
@@ -357,6 +375,14 @@ class LoopService {
             const itemState = pending.itemStates?.find(item => item.actionItemId === result.actionItemId);
             if (!itemState)
                 throw new Error(`Unknown action item for the current pending action (${result.actionItemId}).`);
+            const actionItem = (pending.items || []).find(item => item.id === result.actionItemId);
+            const fallbackAuthorized = actionItem?.runtimeAdapter?.selected
+                && actionItem.runtimeAdapter.selected.kind !== 'native';
+            if (config.executionModel === 'controller'
+                && !controllerCurrent
+                && (!fallbackAuthorized || actionItem?.controllerProvenanceRequired)) {
+                throw new Error(`Cannot record ${result.actionItemId} with an expired native controller session; reissue it through a verified non-native runtime adapter.`);
+            }
             if (config.executionModel === 'controller' && !itemState.executorId) {
                 throw new Error(`Controller result for ${result.actionItemId} requires a prior heartbeat claim by executor ${executorId}.`);
             }
@@ -381,8 +407,8 @@ class LoopService {
             itemState.timedOut = result.timedOut === true;
             itemState.tokensUsed = Math.max(0, Number(result.tokensUsed) || 0);
             itemState.summary = result.summary || null;
-            const actionItem = (pending.items || []).find(item => item.id === result.actionItemId);
-            if (actionItem?.usageKey && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
+            if (actionItem?.usageKey
+                && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
                 await this.taskGraph.completeReviewLoopExecutor(changePath, {
                     dispatchId: actionItem.usageKey,
                     actionId: pending.actionId,
@@ -682,7 +708,22 @@ class LoopService {
     }
     async runOnce(changePath, options = {}) {
         await this.assertExists(changePath);
-        return this.withControllerLease(changePath, () => this.runOnceUnlocked(changePath, options));
+        const startedAt = Date.now();
+        const before = await this.readState(changePath);
+        const result = await this.withControllerLease(changePath, () => this.runOnceUnlocked(changePath, options));
+        const durationMs = Math.max(0, Date.now() - startedAt);
+        const repeatedBlockerCount = result.stopReason
+            ? before.lastFeedback === result.stopReason ? Math.max(2, before.noProgressCount + 1) : 1
+            : 0;
+        await this.appendRunLog(changePath, {
+            ...this.logEntry(await this.readState(changePath), options.trigger || 'manual', result.verifyPassed, 'Loop tick performance metrics.'),
+            event: 'tick_metrics',
+            durationMs,
+            gateDurationMs: result.currentStep === 'gate' ? durationMs : null,
+            dispatchCount: result.actions.length,
+            repeatedBlockerCount,
+        });
+        return result;
     }
     async runOnceUnlocked(changePath, options = {}) {
         await this.assertExists(changePath);
@@ -782,12 +823,10 @@ class LoopService {
         if (config.level !== 'L1'
             && config.executionModel === 'controller'
             && !this.isControllerCapabilityCurrent(config, now)) {
-            return this.gateResult(resolved, state, trigger, 'Loop blocked: controller execution requires a current session-bound capability report from an interactive harness with confirmed native subagents. Refresh explicit harness capability flags or configure cli-driven execution.');
-        }
-        if (config.level !== 'L1') {
-            const documentReadinessError = await this.validateDocumentReviewReadiness(resolved);
-            if (documentReadinessError)
-                return this.gateResult(resolved, state, trigger, documentReadinessError);
+            const fallback = await this.resolveRuntimeAdapter(resolved, config, false, now);
+            if (fallback.blocked) {
+                return this.gateResult(resolved, state, trigger, `Loop blocked: no current native controller capability and no safe runtime adapter fallback is available. ${fallback.warnings.join(' ')}`);
+            }
         }
         state.currentStep = 'plan';
         const taskGraphPath = path.join(resolved, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
@@ -795,6 +834,9 @@ class LoopService {
             if (config.level === 'L1') {
                 return this.runLegacyTick(resolved, config, state, { trigger, nowIso, projectRoot: options.projectRoot, layoutConfig: options.layoutConfig });
             }
+            const documentReadinessError = await this.validateDocumentReviewReadiness(resolved);
+            if (documentReadinessError)
+                return this.gateResult(resolved, state, trigger, documentReadinessError);
             return this.gateResult(resolved, state, trigger, 'Loop blocked: a valid task graph derived from the approved implementation plan is required before executable work.');
         }
         let report;
@@ -814,6 +856,16 @@ class LoopService {
         if (state.progressFingerprint && state.progressFingerprint !== fingerprint)
             state.noProgressCount = 0;
         state.progressFingerprint = fingerprint;
+        if (config.level === 'L3') {
+            const safetyError = await this.validateTaskSafety(resolved, config, this.allReportTasks(report));
+            if (safetyError)
+                return this.gateResult(resolved, state, trigger, safetyError);
+        }
+        if (config.level !== 'L1') {
+            const documentReadinessError = await this.validateDocumentReviewReadiness(resolved);
+            if (documentReadinessError)
+                return this.gateResult(resolved, state, trigger, documentReadinessError);
+        }
         if (config.level === 'L1') {
             if (report.issues.length > 0 || report.invalidTasks.length > 0) {
                 return this.gateResult(resolved, state, trigger, `Task graph is invalid: ${[...report.issues, ...report.invalidTasks.flatMap(item => item.reasons)].join('; ')}`);
@@ -843,6 +895,9 @@ class LoopService {
         if (workspaceReadinessError)
             return this.gateResult(resolved, state, trigger, workspaceReadinessError);
         if (verificationRepairRequired) {
+            const adapter = await this.resolveRuntimeAdapter(resolved, config, true, now);
+            if (adapter.blocked)
+                return this.runtimeAdapterGateResult(resolved, state, trigger, 'final-review', adapter);
             await this.resetFinalReviewForVerificationFailure(resolved, feedback);
             const review = await this.taskGraph.review(resolved);
             return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], `${feedback || 'Verification failed.'} Independent final review is required before grouped repair.`, false);
@@ -887,6 +942,9 @@ class LoopService {
             return this.issueAction(resolved, config, state, trigger, 'implementation', dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed);
         }
         if (reviewTasks.length > 0) {
+            const adapter = await this.resolveRuntimeAdapter(resolved, config, true, now);
+            if (adapter.blocked)
+                return this.runtimeAdapterGateResult(resolved, state, trigger, 'task-review', adapter);
             const reviews = [];
             const reviewLimit = this.getBudgetedBatchLimit(config, state, reviewTasks.length);
             for (const task of reviewTasks.slice(0, reviewLimit)) {
@@ -917,6 +975,9 @@ class LoopService {
                 return this.issueAction(resolved, config, state, trigger, 'implementation', repair.dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), `Final review ${finalDecision}; grouped repair dispatched.`, verifyPassed);
             }
             if (!APPROVED_REVIEW_DECISIONS.has(finalDecision)) {
+                const adapter = await this.resolveRuntimeAdapter(resolved, config, true, now);
+                if (adapter.blocked)
+                    return this.runtimeAdapterGateResult(resolved, state, trigger, 'final-review', adapter);
                 const review = await this.taskGraph.review(resolved);
                 return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], feedback, verifyPassed);
             }
@@ -1038,10 +1099,20 @@ class LoopService {
         }
     }
     async issueAction(changePath, config, state, trigger, kind, items, feedback, verifyPassed = null) {
-        const now = this.now().toISOString();
+        const issuedAt = this.now();
+        const now = issuedAt.toISOString();
+        const runtimeAdapter = await this.resolveRuntimeAdapter(changePath, config, kind === 'task-review' || kind === 'final-review', issuedAt);
+        if (runtimeAdapter.blocked || !runtimeAdapter.selected) {
+            return this.gateResult(changePath, state, trigger, `Loop blocked: no safe runtime adapter can execute ${kind}. ${runtimeAdapter.warnings.join(' ')}`);
+        }
         const actionId = `loop-action-${state.iteration + 1}-${Date.parse(now)}`;
+        const controllerProvenanceRequired = runtimeAdapter.selected.kind === 'native'
+            && this.isControllerCapabilityCurrent(config, issuedAt)
+            && (kind === 'task-review' || kind === 'final-review');
         const allowances = this.allocateTokenAllowances(config, state, items.length);
         for (const item of items) {
+            item.runtimeAdapter = runtimeAdapter;
+            item.controllerProvenanceRequired = controllerProvenanceRequired;
             item.tokenAllowance = allowances.shift() ?? null;
             item.heartbeatCommand = `ospec loop heartbeat ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id>`;
             item.resultCommand = `ospec loop result ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id> --exit-code <code> --summary "..."`;
@@ -1056,6 +1127,10 @@ class LoopService {
                 item.completionCommand = `${unboundCompletion} --loop-action ${this.quote(actionId)} --action-item ${this.quote(item.id)} --executor <child-id>`;
                 item.prompt = item.prompt.replace(unboundCompletion, item.completionCommand);
             }
+            item.prompt = this.boundPrompt([
+                item.prompt,
+                `Runtime adapter: ${runtimeAdapter.selectedAdapterId}. ${runtimeAdapter.selected.supportsParallel ? 'This safe batch may run in parallel.' : 'Run this batch serially in item order.'}`,
+            ], config.efficiency.promptMaxChars);
             if (item.tokenAllowance !== null) {
                 item.prompt = this.boundPrompt([
                     item.prompt,
@@ -1064,14 +1139,17 @@ class LoopService {
             }
         }
         for (const item of items) {
-            if (item.usageKey && (item.kind === 'task-review' || item.kind === 'final-review')) {
-                await this.taskGraph.bindReviewLoopAction(changePath, {
-                    dispatchId: item.usageKey,
-                    actionId,
-                    actionItemId: item.id,
-                    controllerSessionReportedAt: config.capability?.reportedAt || config.createdAt,
-                });
-            }
+            if (!item.usageKey || (item.kind !== 'task-review' && item.kind !== 'final-review'))
+                continue;
+            await this.taskGraph.bindReviewLoopAction(changePath, {
+                dispatchId: item.usageKey,
+                actionId,
+                actionItemId: item.id,
+                controllerSessionReportedAt: controllerProvenanceRequired
+                    ? config.capability?.reportedAt || config.createdAt
+                    : null,
+                runtimeAdapter,
+            });
         }
         state.iteration += 1;
         state.comprehensionDebtCounter += 1;
@@ -1114,8 +1192,10 @@ class LoopService {
             actionId,
             actionCount: items.length,
         });
-        const mode = config.executionModel === 'cli-driven' ? 'CLI watch executes' : 'Current IDE AI MUST dispatch native subagents for';
-        return this.result(changePath, state, state.pendingControllerAction, false, null, `${mode} ${items.length} fresh-context ${kind} action(s) in parallel; consume only the referenced packets, record durable completion/review evidence, then tick again.`, verifyPassed, feedback, items);
+        const mode = runtimeAdapter.selected.supportsParallel
+            ? `Execute with runtime adapter ${runtimeAdapter.selectedAdapterId} in parallel for`
+            : `Execute serially with runtime adapter ${runtimeAdapter.selectedAdapterId} for`;
+        return this.result(changePath, state, state.pendingControllerAction, false, null, `${mode} ${items.length} fresh-context ${kind} action(s); consume only the referenced packets, record durable completion/review evidence, then tick again.`, verifyPassed, feedback, items);
     }
     workerAction(changePath, config, dispatch, iteration) {
         const packetPath = path.resolve(changePath, dispatch.packetPath);
@@ -1265,22 +1345,46 @@ class LoopService {
         await this.assertExists(changePath);
         const config = await this.readConfig(changePath);
         const capability = config.capability?.nativeLoopCapability ?? 'unknown';
-        return {
-            interval: config.schedule.interval,
-            executionModel: config.executionModel,
-            nativeLoopCapability: capability,
-            instructions: config.executionModel === 'cli-driven'
+        const runtimeAdapter = await this.resolveRuntimeAdapter(changePath, config, false, this.now());
+        const selected = runtimeAdapter.selected;
+        const adapterInstructions = !selected
+            ? [
+                `No runtime adapter is available: ${runtimeAdapter.warnings.join(' ')}`,
+            ]
+            : selected.kind === 'native'
                 ? [
-                    `Run "ospec loop watch ${changePath}". Each tick selects bounded task/review packets, launches fresh external agent processes in parallel, observes durable evidence, and feeds failures into retry/repair.`,
-                    `Concurrency is capped at ${config.efficiency.maxParallel}; packets are referenced by path to avoid duplicating goal context.`,
-                ]
-                : [
                     `Run "ospec loop run ${this.quote(changePath)} --once --json". For every non-empty actions[] batch, immediately launch one fresh IDE-native subagent per item and wait for the whole safe batch.`,
                     'Give each subagent only its referenced packet. After spawn, record heartbeatCommand with the real child id; persist each completionCommand/evidence and resultCommand as that child finishes, then tick again immediately without another user prompt.',
                     'Refresh heartbeats while children run. Use loop recover --force only when the prior session or child is known to be gone; never relaunch completed siblings.',
                     'If actions[] is empty and pending is present, observe/wait only and never relaunch pending items. Stop only for a real decision/safety gate, configured guard/STOP, paused/stopped/done, or explicit user pause.',
                     'The CLI is the durable state-machine brain; the current IDE AI is the native subagent executor. Do not switch to loop watch when the IDE native subagent API is available.',
-                ],
+                ]
+                : selected.kind === 'orca'
+                    ? [
+                        `Run "ospec loop run ${this.quote(changePath)} --once --json" and consume each action's runtimeAdapter command vectors with the verified Orca CLI.`,
+                        `Create one Orca terminal per parallel-safe action, up to maxParallel=${config.efficiency.maxParallel}; wait for TUI readiness, send only the action prompt/packet, and use the returned terminal handle as the executor id.`,
+                        'Persist heartbeat and result evidence per terminal. Re-list a stale handle after Orca restart and never relaunch completed siblings.',
+                    ]
+                    : selected.kind === 'cli'
+                        ? [
+                            `Run "ospec loop run ${this.quote(changePath)} --once --json" and launch one fresh ${selected.binary || config.target} process per parallel-safe action using its shell-free command vector.`,
+                            'Record heartbeat/result ownership for each process and tick again immediately after durable evidence arrives.',
+                        ]
+                        : [
+                            `Run "ospec loop run ${this.quote(changePath)} --once --json" and execute emitted ordinary actions serially in the current controller context.`,
+                            'Do not claim that a child process was created. Independent review remains blocked until an independent adapter is available.',
+                        ];
+        return {
+            interval: config.schedule.interval,
+            executionModel: config.executionModel,
+            nativeLoopCapability: capability,
+            runtimeAdapter,
+            instructions: config.executionModel === 'cli-driven' && selected?.kind === 'cli'
+                ? [
+                    `Run "ospec loop watch ${changePath}". Each tick selects bounded task/review packets, launches fresh external agent processes in parallel, observes durable evidence, and feeds failures into retry/repair.`,
+                    `Concurrency is capped at ${config.efficiency.maxParallel}; packets are referenced by path to avoid duplicating goal context.`,
+                ]
+                : adapterInstructions,
         };
     }
     async gateResult(changePath, state, trigger, reason) {
@@ -1290,6 +1394,13 @@ class LoopService {
         await this.writeState(changePath, state);
         await this.appendRunLog(changePath, this.logEntry(state, trigger, null, reason));
         return this.result(changePath, state, null, false, reason, reason, null, reason);
+    }
+    runtimeAdapterGateResult(changePath, state, trigger, kind, adapter) {
+        const reasons = adapter.candidates
+            .filter(candidate => !candidate.available)
+            .map(candidate => `${candidate.id}: ${candidate.reason}`)
+            .join('; ');
+        return this.gateResult(changePath, state, trigger, `Loop blocked before ${kind} dispatch: no safe independent runtime adapter is available. ${adapter.warnings.join(' ')}${reasons ? ` ${reasons}` : ''}`.trim());
     }
     result(changePath, state, pending, stopped, stopReason, nextInstruction, verifyPassed, feedback, actions = []) {
         return {
@@ -1323,7 +1434,10 @@ class LoopService {
                 budgetTokens: raw.stopConditions?.budgetTokens ?? null,
                 budgetMinutes: raw.stopConditions?.budgetMinutes ?? null,
             },
-            allowlist: { paths: raw.allowlist?.paths || [], commands: raw.allowlist?.commands || [] },
+            allowlist: {
+                paths: raw.allowlist?.paths || [],
+                commands: this.normalizeCommandAllowlist(raw.allowlist?.commands || []),
+            },
             efficiency: { ...this.defaultEfficiency(), ...(raw.efficiency || {}) },
             capability: !raw.capability || staleCapability
                 ? (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({ target, primitive, env: {}, now: this.now() })
@@ -1374,8 +1488,22 @@ class LoopService {
         const expiresAt = Date.parse(capability.expiresAt);
         return Number.isFinite(reportedAt)
             && Number.isFinite(expiresAt)
+            && capability.nativeSubagentCapability === 'supported'
             && reportedAt <= now.getTime()
             && expiresAt > now.getTime();
+    }
+    async resolveRuntimeAdapter(changePath, config, requiresIndependentWorker, now) {
+        const projectRoot = await this.findProjectRootForSafety(changePath);
+        return this.runtimeAdapter.resolve({
+            projectRoot,
+            target: config.target,
+            capability: config.capability,
+            preference: config.executionModel === 'cli-driven' ? 'cli' : undefined,
+            strict: config.executionModel === 'cli-driven' ? true : undefined,
+            requiresIndependentWorker,
+            now,
+            cacheFilePath: path.join(changePath, 'artifacts', 'agents', 'runtime-adapter-cache.json'),
+        });
     }
     getBudgetedBatchLimit(config, state, candidateCount) {
         const concurrencyLimit = Math.min(config.efficiency.maxParallel, Math.max(0, candidateCount));
@@ -1461,7 +1589,7 @@ class LoopService {
         return Number.isFinite(start) ? Math.max(0, (now.getTime() - start) / 60000) : 0;
     }
     logEntry(state, trigger, verifyPassed, summary) {
-        return { ts: this.now().toISOString(), iteration: state.iteration, trigger, tokensEst: null, exitCode: null, verifyPassed, summary, costToDate: null, actionId: state.pendingControllerAction?.actionId || null, actionCount: state.pendingControllerAction?.items?.length || 0, noProgressCount: state.noProgressCount };
+        return { event: 'state', ts: this.now().toISOString(), iteration: state.iteration, trigger, tokensEst: null, exitCode: null, verifyPassed, summary, costToDate: null, actionId: state.pendingControllerAction?.actionId || null, actionCount: state.pendingControllerAction?.items?.length || 0, noProgressCount: state.noProgressCount };
     }
     async isPathAllowed(changePath, file, allowlist) {
         const normalized = this.normalizeAllowlistedPath(file);
@@ -1485,15 +1613,97 @@ class LoopService {
         return false;
     }
     isCommandAllowed(command, allowlist) {
-        if (this.containsShellControlSyntax(command))
+        const candidate = this.parseSafeAllowlistedCommand(command);
+        if (!candidate)
             return false;
-        const normalized = command.trim().replace(/\s+/g, ' ');
         return allowlist.some(entry => {
-            if (this.containsShellControlSyntax(entry))
+            if (typeof entry !== 'string') {
+                const policies = this.normalizeCommandPolicies([entry]);
+                if (policies.length !== 1)
+                    return false;
+                const policy = policies[0];
+                if ((policy.cwd || null) !== candidate.cwd)
+                    return false;
+                const tokens = this.tokenizeSafeCommand(candidate.command);
+                if (!tokens || tokens[0] !== policy.command)
+                    return false;
+                const prefix = policy.argsPrefix || [];
+                return prefix.every((argument, index) => tokens[index + 1] === argument);
+            }
+            const allowed = this.parseSafeAllowlistedCommand(entry);
+            if (!allowed)
                 return false;
-            const allowed = entry.trim().replace(/\s+/g, ' ');
-            return normalized === allowed;
+            if (allowed.cwd && allowed.cwd !== candidate.cwd)
+                return false;
+            return candidate.command === allowed.command
+                || candidate.command.startsWith(`${allowed.command} `);
         });
+    }
+    normalizeCommandAllowlist(values) {
+        const strings = this.uniqueNonEmpty(values.filter((value) => typeof value === 'string'));
+        const policies = this.normalizeCommandPolicies(values.filter((value) => Boolean(value) && typeof value === 'object'));
+        return [...strings, ...policies];
+    }
+    normalizeCommandPolicies(values) {
+        const normalized = [];
+        const seen = new Set();
+        for (const value of values) {
+            const command = String(value?.command || '').trim();
+            if (!/^[A-Za-z0-9_.-]+$/.test(command))
+                continue;
+            const argsPrefix = Array.isArray(value.argsPrefix)
+                ? value.argsPrefix.map(argument => String(argument || '').trim()).filter(Boolean)
+                : [];
+            if (argsPrefix.some(argument => /[\r\n\0;|<>`]/.test(argument) || /\$\s*\(/.test(argument)))
+                continue;
+            const cwd = value.cwd === undefined || value.cwd === null
+                ? null
+                : this.normalizeAllowlistedPath(String(value.cwd));
+            if (value.cwd && !cwd)
+                continue;
+            const policy = { command, argsPrefix, cwd };
+            const key = JSON.stringify(policy);
+            if (!seen.has(key)) {
+                seen.add(key);
+                normalized.push(policy);
+            }
+        }
+        return normalized;
+    }
+    tokenizeSafeCommand(command) {
+        const tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g);
+        if (!tokens?.length)
+            return null;
+        return tokens.map(token => {
+            const quoted = (token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"));
+            return quoted ? token.slice(1, -1) : token;
+        });
+    }
+    parseSafeAllowlistedCommand(value) {
+        const raw = String(value || '').trim();
+        if (!raw || /[\r\n\0;|<>`]/.test(raw) || /\$\s*\(/.test(raw))
+            return null;
+        const parts = raw.split(/\s*&&\s*/);
+        if (parts.length > 2)
+            return null;
+        let cwd = null;
+        let command = raw;
+        if (parts.length === 2) {
+            const cdMatch = /^cd\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))$/i.exec(parts[0].trim());
+            if (!cdMatch)
+                return null;
+            cwd = this.normalizeAllowlistedPath(cdMatch[1] || cdMatch[2] || cdMatch[3]);
+            if (!cwd)
+                return null;
+            command = parts[1].trim();
+        }
+        if (!command || command.includes('&'))
+            return null;
+        if (/(?:^|\s)(?:--prefix|--cwd|--directory|-C)(?:=|\s)/i.test(command))
+            return null;
+        if (/(?:^|\s)[A-Za-z]:[\\/]/.test(command) || /(?:^|\s)\.\.([\\/]|\s|$)/.test(command))
+            return null;
+        return { cwd, command: command.replace(/\s+/g, ' ') };
     }
     async findProjectRootForSafety(changePath) {
         let current = path.resolve(changePath);
@@ -1543,11 +1753,21 @@ class LoopService {
             return null;
         return normalized;
     }
-    containsShellControlSyntax(value) {
-        const command = String(value || '');
-        return !command.trim()
-            || /[\r\n\0;&|<>`]/.test(command)
-            || /\$\s*\(/.test(command);
+    isSameCurrentCapabilityAssertion(config, options, now, targetChanged) {
+        const capability = config.capability;
+        if (!this.isControllerCapabilityCurrent(config, now))
+            return false;
+        if (targetChanged)
+            return false;
+        if (options.interactive !== undefined && options.interactive !== capability.interactive)
+            return false;
+        if (options.nativeLoopCapability !== undefined
+            && options.nativeLoopCapability !== capability.nativeLoopCapability)
+            return false;
+        if (options.nativeSubagentCapability !== undefined
+            && options.nativeSubagentCapability !== capability.nativeSubagentCapability)
+            return false;
+        return true;
     }
     boundPrompt(lines, maxChars) {
         const prompt = lines.join('\n');

@@ -1,6 +1,7 @@
 import { AgentModelProfileId, DocumentReviewPolicy } from '../core/types';
 import { FileService } from './FileService';
 import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
+import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
 export type TaskWorkerCapabilityTier = 'mechanical' | 'standard' | 'strong-reasoning' | 'specialist-review';
 export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
@@ -77,6 +78,7 @@ export type TaskReviewFeedbackAction = 'accept' | 'revise' | 'clarify' | 'blocke
 export type TaskDocumentReviewStage = 'design' | 'plan';
 export type TaskDocumentReviewRole = 'design_reviewer' | 'implementation_plan_reviewer';
 export type TaskVerificationEvidenceStatus = 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
+export type TaskVerificationRequirementKind = 'browser' | 'e2e' | 'test' | 'lint' | 'build' | 'manual' | 'other';
 export type TaskTddEvidencePhase = 'red' | 'green' | 'refactor';
 export type TaskDebugEvidencePhase = 'reproduce' | 'isolate' | 'hypothesize' | 'fix' | 'verify';
 export type TaskDebugEvidenceStatus = 'CONFIRMED' | 'FIXED' | 'BLOCKED' | 'SKIPPED';
@@ -194,8 +196,11 @@ export interface TaskReviewDispatchRecord {
     controllerSessionReportedAt?: string | null;
     reviewerExecutorId?: string | null;
     reviewerClaimedAt?: string | null;
+    reviewerHeartbeatAt?: string | null;
     reviewerCompletedAt?: string | null;
     reviewerSucceeded?: boolean | null;
+    runtimeAdapter?: RuntimeExecutionAdapterResolution | null;
+    requiresExecutorProvenance?: boolean;
     requiresNativeExecutorProvenance?: boolean;
 }
 export interface TaskExecutionUsage {
@@ -285,10 +290,13 @@ export interface TaskDocumentReviewDispatchRecord {
     policy: DocumentReviewPolicy;
     riskSignals: string[];
     workerProfile: TaskWorkerProfile;
+    runtimeAdapter?: RuntimeExecutionAdapterResolution | null;
+    requiresExecutorProvenance?: boolean;
     requiresNativeExecutorProvenance?: boolean;
     controllerSessionReportedAt?: string | null;
     reviewerExecutorId?: string | null;
     reviewerClaimedAt?: string | null;
+    reviewerHeartbeatAt?: string | null;
     reviewerCompletedAt?: string | null;
     reviewerSucceeded?: boolean | null;
 }
@@ -306,6 +314,8 @@ export interface TaskDocumentReviewDispatchResult {
     projectSession: TaskBootstrapProjectSessionSnapshot;
     warnings: string[];
     nextInstruction: string;
+    reused?: boolean;
+    pendingReused?: boolean;
 }
 export interface TaskRepairWaveRecord {
     version: string;
@@ -348,6 +358,36 @@ export interface TaskVerificationEvidenceRecord {
     loopActionItemId?: string | null;
     executorId?: string | null;
     issuanceTargetSnapshotHash?: string | null;
+    satisfies?: string[];
+}
+export interface TaskVerificationRequirement {
+    id: string;
+    kind: TaskVerificationRequirementKind;
+    description: string;
+    required: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+export interface TaskVerificationRequirementsArtifact {
+    version: '1.0';
+    feature: string;
+    updatedAt: string;
+    requirements: TaskVerificationRequirement[];
+}
+export interface TaskVerificationRequirementsStatus {
+    ready: boolean;
+    artifactPath: string;
+    required: number;
+    satisfied: string[];
+    pending: string[];
+    reason: string | null;
+}
+export interface TaskVerificationRequirementResult {
+    changePath: string;
+    artifactPath: string;
+    requirement: TaskVerificationRequirement;
+    status: TaskVerificationRequirementsStatus;
+    nextInstruction: string;
 }
 export interface TaskVerificationLoopBinding {
     expectedCommand: string | null;
@@ -844,6 +884,7 @@ export interface TaskUserDecisionRecord {
     createdAt: string;
     updatedAt: string;
     selectedAt: string | null;
+    answeredBy?: 'user' | null;
     recordPath: string;
     reportPath: string;
     nextInstruction: string;
@@ -1057,6 +1098,7 @@ export interface TaskWorkerLaunchPlanArtifact {
     };
     selectedDispatch: TaskWorkerLaunchSelectedDispatch | null;
     nativeAgent: TaskNativeAgentLaunchPlan | null;
+    runtimeAdapter: RuntimeExecutionAdapterResolution | null;
     launchCommands: string[];
     launchPrompt: string;
     blockers: string[];
@@ -1075,6 +1117,7 @@ export interface TaskWorkerLaunchPlanResult {
     dispatchId: string | null;
     loopPlan: TaskLaunchLoopPlan | null;
     nativeAgent: TaskNativeAgentLaunchPlan | null;
+    runtimeAdapter: RuntimeExecutionAdapterResolution | null;
     launchCommands: string[];
     blockers: string[];
     warnings: string[];
@@ -1230,8 +1273,9 @@ export interface TaskReviewRunResult {
 }
 export declare class TaskGraphExecutionService {
     private fileService;
+    private runtimeAdapterService;
     private reportDocumentLanguageCache;
-    constructor(fileService: FileService);
+    constructor(fileService: FileService, runtimeAdapterService?: RuntimeExecutionAdapterService);
     getReport(changePath: string): Promise<TaskGraphExecutionReport>;
     dispatch(changePath: string, options?: {
         taskId?: string;
@@ -1248,6 +1292,7 @@ export declare class TaskGraphExecutionService {
         interval?: string;
     }): Promise<TaskWorkerLaunchPlanResult>;
     private planLaunchUnlocked;
+    private readRuntimeHarnessCapability;
     /**
      * Build the loop/agent-primitive plan for a goal|loop launch (Execution-Model Contracts 1–3).
      * Controller-driven => produce instructions; cli-driven => provide a `claude -p`/`codex exec`
@@ -1312,7 +1357,8 @@ export declare class TaskGraphExecutionService {
         dispatchId: string;
         actionId: string;
         actionItemId: string;
-        controllerSessionReportedAt: string;
+        controllerSessionReportedAt: string | null;
+        runtimeAdapter: RuntimeExecutionAdapterResolution;
     }): Promise<void>;
     claimReviewLoopExecutor(changePath: string, options: {
         dispatchId: string;
@@ -1346,15 +1392,25 @@ export declare class TaskGraphExecutionService {
         selectOptionId?: string;
         skip?: boolean;
         summary?: string;
+        answeredBy?: 'user';
     }): Promise<TaskUserDecisionResult>;
     reviewDocument(changePath: string, options?: {
         stage?: TaskDocumentReviewStage;
+        force?: boolean;
     }): Promise<TaskDocumentReviewDispatchResult>;
     private reviewDocumentUnlocked;
+    private buildDocumentReviewNextInstruction;
     claimDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
+    heartbeatDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
     completeDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
     private readCurrentDocumentReviewDispatch;
     private updateDocumentReviewExecutorProvenance;
+    private extendDocumentReviewControllerSession;
+    private validateDocumentReviewCompletionArtifact;
+    private getDocumentReviewCachePaths;
+    private cacheDocumentReviewApproval;
+    private restoreDocumentReviewCache;
+    private appendDocumentReviewRunMetric;
     private taskReviewScopeKey;
     private documentReviewScopeKey;
     private getCurrentReviewDispatchIndexPath;
@@ -1382,12 +1438,20 @@ export declare class TaskGraphExecutionService {
         status?: TaskVerificationEvidenceStatus;
         exitCode?: number;
         summary?: string;
+        satisfies?: string[];
         loopActionId?: string;
         loopActionItemId?: string;
         executorId?: string;
     }): Promise<TaskVerificationEvidenceResult>;
     private validateVerificationLoopProvenance;
     private recordVerificationUnlocked;
+    requireVerification(changePath: string, options: {
+        id: string;
+        kind?: TaskVerificationRequirementKind;
+        description: string;
+        required?: boolean;
+    }): Promise<TaskVerificationRequirementResult>;
+    validateVerificationRequirements(changePath: string): Promise<TaskVerificationRequirementsStatus>;
     recordTddEvidence(changePath: string, options: {
         phase?: TaskTddEvidencePhase;
         command?: string;
@@ -1454,6 +1518,7 @@ export declare class TaskGraphExecutionService {
     private getWorktreeRunDir;
     private getOrchestrationRunDir;
     private getVerificationEvidencePath;
+    private getVerificationRequirementsPath;
     private getVerificationLoopActionPath;
     private getTddEvidencePath;
     private getDebugEvidencePath;
@@ -1481,6 +1546,9 @@ export declare class TaskGraphExecutionService {
     private normalizeUserDecisionOptions;
     private getUserDecisionNextInstruction;
     private readVerificationEvidence;
+    private readVerificationRequirements;
+    private normalizeVerificationRequirementIds;
+    private normalizeVerificationRequirementKind;
     private isPassingVerificationRecordFresh;
     private isVerificationEvidenceSessionStatus;
     private isVerificationEvidenceRecord;
@@ -1556,6 +1624,8 @@ export declare class TaskGraphExecutionService {
     private findProjectRoot;
     private findProjectRootForOptionalSession;
     private inferProjectRootFromChangePath;
+    private isGoalWorkspaceControlPath;
+    private syncFeatureStateFromBootstrap;
     private readFeatureName;
     private readBootstrapDocumentStatus;
     private readBootstrapPlanSnapshot;

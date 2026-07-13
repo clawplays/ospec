@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.0';
+const CLI_VERSION = '1.8.1';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -175,12 +175,12 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
                 console.error(getNewLikeUsage(commandName));
                 process.exit(1);
             }
-            flags.push(...rawFlags.split(',').map(flag => flag.trim()).filter(Boolean));
+            flags.push(...rawFlags.split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
             index += 1;
             continue;
         }
         if (arg.startsWith('--flags=')) {
-            flags.push(...arg.slice('--flags='.length).split(',').map(flag => flag.trim()).filter(Boolean));
+            flags.push(...arg.slice('--flags='.length).split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
             continue;
         }
         const levelValue = arg === '--level'

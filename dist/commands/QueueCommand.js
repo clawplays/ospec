@@ -125,12 +125,12 @@ class QueueCommand extends BaseCommand_1.BaseCommand {
                 if (!rawFlags || rawFlags.startsWith('--')) {
                     throw new Error('Queue add requires a value after --flags.');
                 }
-                flags.push(...rawFlags.split(',').map(flag => flag.trim()).filter(Boolean));
+                flags.push(...rawFlags.split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
                 index += 1;
                 continue;
             }
             if (value.startsWith('--flags=')) {
-                flags.push(...value.slice('--flags='.length).split(',').map(flag => flag.trim()).filter(Boolean));
+                flags.push(...value.slice('--flags='.length).split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
                 continue;
             }
             if (value.startsWith('--')) {

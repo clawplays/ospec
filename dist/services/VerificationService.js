@@ -159,6 +159,16 @@ class VerificationService {
                     ? 'Latest verification evidence matches the current Git and target-file snapshot'
                     : verificationFreshness.reason || 'Latest verification evidence is stale',
             });
+            const verificationRequirements = await services.taskGraphExecutionService
+                .validateVerificationRequirements(targetPath)
+                .catch((error) => ({ ready: false, reason: error?.message || String(error), pending: [] }));
+            checks.push({
+                name: 'goal.verification_requirements',
+                status: verificationRequirements.ready ? 'pass' : 'fail',
+                message: verificationRequirements.ready
+                    ? 'All required verification requirements have fresh passing evidence'
+                    : verificationRequirements.reason || 'Required verification evidence is incomplete',
+            });
             const finalReviewFreshness = await services.taskGraphExecutionService
                 .validateTaskReviewEvidence(targetPath, null)
                 .catch((error) => ({ ready: false, reason: error?.message || String(error) }));

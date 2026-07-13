@@ -43,6 +43,7 @@ const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
+const SessionCommand_1 = require("./SessionCommand");
 class NewCommand extends BaseCommand_1.BaseCommand {
     async execute(featureName, rootDir, options = {}) {
         try {
@@ -197,6 +198,9 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 }
                 else {
                     this.warn(`  IDE controller blocked: target=${loopConfig.target}, interactive=${loopConfig.capability?.interactive ?? false}, nativeSubagents=${loopConfig.capability?.nativeSubagentCapability ?? 'unknown'}. Report the current harness capabilities explicitly before starting executable Loop actions.`);
+                }
+                if (placement === constants_1.DIR_NAMES.ACTIVE) {
+                    await new SessionCommand_1.SessionCommand().writeSessionBrief(targetDir);
                 }
             }
             this.success(`${placement === constants_1.DIR_NAMES.QUEUED ? 'Queued change' : 'Change'} ${featureName} created at ${featureDir}`);

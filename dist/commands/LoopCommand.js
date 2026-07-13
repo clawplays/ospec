@@ -114,7 +114,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         if (result.actions.length > 0) {
             console.log('\nAction items:');
             for (const action of result.actions) {
-                console.log(`  - ${action.id}: ${action.kind} target=${action.target} task=${action.taskId || 'n/a'}`);
+                console.log(`  - ${action.id}: ${action.kind} target=${action.target} adapter=${action.runtimeAdapter?.selectedAdapterId || 'unresolved'} task=${action.taskId || 'n/a'}`);
                 console.log(`    packet=${action.packetPath || 'none'}`);
                 console.log(`    prompt=${action.prompt.replace(/\s+/g, ' ')}`);
                 if (action.heartbeatCommand)
@@ -138,6 +138,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log(`Execution model: ${plan.executionModel}`);
         console.log(`Interval: ${plan.interval}`);
         console.log(`Native loop capability: ${plan.nativeLoopCapability}`);
+        console.log(`Runtime adapter: ${plan.runtimeAdapter.selectedAdapterId || 'blocked'}`);
         console.log('\nInstructions:');
         for (const instruction of plan.instructions) {
             console.log(`  - ${instruction}`);
@@ -164,7 +165,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const timeoutMs = this.parseOptionalPositiveNumber(this.parseFlagValue(args, '--timeout-ms'), '--timeout-ms');
         const targetOverride = this.parseFlagValue(args, '--target');
         if (config.executionModel !== 'cli-driven') {
-            throw new Error('Loop watch is only available for cli-driven goals. Controller goals must be driven by the current IDE native-subagent session.');
+            throw new Error('Loop watch is only available for cli-driven goals. Controller goals must execute each action through its selected runtime adapter.');
         }
         if (targetOverride && targetOverride !== config.target) {
             throw new Error(`Loop watch --target must match the persisted goal target (${config.target}); reconfigure the goal explicitly before changing executors.`);
@@ -475,12 +476,34 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const testCommands = values('--test-command');
         const allowPaths = values('--allow-path');
         const allowCommands = values('--allow-command');
+        const allowCommandPolicies = values('--allow-command-policy').map(value => {
+            let parsed;
+            try {
+                parsed = JSON.parse(value);
+            }
+            catch {
+                throw new Error('--allow-command-policy must be valid JSON.');
+            }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw new Error('--allow-command-policy must be a JSON object.');
+            }
+            const policy = parsed;
+            if (!String(policy.command || '').trim()) {
+                throw new Error('--allow-command-policy requires a non-empty command.');
+            }
+            if (policy.argsPrefix !== undefined && !Array.isArray(policy.argsPrefix)) {
+                throw new Error('--allow-command-policy argsPrefix must be an array.');
+            }
+            return policy;
+        });
         if (testCommands.length > 0)
             options.testCommands = testCommands;
         if (allowPaths.length > 0)
             options.allowPaths = allowPaths;
         if (allowCommands.length > 0)
             options.allowCommands = allowCommands;
+        if (allowCommandPolicies.length > 0)
+            options.allowCommandPolicies = allowCommandPolicies;
         options.maxParallel = nullableNumber('--max-parallel') ?? undefined;
         options.noProgressLimit = nullableNumber('--no-progress-limit') ?? undefined;
         const reviewEvery = scalar('--review-every');

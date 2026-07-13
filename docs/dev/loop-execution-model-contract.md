@@ -1,4 +1,4 @@
-# Loop Engineering - Integrated Execution-Model Contract (1.8.0)
+# Loop Engineering - Integrated Execution-Model Contract (1.8.1)
 
 This document is the implementation contract for the `ospec goal` loop. Source, tests, skills, and user documentation must preserve these boundaries.
 
@@ -24,15 +24,15 @@ The allowed action kinds are `implementation`, `task-review`, `final-review`, `v
 | | Controller mode | CLI-driven mode |
 | --- | --- | --- |
 | Planner/observer | `LoopService.runOnce()` | `LoopService.runOnce()` |
-| Executor | Current harness native subagents | `ospec loop watch` plus `AgentCliRunnerService` |
-| Worker lifetime | One fresh native subagent per action item | One fresh external process per action item |
-| Parallelism | Controller dispatches the emitted safe batch | Watch executes the emitted safe batch with `Promise.all` |
+| Executor | `runtimeAdapter.selected`: verified Orca, current harness-native, target CLI, or serial current controller | Strict target CLI through `ospec loop watch` plus `AgentCliRunnerService` |
+| Worker lifetime | One adapter-owned executor per action item; generic fallback remains in the current controller | One fresh external process per action item |
+| Parallelism | Only adapters that declare `supportsParallel`; generic fallback is serial | Watch executes the emitted safe batch with `Promise.all` |
 | Persistence | Task/review/evidence artifacts plus loop state | Same artifacts plus executor results in loop state/run log |
 | Lifetime | Current AI session | Current CLI process; never a persistent daemon |
 
 `ospec loop run --once` must never spawn an agent. `ospec loop watch` must execute emitted actions unless `--dry-run` is set, and must immediately re-tick after an executed batch so durable evidence can be observed. `--dry-run` performs no controller tick, dispatch, state write, or external execution. Watch sleeps for the configured interval only when no action is ready.
 
-Direct watch targets are `claude`, `codex`, and `gpt`. Exact external forms remain `claude -p <prompt>` and `codex exec <prompt>`; no `claude --goal` form exists. Other harness targets use controller mode and their native adapter.
+Direct watch targets are `claude`, `codex`, and `gpt`. Exact external forms remain `claude -p <prompt>` and `codex exec <prompt>`; no `claude --goal` form exists. CLI-driven mode is pinned to the strict target-CLI adapter so its artifact never claims Orca/native ownership while watch executes a different process. Other harness targets use controller mode and its safe adapter chain.
 
 ## Contract 3 - Bounded action packets and fresh context
 
@@ -54,6 +54,8 @@ interface LoopActionItem {
   tokenAllowance?: number | null;
   heartbeatCommand?: string;
   resultCommand?: string;
+  runtimeAdapter?: RuntimeExecutionAdapterResolution;
+  controllerProvenanceRequired?: boolean;
 }
 ```
 
@@ -86,7 +88,7 @@ When protocol verification is incomplete, the loop emits a read-only verifier ac
 
 - **L1:** report-only; no implementation, review, repair, or verification action is emitted.
 - **L2:** real actions are allowed, but required decisions block.
-- **L3:** required decisions still block; every implementation/repair target path and verification command must match a non-empty allowlist. Canonical real-path boundaries reject traversal and symlink/junction escapes. Commands must match an allowlist entry exactly and may not contain shell control syntax or option-injection suffixes.
+- **L3:** required decisions still block; every implementation/repair target path and verification command must match a non-empty allowlist. Canonical real-path boundaries reject traversal and symlink/junction escapes. Legacy command entries remain token-boundary prefixes. Structured policies (`command`, `argsPrefix`, `cwd`) validate executable, arguments, and working directory independently. Shell control syntax remains forbidden except for one parsed `cd <project-relative-path> && <command>` wrapper; absolute paths, traversal, cwd-changing options, and additional shell operators fail closed.
 
 The loop must also require approved design and implementation-plan reviews plus ready workspace evidence before executable L2/L3 work. It checks STOP/pause before observation and checks `maxIterations`, `expiresAt`, `budgetTokens`, `budgetMinutes`, no-progress limit, and comprehension-review interval after observing evidence but before issuing a new action. A guard stop or pause is persisted and surfaced through status; it is not converted into success. Resume resets comprehension debt but does not erase task/review/evidence history.
 
@@ -94,13 +96,15 @@ The loop must also require approved design and implementation-plan reviews plus 
 
 The schedule lifecycle is always `session-bound`. Controller mode exposes a `ControllerTickPlan`; it is not a runtime scheduler. CLI watch is the runtime scheduler/executor and must stop cleanly on Ctrl-C.
 
-`artifacts/loop/state.json` persists iteration, pending actions, start/update times, token usage, no-progress count, progress fingerprint, last feedback, and comprehension debt. `artifacts/loop/run-log.jsonl` is append-only at the logical API boundary and records action IDs/counts plus verification and executor feedback. `ospec loop status` surfaces configuration, guards, budgets, pending item counts, and accumulated metrics.
+`artifacts/loop/state.json` persists iteration, pending actions, start/update times, token usage, no-progress count, progress fingerprint, last feedback, and comprehension debt. `artifacts/loop/run-log.jsonl` is append-only at the logical API boundary and records action IDs/counts plus verification and executor feedback. `tick_metrics` records tick/gate duration, dispatch count, and repeated blockers; `document_review` records dispatches, immutable-cache hits, and reviewer duration. `ospec loop status` surfaces configuration, guards, budgets, pending item counts, and accumulated metrics.
 
 Provider sidecars override executor-reported usage with the same usage key so one run is never counted twice. Unknown usage remains unknown/zero; it must not be estimated from prompt length. Before mutating the task graph for a new parallel batch, the controller limits batch size from the remaining budget and persists a bounded reservation/allowance for every selected action.
 
-Controller capability is a session-bound report with `reportedAt` and `expiresAt`. Executable ticks fail closed after expiry. A valid owned heartbeat may extend a still-current session; `resume` and an expired heartbeat cannot reauthorize it, so refresh requires explicit harness capability flags. Controller results require a prior heartbeat claim and the exact non-empty executor id; CLI watch follows the same auditable claim/result lifecycle.
+Controller capability is a session-bound report with `reportedAt` and `expiresAt`. Native execution fails closed after expiry, but ordinary work may continue through a verified non-native adapter or the serial generic fallback. A valid owned native heartbeat or document-review claim/completion may extend a still-current session. Reaffirming identical explicit harness facts extends `expiresAt` without changing the session identity in `reportedAt`; a changed target/capability or an expired report creates a new identity. `resume` and an expired heartbeat cannot reauthorize native execution. Every adapter still requires a prior heartbeat claim and the exact non-empty executor id before a result is accepted.
 
-Specialist design/plan reviews and Loop task/final reviews bind their dispatch to the controller capability session and exact native child executor. Review approval is invalid unless claim, completion, `reviewed_at`, structured findings, document/target hash, and Git provenance all match; later source changes invalidate the old approval.
+Specialist design/plan reviews and Loop task/final reviews require an independent adapter. When the selected adapter is current harness-native, the dispatch also binds to the controller capability session and exact child executor; Orca/target-CLI reviews retain action heartbeat/result ownership without pretending to be native. Generic current-controller fallback is never accepted for independent review. Completion validates the decision, current document hash, and structured findings immediately and caches the approval by stage and meaningful document hash.
+
+Named verification intent is durable in `artifacts/agents/verification-requirements.json`. Final verification and archive fail closed until every required entry is named by fresh PASSED verification evidence. User-choice records require explicit `answeredBy=user` provenance for new selections; legacy records remain readable.
 
 Controller ticks and executor-result writes use a cross-process lease. External CLI execution has a default timeout, terminates the worker process tree on timeout, and bounds captured stdout/stderr so a noisy agent cannot consume unbounded controller memory.
 
@@ -111,4 +115,4 @@ Controller ticks and executor-result writes use a cross-process lease. External 
 - A goal without a task graph uses legacy compatibility behavior rather than crashing, but the task graph is required for integrated batching, review routing, and repair.
 - `ospec execute launch` keeps `primitive='subagent'` as its compatibility default.
 - Project paths continue to flow through the existing layout resolution; loop artifacts remain relative to the resolved active change.
-- Native subagent execution remains owned by the current harness. CLI watch must not be described as a native harness adapter.
+- Runtime adapter selection is capability-based. Orca requires callable status plus current-worktree ownership proof; process names are never sufficient. Native execution remains owned by the current harness, CLI watch remains a strict target-CLI executor, and generic fallback remains serial.

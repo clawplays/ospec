@@ -40,6 +40,7 @@ const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
 const BaseCommand_1 = require("./BaseCommand");
+const SessionCommand_1 = require("./SessionCommand");
 class ExecuteCommand extends BaseCommand_1.BaseCommand {
     constructor() {
         super(...arguments);
@@ -127,6 +128,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 case 'verify':
                     await this.verify(args);
                     return;
+                case 'require-verification':
+                    await this.requireVerification(args);
+                    return;
                 default:
                     this.info((0, subcommandHelp_1.getExecuteHelpText)());
             }
@@ -157,17 +161,21 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     async docReview(args) {
         const parsed = this.parseDocumentReviewArgs(args);
         const changePath = await this.resolveChangePath(parsed.inputPath);
-        if (parsed.claimExecutor || parsed.completeExecutor) {
+        if (parsed.claimExecutor || parsed.heartbeatExecutor || parsed.completeExecutor) {
             if (!parsed.stage)
                 throw new Error('Execute doc-review executor lifecycle requires --stage design|plan.');
             const record = parsed.claimExecutor
                 ? await services_1.services.taskGraphExecutionService.claimDocumentReviewExecutor(changePath, parsed.stage, parsed.claimExecutor)
-                : await services_1.services.taskGraphExecutionService.completeDocumentReviewExecutor(changePath, parsed.stage, parsed.completeExecutor);
-            this.success(`Document review ${record.id} ${parsed.claimExecutor ? 'claimed' : 'completed'} by ${parsed.claimExecutor || parsed.completeExecutor}.`);
+                : parsed.heartbeatExecutor
+                    ? await services_1.services.taskGraphExecutionService.heartbeatDocumentReviewExecutor(changePath, parsed.stage, parsed.heartbeatExecutor)
+                    : await services_1.services.taskGraphExecutionService.completeDocumentReviewExecutor(changePath, parsed.stage, parsed.completeExecutor);
+            const action = parsed.claimExecutor ? 'claimed' : parsed.heartbeatExecutor ? 'heartbeat renewed' : 'completed';
+            this.success(`Document review ${record.id} ${action} by ${parsed.claimExecutor || parsed.heartbeatExecutor || parsed.completeExecutor}.`);
             return;
         }
         const result = await services_1.services.taskGraphExecutionService.reviewDocument(changePath, {
             stage: parsed.stage,
+            force: parsed.force,
         });
         this.printDocumentReview(result);
     }
@@ -304,7 +312,17 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     async sync(inputPath) {
         const changePath = await this.resolveChangePath(inputPath);
         const result = await services_1.services.taskGraphExecutionService.syncWorkerStatus(changePath);
-        this.printSync(result);
+        const bootstrap = await services_1.services.taskGraphExecutionService.bootstrap(changePath);
+        let sessionBriefPath = null;
+        let sessionWarning = null;
+        try {
+            const session = await new SessionCommand_1.SessionCommand().writeSessionBrief(bootstrap.projectRoot);
+            sessionBriefPath = session.artifactPath;
+        }
+        catch (error) {
+            sessionWarning = `Project session brief was not refreshed: ${error?.message || error}`;
+        }
+        this.printSync(result, bootstrap, sessionBriefPath, sessionWarning);
     }
     async review(args) {
         const parsed = this.parseReviewArgs(args);
@@ -357,6 +375,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             selectOptionId: parsed.selectOptionId,
             skip: parsed.skip,
             summary: parsed.summary,
+            answeredBy: parsed.answeredBy,
         });
         this.printDecision(result);
     }
@@ -368,11 +387,18 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             status: parsed.status,
             exitCode: parsed.exitCode,
             summary: parsed.summary,
+            satisfies: parsed.satisfies,
             loopActionId: parsed.loopActionId,
             loopActionItemId: parsed.loopActionItemId,
             executorId: parsed.executorId,
         });
         this.printVerificationEvidence(result);
+    }
+    async requireVerification(args) {
+        const parsed = this.parseVerificationRequirementArgs(args);
+        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const result = await services_1.services.taskGraphExecutionService.requireVerification(changePath, parsed);
+        this.printVerificationRequirement(result);
     }
     async tdd(args) {
         const parsed = this.parseTddArgs(args);
@@ -546,6 +572,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Reviewer: ${result.dispatch.reviewerRole}`);
         console.log(`Document: ${result.dispatch.documentPath}`);
         console.log(`Document readiness: ${result.dispatch.documentReadiness}`);
+        console.log(`Runtime adapter: ${result.dispatch.runtimeAdapter?.selectedAdapterId || (result.dispatch.mode === 'inline_preflight' ? 'inline' : 'manual')}`);
+        console.log(`Reused approval: ${result.reused ? 'yes' : 'no'}`);
+        console.log(`Reused pending dispatch: ${result.pendingReused ? 'yes' : 'no'}`);
         console.log(`Project session: ${result.projectSession.exists ? result.projectSession.cacheStatus : 'missing'}`);
         if (result.projectSession.cacheKey) {
             console.log(`Project session cache: ${result.projectSession.cacheKey}`);
@@ -658,7 +687,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             console.log(`next: ${result.nextInstruction}`);
             return;
         }
-        console.log('\nNative Agent Launch Plan');
+        console.log('\nRuntime Adapter Launch Plan');
         console.log('========================\n');
         console.log(`Change path: ${result.changePath}`);
         console.log(`Project root: ${result.projectRoot}`);
@@ -993,9 +1022,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`  ${result.nextInstruction}`);
         console.log('');
     }
-    printSync(result) {
-        console.log('\nWorker Status Synchronized');
-        console.log('==========================\n');
+    printSync(result, bootstrap, sessionBriefPath, warning) {
+        console.log('\nGoal State Synchronized');
+        console.log('=======================\n');
         console.log(`Change path: ${result.changePath}`);
         console.log(`Session: ${result.sessionPath}`);
         console.log(`Graph: ${result.graphPath}`);
@@ -1005,6 +1034,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Quality reviewer: ${result.qualityReviewerStatus}`);
         console.log(`Controller: ${result.controllerStatus}`);
         console.log(`Verification checklist complete: ${result.verificationChecklistComplete ? 'yes' : 'no'}`);
+        if (bootstrap) {
+            console.log(`Feature state: ${bootstrap.status}`);
+            console.log(`Bootstrap: ${bootstrap.artifactPath}`);
+        }
+        if (sessionBriefPath)
+            console.log(`Session brief: ${sessionBriefPath}`);
+        if (warning)
+            console.log(`Warning: ${warning}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -1121,9 +1158,25 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Command: ${result.record.command}`);
         console.log(`Record: ${result.record.recordPath}`);
         console.log(`Report: ${result.record.reportPath}`);
+        if (result.record.satisfies?.length) {
+            console.log(`Satisfies: ${result.record.satisfies.join(', ')}`);
+        }
         if (result.record.exitCode !== null) {
             console.log(`Exit code: ${result.record.exitCode}`);
         }
+        console.log('\nNext instruction:');
+        console.log(`  ${result.nextInstruction}`);
+        console.log('');
+    }
+    printVerificationRequirement(result) {
+        console.log('\nVerification Requirement Recorded');
+        console.log('=================================\n');
+        console.log(`Change path: ${result.changePath}`);
+        console.log(`Requirement: ${result.requirement.id}`);
+        console.log(`Kind: ${result.requirement.kind}`);
+        console.log(`Required: ${result.requirement.required ? 'yes' : 'no'}`);
+        console.log(`Artifact: ${result.artifactPath}`);
+        console.log(`Pending required evidence: ${result.status.pending.join(', ') || 'none'}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -1239,7 +1292,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             return {
                 nextAction: 'ask user decision',
                 suggestedCommand: pendingDecision
-                    ? `ospec execute decision ${changeArg} --id ${this.quoteCommandArg(pendingDecision.id)} --select <option-id>`
+                    ? `ospec execute decision ${changeArg} --id ${this.quoteCommandArg(pendingDecision.id)} --select <option-id> --answered-by user`
                     : null,
                 reviewNeeded: reviewActions.map(action => action.label),
                 blockedFocus: [...report.decisions.blockers, ...blockedFocus].slice(0, 3),
@@ -1752,7 +1805,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let inputPath;
         let stage;
         let claimExecutor;
+        let heartbeatExecutor;
         let completeExecutor;
+        let force = false;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--stage') {
@@ -1768,12 +1823,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 stage = this.normalizeDocumentReviewStage(arg.slice('--stage='.length));
                 continue;
             }
-            if (arg === '--claim-executor' || arg === '--complete-executor') {
+            if (arg === '--claim-executor' || arg === '--heartbeat-executor' || arg === '--complete-executor') {
                 const value = args[index + 1];
                 if (!value || value.startsWith('--'))
                     throw new Error(`Execute doc-review requires a value after ${arg}.`);
                 if (arg === '--claim-executor')
                     claimExecutor = value;
+                else if (arg === '--heartbeat-executor')
+                    heartbeatExecutor = value;
                 else
                     completeExecutor = value;
                 index += 1;
@@ -1787,6 +1844,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 completeExecutor = arg.slice('--complete-executor='.length).trim();
                 continue;
             }
+            if (arg.startsWith('--heartbeat-executor=')) {
+                heartbeatExecutor = arg.slice('--heartbeat-executor='.length).trim();
+                continue;
+            }
+            if (arg === '--force') {
+                force = true;
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute doc-review flag: ${arg}`);
             }
@@ -1796,11 +1861,18 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             }
             throw new Error(`Unexpected execute doc-review argument: ${arg}`);
         }
-        if (claimExecutor && completeExecutor)
+        if (claimExecutor && completeExecutor) {
             throw new Error('Execute doc-review cannot claim and complete an executor in the same command.');
-        if (claimExecutor === '' || completeExecutor === '')
+        }
+        if ([claimExecutor, heartbeatExecutor, completeExecutor].filter(Boolean).length > 1) {
+            throw new Error('Execute doc-review accepts only one executor lifecycle action per command.');
+        }
+        if (force && (claimExecutor || heartbeatExecutor || completeExecutor)) {
+            throw new Error('Execute doc-review --force cannot be combined with an executor lifecycle action.');
+        }
+        if (claimExecutor === '' || heartbeatExecutor === '' || completeExecutor === '')
             throw new Error('Document review executor ID must be non-empty.');
-        return { inputPath, stage, claimExecutor, completeExecutor };
+        return { inputPath, stage, claimExecutor, heartbeatExecutor, completeExecutor, force };
     }
     parseFinishArgs(args) {
         let inputPath;
@@ -2242,6 +2314,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let selectOptionId;
         let skip = false;
         let summary;
+        let answeredBy;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--id') {
@@ -2309,6 +2382,21 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 selectOptionId = arg.slice('--select='.length);
                 continue;
             }
+            if (arg === '--answered-by') {
+                const value = args[index + 1];
+                if (value !== 'user')
+                    throw new Error('Execute decision --answered-by must be user.');
+                answeredBy = 'user';
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--answered-by=')) {
+                const value = arg.slice('--answered-by='.length).trim();
+                if (value !== 'user')
+                    throw new Error('Execute decision --answered-by must be user.');
+                answeredBy = 'user';
+                continue;
+            }
             if (arg === '--summary') {
                 const value = args[index + 1];
                 if (!value || value.startsWith('--')) {
@@ -2362,6 +2450,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             selectOptionId,
             skip,
             summary,
+            answeredBy,
         };
     }
     parseDecisionOption(value) {
@@ -2391,6 +2480,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let status;
         let exitCode;
         let summary;
+        const satisfies = [];
         let loopActionId;
         let loopActionItemId;
         let executorId;
@@ -2448,6 +2538,19 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 summary = arg.slice('--summary='.length);
                 continue;
             }
+            if (arg === '--satisfies') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute verify requires a value after --satisfies.');
+                }
+                satisfies.push(value.trim());
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--satisfies=')) {
+                satisfies.push(arg.slice('--satisfies='.length).trim());
+                continue;
+            }
             if (arg === '--loop-action' || arg === '--action-item' || arg === '--executor') {
                 const value = args[index + 1];
                 if (!value || value.startsWith('--')) {
@@ -2490,7 +2593,70 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (loopValues.some(value => value !== undefined) && loopValues.some(value => !value?.trim())) {
             throw new Error('Execute verify requires --loop-action, --action-item, and --executor together.');
         }
-        return { inputPath, command, status, exitCode, summary, loopActionId, loopActionItemId, executorId };
+        return { inputPath, command, status, exitCode, summary, satisfies, loopActionId, loopActionItemId, executorId };
+    }
+    parseVerificationRequirementArgs(args) {
+        let inputPath;
+        let id = '';
+        let kind;
+        let description = '';
+        let required;
+        const takeValue = (index, flag) => {
+            const value = args[index + 1];
+            if (!value || value.startsWith('--'))
+                throw new Error(`Execute require-verification requires a value after ${flag}.`);
+            return value.trim();
+        };
+        for (let index = 0; index < args.length; index += 1) {
+            const arg = args[index];
+            if (arg === '--id') {
+                id = takeValue(index, arg);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--id=')) {
+                id = arg.slice('--id='.length).trim();
+                continue;
+            }
+            if (arg === '--kind') {
+                kind = this.normalizeVerificationRequirementKind(takeValue(index, arg));
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--kind=')) {
+                kind = this.normalizeVerificationRequirementKind(arg.slice('--kind='.length));
+                continue;
+            }
+            if (arg === '--description') {
+                description = takeValue(index, arg);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--description=')) {
+                description = arg.slice('--description='.length).trim();
+                continue;
+            }
+            if (arg === '--required') {
+                required = true;
+                continue;
+            }
+            if (arg === '--optional') {
+                required = false;
+                continue;
+            }
+            if (arg.startsWith('--'))
+                throw new Error(`Unknown execute require-verification flag: ${arg}`);
+            if (!inputPath) {
+                inputPath = arg;
+                continue;
+            }
+            throw new Error(`Unexpected execute require-verification argument: ${arg}`);
+        }
+        if (!id)
+            throw new Error('Execute require-verification requires --id.');
+        if (!description)
+            throw new Error('Execute require-verification requires --description.');
+        return { inputPath, id, kind, description, required };
     }
     parseTddArgs(args) {
         let inputPath;
@@ -2758,6 +2924,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             return normalized;
         }
         throw new Error(`Unsupported execute verify status: ${value}`);
+    }
+    normalizeVerificationRequirementKind(value) {
+        const normalized = value.trim().toLowerCase();
+        if (normalized === 'browser' || normalized === 'e2e' || normalized === 'test' || normalized === 'lint'
+            || normalized === 'build' || normalized === 'manual' || normalized === 'other') {
+            return normalized;
+        }
+        throw new Error(`Unsupported verification requirement kind: ${value}`);
     }
     normalizeTddEvidencePhase(value) {
         const normalized = value.trim().toLowerCase();

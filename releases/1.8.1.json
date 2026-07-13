@@ -1,0 +1,33 @@
+{
+  "title_suffix": "runtime adapters, faster goal loops, and resilient review execution",
+  "summary": "OSpec 1.8.1 fixes the Goal and Loop regressions found in real Orca and Codex sessions. Runtime adapter selection now verifies Orca worktree ownership, uses current native harness capabilities when available, falls back to the target CLI, and finally uses a safe serial controller path for non-independent work. Review dispatch, workspace readiness, session synchronization, verification evidence, caching, and controller actions avoid the repeated probes and stale provenance loops that made 1.8.0 slow or blocked. The release also hardens Windows release automation discovered while cutting this version.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.0...1.8.1",
+  "new": [
+    "Added a runtime execution adapter resolver with verified Orca terminal, native harness, target CLI, and serial controller adapters, including explicit fallback order and parallel capability metadata.",
+    "Added persistent multi-key adapter probe caching so ordinary and independent-worker lookups do not overwrite each other or repeatedly probe Orca and agent CLIs.",
+    "Added adapter and executor provenance to worker, task review, final review, design review, and implementation-plan review artifacts.",
+    "Added explicit verification requirements and evidence binding for browser, E2E, test, lint, build, and manual acceptance gates."
+  ],
+  "improved": [
+    "Goal Loop dispatch now uses verified Orca worktree ownership when running inside Orca and can launch multiple independent Codex terminals for parallel-safe task batches.",
+    "Non-Orca sessions no longer stop when a preferred adapter is unavailable: controller mode continues through native, CLI, and safe serial fallbacks according to the task's independence requirements.",
+    "Document reviews reuse valid approvals by document hash and reuse matching pending dispatches, while --force remains available for an intentional replacement.",
+    "Bootstrap, workspace, task graph, review, and verification state synchronization performs fewer redundant round trips and preserves current controller capability data.",
+    "Loop actions and launch plans expose the selected adapter, fallback order, parallel support, and concrete executor commands instead of claiming native subagents without launching them."
+  ],
+  "fixed": [
+    "Fixed Goal runs that repeatedly regenerated design and plan reviews because controller-session timestamps or normalized documentation hashes did not match.",
+    "Fixed expired native capability sessions blocking task and final review even when Orca, a target CLI, or an independent human reviewer was available.",
+    "Fixed cli-driven execution selecting Orca or another adapter while the watch process actually launched the configured target CLI.",
+    "Fixed manual and shell review paths being rejected by executor provenance before any Loop adapter had been bound.",
+    "Fixed controller capability checks treating a reported controller as native-subagent capable without an explicit current supported capability.",
+    "Fixed repeated document review packet creation and adapter probes that caused unnecessary latency and duplicate reviewer work.",
+    "Fixed Windows release status parsing that removed the first character of the first modified path, and included src/cli.ts in the legal version-sync files."
+  ],
+  "docs": [
+    "Updated the managed ospec-goal skill, AI execution guides, project conventions, usage guides, and Loop engineering contract for adapter-based execution and fallback behavior.",
+    "Documented Orca detection as a verified CLI and current-worktree check rather than a process-name guess.",
+    "Documented when parallel workers are allowed, when independent review forbids the serial controller fallback, and how executor provenance is recorded.",
+    "Bumped the package, CLI, lockfile, and localized installation examples to 1.8.1."
+  ]
+}

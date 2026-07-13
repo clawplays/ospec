@@ -210,6 +210,7 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 }
                 await this.addGoalDocumentReviewBlockers(targetPath, result.blockers);
                 await this.addGoalVerificationEvidenceBlocker(targetPath, result.blockers);
+                await this.addGoalVerificationRequirementBlocker(targetPath, result.blockers);
                 const finalReviewEvidence = await services_1.services.taskGraphExecutionService.validateTaskReviewEvidence(targetPath, null);
                 if (!finalReviewEvidence.ready) {
                     result.blockers.push(finalReviewEvidence.reason || 'Final review evidence is stale or invalid.');
@@ -421,6 +422,14 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
         }
         catch (error) {
             blockers.push(`artifacts/agents/verification-evidence.json cannot be parsed: ${error.message || error}`);
+        }
+    }
+    async addGoalVerificationRequirementBlocker(targetPath, blockers) {
+        const verificationRequirements = await services_1.services.taskGraphExecutionService
+            .validateVerificationRequirements(targetPath)
+            .catch((error) => ({ ready: false, reason: error?.message || String(error) }));
+        if (!verificationRequirements.ready) {
+            blockers.push(verificationRequirements.reason || 'Required verification evidence is incomplete.');
         }
     }
     async findProjectRoot(startPath) {

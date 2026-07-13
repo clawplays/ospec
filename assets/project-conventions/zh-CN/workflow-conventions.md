@@ -37,7 +37,7 @@ tags: [conventions, workflow, change, ospec]
 
 - AI 辅助执行 goal 时，必须先基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`，再编辑 `implementation-plan.md`、`tasks.md` 或代码
 - 执行经典 change 时，不要创建 `design.md`、`implementation-plan.md`、task graph、worker packets 或 goal review artifacts，除非用户明确升级为 goal
-- `Announce-Before-Act`：绝不静默执行——宣告当前使用哪个 OSpec skill 及所处阶段、即将运行哪个 `ospec execute ...` 命令与会写出的产物、派发多少原生 subagent 及机制，以及进度被哪个门禁阻塞
+- `Announce-Before-Act`：绝不静默执行——宣告 OSpec skill 与阶段、命令与产物、所选 runtime adapter、worker 数量与实际机制，以及进度被哪个门禁阻塞
 - `Brainstorm-First`：每个 goal 开局先做一次简短头脑风暴再锁定设计，把方向、架构、API、数据、UI、风险、范围的未决问题逐个问用户；优先升起持久 decision gate 而非静默假设，仅当用户明确让 AI 自行决定时才在 `design.md` 写入假设并标注待确认
 - `implementation-plan.md` 必须从已确认的 `design.md` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突
 - `artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色
@@ -60,10 +60,10 @@ tags: [conventions, workflow, change, ospec]
 - 创建隔离 worktree 前，用 `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` 写入 `worktree-plan.json` 和 `worktree-plan.md`；该命令只记录计划，不会运行 `git worktree add`
 - 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `finish-plan.json` 和 `finish-plan.md`；该命令只记录 readiness 和命令文本，不会 finalize、archive、push、merge 或删除 worktree。当 finish plan 状态为 ready 且没有 required pending decision 时，继续运行 `ospec finalize [changes/active/<change>]`；`ospec archive ... --check` 只用于可选 dry-run 预览，检查通过后不要停在这里
 - 需要 task 级持久交接时，用 `ospec execute dispatch` 生成并行安全的 worker 任务包批次和 `artifacts/agents/execution-session.json`；每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior，避免不同工具交接时误判读上下文、编辑、验证和记录完成的边界；用 `--task` 指定单个任务，用 `--limit` 限制派发批次大小；用 `ospec execute complete` 记录 worker 结果；当 complete 记录 `NEEDS_CONTEXT` 或 `BLOCKED` 时，会生成 `artifacts/agents/blockers/`
-- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json]` 写入 `launch-plan.json` 和 `launch-plan.md`；这是给当前控制 AI 使用的默认 native agent 启动 artifact，包含 Codex/GPT `spawn_agent`、Claude Code Task、Gemini `@generalist`、OpenCode `@mention`、Cursor Agent/task chat、Copilot CLI/coding-agent task 的调度说明。适配器需要 stdout 上的 machine-readable launch artifact 时使用 `--json`
-- 默认多 worker 执行路径是当前 harness 原生 subagent：先 dispatch 安全 packet，查看 `launch-plan.md`，再为每个安全 packet 启动一个 native agent，并用 `ospec execute complete` 记录结果
-- 只有当前 harness 不支持原生 subagent 时，才用 `ospec execute orchestrate [changes/active/<change>] --command "..." [--limit N] [--max-rounds N] [--timeout-ms N]` 作为最后 CLI fallback；fallback 模式渲染显式 command template、并发运行 worker command，把结果 collect 回 task graph，并报告 failed-worker retry commands
-- 只有原生 subagent 不可用或被明确绕过时，才用 `--run --command`（即 `ospec execute launch ... --run --command "..."`）作为单 worker CLI fallback；随后用 `ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id]` 记录 fallback 任务结果。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务必须显式 `--force` 才能 retry
+- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json]` 写入 `launch-plan.json` 和 `launch-plan.md`；`runtimeAdapter` 按已验证 Orca ownership、当前 harness-native capability、可用 target CLI、串行 generic current controller 排序。Orca 进程名本身不能证明 ownership
+- 多 worker 执行服从 `runtimeAdapter.selected`：只在所选 adapter 支持并行时启动安全 batch；普通任务可退回串行 current controller，独立 review 必须使用独立 adapter
+- 只有所选 adapter 或记录的 fallback order 选择显式 CLI orchestration 时，才用 `ospec execute orchestrate [changes/active/<change>] --command "..." [--limit N] [--max-rounds N] [--timeout-ms N]`，并且只运行 adapter 允许的 batch
+- 所选 target-CLI adapter 需要单 worker runner，或前序 adapter 在 claim ownership 前失败时，用 `--run --command`（即 `ospec execute launch ... --run --command "..."`）；随后用 `ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id]` 记录结果。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务必须显式 `--force` 才能 retry
 - `ospec execute dispatch` 与 `complete` 也会同步 `artifacts/agents/worker-status.md`；人工修改 task graph、execution session、review artifacts、debug evidence 或 verification checklist 后，用 `ospec execute sync` 重建 worker 状态
 - 每个 worker task 完成后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 生成一个合并的 code reviewer 交接包（一次同时审 spec 符合性与代码质量）。task 级 review 决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等这一次合并 review 通过后才可派发
 - 所有 task 级 review 通过且 task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>]` 在 `artifacts/agents/review-dispatches/` 下生成一个合并的最终整体 code review 交接包；它产出单一 `artifacts/reviews/final-review.md`、一道决策
@@ -72,7 +72,7 @@ tags: [conventions, workflow, change, ospec]
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 在 `artifacts/agents/debug-evidence.json` 下记录根因和修复证据
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 在 `artifacts/agents/tdd-evidence.json` 下记录 TDD cycle evidence
 - 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` 在 `artifacts/agents/verification-evidence.json` 下记录验证证据
-- `ospec session` 以及 `ospec execute bootstrap`、`handoff`、`doc-review`、`workspace`、plan 模式 `worktree`、`finish`、`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`debug`、`tdd`、`verify` 与 `sync` 只更新 OSpec artifacts；除 `workspace`、`worktree` 与 `finish` 会读取 git 状态外，不直接编辑项目源码。原生 subagent 由当前 AI harness 启动；只有显式 `worktree --create`、`worktree --cleanup`、fallback `launch --run --command`、`review --run --command` 或 fallback `orchestrate` 才运行 shell 命令
+- `ospec session` 以及 `ospec execute bootstrap`、`handoff`、`doc-review`、`workspace`、plan 模式 `worktree`、`finish`、`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`debug`、`tdd`、`verify` 与 `sync` 只更新 OSpec artifacts；除 `workspace`、`worktree` 与 `finish` 会读取 git 状态外，不直接编辑项目源码。controller 按所选 runtime adapter 启动 worker；shell 只通过显式 worktree、runner、orchestration 或已选择的外部 adapter 执行
 - task graph 存在未解决状态、无效依赖、缺失执行细节，或顶层 `status` 不是 `completed` 时不得归档
 - `artifacts/agents/worker-status.md` 记录 implementer、spec reviewer、quality reviewer 和 controller 状态
 - 每个 task 的一次合并 review（`artifacts/reviews/tasks/<task-id>/review.md`）必须通过；单一的最终 `artifacts/reviews/final-review.md` 必须通过

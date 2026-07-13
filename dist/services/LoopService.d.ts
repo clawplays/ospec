@@ -2,6 +2,7 @@ import { FileService } from './FileService';
 import { VerificationService } from './VerificationService';
 import { HarnessCapability, NativeLoopCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { LayoutConfigInput } from './TriageService';
+import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
 import { TaskGraphExecutionService, TaskVerificationLoopBinding, TaskWorkerToolTarget } from './TaskGraphExecutionService';
 export type LoopSafetyLevel = 'L1' | 'L2' | 'L3';
 export type LoopStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'done';
@@ -16,7 +17,12 @@ export interface LoopStopConditions {
 }
 export interface LoopAllowlist {
     paths: string[];
-    commands: string[];
+    commands: Array<string | LoopCommandPolicy>;
+}
+export interface LoopCommandPolicy {
+    command: string;
+    argsPrefix?: string[];
+    cwd?: string | null;
 }
 export interface LoopSchedule {
     interval: string;
@@ -46,6 +52,8 @@ export interface LoopActionItem {
     resultCommand?: string;
     verificationCommand?: string | null;
     verificationBinding?: TaskVerificationLoopBinding;
+    runtimeAdapter?: RuntimeExecutionAdapterResolution;
+    controllerProvenanceRequired?: boolean;
 }
 export interface PendingControllerAction {
     actionId: string;
@@ -115,6 +123,7 @@ export interface LoopState {
     lastFeedback: string | null;
 }
 export interface LoopRunLogEntry {
+    event?: 'state' | 'tick_metrics' | 'document_review';
     ts: string;
     iteration: number;
     trigger: string;
@@ -126,6 +135,11 @@ export interface LoopRunLogEntry {
     actionId?: string | null;
     actionCount?: number;
     noProgressCount?: number;
+    durationMs?: number;
+    gateDurationMs?: number | null;
+    dispatchCount?: number;
+    repeatedBlockerCount?: number;
+    reviewCacheHit?: boolean;
 }
 export interface LoopMetrics {
     tokensUsed: number;
@@ -174,6 +188,7 @@ export interface LoopConfigureOptions {
     testCommands?: string[];
     allowPaths?: string[];
     allowCommands?: string[];
+    allowCommandPolicies?: LoopCommandPolicy[];
     maxParallel?: number;
     noProgressLimit?: number;
     comprehensionReviewEvery?: number;
@@ -183,6 +198,7 @@ export interface LoopConfigureOptions {
 export interface LoopServiceDependencies {
     taskGraphExecutionService?: TaskGraphExecutionService;
     verificationService?: VerificationService;
+    runtimeAdapterService?: RuntimeExecutionAdapterService;
     now?: () => Date;
 }
 /**
@@ -194,6 +210,7 @@ export declare class LoopService {
     private readonly fileService;
     private readonly taskGraph;
     private readonly verification;
+    private readonly runtimeAdapter;
     private readonly now;
     constructor(fileService: FileService, dependencies?: LoopServiceDependencies);
     private loopDir;
@@ -265,14 +282,17 @@ export declare class LoopService {
         interval: string;
         executionModel: LoopExecutionModel;
         nativeLoopCapability: string;
+        runtimeAdapter: RuntimeExecutionAdapterResolution;
         instructions: string[];
     }>;
     private gateResult;
+    private runtimeAdapterGateResult;
     private result;
     private normalizeConfig;
     private normalizeState;
     private defaultEfficiency;
     private isControllerCapabilityCurrent;
+    private resolveRuntimeAdapter;
     private getBudgetedBatchLimit;
     private allocateTokenAllowances;
     private recomputeTokenUsage;
@@ -286,10 +306,14 @@ export declare class LoopService {
     private logEntry;
     private isPathAllowed;
     private isCommandAllowed;
+    private normalizeCommandAllowlist;
+    private normalizeCommandPolicies;
+    private tokenizeSafeCommand;
+    private parseSafeAllowlistedCommand;
     private findProjectRootForSafety;
     private resolveRealPathBoundary;
     private normalizeAllowlistedPath;
-    private containsShellControlSyntax;
+    private isSameCurrentCapabilityAssertion;
     private boundPrompt;
     private uniqueNonEmpty;
     private positiveInteger;

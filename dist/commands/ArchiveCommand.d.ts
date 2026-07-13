@@ -7,6 +7,7 @@ export declare class ArchiveCommand extends BaseCommand {
     run(featurePath?: string, options?: ArchiveCommandOptions): Promise<string | void>;
     private addGoalDocumentReviewBlockers;
     private addGoalVerificationEvidenceBlocker;
+    private addGoalVerificationRequirementBlocker;
     private findProjectRoot;
     private performArchive;
     private inferProjectRootFromChangePath;

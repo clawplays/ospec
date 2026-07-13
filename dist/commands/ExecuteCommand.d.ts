@@ -25,6 +25,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private repair;
     private decision;
     private verify;
+    private requireVerification;
     private tdd;
     private debug;
     private resolveChangePath;
@@ -52,6 +53,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private printReviewFeedback;
     private printDecision;
     private printVerificationEvidence;
+    private printVerificationRequirement;
     private printTddEvidence;
     private printDebugEvidence;
     private printWorkflowRoute;
@@ -87,7 +89,9 @@ export declare class ExecuteCommand extends BaseCommand {
         inputPath?: string;
         stage?: TaskDocumentReviewStage;
         claimExecutor?: string;
+        heartbeatExecutor?: string;
         completeExecutor?: string;
+        force?: boolean;
     };
     private parseFinishArgs;
     private parsePositiveInteger;
@@ -106,9 +110,11 @@ export declare class ExecuteCommand extends BaseCommand {
         selectOptionId?: string;
         skip?: boolean;
         summary?: string;
+        answeredBy?: 'user';
     };
     private parseDecisionOption;
     private parseVerificationArgs;
+    private parseVerificationRequirementArgs;
     private parseTddArgs;
     private parseDebugArgs;
     private normalizeCompletionStatus;
@@ -118,6 +124,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private normalizeHandoffTarget;
     private normalizeWorkerToolTarget;
     private normalizeVerificationEvidenceStatus;
+    private normalizeVerificationRequirementKind;
     private normalizeTddEvidencePhase;
     private normalizeDebugEvidencePhase;
     private normalizeTddEvidenceStatus;

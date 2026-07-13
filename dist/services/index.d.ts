@@ -22,6 +22,7 @@ export { TriageService, createTriageService } from './TriageService';
 export { VerificationService, createVerificationService } from './VerificationService';
 export { CapabilityProbeService, createCapabilityProbeService } from './CapabilityProbeService';
 export { AgentCliRunnerService, createAgentCliRunnerService } from './AgentCliRunnerService';
+export { RuntimeExecutionAdapterService, createRuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
 import { FileService } from './FileService';
 import { ConfigManager } from './ConfigManager';
 import { StateManager } from './StateManager';

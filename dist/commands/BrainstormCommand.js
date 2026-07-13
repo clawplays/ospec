@@ -149,7 +149,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         const language = await this.resolveBrainstormLanguage(projectPath);
         const decisionGates = this.buildDecisionGates(args, null, language);
         const askLadder = this.copy(language, '把每个决策门用你 harness 最好的交互方式呈现给用户——有原生问答 UI（Claude Code AskUserQuestion、Gemini ask_user）就用它，否则用 Plan/审批 UI（Codex Plan 模式），都没有就用纯聊天文字——一次问一个。**绝不要自动选"推荐项"：推荐只是给用户看的提示，必须等用户真正回答。**', 'Present each decision gate to the user with your harness\'s best interactive mechanism — a native question UI (Claude Code AskUserQuestion, Gemini ask_user) if available, otherwise your plan/approval UI (Codex Plan mode), otherwise plain chat text — and ask one at a time. NEVER auto-select the recommended option: "recommended" is only a hint to show the user; you must wait for the user\'s actual answer.');
-        const recordHint = this.copy(language, `用户回答后，用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> 记录每个选择。required 决策门未回答前，不要开始实现或派发。不要把这个 brainstorm 留成没答复的空模板。`, `After the user answers, record each choice with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Do not implement or dispatch while a required gate is unanswered. Do not leave this brainstorm as an unanswered template.`);
+        const recordHint = this.copy(language, `用户回答后，用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> --answered-by user 记录每个选择。required 决策门未回答前，不要开始实现或派发。不要把这个 brainstorm 留成没答复的空模板。`, `After the user answers, record each choice with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> --answered-by user. Do not implement or dispatch while a required gate is unanswered. Do not leave this brainstorm as an unanswered template.`);
         const followUp = args.changeName
             ? this.copy(language, `然后用 ospec new ${args.changeName} ${projectPath} 创建 change，并把已解决的 brainstorm 融入 proposal.md 和 design.md。`, `Then create the change with ospec new ${args.changeName} ${projectPath} and fold the resolved brainstorm into proposal.md and design.md.`)
             : this.copy(language, '然后从已确定的方向选一个 change 名字，运行 ospec new <change-name>。', 'Then choose a change name from the resolved direction and run ospec new <change-name>.');
@@ -180,10 +180,10 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             artifact.decisionGates = this.buildDecisionGates(args, changePath, language);
             if (changePath) {
                 decisionGateReports = await this.writeDecisionGates(changePath, artifact.decisionGates);
-                artifact.nextInstruction = `${askLadder} ${this.copy(language, `然后用 ospec execute decision ${changePath} --id <gate-id> --select <option-id> 记录每个答复（并用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> 同步进本 brainstorm）。required 决策门回答前不要派发。`, `Then record each answer with ospec execute decision ${changePath} --id <gate-id> --select <option-id> (and mirror it into this brainstorm with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>). Do not dispatch until the required gates are answered.`)}`;
+                artifact.nextInstruction = `${askLadder} ${this.copy(language, `然后用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> --answered-by user 原子地同步 brainstorm 和 change decision gate。required 决策门回答前不要派发。`, `Then record each answer with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> --answered-by user; it atomically synchronizes the brainstorm and change decision gate. Do not dispatch until the required gates are answered.`)}`;
             }
             else {
-                artifact.nextInstruction = `${askLadder} ${this.copy(language, `然后用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> 记录每个答复。创建或选定 change，再在派发前运行列出的 ospec execute decision 命令。`, `Then record each answer with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id>. Create or select the change, then re-run the listed ospec execute decision commands before dispatch.`)}`;
+                artifact.nextInstruction = `${askLadder} ${this.copy(language, `然后用 ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> --answered-by user 记录每个答复。创建或选定 change，再在派发前运行列出的 ospec execute decision 命令。`, `Then record each answer with ospec brainstorm resolve ${projectPath} --brainstorm ${id} --gate <gate-id> --select <option-id> --answered-by user. Create or select the change, then re-run the listed ospec execute decision commands before dispatch.`)}`;
             }
         }
         await services_1.services.fileService.writeJSON(artifactPath, artifact);
@@ -221,6 +221,8 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 `- ${c('问题', 'Question')}: ${gate.question}`,
                 `- ${c('推荐项', 'Recommended option')}: ${gate.recommendedOptionId}`,
                 `- ${c('用户已选', 'Selected option')}: ${gate.selectedOptionId || notSelected}`,
+                ...(gate.answeredBy ? [`- ${c('回答来源', 'Answered by')}: ${gate.answeredBy}`] : []),
+                ...(gate.answeredAt ? [`- ${c('回答时间', 'Answered at')}: ${gate.answeredAt}`] : []),
                 ...(gate.note ? [`- ${c('备注', 'Note')}: ${gate.note}`] : []),
                 `- ${c('报告', 'Report')}: ${gate.reportPath || c('尚未写入', 'not written yet')}`,
                 '',
@@ -365,6 +367,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         let optionId = '';
         let note;
         let changeName;
+        let answeredBy;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             const takeValue = (flag) => {
@@ -415,6 +418,20 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
                 changeName = arg.slice('--change='.length).trim();
                 continue;
             }
+            if (arg === '--answered-by') {
+                const value = takeValue('--answered-by');
+                if (value !== 'user')
+                    throw new Error('Brainstorm resolve --answered-by must be user.');
+                answeredBy = 'user';
+                continue;
+            }
+            if (arg.startsWith('--answered-by=')) {
+                const value = arg.slice('--answered-by='.length).trim();
+                if (value !== 'user')
+                    throw new Error('Brainstorm resolve --answered-by must be user.');
+                answeredBy = 'user';
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown brainstorm resolve flag: ${arg}`);
             }
@@ -433,7 +450,10 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         if (!optionId) {
             throw new Error('Brainstorm resolve requires --select <option-id>.');
         }
-        return { projectPath, brainstormId, gateId, optionId, note, changeName };
+        if (answeredBy !== 'user') {
+            throw new Error('Brainstorm resolve requires --answered-by user after the user answers.');
+        }
+        return { projectPath, brainstormId, gateId, optionId, note, changeName, answeredBy };
     }
     async resolve(args) {
         const parsed = this.parseResolveArgs(args);
@@ -456,6 +476,8 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         }
         gate.selectedOptionId = parsed.optionId;
         gate.note = parsed.note ?? gate.note ?? null;
+        gate.answeredBy = 'user';
+        gate.answeredAt = new Date().toISOString();
         // Record the change this brainstorm belongs to (if not already linked) so it archives with
         // the change even when their names differ. Use --change when given, else the single active change.
         if (!artifact.changeName || String(artifact.changeName).trim().length === 0) {
@@ -465,6 +487,20 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             if (changeName) {
                 artifact.changeName = changeName;
             }
+        }
+        const linkedChangePath = await this.resolveDecisionGateChangePath(projectPath, artifact.changeName || undefined);
+        if (linkedChangePath) {
+            const decision = await services_1.services.taskGraphExecutionService.recordUserDecision(linkedChangePath, {
+                id: gate.id,
+                question: gate.question,
+                options: gate.options,
+                recommendedOptionId: gate.recommendedOptionId,
+                required: gate.required,
+                selectOptionId: parsed.optionId,
+                summary: gate.note || undefined,
+                answeredBy: 'user',
+            });
+            gate.reportPath = path.relative(projectPath, decision.reportPath).replace(/\\/g, '/');
         }
         const requiredGates = gates.filter(item => item.required);
         artifact.status = requiredGates.length > 0 && requiredGates.every(item => typeof item.selectedOptionId === 'string' && item.selectedOptionId.length > 0)
@@ -492,7 +528,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
         console.log(`
 Brainstorm Commands:
   ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual] [--decision-gates]
-  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> [--note "..."]
+  ospec brainstorm resolve [path] --brainstorm <id> --gate <gate-id> --select <option-id> --answered-by user [--note "..."]
 `);
     }
     buildDecisionGates(args, changePath, language = 'en-US') {

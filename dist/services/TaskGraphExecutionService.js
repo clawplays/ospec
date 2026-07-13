@@ -43,8 +43,10 @@ const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
 const CapabilityProbeService_1 = require("./CapabilityProbeService");
 const AgentCliRunnerService_1 = require("./AgentCliRunnerService");
+const RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
 const EXECUTION_SESSION_FILE = 'execution-session.json';
 const VERIFICATION_EVIDENCE_FILE = 'verification-evidence.json';
+const VERIFICATION_REQUIREMENTS_FILE = 'verification-requirements.json';
 const TDD_EVIDENCE_FILE = 'tdd-evidence.json';
 const DEBUG_EVIDENCE_FILE = 'debug-evidence.json';
 const WORKSPACE_STATUS_FILE = 'workspace-status.json';
@@ -62,6 +64,7 @@ const HANDOFF_FILE = 'handoff.json';
 const HANDOFF_REPORT_FILE = 'handoff.md';
 const LAUNCH_PLAN_FILE = 'launch-plan.json';
 const LAUNCH_PLAN_REPORT_FILE = 'launch-plan.md';
+const RUNTIME_ADAPTER_CACHE_FILE = 'runtime-adapter-cache.json';
 const WORKER_RUNS_DIR = 'worker-runs';
 const REVIEW_RUNS_DIR = 'review-runs';
 const ORCHESTRATION_RUNS_DIR = 'orchestration-runs';
@@ -83,6 +86,7 @@ const CURRENT_REVIEW_DISPATCHES_FILE = 'current-review-dispatches.json';
 const REPAIR_WAVES_DIR = 'repair-waves';
 const DESIGN_DOCUMENT_REVIEW_FILE = 'design-review.md';
 const IMPLEMENTATION_PLAN_DOCUMENT_REVIEW_FILE = 'implementation-plan-review.md';
+const DOCUMENT_REVIEW_CACHE_DIR = 'cache';
 const VERIFICATION_EVIDENCE_DIR = 'verification-evidence';
 const VERIFICATION_ACTIONS_DIR = 'verification-actions';
 const TDD_EVIDENCE_DIR = 'tdd-evidence';
@@ -187,7 +191,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Spawn a worker agent for scoped edits; keep the worker write scope limited to the dispatch packet target files unless the packet evidence proves the scope is wrong.',
             runCommands: 'Let the worker run only the verification commands required for the task or change, then record evidence with ospec execute tdd/debug/verify as appropriate.',
             trackPlan: 'Use the active task graph and visible plan tracking; keep OSpec artifacts synchronized with ospec execute sync after manual artifact edits.',
-            dispatchWorkers: 'Default to Codex native multi-agent dispatch: call spawn_agent for each parallel-safe packet and use the harness wait mechanism for results; release or close workers only when that API is exposed. If multi-agent support is unavailable, record a capability blocker instead of silently using CLI fallback.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact: verified Orca, Codex native spawn_agent, codex exec, then serial current-controller fallback. Use one executor per parallel-safe packet only when the selected adapter supports parallel work.',
             recordCompletion: 'Record each worker outcome with ospec execute complete <task-id> and one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
         },
         gpt: {
@@ -196,7 +200,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Spawn a native worker agent when the harness exposes agent tools; keep edits scoped to the dispatch packet target files unless evidence proves the scope is wrong.',
             runCommands: 'Let the worker run only task-required verification commands and report evidence back to the controller.',
             trackPlan: 'Use the active OSpec task graph as durable state even if the harness has its own plan UI.',
-            dispatchWorkers: 'Default to the current GPT-family harness native agent tool. In Codex-compatible sessions this means spawn_agent plus the harness wait lifecycle; close only when that API exists. Record a capability blocker before any explicit CLI fallback.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact and continue through its safe fallback order. In Codex-compatible native sessions use spawn_agent plus the harness wait lifecycle; in Orca use verified terminals; otherwise use the registered CLI or serial controller fallback.',
             recordCompletion: 'Record worker outcomes with ospec execute complete <task-id> and one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
         },
         claude: {
@@ -205,7 +209,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Use the available file edit tool with narrow diffs and keep packet target files as the default scope.',
             runCommands: 'Use shell commands only for explicit verification or inspection, then record OSpec evidence artifacts.',
             trackPlan: 'Use the local plan/task tracking tool if present, but keep artifacts/agents/task-graph.json as the durable source of truth.',
-            dispatchWorkers: 'Default to Claude Code Task dispatch with general-purpose subagents. Dispatch one Task per safe packet and keep independent Tasks parallel when the harness supports it. Use CLI fallback only if Task/subagent dispatch is unavailable.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact. Use Claude Code Task when native capability is current, otherwise continue to the registered Claude CLI or safe serial fallback; parallelize only when the selected adapter permits it.',
             recordCompletion: 'Update review/evidence artifacts and run ospec execute complete or ospec execute sync after each worker or reviewer result.',
         },
         gemini: {
@@ -214,7 +218,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Use Gemini native subagents for implementation work; keep target files scoped to the packet.',
             runCommands: 'Let the subagent run task verification through Gemini CLI tools and report exact command results.',
             trackPlan: 'Keep Gemini task tracking secondary to artifacts/agents/task-graph.json and worker-status.md.',
-            dispatchWorkers: 'Default to Gemini CLI native subagents via @generalist with the filled worker prompt. Request multiple independent @generalist tasks together for parallel dispatch. Use CLI fallback only when @ subagents are unavailable.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact. Use @generalist when native capability is current, otherwise use the registered Gemini CLI or safe serial fallback; parallelize only when the selected adapter permits it.',
             recordCompletion: 'Record each @generalist result with ospec execute complete, using NEEDS_CONTEXT or BLOCKED when the subagent escalates.',
         },
         opencode: {
@@ -223,7 +227,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Use OpenCode native @mention agent dispatch for scoped worker edits; keep packet target files as the default write set.',
             runCommands: 'Let the OpenCode agent run only required verification and return evidence.',
             trackPlan: 'Keep OpenCode task state secondary to OSpec artifacts.',
-            dispatchWorkers: 'Default to OpenCode native @mention subagent dispatch. Dispatch independent packets in parallel when safe. Use CLI fallback only when the OpenCode agent mechanism is unavailable.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact. Use native @mention when available, otherwise continue to the registered OpenCode CLI or safe serial fallback.',
             recordCompletion: 'Record each native agent result with ospec execute complete and sync worker status.',
         },
         cursor: {
@@ -232,7 +236,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Use Cursor Agent or task/chat handoff for scoped edits; keep packet target files as the default write set.',
             runCommands: 'Run only packet verification commands through the Cursor-controlled terminal or record why they could not run.',
             trackPlan: 'Keep Cursor plan/chat state secondary to artifacts/agents/task-graph.json and worker-status.md.',
-            dispatchWorkers: 'Default to Cursor-native agent/task handoff when available. Use one worker context per dispatch packet and use CLI fallback only when Cursor cannot run a separate agent context.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact. Use Cursor-native agent/task handoff only when its current capability is verified; otherwise continue through the safe adapter fallback order.',
             recordCompletion: 'Record Cursor worker results with ospec execute complete, and use NEEDS_CONTEXT or BLOCKED when the agent needs a user or environment decision.',
         },
         copilot: {
@@ -241,7 +245,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Use Copilot coding-agent/task context for scoped edits; keep packet target files as the default write set.',
             runCommands: 'Run packet verification commands only when the Copilot harness exposes an approved terminal or CI handoff.',
             trackPlan: 'Keep Copilot task state secondary to OSpec artifacts and record every accepted result back into OSpec.',
-            dispatchWorkers: 'Default to Copilot-native task/agent handoff when available. Use CLI fallback only when the current Copilot surface lacks a native task mechanism.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact. Use Copilot-native task/agent handoff only when its current capability is verified; otherwise continue through the safe adapter fallback order.',
             recordCompletion: 'Record Copilot results with ospec execute complete and keep review/verification evidence aligned.',
         },
         shell: {
@@ -250,7 +254,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Edit only the files listed in the packet unless you update the task graph or record a concern.',
             runCommands: 'Run the listed verification commands yourself; OSpec evidence commands record results after commands have already run.',
             trackPlan: 'Use artifacts/agents/task-graph.json, worker-status.md, and verification.md as the manual progress ledger.',
-            dispatchWorkers: 'Shell has no native subagent API. Use this target only as the fallback path after confirming the current AI harness cannot dispatch native agents.',
+            dispatchWorkers: 'Shell has no native subagent API. Runtime adapter resolution keeps ordinary work serial and blocks independent review when no independent executor is available.',
             recordCompletion: 'Use ospec execute complete, review, tdd, debug, verify, and sync to record outcomes.',
         },
         generic: {
@@ -259,7 +263,7 @@ function buildWorkerTargetToolMapping(target) {
             editFiles: 'Keep edits scoped to the task packet and record deviations as concerns.',
             runCommands: 'Run required verification outside OSpec, then record the result as evidence.',
             trackPlan: 'Treat OSpec artifacts as the durable state layer even when another tool has its own local plan.',
-            dispatchWorkers: 'Default to the current harness native Task/subagent/agent mechanism if present; only fall back to CLI command execution when no native agent mechanism is available.',
+            dispatchWorkers: 'Follow runtimeAdapter from the launch artifact and its verified fallback order; never infer an adapter from a process name or claim parallel execution from the serial generic fallback.',
             recordCompletion: 'Record every task, review, verification, TDD, or debug result back into OSpec artifacts.',
         },
     };
@@ -523,8 +527,9 @@ function taskPathModuleKey(filePath) {
     return `${normalizedParent}/${baseName}`;
 }
 class TaskGraphExecutionService {
-    constructor(fileService) {
+    constructor(fileService, runtimeAdapterService = new RuntimeExecutionAdapterService_1.RuntimeExecutionAdapterService()) {
         this.fileService = fileService;
+        this.runtimeAdapterService = runtimeAdapterService;
         this.reportDocumentLanguageCache = new Map();
     }
     async getReport(changePath) {
@@ -718,7 +723,7 @@ class TaskGraphExecutionService {
         const changeRelativeToGit = path.relative(projectRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
         const outsideCurrentChange = (entry) => {
             const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
-            return files.some(file => file !== changeRelativeToGit && !file.startsWith(`${changeRelativeToGit}/`));
+            return files.some(file => !this.isGoalWorkspaceControlPath(file, changeRelativeToGit));
         };
         const workspaceDirtyAtDispatch = gitSnapshot
             ? parseGitStatusV2Entries(gitStatusResult.stdout).some(outsideCurrentChange)
@@ -780,12 +785,12 @@ class TaskGraphExecutionService {
         // Fold the launch step into dispatch for a single task: generate its native agent launch
         // plan now so the controller can spawn the worker directly without a separate
         // `ospec execute launch` round-trip. Batches keep per-task launch (one plan file per task).
-        let nextInstruction = `Run ospec execute launch for each active dispatch, start native harness worker agent(s) from the launch plan, then record results with ospec execute complete <task-id>. Use CLI fallback only when native subagents are unavailable.`;
+        let nextInstruction = `Run ospec execute launch for each active dispatch, execute each packet with runtimeAdapter.selected, then record results with ospec execute complete <task-id>. Continue through runtimeAdapter.fallbackOrder if a preferred adapter fails before launch.`;
         if (createdDispatches.length === 1) {
             try {
                 await this.planLaunchUnlocked(resolvedChangePath, { taskId: createdDispatches[0].taskId });
                 const launchReportPath = this.toChangeRelativePath(resolvedChangePath, this.getLaunchPlanReportPath(resolvedChangePath));
-                nextInstruction = `Launch plan for ${createdDispatches[0].taskId} is already generated at ${launchReportPath} (no separate ospec execute launch step needed). Start the native harness worker agent directly from it, then record the result with ospec execute complete ${createdDispatches[0].taskId}. Use CLI fallback only when native subagents are unavailable.`;
+                nextInstruction = `Launch plan for ${createdDispatches[0].taskId} is already generated at ${launchReportPath} (no separate ospec execute launch step needed). Execute runtimeAdapter.selected directly from it, then record the result with ospec execute complete ${createdDispatches[0].taskId}; use the recorded fallback order if launch fails before ownership is claimed.`;
             }
             catch {
                 // Keep the manual launch instruction if the launch plan could not be prepared.
@@ -933,6 +938,22 @@ class TaskGraphExecutionService {
                 launchPrompt,
             })
             : null;
+        const runtimeAdapter = selected
+            ? this.runtimeAdapterService.resolve({
+                projectRoot,
+                target,
+                capability: await this.readRuntimeHarnessCapability(resolvedChangePath, target),
+                requiresIndependentWorker: profile?.capabilityTier === 'specialist-review'
+                    || /review/i.test(selected.workerRole),
+                cacheFilePath: path.join(resolvedChangePath, 'artifacts', 'agents', RUNTIME_ADAPTER_CACHE_FILE),
+            })
+            : null;
+        if (runtimeAdapter) {
+            warnings.push(...runtimeAdapter.warnings);
+            if (runtimeAdapter.blocked) {
+                blockers.push('No safe runtime execution adapter is available for this worker. Install or expose a supported adapter, report a current native harness capability, or choose a non-strict fallback.');
+            }
+        }
         const primitive = (0, CapabilityProbeService_1.normalizeAgentPrimitive)(options.primitive);
         const loopPlan = (selected && primitive !== 'subagent')
             ? this.buildLaunchLoopPlan({
@@ -950,7 +971,7 @@ class TaskGraphExecutionService {
         }
         const status = blockers.length > 0 ? 'blocked' : 'ready';
         const nextInstruction = status === 'ready'
-            ? `Review ${this.toChangeRelativePath(resolvedChangePath, reportPath)}, dispatch the ${target} worker with the current harness native agent mechanism, then record the result with ospec execute complete ${selected?.taskId || '<task-id>'} ${this.quoteShellArg(relativeChangePath)} --dispatch ${selected?.id || '<dispatch-id>'} --status DONE --summary "...". Use CLI fallback only if native subagents are unavailable.`
+            ? `Review ${this.toChangeRelativePath(resolvedChangePath, reportPath)}, dispatch the ${target} worker with runtime adapter ${runtimeAdapter?.selectedAdapterId || 'unresolved'}, then record the result with ospec execute complete ${selected?.taskId || '<task-id>'} ${this.quoteShellArg(relativeChangePath)} --dispatch ${selected?.id || '<dispatch-id>'} --status DONE --summary "...". If the preferred adapter becomes unavailable before launch, continue through runtimeAdapter.fallbackOrder without relaunching completed work.`
             : `Resolve launch blockers, then rerun ospec execute launch ${this.quoteShellArg(relativeChangePath)}${options.taskId ? ` --task ${this.quoteShellArg(options.taskId)}` : ''} --target ${target}.`;
         const artifact = {
             version: '1.0',
@@ -977,6 +998,7 @@ class TaskGraphExecutionService {
             },
             selectedDispatch: selected,
             nativeAgent,
+            runtimeAdapter,
             launchCommands,
             launchPrompt,
             blockers,
@@ -997,11 +1019,30 @@ class TaskGraphExecutionService {
             dispatchId: selected?.id || null,
             loopPlan,
             nativeAgent,
+            runtimeAdapter,
             launchCommands,
             blockers,
             warnings,
             nextInstruction,
         };
+    }
+    async readRuntimeHarnessCapability(changePath, target) {
+        const loopConfigPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
+        if (await this.fileService.exists(loopConfigPath)) {
+            try {
+                const config = await this.fileService.readJSON(loopConfigPath);
+                if (config.capability && (!config.target || config.target === target)) {
+                    return config.capability;
+                }
+            }
+            catch {
+                // Fall through to current environment signals; diagnostics are captured by the resolver.
+            }
+        }
+        return new CapabilityProbeService_1.CapabilityProbeService().resolveHarnessCapability({
+            target,
+            primitive: 'subagent',
+        });
     }
     /**
      * Build the loop/agent-primitive plan for a goal|loop launch (Execution-Model Contracts 1–3).
@@ -1232,7 +1273,7 @@ class TaskGraphExecutionService {
             changePath: resolvedChangePath,
             retryRecord,
             dispatch,
-            nextInstruction: `Retry dispatch created for ${taskId}. Run ospec execute launch ${this.quoteShellArg(this.toProjectRelativeChangePath(await this.findProjectRootForOptionalSession(resolvedChangePath), resolvedChangePath))} --task ${this.quoteShellArg(taskId)}, then start the worker through the current harness native agent mechanism. Use --run --command only as CLI fallback if native subagents are unavailable.`,
+            nextInstruction: `Retry dispatch created for ${taskId}. Run ospec execute launch ${this.quoteShellArg(this.toProjectRelativeChangePath(await this.findProjectRootForOptionalSession(resolvedChangePath), resolvedChangePath))} --task ${this.quoteShellArg(taskId)}, then execute runtimeAdapter.selected and continue through its fallback order only if launch fails before ownership is claimed.`,
         };
     }
     async orchestrate(changePath, options = {}) {
@@ -1791,8 +1832,21 @@ class TaskGraphExecutionService {
         const warnings = [...projectSession.warnings];
         const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
         const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
-        if (loopControllerSession.controllerMode && !loopControllerSession.current) {
-            throw new Error('Cannot dispatch a code review with an expired or unavailable IDE controller capability session. Refresh the goal harness capability first.');
+        const controllerReviewAdapter = loopControllerSession.controllerMode
+            ? this.runtimeAdapterService.resolve({
+                projectRoot,
+                target: loopControllerSession.target,
+                capability: loopControllerSession.capability,
+                requiresIndependentWorker: true,
+                cacheFilePath: path.join(resolvedChangePath, 'artifacts', 'agents', RUNTIME_ADAPTER_CACHE_FILE),
+            })
+            : null;
+        if (controllerReviewAdapter?.blocked || (controllerReviewAdapter && !controllerReviewAdapter.selected)) {
+            const reasons = controllerReviewAdapter.candidates
+                .filter(candidate => !candidate.available)
+                .map(candidate => `${candidate.id}: ${candidate.reason}`)
+                .join('; ');
+            warnings.push(`No automated independent runtime adapter is available for code review; use an independent human reviewer. ${reasons}`);
         }
         // Per-task review is a single combined code review (spec compliance + code quality in one pass).
         if (taskReview) {
@@ -1833,8 +1887,13 @@ class TaskGraphExecutionService {
                 targetFiles,
                 targetSnapshots,
                 targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
-                requiresNativeExecutorProvenance: loopControllerSession.current,
-                controllerSessionReportedAt: loopControllerSession.current ? loopControllerSession.reportedAt : null,
+                runtimeAdapter: controllerReviewAdapter,
+                // A controller review with an executable independent adapter must
+                // be bound to a Loop action before its decision becomes valid.
+                // Manual review remains available when no adapter can be resolved.
+                requiresExecutorProvenance: Boolean(controllerReviewAdapter?.selected),
+                requiresNativeExecutorProvenance: false,
+                controllerSessionReportedAt: null,
             };
             if (record.workerProfile.modelSelectionSource === 'harness-default') {
                 warnings.push(`Review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
@@ -1925,8 +1984,10 @@ class TaskGraphExecutionService {
             targetFiles,
             targetSnapshots,
             targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
-            requiresNativeExecutorProvenance: loopControllerSession.current,
-            controllerSessionReportedAt: loopControllerSession.current ? loopControllerSession.reportedAt : null,
+            runtimeAdapter: controllerReviewAdapter,
+            requiresExecutorProvenance: Boolean(controllerReviewAdapter?.selected),
+            requiresNativeExecutorProvenance: false,
+            controllerSessionReportedAt: null,
         };
         if (record.workerProfile.modelSelectionSource === 'harness-default') {
             warnings.push(`Final review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
@@ -1983,18 +2044,26 @@ class TaskGraphExecutionService {
             if (record.id !== options.dispatchId)
                 throw new Error(`Review dispatch identity mismatch for ${options.dispatchId}.`);
             await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
-            const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
-            if (!controllerSession.current || controllerSession.reportedAt !== options.controllerSessionReportedAt) {
-                throw new Error(`Review dispatch ${options.dispatchId} does not match the current IDE controller session.`);
+            const selected = options.runtimeAdapter.selected;
+            if (!selected || !selected.available || !selected.verified || selected.kind === 'generic') {
+                throw new Error(`Review dispatch ${options.dispatchId} requires a verified independent runtime adapter.`);
+            }
+            if (selected.kind === 'native') {
+                const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
+                if (!controllerSession.current || controllerSession.reportedAt !== options.controllerSessionReportedAt) {
+                    throw new Error(`Review dispatch ${options.dispatchId} does not match the current IDE controller session.`);
+                }
             }
             if ((record.loopActionId && record.loopActionId !== options.actionId)
                 || (record.loopActionItemId && record.loopActionItemId !== options.actionItemId)) {
                 throw new Error(`Review dispatch ${options.dispatchId} is already bound to another Loop action.`);
             }
-            record.requiresNativeExecutorProvenance = true;
+            record.runtimeAdapter = options.runtimeAdapter;
+            record.requiresExecutorProvenance = true;
+            record.requiresNativeExecutorProvenance = selected.kind === 'native';
             record.loopActionId = options.actionId;
             record.loopActionItemId = options.actionItemId;
-            record.controllerSessionReportedAt = options.controllerSessionReportedAt;
+            record.controllerSessionReportedAt = selected.kind === 'native' ? options.controllerSessionReportedAt : null;
             record.reviewerExecutorId = null;
             record.reviewerClaimedAt = null;
             record.reviewerCompletedAt = null;
@@ -2010,9 +2079,11 @@ class TaskGraphExecutionService {
             const record = await this.fileService.readJSON(recordPath);
             this.assertReviewLoopBinding(record, options);
             await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
-            const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
-            if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
-                throw new Error(`Review dispatch ${options.dispatchId} executor claim does not match the current IDE controller session.`);
+            if (record.requiresNativeExecutorProvenance) {
+                const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
+                if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
+                    throw new Error(`Review dispatch ${options.dispatchId} executor claim does not match the current IDE controller session.`);
+                }
             }
             if (record.reviewerExecutorId && record.reviewerExecutorId !== options.executorId) {
                 throw new Error(`Review dispatch ${options.dispatchId} is claimed by another executor.`);
@@ -2030,9 +2101,11 @@ class TaskGraphExecutionService {
             const record = await this.fileService.readJSON(recordPath);
             this.assertReviewLoopBinding(record, options);
             await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
-            const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
-            if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
-                throw new Error(`Review dispatch ${options.dispatchId} completion does not match the current IDE controller session.`);
+            if (record.requiresNativeExecutorProvenance) {
+                const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
+                if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
+                    throw new Error(`Review dispatch ${options.dispatchId} completion does not match the current IDE controller session.`);
+                }
             }
             if (!record.reviewerExecutorId || record.reviewerExecutorId !== options.executorId) {
                 throw new Error(`Review dispatch ${options.dispatchId} completion does not match its claimed executor.`);
@@ -2062,6 +2135,7 @@ class TaskGraphExecutionService {
             ...(review.data || {}),
             loop_action_id: record.loopActionId || null,
             loop_action_item_id: record.loopActionItemId || null,
+            runtime_adapter_id: record.runtimeAdapter?.selectedAdapterId || null,
             controller_session_reported_at: record.controllerSessionReportedAt || null,
             reviewer_executor_id: record.reviewerExecutorId || null,
             reviewer_claimed_at: record.reviewerClaimedAt || null,
@@ -2266,6 +2340,9 @@ class TaskGraphExecutionService {
         if (options.skip && selectedOptionId) {
             throw new Error('Decision cannot combine --skip with --select.');
         }
+        if ((selectedOptionId || options.skip) && options.answeredBy !== 'user') {
+            throw new Error('Selecting or skipping a user decision requires --answered-by user provenance.');
+        }
         const required = options.required ?? existing?.required ?? true;
         const status = selectedOptionId
             ? 'SELECTED'
@@ -2288,6 +2365,7 @@ class TaskGraphExecutionService {
             createdAt: existing?.createdAt || now,
             updatedAt: now,
             selectedAt: selectedOptionId || options.skip ? now : existing?.selectedAt || null,
+            answeredBy: selectedOptionId || options.skip ? 'user' : existing?.answeredBy || null,
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
             nextInstruction: '',
@@ -2336,13 +2414,107 @@ class TaskGraphExecutionService {
         const now = new Date().toISOString();
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
         const warnings = [...projectSession.warnings];
+        const reusableEvidence = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
+        if (reusableEvidence.ready) {
+            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+            const record = await this.fileService.readJSON(recordPath);
+            warnings.push(`${target.label} already approves the current document hash; reused existing review ${record.id}.`);
+            await this.appendDocumentReviewRunMetric(resolvedChangePath, {
+                stage,
+                dispatchId: record.id,
+                cacheHit: true,
+                cacheSource: 'current',
+                durationMs: 0,
+            });
+            return {
+                changePath: resolvedChangePath,
+                dispatch: record,
+                projectSession,
+                warnings,
+                reused: true,
+                nextInstruction: stage === 'design'
+                    ? 'The current design review remains valid. Continue with the implementation plan review.'
+                    : 'The current implementation plan review remains valid. Continue with task graph and workspace readiness checks.',
+            };
+        }
+        const restoredFromCache = await this.restoreDocumentReviewCache(resolvedChangePath, stage, documentHash);
+        if (restoredFromCache) {
+            const restoredEvidence = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
+            if (restoredEvidence.ready) {
+                warnings.push(`${target.label} approval was restored from the immutable document-hash cache.`);
+                await this.appendDocumentReviewRunMetric(resolvedChangePath, {
+                    stage,
+                    dispatchId: restoredFromCache.id,
+                    cacheHit: true,
+                    cacheSource: 'immutable',
+                    durationMs: 0,
+                });
+                return {
+                    changePath: resolvedChangePath,
+                    dispatch: restoredFromCache,
+                    projectSession,
+                    warnings,
+                    reused: true,
+                    nextInstruction: stage === 'design'
+                        ? 'The cached design review remains valid. Continue with the implementation plan review.'
+                        : 'The cached implementation plan review remains valid. Continue with task graph and workspace readiness checks.',
+                };
+            }
+        }
         const riskSignals = await this.assessDocumentReviewRisk(resolvedChangePath, stage);
         const mode = executionPolicy.documentReviewPolicy === 'adaptive' && riskSignals.length === 0
             ? 'inline_preflight'
             : 'specialist';
         const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
-        if (mode === 'specialist' && loopControllerSession.controllerMode && !loopControllerSession.current) {
-            throw new Error('Cannot dispatch a specialist document review with an expired or unavailable IDE controller capability session. Refresh the goal harness capability first.');
+        const runtimeAdapter = mode === 'specialist' && loopControllerSession.executionModel
+            ? this.runtimeAdapterService.resolve({
+                projectRoot,
+                target: loopControllerSession.target,
+                capability: loopControllerSession.capability,
+                preference: loopControllerSession.executionModel === 'cli-driven' ? 'cli' : undefined,
+                strict: loopControllerSession.executionModel === 'cli-driven' ? true : undefined,
+                requiresIndependentWorker: true,
+                cacheFilePath: path.join(resolvedChangePath, 'artifacts', 'agents', RUNTIME_ADAPTER_CACHE_FILE),
+            })
+            : null;
+        if (runtimeAdapter?.blocked || (runtimeAdapter && !runtimeAdapter.selected)) {
+            const reasons = runtimeAdapter.candidates
+                .filter(candidate => !candidate.available)
+                .map(candidate => `${candidate.id}: ${candidate.reason}`)
+                .join('; ');
+            warnings.push(`No automated independent runtime adapter is available for ${target.label}; use an independent human reviewer. ${reasons}`);
+        }
+        if (mode === 'specialist' && !options.force) {
+            const pendingReview = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            const pendingDispatchId = String(pendingReview.data?.review_dispatch_id || '').trim();
+            const pendingDecision = this.normalizeReviewRunDecision(pendingReview.data?.decision);
+            if (pendingDispatchId && this.toFileSafeId(pendingDispatchId) === pendingDispatchId && pendingDecision === 'PENDING') {
+                const pendingRecordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${pendingDispatchId}.json`);
+                if (await this.fileService.exists(pendingRecordPath)) {
+                    const pendingRecord = await this.fileService.readJSON(pendingRecordPath);
+                    const sameAdapter = (pendingRecord.runtimeAdapter?.selectedAdapterId || null) === (runtimeAdapter?.selectedAdapterId || null)
+                        && Boolean(pendingRecord.runtimeAdapter?.blocked) === Boolean(runtimeAdapter?.blocked);
+                    if (pendingRecord.id === pendingDispatchId
+                        && pendingRecord.stage === stage
+                        && pendingRecord.documentHash === documentHash
+                        && pendingRecord.status === 'DISPATCHED'
+                        && sameAdapter) {
+                        await this.assertCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), pendingDispatchId);
+                        warnings.push(`${target.label} already has a current pending dispatch; reused ${pendingDispatchId} instead of creating duplicate review work.`);
+                        return {
+                            changePath: resolvedChangePath,
+                            dispatch: pendingRecord,
+                            projectSession,
+                            warnings,
+                            reused: false,
+                            pendingReused: true,
+                            nextInstruction: this.buildDocumentReviewNextInstruction(pendingRecord, target),
+                        };
+                    }
+                }
+            }
         }
         const workerProfile = buildReviewerWorkerProfile(target.reviewerRole, executionPolicy.modelProfiles);
         if (mode === 'specialist' && workerProfile.modelSelectionSource === 'harness-default') {
@@ -2368,10 +2540,15 @@ class TaskGraphExecutionService {
             policy: executionPolicy.documentReviewPolicy,
             riskSignals,
             workerProfile,
-            requiresNativeExecutorProvenance: mode === 'specialist' && loopControllerSession.current,
-            controllerSessionReportedAt: mode === 'specialist' && loopControllerSession.current ? loopControllerSession.reportedAt : null,
+            runtimeAdapter,
+            requiresExecutorProvenance: mode === 'specialist' && Boolean(runtimeAdapter?.selected),
+            requiresNativeExecutorProvenance: mode === 'specialist' && runtimeAdapter?.selected?.kind === 'native',
+            controllerSessionReportedAt: mode === 'specialist' && runtimeAdapter?.selected?.kind === 'native'
+                ? loopControllerSession.reportedAt
+                : null,
             reviewerExecutorId: null,
             reviewerClaimedAt: null,
+            reviewerHeartbeatAt: null,
             reviewerCompletedAt: null,
             reviewerSucceeded: null,
         };
@@ -2383,9 +2560,11 @@ class TaskGraphExecutionService {
             document_hash: documentHash,
             review_policy: executionPolicy.documentReviewPolicy,
             review_mode: mode,
+            runtime_adapter_id: record.runtimeAdapter?.selectedAdapterId || null,
             controller_session_reported_at: record.controllerSessionReportedAt || null,
             reviewer_executor_id: null,
             reviewer_claimed_at: null,
+            reviewer_heartbeat_at: null,
             reviewer_completed_at: null,
             reviewer_succeeded: null,
         };
@@ -2425,6 +2604,16 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(recordPath, record);
         await this.setCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), reviewId);
         await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
+        await this.appendDocumentReviewRunMetric(resolvedChangePath, {
+            stage,
+            dispatchId: record.id,
+            cacheHit: false,
+            cacheSource: null,
+            durationMs: null,
+        });
+        if (mode === 'inline_preflight') {
+            await this.cacheDocumentReviewApproval(resolvedChangePath, record);
+        }
         await this.recordExecutionMetric(resolvedChangePath, feature, [{
                 kind: 'review_packet',
                 id: reviewId,
@@ -2443,27 +2632,36 @@ class TaskGraphExecutionService {
             dispatch: record,
             projectSession,
             warnings,
-            nextInstruction: mode === 'inline_preflight'
-                ? stage === 'design'
-                    ? 'Adaptive design preflight approved the low-risk document. Run ospec execute doc-review [change-path] --stage plan.'
-                    : 'Adaptive implementation plan preflight approved the low-risk document. Derive or refresh artifacts/agents/task-graph.json.'
-                : record.requiresNativeExecutorProvenance
-                    ? `Spawn one fresh native ${target.reviewerRole} child, immediately run ospec execute doc-review [change-path] --stage ${stage} --claim-executor <child-id>, wait for its review artifacts, then run ospec execute doc-review [change-path] --stage ${stage} --complete-executor <child-id>.`
-                    : stage === 'design'
-                        ? 'Hand the design review packet to a reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
-                        : 'Hand the implementation plan review packet to a reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.',
+            reused: false,
+            pendingReused: false,
+            nextInstruction: this.buildDocumentReviewNextInstruction(record, target),
         };
+    }
+    buildDocumentReviewNextInstruction(record, target) {
+        if (record.mode === 'inline_preflight') {
+            return record.stage === 'design'
+                ? 'Adaptive design preflight approved the low-risk document. Run ospec execute doc-review [change-path] --stage plan.'
+                : 'Adaptive implementation plan preflight approved the low-risk document. Derive or refresh artifacts/agents/task-graph.json.';
+        }
+        if (record.requiresExecutorProvenance) {
+            return `Execute one fresh independent ${target.reviewerRole} with runtime adapter ${record.runtimeAdapter?.selectedAdapterId}, immediately run ospec execute doc-review [change-path] --stage ${record.stage} --claim-executor <executor-id>, wait for its review artifacts, then run ospec execute doc-review [change-path] --stage ${record.stage} --complete-executor <executor-id>.`;
+        }
+        return record.stage === 'design'
+            ? 'Hand the design review packet to an independent reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
+            : 'Hand the implementation plan review packet to an independent reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.';
     }
     async claimDocumentReviewExecutor(changePath, stage, executorId) {
         return this.withTaskGraphMutationLease(changePath, async () => {
             const resolvedChangePath = path.resolve(changePath);
             const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
-            if (!record.requiresNativeExecutorProvenance || !record.controllerSessionReportedAt) {
-                throw new Error(`Document review ${record.id} does not require a native controller executor claim.`);
+            if (!record.requiresExecutorProvenance && !record.requiresNativeExecutorProvenance) {
+                throw new Error(`Document review ${record.id} does not require an executor claim.`);
             }
-            const session = await this.readLoopControllerSession(resolvedChangePath);
-            if (!session.current || session.reportedAt !== record.controllerSessionReportedAt) {
-                throw new Error('Document review executor claim does not match the current IDE controller session.');
+            if (record.requiresNativeExecutorProvenance) {
+                const session = await this.readLoopControllerSession(resolvedChangePath);
+                if (!session.current || session.reportedAt !== record.controllerSessionReportedAt) {
+                    throw new Error('Document review executor claim does not match the current IDE controller session.');
+                }
             }
             const normalizedExecutor = String(executorId || '').trim();
             if (!normalizedExecutor)
@@ -2471,8 +2669,33 @@ class TaskGraphExecutionService {
             if (record.reviewerExecutorId && record.reviewerExecutorId !== normalizedExecutor) {
                 throw new Error(`Document review ${record.id} is already claimed by another executor.`);
             }
+            if (record.requiresNativeExecutorProvenance && record.controllerSessionReportedAt) {
+                await this.extendDocumentReviewControllerSession(resolvedChangePath, record.controllerSessionReportedAt);
+            }
             record.reviewerExecutorId = normalizedExecutor;
             record.reviewerClaimedAt = record.reviewerClaimedAt || new Date().toISOString();
+            record.reviewerHeartbeatAt = new Date().toISOString();
+            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
+            await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
+            return record;
+        });
+    }
+    async heartbeatDocumentReviewExecutor(changePath, stage, executorId) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
+            const normalizedExecutor = String(executorId || '').trim();
+            if ((!record.requiresExecutorProvenance && !record.requiresNativeExecutorProvenance)
+                || !record.reviewerExecutorId
+                || record.reviewerExecutorId !== normalizedExecutor
+                || !record.reviewerClaimedAt
+                || record.reviewerCompletedAt) {
+                throw new Error(`Document review ${record.id} heartbeat does not match its active claimed executor.`);
+            }
+            if (record.requiresNativeExecutorProvenance && record.controllerSessionReportedAt) {
+                await this.extendDocumentReviewControllerSession(resolvedChangePath, record.controllerSessionReportedAt);
+            }
+            record.reviewerHeartbeatAt = new Date().toISOString();
             await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
             await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
             return record;
@@ -2483,20 +2706,30 @@ class TaskGraphExecutionService {
             const resolvedChangePath = path.resolve(changePath);
             const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
             const normalizedExecutor = String(executorId || '').trim();
-            if (!record.requiresNativeExecutorProvenance
+            if ((!record.requiresExecutorProvenance && !record.requiresNativeExecutorProvenance)
                 || !record.reviewerExecutorId
                 || record.reviewerExecutorId !== normalizedExecutor
                 || !record.reviewerClaimedAt) {
-                throw new Error(`Document review ${record.id} completion does not match its claimed native executor.`);
+                throw new Error(`Document review ${record.id} completion does not match its claimed executor.`);
             }
-            const session = await this.readLoopControllerSession(resolvedChangePath);
-            if (!session.current || session.reportedAt !== record.controllerSessionReportedAt) {
-                throw new Error('Document review completion does not match the current IDE controller session.');
+            const completedAt = new Date().toISOString();
+            if (record.requiresNativeExecutorProvenance && record.controllerSessionReportedAt) {
+                await this.extendDocumentReviewControllerSession(resolvedChangePath, record.controllerSessionReportedAt);
             }
-            record.reviewerCompletedAt = new Date().toISOString();
+            await this.validateDocumentReviewCompletionArtifact(resolvedChangePath, record, completedAt);
+            record.reviewerCompletedAt = completedAt;
+            record.reviewerHeartbeatAt = completedAt;
             record.reviewerSucceeded = true;
             await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
             await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
+            await this.cacheDocumentReviewApproval(resolvedChangePath, record);
+            await this.appendDocumentReviewRunMetric(resolvedChangePath, {
+                stage,
+                dispatchId: record.id,
+                cacheHit: false,
+                cacheSource: null,
+                durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(record.assignedAt)),
+            });
             return record;
         });
     }
@@ -2524,13 +2757,136 @@ class TaskGraphExecutionService {
         }
         review.data = {
             ...(review.data || {}),
+            runtime_adapter_id: record.runtimeAdapter?.selectedAdapterId || null,
             controller_session_reported_at: record.controllerSessionReportedAt || null,
             reviewer_executor_id: record.reviewerExecutorId || null,
             reviewer_claimed_at: record.reviewerClaimedAt || null,
+            reviewer_heartbeat_at: record.reviewerHeartbeatAt || null,
             reviewer_completed_at: record.reviewerCompletedAt || null,
             reviewer_succeeded: record.reviewerSucceeded,
         };
         await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, review.data));
+    }
+    async extendDocumentReviewControllerSession(changePath, expectedReportedAt) {
+        const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
+        const config = await this.fileService.readJSON(configPath);
+        const capability = config?.capability;
+        const now = new Date();
+        if (config?.executionModel !== 'controller'
+            || capability?.controllerAvailable !== true
+            || String(capability?.reportedAt || '') !== expectedReportedAt
+            || !Number.isFinite(Date.parse(String(capability?.expiresAt || '')))
+            || Date.parse(String(capability.expiresAt)) <= now.getTime()) {
+            throw new Error('Document review does not match a current IDE controller session.');
+        }
+        capability.expiresAt = new Date(now.getTime() + CapabilityProbeService_1.DEFAULT_CAPABILITY_SESSION_TTL_MS).toISOString();
+        await this.fileService.writeJSON(configPath, config);
+    }
+    async validateDocumentReviewCompletionArtifact(changePath, record, completedAt) {
+        const documentPath = path.resolve(changePath, record.documentPath);
+        const currentHash = this.hashMeaningfulDocumentation(await this.fileService.readFile(documentPath));
+        if (currentHash !== record.documentHash) {
+            throw new Error(`Document review ${record.id} cannot complete because the reviewed document changed.`);
+        }
+        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        if (String(review.data?.review_dispatch_id || '') !== record.id) {
+            throw new Error(`Document review ${record.id} cannot complete because its artifact names another dispatch.`);
+        }
+        const decision = this.normalizeReviewRunDecision(review.data?.decision);
+        if (decision === 'PENDING') {
+            throw new Error(`Document review ${record.id} cannot complete while its decision is PENDING.`);
+        }
+        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+        if (!(await this.fileService.exists(findingsPath))) {
+            throw new Error(`Document review ${record.id} structured findings are missing.`);
+        }
+        const findings = await this.fileService.readJSON(findingsPath);
+        if (!Array.isArray(findings.findings)) {
+            throw new Error(`Document review ${record.id} structured findings are invalid.`);
+        }
+        review.data = {
+            ...(review.data || {}),
+            status: 'reviewed',
+            reviewed_at: completedAt,
+        };
+        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, review.data));
+    }
+    getDocumentReviewCachePaths(changePath, stage, documentHash) {
+        const base = path.join(changePath, 'artifacts', 'reviews', DOCUMENT_REVIEW_CACHE_DIR, stage, documentHash);
+        return { reviewPath: `${base}.md`, findingsPath: `${base}.findings.json` };
+    }
+    async cacheDocumentReviewApproval(changePath, record) {
+        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
+        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+        if (!(await this.fileService.exists(reviewArtifactPath)) || !(await this.fileService.exists(findingsPath)))
+            return;
+        const cache = this.getDocumentReviewCachePaths(changePath, record.stage, record.documentHash);
+        if (!(await this.fileService.exists(cache.reviewPath))) {
+            await this.fileService.copy(reviewArtifactPath, cache.reviewPath);
+        }
+        if (!(await this.fileService.exists(cache.findingsPath))) {
+            await this.fileService.copy(findingsPath, cache.findingsPath);
+        }
+    }
+    async restoreDocumentReviewCache(changePath, stage, documentHash) {
+        const cache = this.getDocumentReviewCachePaths(changePath, stage, documentHash);
+        if (!(await this.fileService.exists(cache.reviewPath)) || !(await this.fileService.exists(cache.findingsPath)))
+            return null;
+        try {
+            const cachedReview = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(cache.reviewPath));
+            const dispatchId = String(cachedReview.data?.review_dispatch_id || '').trim();
+            if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId)
+                return null;
+            const recordPath = path.join(changePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+            if (!(await this.fileService.exists(recordPath)))
+                return null;
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.id !== dispatchId || record.stage !== stage || record.documentHash !== documentHash)
+                return null;
+            const reviewArtifactPath = this.getDocumentReviewArtifactPath(changePath, stage);
+            await this.fileService.copy(cache.reviewPath, reviewArtifactPath);
+            await this.fileService.copy(cache.findingsPath, reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
+            await this.setCurrentReviewDispatch(changePath, this.documentReviewScopeKey(stage), dispatchId);
+            return record;
+        }
+        catch {
+            return null;
+        }
+    }
+    async appendDocumentReviewRunMetric(changePath, input) {
+        const runLogPath = path.join(changePath, 'artifacts', 'loop', 'run-log.jsonl');
+        if (!(await this.fileService.exists(path.dirname(runLogPath))))
+            return;
+        const entry = {
+            event: 'document_review',
+            ts: new Date().toISOString(),
+            iteration: 0,
+            trigger: 'document-review',
+            tokensEst: null,
+            exitCode: null,
+            verifyPassed: null,
+            summary: input.cacheHit
+                ? `Document review ${input.stage} reused from ${input.cacheSource} cache.`
+                : input.durationMs === null
+                    ? `Document review ${input.stage} dispatched.`
+                    : `Document review ${input.stage} completed.`,
+            costToDate: null,
+            actionId: input.dispatchId,
+            actionCount: input.durationMs === null && !input.cacheHit ? 1 : 0,
+            dispatchCount: input.durationMs === null && !input.cacheHit ? 1 : 0,
+            durationMs: input.durationMs,
+            reviewCacheHit: input.cacheHit,
+            reviewCacheSource: input.cacheSource,
+        };
+        const line = `${JSON.stringify(entry)}\n`;
+        const append = this.fileService.appendFile;
+        if (append) {
+            await append.call(this.fileService, runLogPath, line);
+            return;
+        }
+        const current = await this.fileService.exists(runLogPath) ? await this.fileService.readFile(runLogPath) : '';
+        await this.fileService.writeFile(runLogPath, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${line}`);
     }
     taskReviewScopeKey(taskId) {
         return taskId ? `task:${taskId}` : 'final';
@@ -2574,22 +2930,36 @@ class TaskGraphExecutionService {
     }
     async readLoopControllerSession(changePath) {
         const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
-        if (!(await this.fileService.exists(configPath)))
-            return { controllerMode: false, current: false, reportedAt: null };
+        if (!(await this.fileService.exists(configPath))) {
+            return { controllerMode: false, executionModel: null, current: false, reportedAt: null, target: 'generic', capability: null };
+        }
         try {
             const config = await this.fileService.readJSON(configPath);
             const controllerMode = config?.executionModel === 'controller';
+            const executionModel = controllerMode
+                ? 'controller'
+                : config?.executionModel === 'cli-driven'
+                    ? 'cli-driven'
+                    : null;
             const reportedAt = String(config?.capability?.reportedAt || '').trim() || null;
             const expiresAt = Date.parse(String(config?.capability?.expiresAt || ''));
             const current = controllerMode
                 && config?.capability?.controllerAvailable === true
+                && config?.capability?.nativeSubagentCapability === 'supported'
                 && Boolean(reportedAt)
                 && Number.isFinite(expiresAt)
                 && expiresAt > Date.now();
-            return { controllerMode, current, reportedAt };
+            return {
+                controllerMode,
+                executionModel,
+                current,
+                reportedAt,
+                target: String(config?.target || 'generic').trim().toLowerCase() || 'generic',
+                capability: config?.capability || null,
+            };
         }
         catch {
-            return { controllerMode: false, current: false, reportedAt: null };
+            return { controllerMode: false, executionModel: null, current: false, reportedAt: null, target: 'generic', capability: null };
         }
     }
     async bindVerificationLoopAction(changePath, options) {
@@ -2735,6 +3105,13 @@ class TaskGraphExecutionService {
         const now = new Date().toISOString();
         const evidencePath = this.getVerificationEvidencePath(resolvedChangePath);
         const evidence = await this.readVerificationEvidence(evidencePath, report.feature);
+        const requirements = await this.readVerificationRequirements(resolvedChangePath, report.feature);
+        const satisfies = this.normalizeVerificationRequirementIds(options.satisfies || []);
+        const knownRequirementIds = new Set(requirements.requirements.map(item => item.id));
+        const unknownRequirements = satisfies.filter(id => !knownRequirementIds.has(id));
+        if (unknownRequirements.length > 0) {
+            throw new Error(`Verification evidence references unknown requirement(s): ${unknownRequirements.join(', ')}.`);
+        }
         const evidenceId = `verification-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(status.toLowerCase())}`;
         const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_DIR, `${evidenceId}.json`);
         const reportPath = path.join(resolvedChangePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_DIR, `${evidenceId}.md`);
@@ -2765,6 +3142,7 @@ class TaskGraphExecutionService {
             loopActionItemId: loopProvenance.loopActionItemId,
             executorId: loopProvenance.executorId,
             issuanceTargetSnapshotHash: loopProvenance.issuanceTargetSnapshotHash,
+            satisfies,
         };
         evidence.records.push(record);
         evidence.status = this.deriveVerificationEvidenceStatus(evidence.records);
@@ -2779,14 +3157,88 @@ class TaskGraphExecutionService {
             await this.fileService.writeJSON(loopProvenance.actionRecordPath, actionRecord);
         }
         const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
+        const requirementStatus = await this.validateVerificationRequirements(resolvedChangePath);
         return {
             changePath: resolvedChangePath,
             evidencePath,
             workerStatusPath: workerStatusSync.workerStatusPath,
             record,
-            nextInstruction: status === 'PASSED'
-                ? 'Verification evidence is recorded. Update verification.md checklist and continue with archive gates.'
-                : 'Verification evidence is recorded with a non-passing status. Resolve the issue, rerun verification, and record a passing result before archive.',
+            nextInstruction: status === 'PASSED' && !requirementStatus.ready
+                ? `${requirementStatus.reason} Run the remaining required checks and record PASSED evidence with matching --satisfies values.`
+                : status === 'PASSED'
+                    ? 'Verification evidence is recorded. Update verification.md checklist and continue with archive gates.'
+                    : 'Verification evidence is recorded with a non-passing status. Resolve the issue, rerun verification, and record a passing result before archive.',
+        };
+    }
+    async requireVerification(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const feature = await this.readFeatureName(resolvedChangePath);
+            const id = this.toFileSafeId(options.id);
+            const description = String(options.description || '').trim();
+            if (!id)
+                throw new Error('Verification requirement requires a non-empty --id.');
+            if (!description)
+                throw new Error('Verification requirement requires a non-empty --description.');
+            const kind = this.normalizeVerificationRequirementKind(options.kind);
+            const artifact = await this.readVerificationRequirements(resolvedChangePath, feature);
+            const now = new Date().toISOString();
+            const existing = artifact.requirements.find(item => item.id === id);
+            const requirement = {
+                id,
+                kind,
+                description,
+                required: options.required !== false,
+                createdAt: existing?.createdAt || now,
+                updatedAt: now,
+            };
+            artifact.requirements = [
+                ...artifact.requirements.filter(item => item.id !== id),
+                requirement,
+            ].sort((left, right) => left.id.localeCompare(right.id));
+            artifact.updatedAt = now;
+            const artifactPath = this.getVerificationRequirementsPath(resolvedChangePath);
+            await this.fileService.writeJSON(artifactPath, artifact);
+            const status = await this.validateVerificationRequirements(resolvedChangePath);
+            return {
+                changePath: resolvedChangePath,
+                artifactPath,
+                requirement,
+                status,
+                nextInstruction: status.ready
+                    ? 'All required verification requirements have fresh passing evidence.'
+                    : `Run the required verification and record PASSED evidence with --satisfies ${id}.`,
+            };
+        });
+    }
+    async validateVerificationRequirements(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const feature = await this.readFeatureName(resolvedChangePath);
+        const artifactPath = this.getVerificationRequirementsPath(resolvedChangePath);
+        const artifact = await this.readVerificationRequirements(resolvedChangePath, feature);
+        const required = artifact.requirements.filter(item => item.required);
+        if (required.length === 0) {
+            return { ready: true, artifactPath, required: 0, satisfied: [], pending: [], reason: null };
+        }
+        const evidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
+        const satisfied = new Set();
+        for (const record of evidence.records) {
+            if (record.status !== 'PASSED' || !(await this.isPassingVerificationRecordFresh(resolvedChangePath, record)))
+                continue;
+            for (const id of this.normalizeVerificationRequirementIds(record.satisfies || []))
+                satisfied.add(id);
+        }
+        const requiredIds = required.map(item => item.id);
+        const pending = requiredIds.filter(id => !satisfied.has(id));
+        return {
+            ready: pending.length === 0,
+            artifactPath,
+            required: required.length,
+            satisfied: requiredIds.filter(id => satisfied.has(id)),
+            pending,
+            reason: pending.length > 0
+                ? `Required verification evidence is missing or stale for: ${pending.join(', ')}.`
+                : null,
         };
     }
     async recordTddEvidence(changePath, options) {
@@ -2938,9 +3390,10 @@ class TaskGraphExecutionService {
             const head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
             const statusOutput = this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '';
             const changeRelative = path.relative(gitRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
+            const projectRelative = path.relative(gitRoot, projectRoot).replace(/\\/g, '/').replace(/\/$/, '');
             const statusEntries = this.parseGitStatusEntries(statusOutput).filter(entry => {
                 const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
-                return files.some(file => file !== changeRelative && !file.startsWith(`${changeRelative}/`));
+                return files.some(file => !this.isGoalWorkspaceControlPath(file, changeRelative, projectRelative));
             });
             const worktreesOutput = this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '';
             const worktrees = this.parseGitWorktrees(worktreesOutput);
@@ -3033,28 +3486,30 @@ class TaskGraphExecutionService {
             if (record.mode === 'specialist' && !String(review.data?.reviewed_at || '').trim()) {
                 return { ready: false, reason: `${target.label} specialist review is missing reviewed_at evidence.` };
             }
-            if (record.requiresNativeExecutorProvenance) {
+            if (record.requiresExecutorProvenance || record.requiresNativeExecutorProvenance) {
                 const reviewedAtValue = review.data?.reviewed_at;
                 const reviewedAtMs = reviewedAtValue instanceof Date
                     ? reviewedAtValue.getTime()
                     : Date.parse(String(reviewedAtValue || ''));
                 const claimedAtMs = Date.parse(String(record.reviewerClaimedAt || ''));
                 const completedAtMs = Date.parse(String(record.reviewerCompletedAt || ''));
-                const validNativeProvenance = record.controllerSessionReportedAt
-                    && record.reviewerExecutorId
+                const validExecutorProvenance = record.reviewerExecutorId
                     && record.reviewerSucceeded === true
                     && Number.isFinite(reviewedAtMs)
                     && Number.isFinite(claimedAtMs)
                     && Number.isFinite(completedAtMs)
                     && reviewedAtMs >= claimedAtMs
                     && completedAtMs >= reviewedAtMs
-                    && String(review.data?.controller_session_reported_at || '') === record.controllerSessionReportedAt
+                    && (!record.requiresNativeExecutorProvenance
+                        || (record.controllerSessionReportedAt
+                            && String(review.data?.controller_session_reported_at || '') === record.controllerSessionReportedAt))
+                    && String(review.data?.runtime_adapter_id || '') === String(record.runtimeAdapter?.selectedAdapterId || '')
                     && String(review.data?.reviewer_executor_id || '') === record.reviewerExecutorId
                     && Date.parse(String(review.data?.reviewer_claimed_at || '')) === claimedAtMs
                     && Date.parse(String(review.data?.reviewer_completed_at || '')) === completedAtMs
                     && review.data?.reviewer_succeeded === true;
-                if (!validNativeProvenance) {
-                    return { ready: false, reason: `${target.label} specialist review is not bound to its claimed native child executor and controller session.` };
+                if (!validExecutorProvenance) {
+                    return { ready: false, reason: `${target.label} specialist review is not bound to its claimed runtime-adapter executor.` };
                 }
             }
             const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
@@ -3115,19 +3570,21 @@ class TaskGraphExecutionService {
                 || reviewedAtMs < assignedAtMs) {
                 return { ready: false, reason: `${label} has no valid reviewed_at at or after dispatch.` };
             }
-            if (dispatch.requiresNativeExecutorProvenance || dispatch.loopActionId) {
+            if (dispatch.requiresExecutorProvenance || dispatch.requiresNativeExecutorProvenance || dispatch.loopActionId) {
                 const claimedAtMs = Date.parse(String(dispatch.reviewerClaimedAt || ''));
                 const completedAtMs = Date.parse(String(dispatch.reviewerCompletedAt || ''));
                 const loopProvenanceMatches = dispatch.loopActionId
                     && dispatch.loopActionItemId
-                    && dispatch.controllerSessionReportedAt
                     && dispatch.reviewerExecutorId
                     && Number.isFinite(claimedAtMs)
                     && Number.isFinite(completedAtMs)
                     && dispatch.reviewerSucceeded === true
                     && String(review.data?.loop_action_id || '') === dispatch.loopActionId
                     && String(review.data?.loop_action_item_id || '') === dispatch.loopActionItemId
-                    && String(review.data?.controller_session_reported_at || '') === dispatch.controllerSessionReportedAt
+                    && (!dispatch.requiresNativeExecutorProvenance
+                        || (dispatch.controllerSessionReportedAt
+                            && String(review.data?.controller_session_reported_at || '') === dispatch.controllerSessionReportedAt))
+                    && String(review.data?.runtime_adapter_id || '') === String(dispatch.runtimeAdapter?.selectedAdapterId || '')
                     && String(review.data?.reviewer_executor_id || '') === dispatch.reviewerExecutorId
                     && Date.parse(String(review.data?.reviewer_claimed_at || '')) === claimedAtMs
                     && Date.parse(String(review.data?.reviewer_completed_at || '')) === completedAtMs
@@ -3211,8 +3668,8 @@ class TaskGraphExecutionService {
             const changeRelative = path.relative(gitRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
             const projectRelative = path.relative(gitRoot, projectRoot).replace(/\\/g, '/').replace(/\/$/, '');
             const outsideChange = (entry) => {
-                const file = entry.file.replace(/\\/g, '/');
-                return file !== changeRelative && !file.startsWith(`${changeRelative}/`);
+                const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
+                return files.some(file => !this.isGoalWorkspaceControlPath(file, changeRelative, projectRelative));
             };
             const allowed = allowedTaskPaths
                 .map(item => String(item || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, ''))
@@ -3764,7 +4221,7 @@ class TaskGraphExecutionService {
         const blockers = [];
         const warnings = [];
         const documents = {
-            proposal: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.PROPOSAL),
+            proposal: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.PROPOSAL, { allowUncheckedChecklist: true }),
             design: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.DESIGN),
             implementationPlan: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.IMPLEMENTATION_PLAN),
             tasks: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.TASKS, { allowUncheckedChecklist: true }),
@@ -3907,6 +4364,7 @@ class TaskGraphExecutionService {
         };
         await this.fileService.writeJSON(artifactPath, artifact);
         await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildBootstrapReport(artifact));
+        await this.syncFeatureStateFromBootstrap(resolvedChangePath, artifact);
         return {
             changePath: resolvedChangePath,
             projectRoot,
@@ -4278,6 +4736,9 @@ class TaskGraphExecutionService {
     getVerificationEvidencePath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_FILE);
     }
+    getVerificationRequirementsPath(changePath) {
+        return path.join(changePath, 'artifacts', 'agents', VERIFICATION_REQUIREMENTS_FILE);
+    }
     getVerificationLoopActionPath(changePath, actionId, actionItemId) {
         const fileName = `${this.toFileSafeId(actionId)}-${this.toFileSafeId(actionItemId)}.json`;
         return path.join(changePath, 'artifacts', 'agents', VERIFICATION_ACTIONS_DIR, fileName);
@@ -4398,7 +4859,7 @@ class TaskGraphExecutionService {
             .filter(item => item.status === 'PENDING' && item.required)
             .map(item => item.id);
         const nextInstruction = pendingRequired > 0
-            ? `Ask the user to choose required decision(s): ${pendingIds.join(', ')}. Record the answer with ospec execute decision [change-path] --id <id> --select <option-id>.`
+            ? `Ask the user to choose required decision(s): ${pendingIds.join(', ')}. Record the answer with ospec execute decision [change-path] --id <id> --select <option-id> --answered-by user.`
             : decisions.length > 0
                 ? 'No required user decisions are pending. Continue with bootstrap, workspace, dispatch, review, or verification as appropriate.'
                 : 'No user decisions are recorded for this change.';
@@ -4463,6 +4924,7 @@ class TaskGraphExecutionService {
             createdAt: typeof raw?.createdAt === 'string' ? raw.createdAt : new Date().toISOString(),
             updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
             selectedAt: typeof raw?.selectedAt === 'string' && raw.selectedAt.trim() ? raw.selectedAt.trim() : null,
+            answeredBy: raw?.answeredBy === 'user' ? 'user' : null,
             recordPath: typeof raw?.recordPath === 'string' ? raw.recordPath : recordPath,
             reportPath: typeof raw?.reportPath === 'string' ? raw.reportPath : recordPath.replace(/\.json$/u, '.md'),
             nextInstruction: typeof raw?.nextInstruction === 'string' ? raw.nextInstruction : '',
@@ -4491,7 +4953,7 @@ class TaskGraphExecutionService {
             const optionText = record.options.length > 0
                 ? ` Choose one of: ${record.options.map(option => option.id).join(', ')}.`
                 : '';
-            return `Ask the user to decide "${record.question}".${optionText} Then run ospec execute decision ${this.quoteShellArg(relativeChangePath)} --id ${this.quoteShellArg(record.id)} --select <option-id>.`;
+            return `Ask the user to decide "${record.question}".${optionText} Then run ospec execute decision ${this.quoteShellArg(relativeChangePath)} --id ${this.quoteShellArg(record.id)} --select <option-id> --answered-by user.`;
         }
         return `Decision ${record.id} is ${record.status}. Run ospec execute bootstrap ${this.quoteShellArg(relativeChangePath)} to continue with the next safe action.`;
     }
@@ -4524,6 +4986,57 @@ class TaskGraphExecutionService {
             updatedAt: typeof evidence.updatedAt === 'string' ? evidence.updatedAt : new Date().toISOString(),
             records,
         };
+    }
+    async readVerificationRequirements(changePath, feature) {
+        const artifactPath = this.getVerificationRequirementsPath(changePath);
+        if (!(await this.fileService.exists(artifactPath))) {
+            return {
+                version: '1.0',
+                feature,
+                updatedAt: new Date().toISOString(),
+                requirements: [],
+            };
+        }
+        const raw = await this.fileService.readJSON(artifactPath);
+        const requirements = Array.isArray(raw.requirements)
+            ? raw.requirements.flatMap(item => {
+                const id = this.toFileSafeId(String(item?.id || ''));
+                const description = String(item?.description || '').trim();
+                if (!id || !description)
+                    return [];
+                const now = new Date().toISOString();
+                return [{
+                        id,
+                        kind: this.normalizeVerificationRequirementKind(item.kind),
+                        description,
+                        required: item.required !== false,
+                        createdAt: String(item.createdAt || now),
+                        updatedAt: String(item.updatedAt || item.createdAt || now),
+                    }];
+            })
+            : [];
+        return {
+            version: '1.0',
+            feature: String(raw.feature || feature),
+            updatedAt: String(raw.updatedAt || new Date().toISOString()),
+            requirements,
+        };
+    }
+    normalizeVerificationRequirementIds(values) {
+        return Array.from(new Set(values
+            .map(value => this.toFileSafeId(String(value || '')))
+            .filter(Boolean)));
+    }
+    normalizeVerificationRequirementKind(value) {
+        const normalized = String(value || 'other').trim().toLowerCase();
+        return normalized === 'browser'
+            || normalized === 'e2e'
+            || normalized === 'test'
+            || normalized === 'lint'
+            || normalized === 'build'
+            || normalized === 'manual'
+            ? normalized
+            : 'other';
     }
     async isPassingVerificationRecordFresh(changePath, record) {
         if (!Array.isArray(record.targetFiles)
@@ -5885,7 +6398,7 @@ class TaskGraphExecutionService {
         const replacements = [
             [/^# Change Bootstrap: /u, '# 变更启动快照：'],
             [/^# Worker Handoff: /u, '# Worker 交接：'],
-            [/^# Native Agent Launch Plan: /u, '# 原生 Agent 启动计划：'],
+            [/^# Runtime Adapter Launch Plan: /u, '# 运行时适配器启动计划：'],
             [/^# Workspace Safety: /u, '# 工作区安全检查：'],
             [/^# Worktree Plan: /u, '# Worktree 计划：'],
             [/^# Worktree Run: /u, '# Worktree 执行：'],
@@ -6095,7 +6608,7 @@ class TaskGraphExecutionService {
     }
     localizeZhBoundarySentence(line) {
         const sentences = {
-            '- This command writes a bootstrap snapshot only.': '- 此命令只写入启动快照。',
+            '- This command writes a bootstrap snapshot and synchronizes the active change `state.json` control file.': '- 此命令会写入启动快照，并同步活跃变更的 `state.json` 控制文件。',
             '- It does not launch workers, sync worker status, run tests, inspect git, finalize, archive, push, merge, or edit project source files.': '- 它不会启动 worker、同步 worker 状态、运行测试、检查 git、finalize、archive、push、merge 或编辑项目源码。',
             '- Use it when starting or resuming one active change so the next safe action is explicit.': '- 在开始或恢复一个活跃变更时使用它，让下一步安全动作保持明确。',
             '- This route writes workflow recommendation artifacts only.': '- 此路由只写入工作流建议 artifacts。',
@@ -6187,6 +6700,120 @@ class TaskGraphExecutionService {
             }
         }
         return null;
+    }
+    isGoalWorkspaceControlPath(file, changeRelative, projectRelative = '') {
+        const normalized = String(file || '').replace(/^"|"$/g, '').replace(/\\/g, '/').replace(/^\.\//, '');
+        if (!normalized)
+            return false;
+        if (normalized === changeRelative || normalized.startsWith(`${changeRelative}/`))
+            return true;
+        const candidates = [normalized];
+        const projectPrefix = projectRelative && projectRelative !== '.' ? `${projectRelative}/` : '';
+        if (projectPrefix && normalized.startsWith(projectPrefix)) {
+            candidates.push(normalized.slice(projectPrefix.length));
+        }
+        return candidates.some(candidate => candidate === '.ospec/session-brief.json'
+            || candidate === '.ospec/session-brief.md'
+            || candidate.startsWith('.ospec/brainstorms/'));
+    }
+    async syncFeatureStateFromBootstrap(changePath, artifact) {
+        const statePath = path.join(changePath, constants_1.FILE_NAMES.STATE);
+        if (!(await this.fileService.exists(statePath)))
+            return;
+        const existing = await this.fileService.readJSON(statePath);
+        if (existing.status === 'archived')
+            return;
+        const completed = new Set(Array.isArray(existing.completed) ? existing.completed : []);
+        if (artifact.documents.proposal.readiness === 'ready')
+            completed.add('proposal_complete');
+        if (artifact.documents.tasks.readiness === 'ready' && artifact.execution.taskGraph.exists)
+            completed.add('tasks_complete');
+        const graphComplete = artifact.execution.taskGraph.taskCount > 0
+            && artifact.execution.taskGraph.completed === artifact.execution.taskGraph.taskCount
+            && artifact.execution.taskGraph.status.toLowerCase() === 'completed';
+        if (graphComplete)
+            completed.add('implementation_complete');
+        if (artifact.execution.evidence.verification === 'passed') {
+            completed.add('tests_passed');
+            completed.add('verification_passed');
+        }
+        const canonicalSteps = [
+            'proposal_complete',
+            'tasks_complete',
+            'implementation_complete',
+            'skill_updated',
+            'index_regenerated',
+            'tests_passed',
+            'verification_passed',
+            'archived',
+        ];
+        const pending = new Set([
+            ...(Array.isArray(existing.pending) ? existing.pending : []),
+            ...canonicalSteps,
+        ]);
+        for (const step of completed)
+            pending.delete(step);
+        let status;
+        switch (artifact.status) {
+            case 'needs_proposal':
+                status = 'draft';
+                break;
+            case 'needs_design':
+            case 'needs_plan':
+                status = 'proposed';
+                break;
+            case 'needs_task_graph':
+            case 'needs_decision':
+                status = 'planned';
+                break;
+            case 'needs_review':
+            case 'needs_verification':
+                status = 'verifying';
+                break;
+            case 'ready_to_finish':
+                status = 'ready_to_archive';
+                break;
+            default:
+                status = artifact.execution.taskGraph.exists ? 'implementing' : 'planned';
+                break;
+        }
+        let affects = Array.isArray(existing.affects) ? existing.affects : [];
+        try {
+            const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(path.join(changePath, constants_1.FILE_NAMES.PROPOSAL)));
+            if (Array.isArray(proposal.data?.affects)) {
+                affects = proposal.data.affects.map((item) => String(item).trim()).filter(Boolean);
+            }
+        }
+        catch {
+            // Readiness already reports malformed or missing proposal content.
+        }
+        const blockedBy = artifact.status === 'needs_proposal'
+            ? ['missing_proposal']
+            : artifact.status === 'needs_decision'
+                ? ['pending_decision']
+                : artifact.status === 'blocked'
+                    ? ['bootstrap_blocked']
+                    : [];
+        const state = {
+            version: typeof existing.version === 'string' ? existing.version : '1.0',
+            feature: typeof existing.feature === 'string' && existing.feature.trim() ? existing.feature : artifact.feature,
+            mode: existing.mode === 'lite' || existing.mode === 'standard' || existing.mode === 'full'
+                ? existing.mode
+                : 'full',
+            workflow_profile_id: existing.workflow_profile_id || 'goal',
+            status,
+            current_step: artifact.status,
+            affects,
+            completed: [...completed],
+            pending: [...pending],
+            blocked_by: blockedBy,
+            ...(existing.queued_at ? { queued_at: existing.queued_at } : {}),
+            ...(existing.activated_at ? { activated_at: existing.activated_at } : {}),
+            ...(existing.queue_source ? { queue_source: existing.queue_source } : {}),
+            ...(existing.activation_source ? { activation_source: existing.activation_source } : {}),
+            last_updated: new Date().toISOString(),
+        };
+        await this.fileService.writeJSON(statePath, state);
     }
     async readFeatureName(changePath) {
         const statePath = path.join(changePath, constants_1.FILE_NAMES.STATE);
@@ -6532,7 +7159,7 @@ class TaskGraphExecutionService {
                     status: 'ready_to_launch',
                     blockers,
                     warnings,
-                    nextInstruction: `Run ospec execute launch ${this.quoteShellArg(relativeChangePath)} --task ${this.quoteShellArg(dispatch.taskId)} --target ${dispatch.target} to write the native agent launch plan, then dispatch the worker through the current AI harness.`,
+                    nextInstruction: `Run ospec execute launch ${this.quoteShellArg(relativeChangePath)} --task ${this.quoteShellArg(dispatch.taskId)} --target ${dispatch.target} to write the runtime adapter launch plan, then execute runtimeAdapter.selected.`,
                 };
             }
             if (input.execution.session.activeDispatchCount > 1) {
@@ -6852,7 +7479,7 @@ class TaskGraphExecutionService {
         };
         const pendingDecision = artifact.execution.decisions.decisions.find(decision => decision.status === 'PENDING' && decision.required);
         if (pendingDecision) {
-            add('ask user decision', `ospec execute decision ${changeArg} --id ${this.quoteShellArg(pendingDecision.id)} --select <option-id>`, `Required decision "${pendingDecision.id}" is pending.`);
+            add('ask user decision', `ospec execute decision ${changeArg} --id ${this.quoteShellArg(pendingDecision.id)} --select <option-id> --answered-by user`, `Required decision "${pendingDecision.id}" is pending.`);
             return recommendations;
         }
         if (artifact.status === 'needs_proposal') {
@@ -7521,7 +8148,7 @@ class TaskGraphExecutionService {
         const rules = [
             'Start or resume from one active change; do not enter queue mode unless explicitly requested.',
             'Do not dispatch workers until workspace-status is ready or the work is moved into an isolated worktree.',
-            'Default to the current AI harness native subagent mechanism for worker dispatch; do not use CLI command execution unless native subagents are unavailable.',
+            'Follow the capability-based runtime adapter resolution and its safe fallback order; never infer Orca or native capability from a process name alone.',
             'Do not claim completion until worker-status controller_status is DONE and fresh verification evidence is passing.',
             'Use DONE_WITH_CONCERNS instead of DONE when the implementation works but has known risk or follow-up.',
             'Use NEEDS_CONTEXT or BLOCKED instead of guessing when requirements, dependencies, or environment are missing.',
@@ -9357,6 +9984,8 @@ class TaskGraphExecutionService {
             `- Risk signals: ${record.riskSignals.join(', ') || 'none'}`,
             `- Model profile: ${record.workerProfile.modelProfile}`,
             `- Model: ${record.workerProfile.model || 'harness default (not explicitly configured)'}`,
+            `- Runtime adapter: ${record.runtimeAdapter?.selectedAdapterId || (record.mode === 'inline_preflight' ? 'inline' : 'manual independent reviewer')}`,
+            `- Parallel execution: ${record.runtimeAdapter?.selected?.supportsParallel ? 'supported' : 'no'}`,
             `- Status: ${record.status}`,
             `- Document: ${record.documentPath}`,
             `- Document hash: ${record.documentHash}`,
@@ -9379,6 +10008,12 @@ class TaskGraphExecutionService {
                     '- Redispatch to a specialist if later work reveals any risk signal listed by policy.',
                 ]
                 : [
+                    ...(record.requiresExecutorProvenance
+                        ? [
+                            `- Before review work, claim the real adapter executor with \`ospec execute doc-review [change-path] --stage ${record.stage} --claim-executor <executor-id>\`.`,
+                            `- After writing the review and findings, finish with \`ospec execute doc-review [change-path] --stage ${record.stage} --complete-executor <executor-id>\`.`,
+                        ]
+                        : []),
                     `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
                     '- Set frontmatter `reviewed_at` to the actual completion time. Preserve the controller-written dispatch, document hash, reviewer role, policy/mode, controller session, and reviewer executor provenance fields unchanged.',
                     '- Record concrete findings and required corrections in the review artifact body.',
@@ -9724,7 +10359,7 @@ class TaskGraphExecutionService {
             record.recommendedOptionId
                 ? `Recommended option: ${record.recommendedOptionId}`
                 : 'No recommended option is recorded.',
-            `Reply with one option id. Record the answer with: ospec execute decision [change-path] --id ${this.quoteShellArg(record.id)} --select <option-id>`,
+            `Reply with one option id. Record the answer with: ospec execute decision [change-path] --id ${this.quoteShellArg(record.id)} --select <option-id> --answered-by user`,
         ].join('\n');
         return [
             `# User Decision: ${record.id}`,
@@ -9735,6 +10370,7 @@ class TaskGraphExecutionService {
             `- Created at: ${record.createdAt}`,
             `- Updated at: ${record.updatedAt}`,
             `- Selected at: ${record.selectedAt || 'not selected'}`,
+            `- Answered by: ${record.answeredBy || 'legacy or not selected'}`,
             `- Recommended option: ${record.recommendedOptionId || 'none'}`,
             `- Selected option: ${record.selectedOptionId || 'none'}`,
             '',
@@ -10045,6 +10681,28 @@ class TaskGraphExecutionService {
                 ...artifact.nativeAgent.fallbackInstructions.map(item => `- ${item}`),
             ].join('\n')
             : '- Not available until exactly one active dispatch is selected.';
+        const runtimeAdapter = artifact.runtimeAdapter
+            ? [
+                `- Preference: ${artifact.runtimeAdapter.preference}${artifact.runtimeAdapter.strict ? ' (strict)' : ''}`,
+                `- Selected adapter: ${artifact.runtimeAdapter.selectedAdapterId || 'none'}`,
+                `- Blocked: ${artifact.runtimeAdapter.blocked ? 'yes' : 'no'}`,
+                `- Fallback order: ${artifact.runtimeAdapter.fallbackOrder.join(' -> ')}`,
+                `- Parallel execution: ${artifact.runtimeAdapter.selected?.supportsParallel ? 'supported' : 'serial'}`,
+                `- Workspace ownership verified: ${artifact.runtimeAdapter.selected?.workspaceOwned === null || artifact.runtimeAdapter.selected?.workspaceOwned === undefined ? 'not applicable' : artifact.runtimeAdapter.selected.workspaceOwned ? 'yes' : 'no'}`,
+                '',
+                '### Adapter Probes',
+                '',
+                ...artifact.runtimeAdapter.candidates.map(candidate => `- ${candidate.id}: ${candidate.available ? 'available' : 'unavailable'}; ${candidate.reason}`),
+                ...(artifact.runtimeAdapter.selected?.commandTemplates.length
+                    ? [
+                        '',
+                        '### Selected Adapter Command Vectors',
+                        '',
+                        ...artifact.runtimeAdapter.selected.commandTemplates.map(command => `- ${JSON.stringify([command.bin, ...command.args])}`),
+                    ]
+                    : []),
+            ].join('\n')
+            : '- Not available until exactly one active dispatch is selected.';
         const selectedDispatch = artifact.selectedDispatch
             ? [
                 `- Dispatch ID: ${artifact.selectedDispatch.id}`,
@@ -10121,7 +10779,7 @@ class TaskGraphExecutionService {
             ].join('\n')
             : '- Not requested (default subagent primitive).';
         return [
-            `# Native Agent Launch Plan: ${artifact.feature}`,
+            `# Runtime Adapter Launch Plan: ${artifact.feature}`,
             '',
             `- Status: ${artifact.status}`,
             `- Target: ${artifact.target}`,
@@ -10150,6 +10808,10 @@ class TaskGraphExecutionService {
             '## Native Agent Dispatch',
             '',
             nativeAgent,
+            '',
+            '## Runtime Adapter Resolution',
+            '',
+            runtimeAdapter,
             '',
             '## Harness Adapter Packet',
             '',
@@ -10181,8 +10843,9 @@ class TaskGraphExecutionService {
             '',
             '- This command writes a launch preparation plan only.',
             '- It does not start Codex, GPT, Claude, Gemini, OpenCode, Cursor, Copilot, shell workers, tests, or other external processes by itself.',
-            '- The default path is current-harness native agent dispatch from the controlling AI session.',
-            '- Use the CLI fallback commands only when the current AI harness cannot dispatch native subagents.',
+            '- Runtime adapter selection is capability-based: verified Orca ownership, current harness-native capability, target CLI, then generic current-controller fallback.',
+            '- An Orca process name alone never selects the Orca adapter; the CLI status and current-worktree probes must both succeed.',
+            '- Adapter probe failure falls through automatically unless a strict preference or independent-worker constraint makes fallback unsafe.',
             '- Record worker completion with `ospec execute complete`; do not rely on chat history as the durable state.',
             '',
         ].join('\n');
@@ -10419,7 +11082,7 @@ class TaskGraphExecutionService {
             '',
             '## Safety Notes',
             '',
-            '- This command writes a bootstrap snapshot only.',
+            '- This command writes a bootstrap snapshot and synchronizes the active change `state.json` control file.',
             '- It does not launch workers, sync worker status, run tests, inspect git, finalize, archive, push, merge, or edit project source files.',
             '- Use it when starting or resuming one active change so the next safe action is explicit.',
             '',
