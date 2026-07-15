@@ -34,7 +34,7 @@ tags: [ai, guide, ospec]
 - `ospec execute …` 控制层（bootstrap、doc-review、dispatch、launch、review、worktree、finish、collect、retry、sync）和所有 goal-only artifacts 都属于 `workflow_profile_id: goal`。对 `workflow_profile_id: change`，保持经典快速流程——不要读取或运行 execute 层或 goal artifacts；编辑 `proposal.md` 和 `tasks.md`、实现、记录 `verification.md` 和 `review.md`，再用 `ospec verify` 和 `ospec finalize` 收尾——除非用户明确要求对这个 change 做 agent/worker 执行
 - AI 辅助执行 goal 时，不要求用户手写 `design.md` 或 `implementation-plan.md`；必须先基于需求、`proposal.md` 和项目上下文起草或更新它们，再推导 `artifacts/agents/task-graph.json`、编辑 `tasks.md` 或代码
 - 执行经典 change 时，不要创建 goal-only 文件，除非用户明确把该工作升级为 goal
-- `Announce-Before-Act`：绝不静默执行流程。宣告 OSpec skill 与阶段、命令与产物、所选 runtime adapter、worker 数量与实际机制，以及阻塞门禁和解锁条件
+- `Announce-Before-Act`：绝不静默执行流程。宣告 OSpec skill 与阶段、命令与产物、所选 model-native subagent adapter、worker 数量、当前 session capability，以及阻塞门禁和解锁条件
 - `Brainstorm-First`：每个 goal 开局先做一次简短头脑风暴再锁定设计。把方向、架构、API、数据、UI、风险、范围的未决问题逐个抛给用户，而不是默默假设；需要时用 `ospec brainstorm [path] --topic "..."` 持久化探索。任一项真正开放时，优先升起持久 decision gate 让用户选择，而不是写下静默假设；仅当用户明确让 AI 自行决定或不可用时，才在 `design.md` 写入假设并标注为待确认
 - 当 change 必须等待用户选择后才能继续时，用 `ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required]` 写入持久 decision gate，向用户展示 decision report 的 `Chat Prompt` 或 `artifacts/agents/decisions/index.md`，再用 `ospec execute decision [changes/active/<change>] --id <id> --select <option-id>` 记录用户选择
 - 执行 goal 时，`implementation-plan.md` 必须从 `design.md` 推导，`artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导，`tasks.md` 必须从 task graph 推导；若任务已存在，先更新上游文档，再回头对齐任务。执行经典 change 时，`tasks.md` 直接从 `proposal.md` 和实现范围推导
@@ -51,20 +51,18 @@ tags: [ai, guide, ospec]
 - 决策门和 brainstorm 选项属于用户：**绝不要自动选"推荐项"、也不要自己 resolve 决策门**——用能力阶梯（原生问答 UI → Plan/审批 UI → 纯聊天文字）把每个门呈现给用户，等用户真正回答；required 门在用户回答前会阻塞实现与派发，`recommended` 只是给用户看的提示
 - 你产出的每个 change 文档和 brainstorm 都要用项目的文档语言（`.skillrc` 的 `documentLanguage` / 托管 `for-ai/` 指引）书写；同一个 change 内不要中英文混用
 - 需要 task 级持久交接时，用 `ospec execute dispatch` 生成并行安全的 worker 任务包批次，用 `ospec execute complete` 记录 worker 结果；每个 dispatch packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior；required pending user decision 会阻止 dispatch；当结果是 `NEEDS_CONTEXT` 或 `BLOCKED` 时，`complete` 会写入 `artifacts/agents/blockers/`；用 `--task` 指定单个任务，用 `--limit` 限制派发批次大小；每个 worker 返回 `DONE` 或 `DONE_WITH_CONCERNS` 后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 做一次合并 review（一次同时审 spec 符合性与代码质量），依赖任务会等这一次合并 review 通过后才可派发；所有单任务 review 通过且 task graph 完成后，再用不带 `--task` 的 `ospec execute review` 生成一个合并的最终整体 code review 交接包；最终 review 决策不是 `PENDING` 后，用 `ospec execute feedback` 写入 `artifacts/agents/review-feedback-plan.md`；人工改过执行或 review artifacts 后，用 `ospec execute sync` 重建 `worker-status.md`
-- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json]` 写入启动计划；`runtimeAdapter` 按已验证 Orca ownership、当前 harness-native capability、可用 target CLI、串行 generic current controller 排序。Orca 进程名本身不能证明 ownership
-- 多 worker 执行服从 `runtimeAdapter.selected`：只在所选 adapter 支持并行时启动安全 batch；普通任务可退回串行 current controller，独立 review 必须使用独立 adapter
-- goal 集成循环使用 controller 模式时，不要停在初始化或让用户手工运行 Loop 命令。运行 `ospec loop run [change] --once --json`，通过每个 action 的 `runtimeAdapter.selected` 执行，持久化 heartbeat/result evidence，再无需用户提示地继续 tick；每个 worker 只读取引用的 packet
-- `IDE-CONTROLLER-AUTO-DISPATCH`：L1 只报告；L2/L3 由 IDE 主 AI 负责 tick -> 通过每个 action 的所选 runtime adapter 执行全部 `actions[]` -> 写 heartbeat/result evidence -> 立即再 tick。`actions[]` 为空但存在 `pending` 时只观察，绝不能重派
-- CLI-driven 模式下，`ospec loop watch` 是会话内执行器，会为 action 启动 fresh `claude -p` / `codex exec` 进程，并行执行 ready batch，执行后立即重新观察 evidence，只在没有 ready action 时等待；pause、`STOP`、完成、预算、无进展断路器、理解复核门或进程退出都会停止它。不支持直接 CLI target 时使用 controller 模式
+- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run] [--json]` 写入启动计划；`runtimeAdapter` 只接受当前、target 匹配的模型原生 subagent capability，并给出 native primitive
+- 执行 `runtimeAdapter.selected.nativeSubagent`，只并行派发安全 batch。capability 缺失或过期时必须阻断并刷新当前模型会话，不得启动 agent CLI 或退回 controller context
+- goal 集成循环使用 controller 模式时，不要停在初始化或让用户手工运行 Loop 命令。运行 `ospec loop run [change] --once --json`，通过每个 action 的 `runtimeAdapter.selected.nativeSubagent` 执行，持久化 heartbeat/result evidence，再无需用户提示地继续 tick；每个 worker 只读取引用的 packet
+- `IDE-CONTROLLER-AUTO-DISPATCH`：L1 只报告；L2/L3 由 IDE 主 AI 负责 tick -> 通过每个 action 的 `runtimeAdapter.selected.nativeSubagent` 执行全部 `actions[]` -> 写 heartbeat/result evidence -> 立即再 tick。`actions[]` 为空但存在 `pending` 时只观察，绝不能重派
+- agent CLI 执行已移除；`loop watch`、`execute orchestrate`、`launch --run --command` 和 `review --run --command` 都会在启动进程或创建 run artifact 前失败
 - required decision 会阻断所有安全级。L1 不产生可执行 action；L3 还要求 path 和 command allowlist 都非空，并阻断越界目标文件或验证命令
 - 省 token（不改变任何门禁）：`ospec execute …` 命令带 `--brief`，用 `ospec execute status --brief` 驱动每一步，并消费 loop action 引用的 packet path；不要每轮重读或内嵌完整 `task-graph.json`、`worker-status.md`、`launch-plan.md` 或全部 goal 文档——完整产物仍写盘，只在需要细节时打开
-- 只有所选 adapter 或记录的 fallback order 选择显式 CLI orchestration 时，才用 `ospec execute orchestrate [changes/active/<change>] --command "..."`，并且只运行 adapter 允许的 batch
-- 所选 target-CLI adapter 需要单 worker runner，或前序 adapter 在 claim ownership 前失败时，用 `--run --command`；随后用 `ospec execute collect ...` 记录结果。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务默认不得 retry，除非显式 `--force`
-- 只有显式使用 `ospec execute review ... --run --command "..."` 时，OSpec 才会运行本地 reviewer 命令并写入 `artifacts/agents/review-runs/`；提供 `--decision` 时可写回单任务或最终 review decision
+- 修复 blocked、needs-context 或 failed native work 后，用 `ospec execute retry` 重新派发；已完成任务默认不得 retry，除非显式 `--force`
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 记录根因和修复证据；该命令只记录 evidence，不会运行 shell 命令
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 记录 TDD cycle evidence；该命令只记录 evidence，不会运行 shell 命令
-- 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` 记录验证证据；该命令只记录 evidence，不会运行 shell 命令
-- `ospec execute doc-review` 只记录 artifacts，不会启动 reviewer、运行 shell 命令、同步 worker status 或编辑源码；shell 只会通过显式 worktree create/cleanup、fallback `launch --run --command`、`review --run --command`、带 command template 的 fallback `orchestrate`，或已配置的 CLI-driven `ospec loop watch` 执行
+- 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED --exit-code 0` 记录验证证据；该命令只记录 evidence，不会运行 shell 命令
+- `ospec execute doc-review` 只记录 artifacts，不会启动 reviewer、运行 shell 命令、同步 worker status 或编辑源码；specialist review 必须通过 `runtimeAdapter.selected.nativeSubagent` 执行并绑定真实 child id
 - 对 goal，`artifacts/agents/task-graph.json` 中存在未解决 task 状态、无效依赖、缺失目标文件、缺失验证命令，或顶层 `status` 不是 `completed` 时，不得 archive
 - 实现后每个任务必须完成该任务的一次合并 review（`artifacts/reviews/tasks/<task-id>/review.md`）；最终阶段必须完成单一的 `artifacts/reviews/final-review.md`；未解决的单任务或最终 review decision 会阻止 archive
 - 实现和 review 阶段必须保持 `artifacts/agents/worker-status.md` 与 implementer、spec reviewer、quality reviewer 和 controller 状态一致

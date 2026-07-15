@@ -10,6 +10,8 @@ export type NativeLoopCapability = 'supported' | 'unknown' | 'unsupported';
 export type CapabilityFallbackMode = 'controller-self-loop' | 'cli-driven' | 'emulated' | 'none';
 export declare const DEFAULT_CAPABILITY_SESSION_TTL_MS: number;
 export interface HarnessCapability {
+    /** Model harness target that reported this session-bound capability. */
+    target: string;
     /** Whether the requested primitive maps to a confirmed native harness primitive. */
     nativeLoopCapability: NativeLoopCapability;
     /** How the capability was determined (for example, explicit input or an environment signal). */

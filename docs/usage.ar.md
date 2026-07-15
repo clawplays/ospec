@@ -33,12 +33,9 @@ ospec execute worktree [changes/active/<change>] --cleanup [--path path]
 ospec execute finish [changes/active/<change>] [--target main] [--remote origin]
 ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]
 ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]
-ospec execute orchestrate [changes/active/<change>] --command "..." [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--limit N] [--max-rounds N] [--timeout-ms N] # fallback only
-ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] --run --command "..." [--timeout-ms N] # fallback only
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
 ospec execute review [changes/active/<change>] [--task task-id]
-ospec execute review [changes/active/<change>] [--task task-id] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user [--summary "..."]
@@ -125,7 +122,7 @@ ospec finalize [changes/active/<change>]
 
 ينشئ `ospec new <change-name> [path]` ملفات classic fast-flow فقط: `proposal.md` و`tasks.md` و`state.json` و`verification.md` و`review.md`. أما `ospec goal <goal-name> [path]` فينشئ full workflow ويستخدم `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وreview artifacts و`artifacts/agents/worker-status.md` وevidence artifacts.
 
-يعمل goal كـ **حلقة task graph مرتبطة بالجلسة**. يراقب `ospec loop run --once` الـ evidence ثم يصدر bounded batch يحمل لكل action قيمة `runtimeAdapter` مبنية على capability. يعمل بالتوازي فقط عندما يسمح adapter المختار، ويشغّل generic fallback الـ tasks العادية تسلسليا داخل current controller. يتطلب independent review مستقلا. راجع [loop-engineering.md](loop-engineering.md).
+يعمل goal كـ **حلقة task graph مرتبطة بالجلسة**. يراقب `ospec loop run --once` الـ evidence ثم يصدر bounded batch يحمل لكل action قيمة `runtimeAdapter.selected.nativeSubagent` مرتبطة بالـ target. يعمل بالتوازي فقط عندما يسمح model-native adapter المختار، ويجب block عند غياب capability أو انتهائها أو عدم مطابقة target. لا يوجد fallback إلى agent CLI أو current controller. راجع [loop-engineering.md](loop-engineering.md).
 
 - يعمل كل goal بثلاثة عقود تجربة: `Announce-Before-Act` (يعلن الذكاء الاصطناعي skill والمرحلة، وكل أمر `ospec execute …` وأثره، وكل توزيع subagent)، و`Brainstorm-First` (قبل تثبيت التصميم يسأل عن القرارات المفتوحة للاتجاه والبنية وAPI والبيانات وUI والمخاطر والنطاق واحداً تلو الآخر عبر واجهة الأسئلة الأصلية — في Claude Code: AskUserQuestion)، و`Zero-Setup` (ينفّذ الذكاء الاصطناعي كل أمر `ospec` بنفسه، فأنت فقط تبدأ goal وتصف المتطلب).
 - يمكن أن تفعّل workflow flags خطوات quality policy المدمجة للـ agent: `tdd_cycle` و`root_cause_debug` و`verification_evidence`. تكتب الخطوات المفعّلة في frontmatter الخاص بالـ change ضمن `optional_steps` ويجب تغطيتها في `tasks.md` و`verification.md` وarchive readiness.
@@ -151,19 +148,17 @@ ospec finalize [changes/active/<change>]
 - استخدم `ospec execute worktree [changes/active/<change>] --cleanup [--path path]` فقط عندما تريد صراحة أن يشغّل OSpec `git worktree remove`. لا يحذف cleanup الفروع ولا يعمل push أو merge أو archive أو tests.
 - قبل الإغلاق النهائي، استخدم `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` لتسجيل `artifacts/agents/finish-plan.json` و`artifacts/agents/finish-plan.md`. يفحص task graph وreviews وverification evidence وworker status ونظافة git، ثم يسجل الأوامر المقترحة فقط ولا ينفذها. عندما تكون finish plan جاهزة ولا توجد required pending decision، تابع بتنفيذ `ospec finalize [changes/active/<change>]`؛ `ospec archive ... --check` هو معاينة dry-run اختيارية فقط.
 - استخدم `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` لإنشاء batch آمن للتوازي من worker packets داخل `artifacts/agents/dispatches/*` و`artifacts/agents/execution-session.json`. يتضمن كل packet project session brief snapshot وworker profile يوضح capability tier وrecommended target وtarget tool mapping وrationale وrequired behavior لتوجيه المهام المعقدة إلى worker أقوى والمهام البسيطة إلى worker أخف. ثم استخدم `ospec execute complete <task-id> ...` لتسجيل نتيجة worker. استخدم `--task` لمهمة واحدة صريحة و`--limit` لتحديد حجم batch. يقوم الأمران أيضا بمزامنة `artifacts/agents/worker-status.md`؛ وعندما تسجل completion الحالة `NEEDS_CONTEXT` أو `BLOCKED` يكتب OSpec ملفات escalation تحت `artifacts/agents/blockers/` لمتابعة controller.
-- بعد dispatch، استخدم `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]` لكتابة agent launch plan. يسجل `runtimeAdapter` بالترتيب: Orca worktree موثّق، ثم current harness-native capability، ثم target CLI متاح، ثم serial generic current controller. لا يكفي اسم عملية Orca لاختيار Orca adapter. هذا الأمر لا يشغّل workers ولا أوامر shell بنفسه.
-- يتبع multi-worker execution القيمة `runtimeAdapter.selected`: يشغّل safe batch بالتوازي فقط عندما يدعم adapter المختار ذلك، ويتابع fallback الآمن عند فشل probe للـ adapter المفضل. يمكن للمهام العادية الرجوع إلى serial current controller، أما independent review فيتطلب independent adapter.
-- استخدم `ospec execute orchestrate [changes/active/<change>] --command "..."` عندما يختار selected adapter أو fallback order المسجل مسار explicit CLI orchestration، وشغّل فقط batch الذي يسمح به adapter.
-- استخدم `ospec execute launch ... --run --command "..."` عندما يحتاج selected target-CLI adapter إلى single-worker runner أو يفشل adapter سابق قبل claim ownership؛ ثم استخدم `ospec execute collect ...` لتسجيل task completion.
+- بعد dispatch، استخدم `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run]` لكتابة agent launch plan. يقبل `runtimeAdapter` فقط model-native subagent capability حالية ومرتبطة بالـ target ويعرض native primitive. لا يشغّل OSpec worker process بنفسه.
+- نفّذ `runtimeAdapter.selected.nativeSubagent` وشغّل safe batch فقط بالتوازي. عند غياب capability أو انتهاء صلاحيتها يجب block من دون agent CLI أو current-controller fallback.
+- أزيل agent CLI execution. تعيد `execute orchestrate` و`launch --run --command` و`review --run --command` و`loop watch` migration error قبل تشغيل process أو إنشاء run artifact.
 - استخدم `ospec execute retry [changes/active/<change>] --task task-id` بعد إصلاح worker run كان blocked أو needs-context أو failed. يكتب `artifacts/agents/retries/`، ويعيد فتح task، وينشئ dispatch packet جديدا. تحتاج المهام المكتملة إلى `--force` صراحة.
 - بعد اكتمال كل worker task، استخدم `ospec execute review [changes/active/<change>] --task <task-id>` لإجراء مراجعة code review موحدة واحدة (spec compliance وcode quality في تمريرة واحدة). يحفظ القرار في `artifacts/reviews/tasks/<task-id>/review.md` وتبقى المهام التابعة محجوبة حتى اعتماد تلك المراجعة الموحدة الواحدة.
 - بعد اكتمال task graph، استخدم `ospec execute review [changes/active/<change>]` من دون `--task` لإنشاء حزمة code review نهائية موحدة واحدة داخل `artifacts/agents/review-dispatches/*`. تكتب قرار `artifacts/reviews/final-review.md` واحدا.
-- استخدم `ospec execute review ... --run --command "..."` فقط عندما تريد صراحة أن يشغّل OSpec local reviewer command. يسجل OSpec run تحت `artifacts/agents/review-runs/` ويمكنه تحديث task-level أو final review artifact المطابق عند تمرير `--decision`.
 - بعد أن يحتوي review artifact على قرار غير `PENDING`، استخدم `ospec execute feedback [changes/active/<change>] [--summary "..."]` لكتابة `artifacts/agents/review-feedback-plan.json` و`artifacts/agents/review-feedback-plan.md`. يسجل هل سيتم قبول feedback أو تعديله أو توضيحه أو إزالة blocker قبل dispatch عمل إضافي، وينشئ required user decision gate عندما يؤثر feedback في scope أو direction أو API أو UI أو risk أو accepted tradeoffs.
 - عندما يكون debugging جزءا من change، استخدم `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` لتسجيل `artifacts/agents/debug-evidence.json` وdebug evidence report. تعني `CONFIRMED` عزل root cause، وتعني `FIXED` إصلاحا متحققا، وتؤدي `BLOCKED` إلى فشل verify.
 - بعد تشغيل focused tests، استخدم `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` لتسجيل `artifacts/agents/tdd-evidence.json` وevidence report لكل دورة. يجب أن يسجل red اختبارا focused غير ناجح قبل implementation، ويتطلب green سجلا سابقا red `FAILED`، ويتطلب refactor دليلا سابقا green/refactor ناجحا، ويتطلب `SKIPPED` ملخصا محددا.
 - استخدم `ospec execute require-verification` لحفظ browser أو E2E أو manual verification surface التي طلبها المستخدم. يظل final verification وarchive محجوبين حتى يرتبط fresh PASSED evidence عبر `--satisfies <id>`.
-- بعد تشغيل project checks حديثة، استخدم `ospec execute verify [changes/active/<change>] --command "..." --status PASSED` لتسجيل `artifacts/agents/verification-evidence.json` وevidence report لكل تشغيل.
+- بعد تشغيل project checks حديثة، استخدم `ospec execute verify [changes/active/<change>] --command "..." --status PASSED --exit-code 0` لتسجيل `artifacts/agents/verification-evidence.json` وevidence report لكل تشغيل؛ يرفض PASSED من دون رمز خروج 0 صريح.
 - استخدم `ospec execute sync [changes/active/<change>]` لمزامنة worker status و`state.json` المشتق من bootstrap وproject session brief.
 - استخدم `tasks.md` لتقسيم خطة التنفيذ المقبولة إلى عمل قابل للتنفيذ.
 - كل task يخضع لمراجعة موحدة واحدة تغطي spec compliance وcode quality معا؛ وتسجل المراجعة النهائية قرارا واحدا في `artifacts/reviews/final-review.md`.
@@ -171,7 +166,7 @@ ospec finalize [changes/active/<change>]
 - في مسارات AI / `/ospec-change` يبقي AI التدفق الصغير مركزا على `proposal.md` و`tasks.md` والتنفيذ و`verification.md` و`review.md`.
 - في مسارات AI / `/ospec-goal` ينشئ AI ملفات `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` أو يحدّثها من المتطلب و`proposal.md` وسياق المشروع؛ ولا تحتاج إلا إلى مراجعة الافتراضات أو تصحيح القرارات المهمة.
 - قيم حالة task graph هي `DONE` و`DONE_WITH_CONCERNS` و`IN_PROGRESS` و`NEEDS_CONTEXT` و`BLOCKED` و`PENDING`؛ وتتطلب جاهزية الأرشفة أن يكون `status` العلوي `"completed"` وأن تكون كل المهام `DONE` أو `DONE_WITH_CONCERNS`.
-- لا تعدّل أوامر artifact في `ospec execute` ملفات source مباشرة. يشغّل controller الـ workers عبر runtime adapter المختار، وتستخدم specialist reviews الـ executor id الحقيقي في claim/complete.
+- لا تعدّل أوامر artifact في `ospec execute` ملفات source مباشرة. يوزّع current model controller الـ workers فقط عبر `runtimeAdapter.selected.nativeSubagent`، وتستخدم specialist reviews الـ executor id الحقيقي في claim/complete. لا يشغّل OSpec agent CLI.
 - قيم حالة worker هي `DONE` و`DONE_WITH_CONCERNS` و`NEEDS_CONTEXT` و`BLOCKED` و`PENDING`؛ ويتطلب الاكتمال حل حالات worker وأن تكون `controller_status` مساوية لـ `DONE`.
 - في profile `change` يتطلب `ospec verify [changes/active/<change>]` ملفات classic فقط. وفي profile `goal` يتطلب أيضا `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وdocument review artifacts وfinal review artifacts وverification evidence و`artifacts/agents/worker-status.md`.
 - اجعل `design.md` موجزا؛ دوره رفع دقة تقسيم المهام، وليس استبدال وثائق المشروع طويلة الأمد.
@@ -188,7 +183,7 @@ ospec finalize [changes/active/<change>]
 1. شغّل `ospec session hook [path]` بعد تحديث المشروع، ثم اجعل harness يحقن `.ospec/hooks/using-ospec.md` عند session start.
 2. عند استئناف change شغّل `ospec execute bootstrap [changes/active/<change>]` واتبع next instruction قبل dispatch العمل.
 3. إذا أظهر bootstrap أو status وجود pending decision، افتح `artifacts/agents/decisions/index.md`، واعرض `Chat Prompt` من decision report على المستخدم، ثم سجّل الإجابة عبر `ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user`.
-4. شغّل `ospec execute workspace [changes/active/<change>]` ثم `ospec execute dispatch [changes/active/<change>]`. استخدم `ospec execute launch ... --json` عندما يحتاج adapter إلى بيانات تشغيل machine-readable، واجعل `--run --command` fallback للـ CLI فقط.
+4. شغّل `ospec execute workspace [changes/active/<change>]` ثم `ospec execute dispatch [changes/active/<change>]`. استخدم `ospec execute launch ... --json` لقراءة native subagent contract، ثم dispatch عبر current model harness وسجّل real child result.
 5. في changes التي تفعّل Checkpoint، شغّل `ospec plugins doctor checkpoint [path]` وأصلح `routes.yaml` و`flows.yaml` وbaseline وscreenshots وtraces وconsole/network evidence وaccessibility evidence وassertions قبل closeout.
 6. استخدم `ospec execute status` و`ospec execute next` و`ospec execute finish` لتأكيد Checkpoint evidence readiness. يتم حجب finish وverify وarchive حتى تكتمل required decisions وactive Checkpoint evidence.
 
@@ -201,7 +196,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.1
+npm install -g @clawplays/ospec-cli@1.8.2
 ospec update [path]
 ```
 

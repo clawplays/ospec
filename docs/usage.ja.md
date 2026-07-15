@@ -33,12 +33,9 @@ ospec execute worktree [changes/active/<change>] --cleanup [--path path]
 ospec execute finish [changes/active/<change>] [--target main] [--remote origin]
 ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]
 ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]
-ospec execute orchestrate [changes/active/<change>] --command "..." [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--limit N] [--max-rounds N] [--timeout-ms N] # fallback only
-ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] --run --command "..." [--timeout-ms N] # fallback only
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
 ospec execute review [changes/active/<change>] [--task task-id]
-ospec execute review [changes/active/<change>] [--task task-id] --run --command "..." [--timeout-ms N] [--decision APPROVED|APPROVED_WITH_CONCERNS|NEEDS_CHANGES|BLOCKED|PENDING] [--summary "..."]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user [--summary "..."]
@@ -125,7 +122,7 @@ ospec finalize [changes/active/<change>]
 
 `ospec new <change-name> [path]` は classic fast-flow files だけを作成します: `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`。`ospec goal <goal-name> [path]` は full workflow を作成し、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、`artifacts/agents/worker-status.md`、evidence artifacts を使います。
 
-goal は **セッションスコープの task graph ループ** として動作します。`ospec loop run --once` は evidence を観察し、各 action に capability-based `runtimeAdapter` を持つ bounded batch を出力します。選択 adapter が許可するときだけ並列実行し、generic fallback は通常 task を current controller で直列実行します。independent review には independent adapter が必要です。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
+goal は **セッションスコープの task graph ループ** として動作します。`ospec loop run --once` は evidence を観察し、各 action に target-bound な `runtimeAdapter.selected.nativeSubagent` を持つ bounded batch を出力します。選択された model-native adapter が許可するときだけ並列実行し、capability がない、期限切れ、または target 不一致の場合は block します。agent CLI や current controller への fallback はありません。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
 
 - 各 goal は 3 つの体験契約で動きます：`Announce-Before-Act`（AI が skill・段階、各 `ospec execute …` コマンドと生成物、各 subagent 派遣を宣言）、`Brainstorm-First`（設計確定前に、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項をネイティブの質問 UI——Claude Code は AskUserQuestion——で 1 つずつ尋ねる）、`Zero-Setup`（すべての `ospec` コマンドを AI 自身が実行するので、あなたは goal を起こして要件を説明するだけ）。
 - workflow flags は built-in agent quality policy steps として `tdd_cycle`、`root_cause_debug`、`verification_evidence` を有効化できます。有効化された steps は change frontmatter の `optional_steps` に書かれ、`tasks.md`、`verification.md`、archive readiness で coverage が必要です。
@@ -151,19 +148,17 @@ goal は **セッションスコープの task graph ループ** として動作
 - `ospec execute worktree [changes/active/<change>] --cleanup [--path path]` は、OSpec に `git worktree remove` を実行させたい場合だけ明示的に使います。cleanup は branch 削除、push、merge、archive、test 実行を行いません。
 - final closeout の前に `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` で `artifacts/agents/finish-plan.json` と `artifacts/agents/finish-plan.md` を記録します。task graph、reviews、verification evidence、worker status、git cleanliness を確認し、suggested commands のみを記録して実行しません。finish plan が ready で required pending decision がない場合は、続けて `ospec finalize [changes/active/<change>]` を実行します。`ospec archive ... --check` は任意の dry-run preview だけです。
 - `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` で parallel-safe な `artifacts/agents/dispatches/*` の worker packet batch と `artifacts/agents/execution-session.json` を作成します。各 packet には project session brief snapshot と、capability tier、recommended target、target tool mapping、rationale、required behavior を示す worker profile が含まれ、複雑な task を強い worker に、単純な task を軽量 worker に振り分けやすくします。`ospec execute complete <task-id> ...` で worker 結果を記録します。`--task` は明示的な単一 task、`--limit` は batch size の上限に使います。どちらも `artifacts/agents/worker-status.md` を同期します。completion が `NEEDS_CONTEXT` または `BLOCKED` を記録した場合、OSpec は controller follow-up 用に `artifacts/agents/blockers/` escalation files を書きます。
-- dispatch 後は `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]` で agent launch plan を書きます。artifact の `runtimeAdapter` は、検証済み Orca worktree、current harness-native capability、利用可能な target CLI、serial generic current controller の順で解決します。Orca の process 名だけでは Orca adapter を選択しません。この command 自体は worker や shell command を起動しません。
-- multi-worker execution は `runtimeAdapter.selected` に従います。選択された adapter が parallel execution をサポートする場合だけ safe batch を並列起動し、優先 adapter の probe が失敗した場合は安全な fallback を続行します。通常 task は current controller で serial 実行できますが、independent review には independent adapter が必要です。
-- selected adapter または記録された fallback order が explicit CLI orchestration を選択した場合、`ospec execute orchestrate [changes/active/<change>] --command "..."` を使い、adapter が許可した batch だけを実行します。
-- selected target-CLI adapter が single-worker runner を必要とする場合、または前の adapter が ownership claim 前に失敗した場合は `ospec execute launch ... --run --command "..."` を使い、その後 `ospec execute collect ...` で task completion を記録します。
+- dispatch 後は `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run]` で agent launch plan を書きます。`runtimeAdapter` は current かつ target-bound な model-native subagent capability のみを受け入れ、native primitive を示します。OSpec 自体は worker process を起動しません。
+- multi-worker execution は `runtimeAdapter.selected.nativeSubagent` に従います。選択された model-native adapter が parallel execution をサポートする場合だけ safe batch を並列起動します。capability がない、期限切れ、または target 不一致の場合は block し、agent CLI や current controller に fallback しません。
+- agent CLI execution は削除されました。`execute orchestrate`、`launch --run --command`、`review --run --command`、`loop watch` は process 起動や run artifact 作成の前に migration error を返します。
 - blocked、needs-context、failed の worker run を修正した後は、`ospec execute retry [changes/active/<change>] --task task-id` を使います。`artifacts/agents/retries/` を書き、task を reopen し、新しい dispatch packet を作成します。完了済み task は explicit `--force` が必要です。
 - 各 worker task 完了後、`ospec execute review [changes/active/<change>] --task <task-id>` で 1 回の統合 code review（spec compliance と code quality を一度に確認）を行います。task-level decision は `artifacts/reviews/tasks/<task-id>/review.md` に保存され、その 1 回の統合 review が承認されるまで dependent task は dispatch されません。
 - task graph が完了した後、`--task` なしの `ospec execute review [changes/active/<change>]` で 1 つの統合 final whole-change `artifacts/agents/review-dispatches/*` reviewer handoff packet を作成します。これは単一 `artifacts/reviews/final-review.md` の decision を書きます。
-- `ospec execute review ... --run --command "..."` は、OSpec に local reviewer command を実行させたい場合だけ明示的に使います。OSpec は run を `artifacts/agents/review-runs/` に記録し、`--decision` がある場合は対応する task-level または final review artifact を更新できます。
 - review artifact が non-`PENDING` decision を持つ場合は `ospec execute feedback [changes/active/<change>] [--summary "..."]` で `artifacts/agents/review-feedback-plan.json` と `artifacts/agents/review-feedback-plan.md` を書きます。追加作業を dispatch する前に、feedback を accept、revise、clarify、unblock のどれで扱うか記録し、feedback が scope、direction、API、UI、risk、accepted tradeoff に影響する場合は required user decision gate を作成します。
 - debugging が change の一部だった場合、`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` で `artifacts/agents/debug-evidence.json` と debug evidence report を記録します。`CONFIRMED` は root cause の隔離、`FIXED` は verified fix、`BLOCKED` は verify failure を意味します。
 - focused test 実行後、`ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` で `artifacts/agents/tdd-evidence.json` と cycle ごとの evidence report を記録します。red は implementation 前の non-passing focused test を記録し、green は prior red `FAILED` record を要求し、refactor は prior passing green/refactor evidence を要求します。`SKIPPED` には具体的な summary が必要です。
 - `ospec execute require-verification` でユーザーが要求した browser、E2E、manual verification surface を永続化します。fresh PASSED evidence を `--satisfies <id>` で関連付けるまで final verification と archive はブロックされます。
-- fresh project checks を実行した後、`ospec execute verify [changes/active/<change>] --command "..." --status PASSED` で `artifacts/agents/verification-evidence.json` と run ごとの evidence report を記録します。
+- fresh project checks を実行した後、`ospec execute verify [changes/active/<change>] --command "..." --status PASSED --exit-code 0` で `artifacts/agents/verification-evidence.json` と run ごとの evidence report を記録します。明示的な exit code 0 がない PASSED evidence は拒否されます。
 - `ospec execute sync [changes/active/<change>]` は worker status、bootstrap 由来の `state.json`、project session brief を同期します。
 - `tasks.md` には、確認済みの実行計画を実行可能な作業へ分解します。
 - 各 task は 1 回の統合 review で spec compliance と code quality を一度に確認します。final review は単一の `artifacts/reviews/final-review.md` に 1 つの decision を記録します。
@@ -171,7 +166,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - AI / `/ospec-change` フローでは、AI は小さな flow を `proposal.md`、`tasks.md`、実装、`verification.md`、`review.md` に集中させます。
 - AI / `/ospec-goal` フローでは、AI が要件、`proposal.md`、プロジェクト文脈から `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json` を作成または更新します。ユーザーは仮定の確認や重要判断の修正だけを行えば十分です。
 - Task graph の状態値は `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING` です。archive 準備にはトップレベルの `status: "completed"` と、全 task の `DONE` または `DONE_WITH_CONCERNS` が必要です。
-- `ospec execute` の artifact command は project source file を直接編集しません。controller は選択された runtime adapter で worker を起動し、specialist review は実 executor id を claim/complete します。
+- `ospec execute` の artifact command は project source file を直接編集しません。current model controller は `runtimeAdapter.selected.nativeSubagent` だけで worker を dispatch し、specialist review は実 executor id を claim/complete します。OSpec は agent CLI を実行しません。
 - Worker 状態値は `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING` です。完了には worker 状態が解決済みで、`controller_status` が `DONE` である必要があります。
 - `change` profile では `ospec verify [changes/active/<change>]` は classic files だけを必須にします。`goal` profile では `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence、`artifacts/agents/worker-status.md` も必須にします。
 - `design.md` は簡潔に保ちます。役割はタスク分解の精度を上げることであり、長期的なプロジェクト文書の代替ではありません。
@@ -188,7 +183,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 1. プロジェクト更新後に `ospec session hook [path]` を実行し、harness が session start で `.ospec/hooks/using-ospec.md` を注入できるようにします。
 2. change を再開するときは `ospec execute bootstrap [changes/active/<change>]` を実行し、表示された next instruction に従ってから dispatch します。
 3. bootstrap または status が pending decision を示した場合は、`artifacts/agents/decisions/index.md` を開き、該当 decision report の `Chat Prompt` をユーザーに提示し、`ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user` で回答を記録します。
-4. `ospec execute workspace [changes/active/<change>]` の後に `ospec execute dispatch [changes/active/<change>]` を実行します。adapter が machine-readable launch data を必要とする場合は `ospec execute launch ... --json` を使い、`--run --command` は selected target-CLI adapter が runner を必要とする場合だけ使います。
+4. `ospec execute workspace [changes/active/<change>]` の後に `ospec execute dispatch [changes/active/<change>]` を実行します。`ospec execute launch ... --json` で machine-readable native subagent contract を読み、current model harness で dispatch して real child result を記録します。
 5. Checkpoint を有効化した change では `ospec plugins doctor checkpoint [path]` を実行し、closeout 前に `routes.yaml`、`flows.yaml`、baseline、screenshots、traces、console/network evidence、accessibility evidence、assertions を修復します。
 6. `ospec execute status`、`ospec execute next`、`ospec execute finish` で Checkpoint evidence readiness を確認します。required decisions または active Checkpoint evidence が未完了の間は finish、verify、archive がブロックされます。
 
@@ -201,7 +196,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.1
+npm install -g @clawplays/ospec-cli@1.8.2
 ospec update [path]
 ```
 

@@ -692,18 +692,58 @@ class ProjectService {
             blocked_by: [],
         };
         await this.preflightArchivedKnowledgeWrite(projectRoot, archivePath);
-        await this.fileService.move(resolvedFeaturePath, archivePath);
-        await this.fileService.writeJSON(path_1.default.join(archivePath, constants_1.FILE_NAMES.STATE), nextState);
-        const archivedProposalPath = path_1.default.join(archivePath, constants_1.FILE_NAMES.PROPOSAL);
-        if (await this.fileService.exists(archivedProposalPath)) {
-            const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(archivedProposalPath));
-            proposal.data.status = 'archived';
-            await this.fileService.writeFile(archivedProposalPath, (0, helpers_1.stringifyFrontmatter)(proposal.content, proposal.data));
+        const originalProposal = await this.fileService.exists(proposalPath)
+            ? await this.fileService.readFile(proposalPath)
+            : null;
+        let moved = false;
+        let linksRebased = false;
+        try {
+            await this.fileService.move(resolvedFeaturePath, archivePath);
+            moved = true;
+            await this.fileService.writeJSON(path_1.default.join(archivePath, constants_1.FILE_NAMES.STATE), nextState);
+            const archivedProposalPath = path_1.default.join(archivePath, constants_1.FILE_NAMES.PROPOSAL);
+            if (await this.fileService.exists(archivedProposalPath)) {
+                const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(archivedProposalPath));
+                proposal.data.status = 'archived';
+                await this.fileService.writeFile(archivedProposalPath, (0, helpers_1.stringifyFrontmatter)(proposal.content, proposal.data));
+            }
+            await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
+            linksRebased = true;
+            await this.rebuildIndex(projectRoot);
+            await this.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
+            await this.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
         }
-        await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
-        await this.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
-        await this.rebuildIndex(projectRoot);
-        await this.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
+        catch (error) {
+            if (!moved)
+                throw error;
+            const rollbackErrors = [];
+            try {
+                if (await this.fileService.exists(archivePath)) {
+                    await this.fileService.move(archivePath, resolvedFeaturePath);
+                }
+            }
+            catch (rollbackError) {
+                rollbackErrors.push(`move: ${rollbackError?.message || rollbackError}`);
+            }
+            if (await this.fileService.exists(resolvedFeaturePath)) {
+                if (linksRebased) {
+                    await this.rebaseMovedChangeMarkdownLinks(archivePath, resolvedFeaturePath)
+                        .catch((rollbackError) => rollbackErrors.push(`links: ${rollbackError?.message || rollbackError}`));
+                }
+                await this.fileService.writeJSON(path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE), featureState)
+                    .catch((rollbackError) => rollbackErrors.push(`state: ${rollbackError?.message || rollbackError}`));
+                if (originalProposal !== null) {
+                    await this.fileService.writeFile(path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL), originalProposal)
+                        .catch((rollbackError) => rollbackErrors.push(`proposal: ${rollbackError?.message || rollbackError}`));
+                }
+            }
+            await this.rebuildIndex(projectRoot)
+                .catch((rollbackError) => rollbackErrors.push(`index: ${rollbackError?.message || rollbackError}`));
+            if (rollbackErrors.length > 0) {
+                throw new Error(`Finalize failed (${error?.message || error}); rollback also failed: ${rollbackErrors.join('; ')}`);
+            }
+            throw error;
+        }
         return {
             archivePath: this.toRelativePath(projectRoot, archivePath),
             change: item,
@@ -722,33 +762,45 @@ class ProjectService {
         }
         const entries = await this.fileService.readDir(brainstormsDir);
         const moved = [];
-        for (const name of entries) {
-            const sourceDir = path_1.default.join(brainstormsDir, name);
-            const jsonPath = path_1.default.join(sourceDir, 'brainstorm.json');
-            if (!(await this.fileService.exists(jsonPath))) {
-                continue;
+        try {
+            for (const name of entries) {
+                const sourceDir = path_1.default.join(brainstormsDir, name);
+                const jsonPath = path_1.default.join(sourceDir, 'brainstorm.json');
+                if (!(await this.fileService.exists(jsonPath))) {
+                    continue;
+                }
+                let linked = false;
+                try {
+                    const data = await this.fileService.readJSON(jsonPath);
+                    const changeName = typeof data?.changeName === 'string' ? data.changeName.trim() : '';
+                    // Explicit link wins; otherwise match the brainstorm directory id to the feature,
+                    // including a hyphen-bounded prefix relationship (e.g. feature "iot-latest-data"
+                    // and brainstorm id "iot-latest-data-keyname", or vice versa).
+                    linked = changeName === feature
+                        || name === feature
+                        || (changeName.length === 0 && (name.startsWith(`${feature}-`) || feature.startsWith(`${name}-`)));
+                }
+                catch {
+                    linked = false;
+                }
+                if (!linked) {
+                    continue;
+                }
+                const destDir = path_1.default.join(archivePath, 'artifacts', 'brainstorm', name);
+                await this.fileService.ensureDir(path_1.default.dirname(destDir));
+                await this.fileService.move(sourceDir, destDir);
+                moved.push(name);
             }
-            let linked = false;
-            try {
-                const data = await this.fileService.readJSON(jsonPath);
-                const changeName = typeof data?.changeName === 'string' ? data.changeName.trim() : '';
-                // Explicit link wins; otherwise match the brainstorm directory id to the feature,
-                // including a hyphen-bounded prefix relationship (e.g. feature "iot-latest-data"
-                // and brainstorm id "iot-latest-data-keyname", or vice versa).
-                linked = changeName === feature
-                    || name === feature
-                    || (changeName.length === 0 && (name.startsWith(`${feature}-`) || feature.startsWith(`${name}-`)));
+        }
+        catch (error) {
+            for (const name of [...moved].reverse()) {
+                const archivedDir = path_1.default.join(archivePath, 'artifacts', 'brainstorm', name);
+                const sourceDir = path_1.default.join(brainstormsDir, name);
+                if (await this.fileService.exists(archivedDir)) {
+                    await this.fileService.move(archivedDir, sourceDir).catch(() => undefined);
+                }
             }
-            catch {
-                linked = false;
-            }
-            if (!linked) {
-                continue;
-            }
-            const destDir = path_1.default.join(archivePath, 'artifacts', 'brainstorm', name);
-            await this.fileService.ensureDir(path_1.default.dirname(destDir));
-            await this.fileService.move(sourceDir, destDir);
-            moved.push(name);
+            throw error;
         }
         return moved;
     }
@@ -766,30 +818,40 @@ class ProjectService {
             constants_1.FILE_NAMES.VERIFICATION,
             constants_1.FILE_NAMES.REVIEW,
         ];
-        for (const fileName of markdownFiles) {
-            const nextFilePath = path_1.default.join(nextRoot, fileName);
-            if (!(await this.fileService.exists(nextFilePath))) {
-                continue;
-            }
-            const previousFilePath = path_1.default.join(previousRoot, fileName);
-            const originalContent = await this.fileService.readFile(nextFilePath);
-            const previousDir = path_1.default.dirname(previousFilePath);
-            const nextDir = path_1.default.dirname(nextFilePath);
-            const rewrittenContent = originalContent.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, rawHref) => {
-                const href = String(rawHref || '').trim();
-                if (!this.isRelativeMarkdownHref(href)) {
-                    return match;
+        const changed = new Map();
+        try {
+            for (const fileName of markdownFiles) {
+                const nextFilePath = path_1.default.join(nextRoot, fileName);
+                if (!(await this.fileService.exists(nextFilePath))) {
+                    continue;
                 }
-                const previousTargetPath = path_1.default.resolve(previousDir, href);
-                if (this.isPathWithin(previousTargetPath, previousRoot)) {
-                    return match;
+                const previousFilePath = path_1.default.join(previousRoot, fileName);
+                const originalContent = await this.fileService.readFile(nextFilePath);
+                const previousDir = path_1.default.dirname(previousFilePath);
+                const nextDir = path_1.default.dirname(nextFilePath);
+                const rewrittenContent = originalContent.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, rawHref) => {
+                    const href = String(rawHref || '').trim();
+                    if (!this.isRelativeMarkdownHref(href)) {
+                        return match;
+                    }
+                    const previousTargetPath = path_1.default.resolve(previousDir, href);
+                    if (this.isPathWithin(previousTargetPath, previousRoot)) {
+                        return match;
+                    }
+                    const rebasedHref = path_1.default.relative(nextDir, previousTargetPath).replace(/\\/g, '/');
+                    return `[${label}](${rebasedHref || '.'})`;
+                });
+                if (rewrittenContent !== originalContent) {
+                    changed.set(nextFilePath, originalContent);
+                    await this.fileService.writeFile(nextFilePath, rewrittenContent);
                 }
-                const rebasedHref = path_1.default.relative(nextDir, previousTargetPath).replace(/\\/g, '/');
-                return `[${label}](${rebasedHref || '.'})`;
-            });
-            if (rewrittenContent !== originalContent) {
-                await this.fileService.writeFile(nextFilePath, rewrittenContent);
             }
+        }
+        catch (error) {
+            for (const [filePath, originalContent] of changed) {
+                await this.fileService.writeFile(filePath, originalContent).catch(() => undefined);
+            }
+            throw error;
         }
     }
     isRelativeMarkdownHref(href) {

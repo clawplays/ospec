@@ -234,18 +234,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async launch(args) {
         const parsed = this.parseLaunchArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
         if (parsed.run) {
-            const result = await services_1.services.taskGraphExecutionService.launchAndRun(changePath, {
-                taskId: parsed.taskId,
-                target: parsed.target,
-                dryRun: parsed.dryRun,
-                command: parsed.command || '',
-                timeoutMs: parsed.timeoutMs,
-            });
-            this.printWorkerRun(result);
-            return;
+            throw new Error('Execute launch --run was removed. Use the launch artifact nativeSubagent contract with the current model harness.');
         }
+        const changePath = await this.resolveChangePath(parsed.inputPath);
         const result = await services_1.services.taskGraphExecutionService.planLaunch(changePath, {
             taskId: parsed.taskId,
             target: parsed.target,
@@ -261,20 +253,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         this.printLaunch(result);
     }
-    async orchestrate(args) {
-        const parsed = this.parseOrchestrateArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
-        const result = await services_1.services.taskGraphExecutionService.orchestrate(changePath, {
-            command: parsed.command,
-            target: parsed.target,
-            limit: parsed.limit,
-            maxRounds: parsed.maxRounds,
-            timeoutMs: parsed.timeoutMs,
-            dryRun: parsed.dryRun,
-            collect: parsed.collect,
-            continueOnFailure: parsed.continueOnFailure,
-        });
-        this.printOrchestration(result);
+    async orchestrate(_args) {
+        throw new Error('Execute orchestrate was removed. Use ospec loop run --once and dispatch its action batch through model-native subagents.');
     }
     async collect(args) {
         const parsed = this.parseCollectArgs(args);
@@ -326,20 +306,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async review(args) {
         const parsed = this.parseReviewArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
         if (parsed.run) {
-            const result = await services_1.services.taskGraphExecutionService.runReview(changePath, {
-                stage: parsed.stage,
-                taskId: parsed.taskId,
-                command: parsed.command || '',
-                decision: parsed.decision,
-                summary: parsed.summary,
-                timeoutMs: parsed.timeoutMs,
-                usageFile: parsed.usageFile,
-            });
-            this.printReviewRun(result);
-            return;
+            throw new Error('Execute review --run was removed. Dispatch the review packet through a fresh model-native subagent.');
         }
+        const changePath = await this.resolveChangePath(parsed.inputPath);
         const result = await services_1.services.taskGraphExecutionService.review(changePath, {
             stage: parsed.stage,
             taskId: parsed.taskId,
@@ -729,7 +699,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             console.log(`Native agent default: ${result.nativeAgent.defaultPath ? 'yes' : 'no'}`);
         }
         if (result.launchCommands.length > 0) {
-            console.log('\nCLI fallback commands:');
+            console.log('\nController commands:');
             for (const command of result.launchCommands) {
                 console.log(`  - ${command}`);
             }

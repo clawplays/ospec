@@ -51,15 +51,15 @@ const LOOP_RUNLOG_FILE = 'run-log.jsonl';
 const LOOP_STOP_FILE = 'STOP';
 const LOOP_CONTROLLER_LOCK_FILE = 'controller.lock';
 const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
+const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
 const MAX_ACTION_LEASE_MS = 30 * 60 * 1000;
 const MIN_ACTION_TOKEN_RESERVATION = 1000;
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
 const RETRY_REVIEW_DECISIONS = new Set(['NEEDS_CHANGES', 'BLOCKED']);
 /**
- * Durable plan-act-observe controller for goal task graphs. OSpec still does not invoke a
- * harness-native subagent itself: controller mode emits bounded action packets, while CLI watch
- * executes those packets through AgentCliRunnerService and records the result for the next tick.
+ * Durable plan-act-observe controller for goal task graphs. OSpec emits bounded action packets;
+ * the active model harness executes them through its native subagent primitive.
  */
 class LoopService {
     constructor(fileService, dependencies = {}) {
@@ -88,6 +88,9 @@ class LoopService {
         return this.fileService.exists(this.configPath(changePath));
     }
     async scaffold(changePath, options = {}) {
+        if (options.executionModel === 'cli-driven') {
+            throw new Error('CLI-driven agent execution was removed. Use controller mode with the current model harness native subagent capability.');
+        }
         const configPath = this.configPath(changePath);
         if (await this.fileService.exists(configPath)) {
             if (options.target !== undefined
@@ -189,6 +192,9 @@ class LoopService {
         return this.withControllerLease(changePath, () => this.configureUnlocked(changePath, options));
     }
     async configureUnlocked(changePath, options) {
+        if (options.executionModel === 'cli-driven') {
+            throw new Error('CLI-driven agent execution was removed. Use controller mode with the current model harness native subagent capability.');
+        }
         const config = await this.readConfig(changePath);
         const targetChanged = options.target !== undefined && options.target !== config.target;
         if (options.target)
@@ -267,6 +273,7 @@ class LoopService {
             if (state.status === 'paused' || state.status === 'stopped')
                 state.status = 'idle';
             state.comprehensionDebtCounter = 0;
+            state.noProgressCount = 0;
             await this.writeState(changePath, state);
             return state;
         });
@@ -289,13 +296,7 @@ class LoopService {
             const actionItem = (pending.items || []).find(item => item.id === heartbeat.actionItemId);
             const now = heartbeatNow;
             const controllerCurrent = this.isControllerCapabilityCurrent(config, heartbeatNow);
-            const fallbackAuthorized = actionItem?.runtimeAdapter?.selected
-                && actionItem.runtimeAdapter.selected.kind !== 'native';
-            if (config.executionModel === 'controller'
-                && !controllerCurrent
-                && (!fallbackAuthorized || actionItem?.controllerProvenanceRequired)) {
-                throw new Error('Cannot heartbeat this action with an expired controller capability session; refresh the native session or reissue it through a verified non-native runtime adapter.');
-            }
+            this.assertActionNativeSession(config, actionItem, heartbeatNow, heartbeat.actionItemId);
             if (itemState.executorId && itemState.executorId !== executorId
                 && Date.parse(itemState.leaseExpiresAt) > now.getTime()) {
                 throw new Error(`Action item ${heartbeat.actionItemId} is leased by another executor.`);
@@ -361,7 +362,6 @@ class LoopService {
         this.ensurePendingItemStates(pending);
         const config = await this.readConfig(changePath);
         const resultNow = this.now();
-        const controllerCurrent = this.isControllerCapabilityCurrent(config, resultNow);
         const expectedIds = new Set((pending.items || []).map(item => item.id));
         const resultIds = results.map(result => result.actionItemId);
         if (results.length === 0
@@ -376,14 +376,8 @@ class LoopService {
             if (!itemState)
                 throw new Error(`Unknown action item for the current pending action (${result.actionItemId}).`);
             const actionItem = (pending.items || []).find(item => item.id === result.actionItemId);
-            const fallbackAuthorized = actionItem?.runtimeAdapter?.selected
-                && actionItem.runtimeAdapter.selected.kind !== 'native';
-            if (config.executionModel === 'controller'
-                && !controllerCurrent
-                && (!fallbackAuthorized || actionItem?.controllerProvenanceRequired)) {
-                throw new Error(`Cannot record ${result.actionItemId} with an expired native controller session; reissue it through a verified non-native runtime adapter.`);
-            }
-            if (config.executionModel === 'controller' && !itemState.executorId) {
+            this.assertActionNativeSession(config, actionItem, resultNow, result.actionItemId);
+            if (!itemState.executorId) {
                 throw new Error(`Controller result for ${result.actionItemId} requires a prior heartbeat claim by executor ${executorId}.`);
             }
             if (itemState.executorId && executorId !== itemState.executorId) {
@@ -397,7 +391,7 @@ class LoopService {
                 }
                 continue;
             }
-            if (config.executionModel === 'controller' && Date.parse(itemState.leaseExpiresAt) <= resultNow.getTime()) {
+            if (Date.parse(itemState.leaseExpiresAt) <= resultNow.getTime()) {
                 throw new Error(`Action item ${result.actionItemId} executor lease expired; recover the orphaned action before accepting another result.`);
             }
             const failed = result.timedOut === true || result.exitCode !== 0;
@@ -619,7 +613,13 @@ class LoopService {
             try {
                 const candidate = await fs_1.promises.open(lockPath, 'wx');
                 try {
-                    await candidate.writeFile(JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString(), nonce }));
+                    await candidate.writeFile(JSON.stringify({
+                        version: 2,
+                        pid: process.pid,
+                        acquiredAt: new Date().toISOString(),
+                        nonce,
+                        heartbeat: true,
+                    }));
                     handle = candidate;
                 }
                 catch (error) {
@@ -634,11 +634,13 @@ class LoopService {
                     throw error;
                 const owner = await this.readControllerLockOwner(lockPath);
                 const stat = await fs_1.promises.stat(lockPath).catch(() => null);
+                const lockAgeMs = stat ? Date.now() - stat.mtimeMs : 0;
                 if (attempt === 0
                     && stat
-                    && Date.now() - stat.mtimeMs >= STALE_CONTROLLER_LOCK_MS
+                    && (lockAgeMs >= STALE_CONTROLLER_LOCK_MS || lockAgeMs <= -STALE_CONTROLLER_LOCK_MS)
                     && (owner
-                        ? !this.isProcessAlive(owner.pid) && await this.removeControllerLockIfOwned(lockPath, owner.nonce)
+                        ? ((!this.isProcessAlive(owner.pid) || owner.heartbeat)
+                            && await this.removeControllerLockIfOwned(lockPath, owner.nonce))
                         : await this.removeCorruptControllerLockIfUnchanged(lockPath, stat))) {
                     continue;
                 }
@@ -647,10 +649,15 @@ class LoopService {
         }
         if (!handle)
             throw new Error(`Could not acquire the loop controller lease for ${path.resolve(changePath)}.`);
+        const heartbeat = setInterval(() => {
+            void this.refreshControllerLockIfOwned(lockPath, nonce);
+        }, CONTROLLER_LOCK_HEARTBEAT_MS);
+        heartbeat.unref();
         try {
             return await operation();
         }
         finally {
+            clearInterval(heartbeat);
             await handle.close().catch(() => undefined);
             await this.removeControllerLockIfOwned(lockPath, nonce);
         }
@@ -659,12 +666,19 @@ class LoopService {
         try {
             const value = JSON.parse(await fs_1.promises.readFile(lockPath, 'utf8'));
             return Number.isInteger(value?.pid) && value.pid > 0 && typeof value?.nonce === 'string' && value.nonce.length > 0
-                ? { pid: value.pid, nonce: value.nonce }
+                ? { pid: value.pid, nonce: value.nonce, heartbeat: value?.version === 2 && value?.heartbeat === true }
                 : null;
         }
         catch {
             return null;
         }
+    }
+    async refreshControllerLockIfOwned(lockPath, nonce) {
+        const owner = await this.readControllerLockOwner(lockPath);
+        if (owner?.nonce !== nonce)
+            return;
+        const now = new Date();
+        await fs_1.promises.utimes(lockPath, now, now).catch(() => undefined);
     }
     isProcessAlive(pid) {
         try {
@@ -709,21 +723,23 @@ class LoopService {
     async runOnce(changePath, options = {}) {
         await this.assertExists(changePath);
         const startedAt = Date.now();
-        const before = await this.readState(changePath);
-        const result = await this.withControllerLease(changePath, () => this.runOnceUnlocked(changePath, options));
-        const durationMs = Math.max(0, Date.now() - startedAt);
-        const repeatedBlockerCount = result.stopReason
-            ? before.lastFeedback === result.stopReason ? Math.max(2, before.noProgressCount + 1) : 1
-            : 0;
-        await this.appendRunLog(changePath, {
-            ...this.logEntry(await this.readState(changePath), options.trigger || 'manual', result.verifyPassed, 'Loop tick performance metrics.'),
-            event: 'tick_metrics',
-            durationMs,
-            gateDurationMs: result.currentStep === 'gate' ? durationMs : null,
-            dispatchCount: result.actions.length,
-            repeatedBlockerCount,
+        return this.withControllerLease(changePath, async () => {
+            const before = await this.readState(changePath);
+            const result = await this.runOnceUnlocked(changePath, options);
+            const durationMs = Math.max(0, Date.now() - startedAt);
+            const repeatedBlockerCount = result.stopReason
+                ? before.lastFeedback === result.stopReason ? Math.max(2, before.noProgressCount + 1) : 1
+                : 0;
+            await this.appendRunLog(changePath, {
+                ...this.logEntry(await this.readState(changePath), options.trigger || 'manual', result.verifyPassed, 'Loop tick performance metrics.'),
+                event: 'tick_metrics',
+                durationMs,
+                gateDurationMs: result.currentStep === 'gate' ? durationMs : null,
+                dispatchCount: result.actions.length,
+                repeatedBlockerCount,
+            });
+            return result;
         });
-        return result;
     }
     async runOnceUnlocked(changePath, options = {}) {
         await this.assertExists(changePath);
@@ -779,7 +795,10 @@ class LoopService {
             if (!observation.settled) {
                 if (state.pendingControllerAction.executorCompletedAt) {
                     const pending = state.pendingControllerAction;
-                    state.noProgressCount += 1;
+                    const failureAlreadyCounted = (pending.itemStates || [])
+                        .some(item => item.status === 'failed' || item.status === 'expired');
+                    if (!failureAlreadyCounted)
+                        state.noProgressCount += 1;
                     feedback = `${observation.feedback || 'Durable evidence is incomplete.'} The executor already exited, so this attempt will be retried with fresh context.`;
                     state.lastFeedback = feedback;
                     await this.markImplementationAttemptsBlocked(resolved, pending, [], feedback);
@@ -825,7 +844,7 @@ class LoopService {
             && !this.isControllerCapabilityCurrent(config, now)) {
             const fallback = await this.resolveRuntimeAdapter(resolved, config, false, now);
             if (fallback.blocked) {
-                return this.gateResult(resolved, state, trigger, `Loop blocked: no current native controller capability and no safe runtime adapter fallback is available. ${fallback.warnings.join(' ')}`);
+                return this.gateResult(resolved, state, trigger, `Loop blocked: no current model-native subagent capability is available. ${fallback.warnings.join(' ')}`);
             }
         }
         state.currentStep = 'plan';
@@ -1113,6 +1132,8 @@ class LoopService {
         for (const item of items) {
             item.runtimeAdapter = runtimeAdapter;
             item.controllerProvenanceRequired = controllerProvenanceRequired;
+            item.nativeSessionTarget = config.target;
+            item.nativeSessionReportedAt = config.capability.reportedAt;
             item.tokenAllowance = allowances.shift() ?? null;
             item.heartbeatCommand = `ospec loop heartbeat ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id>`;
             item.resultCommand = `ospec loop result ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id> --exit-code <code> --summary "..."`;
@@ -1127,16 +1148,21 @@ class LoopService {
                 item.completionCommand = `${unboundCompletion} --loop-action ${this.quote(actionId)} --action-item ${this.quote(item.id)} --executor <child-id>`;
                 item.prompt = item.prompt.replace(unboundCompletion, item.completionCommand);
             }
+            const promptAdditions = [
+                `Runtime adapter: ${runtimeAdapter.selectedAdapterId}. ${runtimeAdapter.selected.supportsParallel ? 'This safe batch may run in parallel.' : 'Run this batch serially in item order.'}`,
+            ];
+            if (item.tokenAllowance !== null) {
+                promptAdditions.push(`Token allowance for this action: ${item.tokenAllowance}. Keep the run within this reserved share and report actual usage.`);
+            }
             item.prompt = this.boundPrompt([
                 item.prompt,
-                `Runtime adapter: ${runtimeAdapter.selectedAdapterId}. ${runtimeAdapter.selected.supportsParallel ? 'This safe batch may run in parallel.' : 'Run this batch serially in item order.'}`,
-            ], config.efficiency.promptMaxChars);
-            if (item.tokenAllowance !== null) {
-                item.prompt = this.boundPrompt([
-                    item.prompt,
-                    `Token allowance for this action: ${item.tokenAllowance}. Keep the run within this reserved share and report actual usage.`,
-                ], config.efficiency.promptMaxChars);
-            }
+                ...promptAdditions,
+            ], config.efficiency.promptMaxChars, [
+                `Read the authoritative packet at: ${item.packetPath}`,
+                `Claim and heartbeat with: ${item.heartbeatCommand}`,
+                `Record durable evidence with: ${item.completionCommand}`,
+                `Record the executor result with: ${item.resultCommand}`,
+            ]);
         }
         for (const item of items) {
             if (!item.usageKey || (item.kind !== 'task-review' && item.kind !== 'final-review'))
@@ -1246,7 +1272,7 @@ class LoopService {
     verificationAction(changePath, config, outcome, iteration) {
         const commands = config.stopConditions.testCommands;
         const commandText = commands.length > 0 ? commands.join(' && ') : '<project test/build commands from verification.md>';
-        const completionCommand = `ospec execute verify ${this.quote(changePath)} --command ${this.quote(commandText)} --status PASSED`;
+        const completionCommand = `ospec execute verify ${this.quote(changePath)} --command ${this.quote(commandText)} --status PASSED --exit-code 0`;
         const id = `verify-${iteration}`;
         return {
             id,
@@ -1334,7 +1360,7 @@ class LoopService {
             kind: 'legacy', taskId: null, role: 'goal_worker', target: config.target,
             packetPath: '', instructionPath: '',
             prompt: 'A legacy goal has no task graph. Complete the goal through the documented OSpec workflow and record verification evidence.',
-            completionCommand: `ospec execute verify ${this.quote(changePath)} --status PASSED --command "..."`,
+            completionCommand: `ospec execute verify ${this.quote(changePath)} --status PASSED --exit-code 0 --command "..."`,
             expectedEvidencePath: path.resolve(changePath, 'artifacts', 'agents', 'verification-evidence.json'),
         };
         state.iteration -= 1;
@@ -1351,40 +1377,21 @@ class LoopService {
             ? [
                 `No runtime adapter is available: ${runtimeAdapter.warnings.join(' ')}`,
             ]
-            : selected.kind === 'native'
-                ? [
-                    `Run "ospec loop run ${this.quote(changePath)} --once --json". For every non-empty actions[] batch, immediately launch one fresh IDE-native subagent per item and wait for the whole safe batch.`,
-                    'Give each subagent only its referenced packet. After spawn, record heartbeatCommand with the real child id; persist each completionCommand/evidence and resultCommand as that child finishes, then tick again immediately without another user prompt.',
-                    'Refresh heartbeats while children run. Use loop recover --force only when the prior session or child is known to be gone; never relaunch completed siblings.',
-                    'If actions[] is empty and pending is present, observe/wait only and never relaunch pending items. Stop only for a real decision/safety gate, configured guard/STOP, paused/stopped/done, or explicit user pause.',
-                    'The CLI is the durable state-machine brain; the current IDE AI is the native subagent executor. Do not switch to loop watch when the IDE native subagent API is available.',
-                ]
-                : selected.kind === 'orca'
-                    ? [
-                        `Run "ospec loop run ${this.quote(changePath)} --once --json" and consume each action's runtimeAdapter command vectors with the verified Orca CLI.`,
-                        `Create one Orca terminal per parallel-safe action, up to maxParallel=${config.efficiency.maxParallel}; wait for TUI readiness, send only the action prompt/packet, and use the returned terminal handle as the executor id.`,
-                        'Persist heartbeat and result evidence per terminal. Re-list a stale handle after Orca restart and never relaunch completed siblings.',
-                    ]
-                    : selected.kind === 'cli'
-                        ? [
-                            `Run "ospec loop run ${this.quote(changePath)} --once --json" and launch one fresh ${selected.binary || config.target} process per parallel-safe action using its shell-free command vector.`,
-                            'Record heartbeat/result ownership for each process and tick again immediately after durable evidence arrives.',
-                        ]
-                        : [
-                            `Run "ospec loop run ${this.quote(changePath)} --once --json" and execute emitted ordinary actions serially in the current controller context.`,
-                            'Do not claim that a child process was created. Independent review remains blocked until an independent adapter is available.',
-                        ];
+            : [
+                `Run "ospec loop run ${this.quote(changePath)} --once --json". For every non-empty actions[] batch, immediately launch one fresh ${selected.nativeSubagent?.primitive || 'model-native'} subagent per item and wait for the whole safe batch.`,
+                selected.nativeSubagent?.dispatch || 'Use the current model harness native subagent dispatch primitive.',
+                selected.nativeSubagent?.wait || 'Wait for the native child batch in the current model session.',
+                'Give each subagent only its referenced packet. After dispatch, record heartbeatCommand with the real child id; persist each completionCommand/evidence and resultCommand as that child finishes, then tick again immediately without another user prompt.',
+                'Refresh heartbeats while children run. Use loop recover --force only when the prior session or child is known to be gone; never relaunch completed siblings.',
+                'If actions[] is empty and pending is present, observe/wait only and never relaunch pending items. Stop only for a real decision/safety gate, configured guard/STOP, paused/stopped/done, or explicit user pause.',
+                'OSpec owns durable workflow state; the current model harness owns native subagent execution. Agent CLI processes are not a supported fallback.',
+            ];
         return {
             interval: config.schedule.interval,
             executionModel: config.executionModel,
             nativeLoopCapability: capability,
             runtimeAdapter,
-            instructions: config.executionModel === 'cli-driven' && selected?.kind === 'cli'
-                ? [
-                    `Run "ospec loop watch ${changePath}". Each tick selects bounded task/review packets, launches fresh external agent processes in parallel, observes durable evidence, and feeds failures into retry/repair.`,
-                    `Concurrency is capped at ${config.efficiency.maxParallel}; packets are referenced by path to avoid duplicating goal context.`,
-                ]
-                : adapterInstructions,
+            instructions: adapterInstructions,
         };
     }
     async gateResult(changePath, state, trigger, reason) {
@@ -1417,6 +1424,7 @@ class LoopService {
             || raw.capability?.interactive === undefined
             || raw.capability?.nativeSubagentCapability === undefined
             || raw.capability?.controllerAvailable === undefined
+            || raw.capability?.target !== target
             || !raw.capability?.reportedAt
             || !raw.capability?.expiresAt;
         return {
@@ -1424,7 +1432,7 @@ class LoopService {
             pattern: raw.pattern || 'goal-loop',
             primitive,
             level: raw.level || 'L1',
-            executionModel: raw.executionModel || 'controller',
+            executionModel: 'controller',
             target,
             schedule: { interval: raw.schedule?.interval || '10m', lifecycle: 'session-bound' },
             stopConditions: {
@@ -1482,28 +1490,64 @@ class LoopService {
     }
     isControllerCapabilityCurrent(config, now) {
         const capability = config.capability;
-        if (capability?.controllerAvailable !== true || !capability.reportedAt || !capability.expiresAt)
+        if (config.executionModel !== 'controller'
+            || capability?.controllerAvailable !== true
+            || !capability.reportedAt
+            || !capability.expiresAt)
             return false;
         const reportedAt = Date.parse(capability.reportedAt);
         const expiresAt = Date.parse(capability.expiresAt);
         return Number.isFinite(reportedAt)
             && Number.isFinite(expiresAt)
+            && expiresAt > reportedAt
+            && capability.target === config.target
+            && capability.interactive === true
             && capability.nativeSubagentCapability === 'supported'
             && reportedAt <= now.getTime()
             && expiresAt > now.getTime();
     }
+    assertActionNativeSession(config, actionItem, now, actionItemId) {
+        if (!this.isControllerCapabilityCurrent(config, now)) {
+            throw new Error(`Cannot use action ${actionItemId} with an expired native controller session; refresh the current model native subagent capability and reissue the action.`);
+        }
+        const selected = actionItem?.runtimeAdapter?.selected;
+        if (!actionItem
+            || !selected
+            || selected.kind !== 'native'
+            || !selected.nativeSubagent
+            || selected.nativeSubagent.target !== config.target) {
+            throw new Error(`Action ${actionItemId} is not bound to the current target's model-native subagent adapter.`);
+        }
+        if (actionItem.nativeSessionTarget !== config.target
+            || actionItem.nativeSessionReportedAt !== config.capability.reportedAt) {
+            throw new Error(`Action ${actionItemId} belongs to a different native subagent session; recover and reissue it before recording executor evidence.`);
+        }
+    }
     async resolveRuntimeAdapter(changePath, config, requiresIndependentWorker, now) {
         const projectRoot = await this.findProjectRootForSafety(changePath);
-        return this.runtimeAdapter.resolve({
+        const resolution = this.runtimeAdapter.resolve({
             projectRoot,
             target: config.target,
             capability: config.capability,
-            preference: config.executionModel === 'cli-driven' ? 'cli' : undefined,
-            strict: config.executionModel === 'cli-driven' ? true : undefined,
+            preference: 'native',
+            strict: true,
             requiresIndependentWorker,
             now,
             cacheFilePath: path.join(changePath, 'artifacts', 'agents', 'runtime-adapter-cache.json'),
         });
+        if (resolution.selected && resolution.selected.kind !== 'native') {
+            return {
+                ...resolution,
+                selectedAdapterId: null,
+                selected: null,
+                blocked: true,
+                warnings: [
+                    ...resolution.warnings,
+                    `Runtime adapter ${resolution.selected.id} is non-native and cannot execute Loop actions.`,
+                ],
+            };
+        }
+        return resolution;
     }
     getBudgetedBatchLimit(config, state, candidateCount) {
         const concurrencyLimit = Math.min(config.efficiency.maxParallel, Math.max(0, candidateCount));
@@ -1628,15 +1672,15 @@ class LoopService {
                 if (!tokens || tokens[0] !== policy.command)
                     return false;
                 const prefix = policy.argsPrefix || [];
-                return prefix.every((argument, index) => tokens[index + 1] === argument);
+                return tokens.length === prefix.length + 1
+                    && prefix.every((argument, index) => tokens[index + 1] === argument);
             }
             const allowed = this.parseSafeAllowlistedCommand(entry);
             if (!allowed)
                 return false;
             if (allowed.cwd && allowed.cwd !== candidate.cwd)
                 return false;
-            return candidate.command === allowed.command
-                || candidate.command.startsWith(`${allowed.command} `);
+            return candidate.command === allowed.command;
         });
     }
     normalizeCommandAllowlist(values) {
@@ -1703,6 +1747,18 @@ class LoopService {
             return null;
         if (/(?:^|\s)[A-Za-z]:[\\/]/.test(command) || /(?:^|\s)\.\.([\\/]|\s|$)/.test(command))
             return null;
+        const tokens = this.tokenizeSafeCommand(command);
+        if (!tokens)
+            return null;
+        for (const token of tokens.slice(1)) {
+            const value = token.includes('=') ? token.slice(token.indexOf('=') + 1) : token;
+            const normalizedValue = value.replace(/\\/g, '/');
+            if (path.posix.isAbsolute(normalizedValue)
+                || /^[A-Za-z]:\//.test(normalizedValue)
+                || normalizedValue.startsWith('//')
+                || normalizedValue.split('/').includes('..'))
+                return null;
+        }
         return { cwd, command: command.replace(/\s+/g, ' ') };
     }
     async findProjectRootForSafety(changePath) {
@@ -1769,9 +1825,20 @@ class LoopService {
             return false;
         return true;
     }
-    boundPrompt(lines, maxChars) {
-        const prompt = lines.join('\n');
-        return prompt.length <= maxChars ? prompt : `${prompt.slice(0, Math.max(0, maxChars - 32))}\n[truncated: read packet]`;
+    boundPrompt(lines, maxChars, requiredLines = []) {
+        const prompt = lines.filter(Boolean).join('\n');
+        const required = requiredLines.filter(Boolean).join('\n');
+        if (!required && prompt.length <= maxChars)
+            return prompt;
+        if (required && `${prompt}\n${required}`.length <= maxChars)
+            return `${prompt}\n${required}`;
+        const marker = '[truncated: use authoritative packet and commands below]';
+        if (!required) {
+            return `${prompt.slice(0, Math.max(0, maxChars - marker.length - 1))}\n${marker}`;
+        }
+        const optionalBudget = Math.max(0, maxChars - required.length - marker.length - 2);
+        const optional = prompt.slice(0, optionalBudget).trimEnd();
+        return [optional, marker, required].filter(Boolean).join('\n');
     }
     uniqueNonEmpty(values) {
         return [...new Set(values.map(value => String(value).trim()).filter(Boolean))];

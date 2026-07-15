@@ -455,6 +455,10 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
         const archivedRoot = (0, ProjectLayout_1.resolveManagedPath)(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         await services_1.services.fileService.ensureDir(archivedRoot);
         const archivePath = await this.resolveArchivePath(archivedRoot, featureState.feature, config);
+        const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);
+        const originalProposal = await services_1.services.fileService.exists(proposalPath)
+            ? await services_1.services.fileService.readFile(proposalPath)
+            : null;
         const nextState = {
             ...featureState,
             status: 'archived',
@@ -464,14 +468,51 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             blocked_by: [],
         };
         await services_1.services.projectService.preflightArchivedKnowledgeWrite(projectRoot, archivePath);
-        await services_1.services.fileService.move(targetPath, archivePath);
-        await services_1.services.stateManager.writeState(archivePath, nextState);
-        await this.updateProposalStatus(archivePath, 'archived');
-        await services_1.services.projectService.rebaseMovedChangeMarkdownLinks(targetPath, archivePath);
-        await services_1.services.projectService.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
-        await services_1.services.projectService.rebuildIndex(projectRoot);
-        await services_1.services.projectService.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
-        return this.toRelativePath(projectRoot, archivePath);
+        let moved = false;
+        let linksRebased = false;
+        try {
+            await services_1.services.fileService.move(targetPath, archivePath);
+            moved = true;
+            await services_1.services.stateManager.writeState(archivePath, nextState);
+            await this.updateProposalStatus(archivePath, 'archived');
+            await services_1.services.projectService.rebaseMovedChangeMarkdownLinks(targetPath, archivePath);
+            linksRebased = true;
+            await services_1.services.projectService.rebuildIndex(projectRoot);
+            await services_1.services.projectService.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
+            await services_1.services.projectService.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
+            return this.toRelativePath(projectRoot, archivePath);
+        }
+        catch (error) {
+            if (!moved)
+                throw error;
+            const rollbackErrors = [];
+            try {
+                if (await services_1.services.fileService.exists(archivePath)) {
+                    await services_1.services.fileService.move(archivePath, targetPath);
+                }
+            }
+            catch (rollbackError) {
+                rollbackErrors.push(`move: ${rollbackError?.message || rollbackError}`);
+            }
+            if (await services_1.services.fileService.exists(targetPath)) {
+                if (linksRebased) {
+                    await services_1.services.projectService.rebaseMovedChangeMarkdownLinks(archivePath, targetPath)
+                        .catch((rollbackError) => rollbackErrors.push(`links: ${rollbackError?.message || rollbackError}`));
+                }
+                await services_1.services.stateManager.writeState(targetPath, featureState)
+                    .catch((rollbackError) => rollbackErrors.push(`state: ${rollbackError?.message || rollbackError}`));
+                if (originalProposal !== null) {
+                    await services_1.services.fileService.writeFile(path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL), originalProposal)
+                        .catch((rollbackError) => rollbackErrors.push(`proposal: ${rollbackError?.message || rollbackError}`));
+                }
+            }
+            await services_1.services.projectService.rebuildIndex(projectRoot)
+                .catch((rollbackError) => rollbackErrors.push(`index: ${rollbackError?.message || rollbackError}`));
+            if (rollbackErrors.length > 0) {
+                throw new Error(`Archive failed (${error?.message || error}); rollback also failed: ${rollbackErrors.join('; ')}`);
+            }
+            throw error;
+        }
     }
     inferProjectRootFromChangePath(startPath) {
         const normalizedPath = path.resolve(startPath);

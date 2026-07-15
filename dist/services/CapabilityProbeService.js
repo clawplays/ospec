@@ -65,6 +65,7 @@ class CapabilityProbeService {
                     ? 'env:OSPEC_NATIVE_SUBAGENT_CAPABILITY'
                     : `runtime-unreported:${target || 'generic'}`;
             return {
+                target,
                 nativeLoopCapability: nativeSubagentCapability,
                 probeSource,
                 fallbackMode: 'none',
@@ -95,9 +96,10 @@ class CapabilityProbeService {
             warnings.push(`${primitive === 'goal' ? 'Goal' : 'Interval-loop'} capability for "${target || 'generic'}" is ${capability}.`);
         }
         if (!controllerAvailable) {
-            warnings.push(`Controller dispatch is unavailable: interactive=${interactive}, nativeSubagents=${nativeSubagentCapability}. Report explicit harness capabilities or opt into CLI-driven execution.`);
+            warnings.push(`Controller dispatch is unavailable: interactive=${interactive}, nativeSubagents=${nativeSubagentCapability}. Report explicit capabilities from the current model harness; agent CLI fallback is not supported.`);
         }
         return {
+            target,
             nativeLoopCapability: capability,
             probeSource,
             fallbackMode,

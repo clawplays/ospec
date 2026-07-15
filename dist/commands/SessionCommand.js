@@ -498,7 +498,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             {
                 target: 'copilot',
                 startupUse: 'Use using-ospec.md as repository instruction context and run the session command manually when needed.',
-                nativeExecution: 'Use Copilot task context from launch-plan.md; keep CLI worker runners as fallback only.',
+                nativeExecution: 'Use the Copilot native task context from launch-plan.md; stop if native subagents are unavailable.',
             },
             {
                 target: 'generic',

@@ -1,0 +1,31 @@
+{
+  "title_suffix": "model-native subagents and fail-closed goal execution",
+  "summary": "OSpec 1.8.2 replaces the 1.8.1 Orca and agent-CLI fallback chain with target-bound model-native subagents. Codex/GPT use spawn_agent and wait_agent, Claude uses Task, Gemini uses @generalist, OpenCode uses @mention, and registered Cursor or Copilot sessions use their native agent contexts. Missing, expired, future-dated, or mismatched capability now blocks before process launch or run-artifact creation. Loop executor evidence is bound to the exact native session that issued each action.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.1...1.8.2",
+  "new": [
+    "Added a machine-readable nativeSubagent contract to runtime adapter resolutions and launch artifacts for every supported model harness.",
+    "Bound Loop actions, heartbeats, review claims, and results to the target and reportedAt identity of the native capability session that issued the work."
+  ],
+  "improved": [
+    "Runtime adapter resolution is deterministic and native-only, with one target-specific candidate and no Orca, PATH, CLI, cache, or current-controller probing.",
+    "Goal and Loop guidance now tells the controlling model to dispatch one fresh native subagent per safe packet, wait for the batch, record real child IDs, and continue ticking.",
+    "Launch plans no longer contain agent CLI command vectors, and shell or generic targets remain blocked until a registered native primitive is selected."
+  ],
+  "fixed": [
+    "Fixed auto adapter selection preferring Orca over the active model harness and silently falling back to target CLIs or the current controller.",
+    "Fixed capability snapshots being reused across target changes, accepting future timestamps, or authorizing old actions after a session rotation.",
+    "Fixed document review reuse accepting stale target, interactivity, capability, or native-session provenance.",
+    "Fixed orphaned document-review claims, controller locks, and task-graph locks becoming permanently stuck after worker loss, PID reuse, or future-dated filesystem timestamps.",
+    "Fixed Loop heartbeat and result paths accepting injected non-native adapters or executor evidence that was not claimed by the current native child.",
+    "Fixed Loop resume immediately retriggering the no-progress circuit breaker, failed executors being counted twice, and small prompt limits dropping packet and lifecycle commands.",
+    "Fixed verification evidence accepting PASSED without an explicit zero exit code, and hardened L3 command policies against appended arguments, absolute paths, and parent traversal.",
+    "Fixed normalized task artifact ID collisions that could cause separate task IDs to overwrite the same evidence directory.",
+    "Fixed partial Goal creation and post-move archive failures leaving active state, session briefs, Markdown links, or project indexes inconsistent; both workflows now roll back transactionally.",
+    "Fixed loop watch, execute orchestrate, launch --run --command, and review --run --command retaining process-launch behavior; they now fail before side effects.",
+    "Fixed CLI help, localized templates, and project conventions continuing to recommend removed fallback paths."
+  ],
+  "docs": [
+    "Updated the managed ospec-goal skill, AI guides, execution protocol, Loop engineering contract, usage guides, README, and four localized project conventions for native-only execution.",
+    "Documented the exact Codex, Claude, Gemini, OpenCode, Cursor, and Copilot native dispatch lifecycle and the hard gate used when a capability is unavailable."
+  ]
+}

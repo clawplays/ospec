@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.1';
+const CLI_VERSION = '1.8.2';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -154,7 +154,7 @@ function parseInitCommandArgs(commandArgs) {
 }
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
-        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--execution-model controller|cli-driven] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
+        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
         : 'Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]';
 }
 function parseNewCommandArgs(commandArgs, commandName = 'new') {
@@ -239,8 +239,8 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         }
         const executionModelValue = requireGoalOption('--execution-model', goalOnlyValue('--execution-model'));
         if (executionModelValue !== undefined) {
-            if (executionModelValue !== 'controller' && executionModelValue !== 'cli-driven') {
-                console.error(`Invalid --execution-model value for goal: ${executionModelValue} (expected controller or cli-driven)`);
+            if (executionModelValue !== 'controller') {
+                console.error(`Invalid --execution-model value for goal: ${executionModelValue} (only controller is supported; agent CLI execution was removed)`);
                 process.exit(1);
             }
             executionModel = executionModelValue;
@@ -511,7 +511,7 @@ Commands:
   changes [action] [path]   Active change summaries (status)
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
-  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, orchestrate, complete, repair)
+  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, launch, complete, repair)
   loop [action] [path]      Goal loop controller (run, status, heartbeat, result, recover, configure, pause, resume)
   triage [action] [path]    Triage inbox helpers (list, claim, promote)
   docs [action] [path]      Docs helpers (status, generate)
@@ -561,7 +561,6 @@ Examples:
   ospec execute finish ./changes/active/onboarding-flow --target main --remote origin
   ospec execute dispatch ./changes/active/onboarding-flow --task task-1
   ospec execute launch ./changes/active/onboarding-flow --target codex
-  ospec execute orchestrate ./changes/active/onboarding-flow --command "codex exec {{packet}}" --limit 2 --max-rounds 5  # fallback only
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --summary "Implemented and verified"
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --usage-file ./usage.json
   ospec execute repair ./changes/active/onboarding-flow

@@ -35,6 +35,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NewCommand = void 0;
 const path = __importStar(require("path"));
+const crypto_1 = require("crypto");
+const fs_1 = require("fs");
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
@@ -44,8 +46,17 @@ const BaseCommand_1 = require("./BaseCommand");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const SessionCommand_1 = require("./SessionCommand");
+const CHANGE_CREATION_LOCK_FILE = '.change-creation.lock';
+const CHANGE_CREATION_LOCK_TIMEOUT_MS = 30 * 1000;
+const STALE_CHANGE_CREATION_LOCK_MS = 2 * 60 * 1000;
+const CHANGE_CREATION_LOCK_HEARTBEAT_MS = 30 * 1000;
 class NewCommand extends BaseCommand_1.BaseCommand {
     async execute(featureName, rootDir, options = {}) {
+        let creationLease = null;
+        let createdFeatureDir = null;
+        let rollbackProjectRoot = null;
+        let rollbackPlacement = null;
+        let sessionBriefBackup = null;
         try {
             this.validateArgs([featureName], 1);
             services_1.services.validationService.validateFeatureName(featureName);
@@ -56,10 +67,23 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 : constants_1.DIR_NAMES.ACTIVE;
             const featureDir = PathUtils_1.PathUtils.getChangeDir(targetDir, placement, featureName, config);
             this.logger.info(`Creating ${placement === constants_1.DIR_NAMES.QUEUED ? 'queued change' : 'change'}: ${featureName}`);
+            creationLease = await this.acquireChangeCreationLease(targetDir, config);
+            if (placement === constants_1.DIR_NAMES.ACTIVE) {
+                const sessionDir = path.join(targetDir, '.ospec');
+                const jsonPath = path.join(sessionDir, 'session-brief.json');
+                const markdownPath = path.join(sessionDir, 'session-brief.md');
+                sessionBriefBackup = {
+                    json: await services_1.services.fileService.exists(jsonPath) ? await services_1.services.fileService.readFile(jsonPath) : null,
+                    markdown: await services_1.services.fileService.exists(markdownPath) ? await services_1.services.fileService.readFile(markdownPath) : null,
+                };
+            }
             await this.ensureChangeNameAvailable(targetDir, featureName, config);
             await this.ensureSingleActiveMode(targetDir, placement, featureName, config);
             await services_1.services.fileService.ensureDir((0, ProjectLayout_1.resolveManagedPath)(targetDir, `${constants_1.DIR_NAMES.CHANGES}/${placement}`, config));
-            await services_1.services.fileService.ensureDir(featureDir);
+            await fs_1.promises.mkdir(featureDir);
+            createdFeatureDir = featureDir;
+            rollbackProjectRoot = targetDir;
+            rollbackPlacement = placement;
             const composer = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
             const flags = this.normalizeFlags(options.flags);
             const workflowProfile = (0, WorkflowProfile_1.normalizeWorkflowProfileId)(options.workflowProfile) || 'change';
@@ -193,9 +217,6 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                     const controllerCommand = (0, helpers_1.formatCliCommand)('ospec', 'loop', 'run', featureDir, '--once', '--json');
                     this.info(`  IDE controller handoff: keep this AI session active. After required decisions, independent document reviews, and workspace gates are ready, run "${controllerCommand}"; for every non-empty actions[] batch launch one fresh IDE-native subagent per item, wait for all results, record each completionCommand/evidence, and tick again immediately. When actions[] is empty and pending is present, observe only and never relaunch it. Return only on a real gate, paused/stopped/done, or explicit user pause.`);
                 }
-                else if (loopConfig.executionModel === 'cli-driven') {
-                    this.info('  CLI-driven execution was explicitly selected. The IDE controller will not dispatch native subagents.');
-                }
                 else {
                     this.warn(`  IDE controller blocked: target=${loopConfig.target}, interactive=${loopConfig.capability?.interactive ?? false}, nativeSubagents=${loopConfig.capability?.nativeSubagentCapability ?? 'unknown'}. Report the current harness capabilities explicitly before starting executable Loop actions.`);
                 }
@@ -210,9 +231,139 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             if (activatedSteps.length > 0) {
                 this.info(`  Activated optional steps: ${activatedSteps.join(', ')}`);
             }
+            createdFeatureDir = null;
         }
         catch (error) {
+            if (createdFeatureDir) {
+                await services_1.services.fileService.remove(createdFeatureDir).catch((rollbackError) => {
+                    this.warn(`Failed to roll back partial change ${createdFeatureDir}: ${rollbackError?.message || rollbackError}`);
+                });
+                if (rollbackProjectRoot
+                    && rollbackPlacement === constants_1.DIR_NAMES.ACTIVE
+                    && sessionBriefBackup) {
+                    const sessionDir = path.join(rollbackProjectRoot, '.ospec');
+                    for (const [fileName, content] of [
+                        ['session-brief.json', sessionBriefBackup.json],
+                        ['session-brief.md', sessionBriefBackup.markdown],
+                    ]) {
+                        const filePath = path.join(sessionDir, fileName);
+                        if (content === null)
+                            await services_1.services.fileService.remove(filePath).catch(() => undefined);
+                        else
+                            await services_1.services.fileService.writeFile(filePath, content).catch(() => undefined);
+                    }
+                }
+            }
             this.error(`Failed to create change: ${error}`);
+            throw error;
+        }
+        finally {
+            if (creationLease)
+                await this.releaseChangeCreationLease(creationLease);
+        }
+    }
+    async acquireChangeCreationLease(targetDir, config) {
+        const changesRoot = (0, ProjectLayout_1.resolveManagedPath)(targetDir, constants_1.DIR_NAMES.CHANGES, config);
+        await services_1.services.fileService.ensureDir(changesRoot);
+        const lockPath = path.join(changesRoot, CHANGE_CREATION_LOCK_FILE);
+        const nonce = (0, crypto_1.randomBytes)(16).toString('hex');
+        const startedAt = Date.now();
+        while (true) {
+            try {
+                const handle = await fs_1.promises.open(lockPath, 'wx');
+                await handle.writeFile(JSON.stringify({
+                    version: 2,
+                    pid: process.pid,
+                    acquiredAt: new Date().toISOString(),
+                    nonce,
+                    heartbeat: true,
+                }));
+                const heartbeat = setInterval(() => {
+                    void this.refreshChangeCreationLockIfOwned(lockPath, nonce);
+                }, CHANGE_CREATION_LOCK_HEARTBEAT_MS);
+                heartbeat.unref();
+                return { lockPath, nonce, handle, heartbeat };
+            }
+            catch (error) {
+                if (error?.code !== 'EEXIST')
+                    throw error;
+                const owner = await this.readChangeCreationLockOwner(lockPath);
+                const stat = await fs_1.promises.stat(lockPath).catch(() => null);
+                const lockAgeMs = stat ? Date.now() - stat.mtimeMs : 0;
+                if (stat
+                    && (lockAgeMs >= STALE_CHANGE_CREATION_LOCK_MS || lockAgeMs <= -STALE_CHANGE_CREATION_LOCK_MS)
+                    && (owner
+                        ? ((!this.isProcessAlive(owner.pid) || owner.heartbeat)
+                            && await this.removeChangeCreationLockIfOwned(lockPath, owner.nonce))
+                        : await this.removeCorruptChangeCreationLockIfUnchanged(lockPath, stat)))
+                    continue;
+                if (Date.now() - startedAt >= CHANGE_CREATION_LOCK_TIMEOUT_MS) {
+                    throw new Error(`Timed out waiting for change creation lease at ${lockPath}.`);
+                }
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
+    }
+    async releaseChangeCreationLease(lease) {
+        clearInterval(lease.heartbeat);
+        await lease.handle.close().catch(() => undefined);
+        await this.removeChangeCreationLockIfOwned(lease.lockPath, lease.nonce);
+    }
+    async readChangeCreationLockOwner(lockPath) {
+        try {
+            const value = JSON.parse(await fs_1.promises.readFile(lockPath, 'utf8'));
+            return Number.isInteger(value?.pid) && value.pid > 0 && typeof value?.nonce === 'string' && value.nonce.length > 0
+                ? { pid: value.pid, nonce: value.nonce, heartbeat: value?.version === 2 && value?.heartbeat === true }
+                : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    isProcessAlive(pid) {
+        try {
+            process.kill(pid, 0);
+            return true;
+        }
+        catch (error) {
+            return error?.code !== 'ESRCH' && error?.code !== 'EINVAL';
+        }
+    }
+    async refreshChangeCreationLockIfOwned(lockPath, nonce) {
+        const owner = await this.readChangeCreationLockOwner(lockPath);
+        if (owner?.nonce !== nonce)
+            return;
+        const now = new Date();
+        await fs_1.promises.utimes(lockPath, now, now).catch(() => undefined);
+    }
+    async removeChangeCreationLockIfOwned(lockPath, nonce) {
+        const owner = await this.readChangeCreationLockOwner(lockPath);
+        if (owner?.nonce !== nonce)
+            return false;
+        try {
+            await fs_1.promises.unlink(lockPath);
+            return true;
+        }
+        catch (error) {
+            if (error?.code === 'ENOENT')
+                return false;
+            throw error;
+        }
+    }
+    async removeCorruptChangeCreationLockIfUnchanged(lockPath, observed) {
+        const current = await fs_1.promises.stat(lockPath).catch(() => null);
+        if (!current
+            || current.size !== observed.size
+            || current.mtimeMs !== observed.mtimeMs
+            || await this.readChangeCreationLockOwner(lockPath))
+            return false;
+        try {
+            await fs_1.promises.unlink(lockPath);
+            return true;
+        }
+        catch (error) {
+            if (error?.code === 'ENOENT')
+                return false;
             throw error;
         }
     }

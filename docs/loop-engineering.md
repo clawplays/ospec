@@ -6,25 +6,20 @@
 
 ## Execution model
 
-OSpec is the durable state-machine brain. It decides what is safe to do next and records the pending action, but the executor depends on the configured mode:
+OSpec is the durable state-machine brain. It decides what is safe to do next and records the pending action. The current model harness is the only agent executor: `ospec loop run [path] --once --json` observes the prior action and emits a bounded action batch whose `runtimeAdapter.selected.nativeSubagent` names the native primitive. The controller claims each action with its real child id and heartbeat, records result/evidence with that owner, and ticks again.
 
-- **Controller mode:** create the goal with explicit harness facts. `ospec loop run [path] --once --json` observes the prior action and emits a bounded action batch whose `runtimeAdapter` selects verified Orca, current harness-native, target CLI, or serial current controller. The controller claims each action with its real executor id and heartbeat, records result/evidence with that owner, and ticks again. Expired native capability falls through safely for ordinary work; independent review still requires an independent adapter.
-- **CLI-driven mode:** `ospec loop watch [path]` performs the same planning and observation, then launches fresh external agent processes for the emitted action items. Supported direct targets use `claude -p` or `codex exec`; `gpt` also uses the Codex CLI. Actions in one safe batch run in parallel up to the configured limit.
-
-`loop watch` is a real executor, not a daemon. It ends with the terminal session, Ctrl-C, pause, a `STOP` file, a configured guard, `--max-ticks`, or successful completion. Use controller mode for harness targets that cannot be launched directly by the CLI.
+There is no agent CLI execution mode. `loop watch`, `execute orchestrate`, `launch --run --command`, and `review --run --command` return migration errors before creating a process or run artifact.
 
 ### Runtime adapter resolution
 
-Every `ospec execute launch` artifact includes a capability-based `runtimeAdapter` resolution. The default order is:
+Every `ospec execute launch` artifact includes one model-native candidate. It is available only when:
 
-1. a verified Orca adapter, but only when an Orca CLI candidate is callable, `status --json` succeeds, and `worktree current --json` proves that Orca owns the current project path;
-2. the target's native harness adapter when the persisted session-bound native-subagent capability is current;
-3. a registered target CLI (`codex`, `claude`, `gemini`, or `opencode`) when its executable is available;
-4. a serial `generic-current-controller` fallback for ordinary implementation work.
+1. the target has a registered native subagent primitive;
+2. the capability snapshot is interactive and reports native subagent support;
+3. the capability target exactly matches the requested target;
+4. `reportedAt` is not in the future and `expiresAt` is still current.
 
-An `Orca.exe` process name is diagnostic evidence only and never selects the Orca adapter. Set `OSPEC_EXECUTION_ADAPTER=orca|native|cli|generic` to prefer one adapter kind. A failed preference continues through the safe fallback chain; set `OSPEC_EXECUTION_ADAPTER_STRICT=true` only when fallback must be forbidden. Independent review never falls back into the same controller context, because that would invalidate reviewer independence.
-
-For Orca, the launch artifact stores shell-free command vectors for terminal creation, readiness wait, and prompt delivery. The controller persists the returned terminal handle with the action/dispatch id, reacquires stale handles by listing terminals, and never relaunches completed siblings. Parallel terminals are still bounded by task dependencies, conflicts, target-file ownership, and `maxParallel`.
+Codex/GPT use `spawn_agent` plus `wait_agent`, Claude uses Task, Gemini uses `@generalist`, and OpenCode uses `@mention`. Cursor and Copilot use their registered native agent/task contexts. `shell` and `generic` are not executable agent targets. OSpec does not probe Orca, PATH binaries, or agent CLIs, does not write an adapter probe cache, and does not fall back into the current controller context.
 
 ## Integrated task-graph cycle
 
@@ -54,15 +49,15 @@ This keeps the scheduler context small while `task-graph.json`, `execution-sessi
 
 ## Feedback and stop condition
 
-A successful external process is not enough to settle an action. The next tick checks durable evidence:
+A successful child result is not enough to settle an action. The next tick checks durable evidence:
 
 - implementation settles from task status (`DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`);
 - task and final review settle from their recorded decisions;
 - verification settles on current PASSED evidence or on explicit FAILED/BLOCKED evidence. Failure invalidates the prior final approval and routes through an independent re-review and grouped repair before verification is retried.
 
-Failures and non-approved decisions remain visible as feedback and feed the retry, grouped-repair, or verifier action on a later tick. An external process that exits without writing its expected evidence becomes a bounded fresh-context retry and contributes to the no-progress circuit breaker. Verification after final review is read-only; a verifier records failures instead of editing reviewed implementation. Final completion still requires the project's real test/build commands, recorded verification evidence, approved review gates, and `ospec verify`.
+Failures and non-approved decisions remain visible as feedback and feed the retry, grouped-repair, or verifier action on a later tick. A child that returns without writing its expected evidence becomes a bounded fresh-context retry and contributes to the no-progress circuit breaker. Verification after final review is read-only; a verifier records failures instead of editing reviewed implementation. Final completion still requires the project's real test/build commands, recorded verification evidence, approved review gates, and `ospec verify`.
 
-Specialist design/plan reviewers and Loop task/final reviewers require an independent adapter. Native reviews bind to the exact child and controller capability session; verified Orca or target-CLI reviews use their durable action executor ownership. Generic current-controller fallback is rejected. Completion validates the decision, document hash, and structured findings before reporting success. Approved document hashes and current PASSED verification snapshots remain reusable only while their inputs are unchanged.
+Specialist design/plan reviewers and Loop task/final reviewers require a fresh native subagent. Reviews bind to the exact child, target, and controller capability session. Completion validates the decision, document hash, and structured findings before reporting success. Approved document hashes and current PASSED verification snapshots remain reusable only while their inputs are unchanged.
 
 ## Safety levels and guards
 
@@ -72,7 +67,7 @@ Choose the initial level with `ospec goal <name> --level L1|L2|L3`:
 | --- | --- | --- |
 | **L1 - report-only** | Inspects the task graph and writes findings to triage; emits no executable actions | None |
 | **L2 - assisted** | Emits real task/review/verification actions | Required decisions always block |
-| **L3 - unattended** | May execute through CLI watch or controller dispatch | Requires non-empty path and command allowlists; task targets must stay in canonical paths and verification commands must match safe token-boundary prefixes |
+| **L3 - unattended** | May execute through native controller dispatch | Requires non-empty path and command allowlists; task targets must stay in canonical paths and verification commands must match exact safe commands or structured policies |
 
 Required user decisions block every level; L3 never auto-selects them. Before issuing new work, the loop also enforces:
 
@@ -83,7 +78,7 @@ Required user decisions block every level; L3 never auto-selects them. Before is
 - periodic comprehension-review pauses;
 - explicit pause and the `artifacts/loop/STOP` sentinel.
 
-Controller ticks and task-graph completion mutations use cross-process leases. JSON state uses same-directory atomic replacement so readers never observe partial documents. CLI processes have a default 30-minute timeout, terminate their process tree on timeout, and cap captured output at 1 MiB. Token accounting combines executor-reported counters with authoritative usage sidecars and deduplicates matching usage keys. Before a task-graph dispatch/review/retry mutation, the remaining token budget limits batch size; the selected batch divides that remainder into persisted per-action reservations/allowances that executors must honor and report against. Unknown fields remain unknown instead of being estimated.
+Controller ticks and task-graph completion mutations use cross-process leases. JSON state uses same-directory atomic replacement so readers never observe partial documents. Token accounting combines executor-reported counters with authoritative usage sidecars and deduplicates matching usage keys. Before a task-graph dispatch/review/retry mutation, the remaining token budget limits batch size; the selected batch divides that remainder into persisted per-action reservations/allowances that executors must honor and report against. Unknown fields remain unknown instead of being estimated.
 
 ## Commands
 
@@ -92,10 +87,6 @@ Controller ticks and task-graph completion mutations use cross-process leases. J
 ospec loop status [path]
 ospec loop run [path] --once [--json]   # JSON is preferred by adapter-driven controllers
 ospec loop tick-plan [path]
-
-# Run the session-bound CLI executor
-ospec loop watch [path] [--target claude|codex|gpt] [--interval 10m]
-ospec loop watch [path] [--max-ticks N] [--timeout-ms N] [--dry-run] # dry-run performs no tick or state mutation
 
 # Change safety or stop/resume explicitly
 ospec loop level [path] <L1|L2|L3>
@@ -124,19 +115,20 @@ ospec execute doc-review [path] --stage design|plan --complete-executor <child-i
 
 # Durable verification intent
 ospec execute require-verification [path] --id browser-flow --kind browser --description "Exercise the requested browser flow"
-ospec execute verify [path] --command "npm run test:e2e" --status PASSED --satisfies browser-flow
+ospec execute verify [path] --command "npm run test:e2e" --status PASSED --exit-code 0 --satisfies browser-flow
 ```
 
 Repeatable flags such as `--allow-path`, `--allow-command`, `--allow-command-policy`, `--test-command`, and `--satisfies` may be supplied more than once. Use `none` for nullable stop limits such as `--max-iterations`, `--budget-tokens`, `--budget-minutes`, and `--expires-at` when you intentionally want them unbounded.
 
-`--allow-command` values are command prefixes at token boundaries. For example, `--allow-command "go test"` permits `go test ./internal/... -count=1`. Verification commands may use one safe project-relative working-directory wrapper such as `cd src/backend && go test ./...`; other shell operators, absolute paths, traversal, and cwd-changing arguments are rejected.
+`--allow-command` values must match the complete normalized command. For example, permitting `go test ./internal/... -count=1` requires that full value, not only `go test`. Verification commands may use one exact project-relative working-directory wrapper such as `cd src/backend && go test ./...`; other shell operators, absolute paths, traversal, appended arguments, and cwd-changing arguments are rejected.
 
-`--allow-command-policy` accepts a JSON object with `command`, optional `argsPrefix`, and optional project-relative `cwd`. Prefer it for generated L3 configurations because executable, arguments, and working directory are validated independently. Legacy string entries remain supported.
+`--allow-command-policy` accepts a JSON object with `command`, optional `argsPrefix`, and optional project-relative `cwd`. The current safety contract treats `argsPrefix` as the complete allowed argument vector; additional arguments are rejected. Prefer structured policies for generated L3 configurations because executable, arguments, and working directory are validated independently. Legacy exact-string entries remain supported.
 
 ## Operational guidance
 
-- Prefer controller mode when runtime adapter fallback is desired; it preserves native capabilities when current and continues safely through verified Orca/CLI or serial ordinary-work fallback.
-- Use CLI watch only with a directly supported target and an authenticated CLI available on `PATH`.
+- Use controller mode with explicit target-bound native capability facts. If capability expires, refresh it from the current model session before issuing more work.
+- Do not use agent CLIs as subagent substitutes. OSpec intentionally fails closed when the harness has no native child primitive.
 - Keep `freshContext` enabled. Disabling it changes prompt guidance but does not turn durable artifacts into chat memory.
-- Inspect `ospec loop status` and `artifacts/loop/run-log.jsonl` before raising a budget, resuming after a comprehension pause, or overriding a no-progress stop. `tick_metrics` entries report tick/gate duration, dispatch count, and repeated blockers; `document_review` entries report dispatches, cache hits, and reviewer duration.
+- Inspect `ospec loop status` and `artifacts/loop/run-log.jsonl` before raising a budget, resuming after a comprehension pause, or overriding a no-progress stop. Explicit `loop resume` resets the no-progress and comprehension counters but preserves task, review, and evidence history. `tick_metrics` entries report tick/gate duration, dispatch count, and repeated blockers; `document_review` entries report dispatches, cache hits, and reviewer duration.
+- Document reviewer claims use a five-minute executor lease. `--heartbeat-executor` renews it; an expired orphan claim is released automatically when the dispatch is reused or a fresh child claims it.
 - Do not weaken tests, review decisions, task boundaries, or allowlists to make the loop advance.

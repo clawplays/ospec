@@ -297,6 +297,7 @@ export interface TaskDocumentReviewDispatchRecord {
     reviewerExecutorId?: string | null;
     reviewerClaimedAt?: string | null;
     reviewerHeartbeatAt?: string | null;
+    reviewerLeaseExpiresAt?: string | null;
     reviewerCompletedAt?: string | null;
     reviewerSucceeded?: boolean | null;
 }
@@ -1058,8 +1059,8 @@ export interface TaskNativeAgentAdapterPacket {
 export type TaskLaunchExecutionMode = 'native-goal' | 'emulated-goal' | 'native-loop' | 'emulated-loop';
 /**
  * Loop/agent-primitive plan attached to a launch when `--primitive goal|loop` is requested.
- * Produces instructions (controller-driven) or an external CLI preview (cli-driven); ospec never
- * executes the agent itself (Execution-Model Contract 1). Absent for the default `subagent` primitive.
+ * Produces controller instructions for the current model harness; OSpec never executes the agent.
+ * Absent for the default `subagent` primitive.
  */
 export interface TaskLaunchLoopPlan {
     primitive: 'goal' | 'loop';
@@ -1294,9 +1295,8 @@ export declare class TaskGraphExecutionService {
     private planLaunchUnlocked;
     private readRuntimeHarnessCapability;
     /**
-     * Build the loop/agent-primitive plan for a goal|loop launch (Execution-Model Contracts 1–3).
-     * Controller-driven => produce instructions; cli-driven => provide a `claude -p`/`codex exec`
-     * dry-run preview. Never executes the agent and never emits `claude --goal`.
+     * Build the loop/agent-primitive plan for a goal|loop launch. OSpec only
+     * produces controller instructions; the model harness owns native dispatch.
      */
     private buildLaunchLoopPlan;
     launchAndRun(changePath: string, options: {
@@ -1403,6 +1403,9 @@ export declare class TaskGraphExecutionService {
     claimDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
     heartbeatDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
     completeDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
+    private documentReviewExecutorLeaseExpiresAt;
+    private isDocumentReviewExecutorLeaseExpired;
+    private releaseDocumentReviewExecutorClaimUnlocked;
     private readCurrentDocumentReviewDispatch;
     private updateDocumentReviewExecutorProvenance;
     private extendDocumentReviewControllerSession;
@@ -1598,6 +1601,7 @@ export declare class TaskGraphExecutionService {
     private recordExecutionMetric;
     private withTaskGraphMutationLease;
     private readTaskGraphLockOwner;
+    private refreshTaskGraphLockIfOwned;
     private isProcessAlive;
     private removeTaskGraphLockIfOwned;
     private removeCorruptTaskGraphLockIfUnchanged;
@@ -1682,7 +1686,6 @@ export declare class TaskGraphExecutionService {
     private getNativeAgentAdapterId;
     private getNativeAgentPrimitive;
     private getNativeAgentDispatchMode;
-    private buildWorkerLaunchCommands;
     private buildWorkerLaunchPrompt;
     private runWorkerCommand;
     private normalizeTimeoutMs;

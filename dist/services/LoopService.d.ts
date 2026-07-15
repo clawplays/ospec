@@ -6,6 +6,7 @@ import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } fro
 import { TaskGraphExecutionService, TaskVerificationLoopBinding, TaskWorkerToolTarget } from './TaskGraphExecutionService';
 export type LoopSafetyLevel = 'L1' | 'L2' | 'L3';
 export type LoopStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'done';
+/** `cli-driven` is retained only so callers can receive a migration error. */
 export type LoopExecutionModel = 'controller' | 'cli-driven';
 export type LoopActionKind = 'implementation' | 'task-review' | 'final-review' | 'verification' | 'legacy';
 export interface LoopStopConditions {
@@ -54,6 +55,8 @@ export interface LoopActionItem {
     verificationBinding?: TaskVerificationLoopBinding;
     runtimeAdapter?: RuntimeExecutionAdapterResolution;
     controllerProvenanceRequired?: boolean;
+    nativeSessionTarget?: string;
+    nativeSessionReportedAt?: string;
 }
 export interface PendingControllerAction {
     actionId: string;
@@ -202,9 +205,8 @@ export interface LoopServiceDependencies {
     now?: () => Date;
 }
 /**
- * Durable plan-act-observe controller for goal task graphs. OSpec still does not invoke a
- * harness-native subagent itself: controller mode emits bounded action packets, while CLI watch
- * executes those packets through AgentCliRunnerService and records the result for the next tick.
+ * Durable plan-act-observe controller for goal task graphs. OSpec emits bounded action packets;
+ * the active model harness executes them through its native subagent primitive.
  */
 export declare class LoopService {
     private readonly fileService;
@@ -259,6 +261,7 @@ export declare class LoopService {
     private appendRunLog;
     private withControllerLease;
     private readControllerLockOwner;
+    private refreshControllerLockIfOwned;
     private isProcessAlive;
     private removeControllerLockIfOwned;
     private removeCorruptControllerLockIfUnchanged;
@@ -292,6 +295,7 @@ export declare class LoopService {
     private normalizeState;
     private defaultEfficiency;
     private isControllerCapabilityCurrent;
+    private assertActionNativeSession;
     private resolveRuntimeAdapter;
     private getBudgetedBatchLimit;
     private allocateTokenAllowances;

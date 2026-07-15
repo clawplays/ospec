@@ -24,5 +24,12 @@ export interface NewCommandOptions {
 }
 export declare class NewCommand extends BaseCommand {
     execute(featureName: string, rootDir?: string, options?: NewCommandOptions): Promise<void>;
+    private acquireChangeCreationLease;
+    private releaseChangeCreationLease;
+    private readChangeCreationLockOwner;
+    private isProcessAlive;
+    private refreshChangeCreationLockIfOwned;
+    private removeChangeCreationLockIfOwned;
+    private removeCorruptChangeCreationLockIfUnchanged;
     private normalizeFlags;
 }

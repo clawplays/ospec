@@ -37,7 +37,6 @@ exports.LoopCommand = void 0;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
-const AgentCliRunnerService_1 = require("../services/AgentCliRunnerService");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
 const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'tick-plan', 'heartbeat', 'result', 'recover'];
@@ -145,106 +144,8 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         console.log('');
     }
-    /**
-     * Session-bound in-process watcher (CLI-driven). Executes emitted fresh-context agent actions
-     * in parallel, then immediately observes their durable evidence. It waits only when no action
-     * is ready, and ends when the loop
-     * stops/pauses/finishes, a STOP sentinel appears, max ticks is reached, or the process exits
-     * (closing the session). It is NOT persistent — it dies with this process.
-     */
-    async watch(args) {
-        const inputPath = this.parseOptionalPath(args, ['--interval', '--max-ticks', '--timeout-ms', '--target'], ['--dry-run']);
-        const changePath = await this.resolveChangePath(inputPath);
-        const project = await this.resolveProjectRoot(changePath);
-        const config = await services_1.services.loopService.readConfig(changePath);
-        const intervalOverride = this.parseFlagValue(args, '--interval');
-        const intervalLabel = intervalOverride || config.schedule.interval;
-        const intervalMs = this.parseIntervalMs(intervalLabel);
-        const maxTicks = this.parseMaxTicks(args);
-        const dryRun = args.includes('--dry-run');
-        const timeoutMs = this.parseOptionalPositiveNumber(this.parseFlagValue(args, '--timeout-ms'), '--timeout-ms');
-        const targetOverride = this.parseFlagValue(args, '--target');
-        if (config.executionModel !== 'cli-driven') {
-            throw new Error('Loop watch is only available for cli-driven goals. Controller goals must execute each action through its selected runtime adapter.');
-        }
-        if (targetOverride && targetOverride !== config.target) {
-            throw new Error(`Loop watch --target must match the persisted goal target (${config.target}); reconfigure the goal explicitly before changing executors.`);
-        }
-        const runner = (0, AgentCliRunnerService_1.createAgentCliRunnerService)();
-        if (dryRun) {
-            const plan = await services_1.services.loopService.buildControllerTickPlan(changePath);
-            this.info('Loop watch dry-run: no tick, task dispatch, state update, or external process was executed.');
-            for (const instruction of plan.instructions)
-                console.log(`  - ${instruction}`);
-            return;
-        }
-        this.info(`Watching loop (session-bound, interval ${intervalLabel}, executor ${targetOverride || config.target}${dryRun ? ', dry-run' : ''}). Press Ctrl-C or close the session to stop.`);
-        let ticks = 0;
-        let active = true;
-        const stop = () => { active = false; };
-        process.once('SIGINT', stop);
-        while (active) {
-            const result = await services_1.services.loopService.runOnce(changePath, {
-                trigger: 'watch',
-                projectRoot: project.projectRoot,
-                layoutConfig: project.config,
-            });
-            ticks += 1;
-            console.log(`[tick ${ticks}] iteration=${result.iteration} status=${result.status} step=${result.currentStep} actions=${result.actions.length} tokens=${result.metrics.tokensUsed} no-progress=${result.metrics.noProgressCount}`);
-            if (result.stopped || result.status === 'done' || result.status === 'paused' || result.status === 'stopped') {
-                this.info(`Watch ending: loop status is ${result.status}.`);
-                break;
-            }
-            if (maxTicks !== null && ticks >= maxTicks) {
-                this.info(`Watch reached --max-ticks ${maxTicks}.`);
-                break;
-            }
-            if (result.actions.length > 0) {
-                const actionTimeoutMs = this.getActionTimeoutMs(config, result, timeoutMs);
-                const executions = await Promise.all(result.actions.map(async (action) => {
-                    const target = this.toAgentCliTarget(targetOverride || action.target || config.target);
-                    const executorId = `cli-watch:${process.pid}:${action.id}`;
-                    await services_1.services.loopService.heartbeatExecution(changePath, {
-                        actionItemId: action.id,
-                        executorId,
-                        leaseMs: actionTimeoutMs,
-                    });
-                    const run = await runner.runAsync({
-                        target,
-                        prompt: action.prompt,
-                        dryRun: false,
-                        timeoutMs: actionTimeoutMs,
-                        cwd: project.projectRoot,
-                    });
-                    console.log(`[action ${action.id}] target=${target} executed=${run.executed} exit=${run.exitCode ?? 'n/a'} timeout=${run.timedOut ? 'yes' : 'no'} truncated=${run.outputTruncated ? 'yes' : 'no'} duration=${run.durationMs}ms`);
-                    const summary = run.executed
-                        ? (run.exitCode === 0 ? `${action.id} completed; observing durable evidence.` : `${action.id} failed: ${run.stderr.trim().slice(0, 500)}`)
-                        : `${action.id} was not executed${run.available ? ' (dry-run)' : ` (${run.command.bin} unavailable)`}.`;
-                    return {
-                        actionItemId: action.id,
-                        executorId,
-                        exitCode: run.exitCode,
-                        timedOut: run.timedOut,
-                        tokensUsed: 0,
-                        summary,
-                    };
-                }));
-                await services_1.services.loopService.recordExecutionResults(changePath, executions);
-                continue;
-            }
-            await new Promise(resolve => setTimeout(resolve, intervalMs));
-        }
-        process.removeListener('SIGINT', stop);
-    }
-    parseIntervalMs(interval) {
-        const match = String(interval || '').trim().match(/^(\d+)\s*(ms|s|m|h)?$/i);
-        if (!match) {
-            return 600000;
-        }
-        const value = Number(match[1]);
-        const unit = (match[2] || 'm').toLowerCase();
-        const factor = unit === 'ms' ? 1 : unit === 's' ? 1000 : unit === 'h' ? 3600000 : 60000;
-        return Math.max(1, value * factor);
+    async watch(_args) {
+        throw new Error('Loop watch agent execution was removed. Use "ospec loop run --once --json" and dispatch each action through the current model harness native subagent API.');
     }
     parseOptionalPath(args, valueFlags, booleanFlags) {
         const valueSet = new Set(valueFlags);
@@ -280,42 +181,6 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             }
         }
         return undefined;
-    }
-    parseMaxTicks(args) {
-        for (let index = 0; index < args.length; index += 1) {
-            if (args[index] === '--max-ticks') {
-                return Math.max(1, Number(args[index + 1]) || 1);
-            }
-            if (args[index].startsWith('--max-ticks=')) {
-                return Math.max(1, Number(args[index].slice('--max-ticks='.length)) || 1);
-            }
-        }
-        return null;
-    }
-    toAgentCliTarget(target) {
-        if (target === 'claude' || target === 'codex' || target === 'gpt')
-            return target;
-        throw new Error(`Loop watch cannot execute target "${target}" directly. Configure claude/codex/gpt or use controller mode with the harness-native ${target} subagent adapter.`);
-    }
-    parseOptionalPositiveNumber(value, flag) {
-        if (value === undefined)
-            return undefined;
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed <= 0)
-            throw new Error(`${flag} must be a positive number.`);
-        return parsed;
-    }
-    getActionTimeoutMs(config, result, requested) {
-        const limits = [];
-        if (requested !== undefined)
-            limits.push(requested);
-        if (config.stopConditions.budgetMinutes !== null) {
-            limits.push(Math.max(1, (config.stopConditions.budgetMinutes - result.metrics.elapsedMinutes) * 60000));
-        }
-        if (config.stopConditions.expiresAt) {
-            limits.push(Math.max(1, Date.parse(config.stopConditions.expiresAt) - Date.now()));
-        }
-        return limits.length > 0 ? Math.floor(Math.min(...limits)) : undefined;
     }
     async resolveProjectRoot(changePath) {
         let current = path.resolve(changePath);
@@ -446,9 +311,9 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         const model = scalar('--execution-model');
         if (model) {
-            if (model !== 'controller' && model !== 'cli-driven')
-                throw new Error('--execution-model must be controller or cli-driven.');
-            options.executionModel = model;
+            if (model !== 'controller')
+                throw new Error('--execution-model only supports controller; agent CLI execution was removed.');
+            options.executionModel = 'controller';
         }
         const harnessInteractive = scalar('--harness-interactive');
         if (harnessInteractive !== undefined) {

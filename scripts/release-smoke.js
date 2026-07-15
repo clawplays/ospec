@@ -143,6 +143,57 @@ async function approveDispatchedReview(featureDir, dispatch) {
   });
 }
 
+async function approveNativeDocumentReview(
+  execution,
+  featureDir,
+  dispatch,
+  executorId,
+) {
+  await execution.claimDocumentReviewExecutor(
+    featureDir,
+    dispatch.stage,
+    executorId,
+  );
+  await approveDispatchedReview(featureDir, dispatch);
+  await execution.completeDocumentReviewExecutor(
+    featureDir,
+    dispatch.stage,
+    executorId,
+  );
+}
+
+async function approveNativeCodeReview(execution, featureDir, dispatch) {
+  const loopConfig = await fs.readJson(
+    path.join(featureDir, 'artifacts', 'loop', 'loop.json'),
+  );
+  const actionId = `release-smoke-review-action-${dispatch.id}`;
+  const actionItemId = `release-smoke-review-item-${dispatch.id}`;
+  const executorId = `release-smoke-reviewer-${dispatch.id}`;
+  await execution.bindReviewLoopAction(featureDir, {
+    dispatchId: dispatch.id,
+    actionId,
+    actionItemId,
+    controllerSessionReportedAt: loopConfig.capability.reportedAt,
+    runtimeAdapter: dispatch.runtimeAdapter,
+  });
+  await execution.claimReviewLoopExecutor(featureDir, {
+    dispatchId: dispatch.id,
+    actionId,
+    actionItemId,
+    executorId,
+    claimedAt: new Date().toISOString(),
+  });
+  await approveDispatchedReview(featureDir, dispatch);
+  await execution.completeReviewLoopExecutor(featureDir, {
+    dispatchId: dispatch.id,
+    actionId,
+    actionItemId,
+    executorId,
+    completedAt: new Date().toISOString(),
+    succeeded: true,
+  });
+}
+
 async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
   const agentsDir = path.join(featureDir, 'artifacts', 'agents');
 
@@ -199,19 +250,29 @@ async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
   const designReview = await execution.reviewDocument(featureDir, {
     stage: 'design',
   });
-  await approveDispatchedReview(featureDir, designReview.dispatch);
+  await approveNativeDocumentReview(
+    execution,
+    featureDir,
+    designReview.dispatch,
+    'release-smoke-design-reviewer',
+  );
   const planReview = await execution.reviewDocument(featureDir, {
     stage: 'plan',
   });
-  await approveDispatchedReview(featureDir, planReview.dispatch);
+  await approveNativeDocumentReview(
+    execution,
+    featureDir,
+    planReview.dispatch,
+    'release-smoke-plan-reviewer',
+  );
 
   const taskReview = await execution.review(featureDir, {
     taskId: 'task-1',
   });
-  await approveDispatchedReview(featureDir, taskReview.dispatch);
+  await approveNativeCodeReview(execution, featureDir, taskReview.dispatch);
   await execution.syncWorkerStatus(featureDir);
   const finalReview = await execution.review(featureDir);
-  await approveDispatchedReview(featureDir, finalReview.dispatch);
+  await approveNativeCodeReview(execution, featureDir, finalReview.dispatch);
   await execution.syncWorkerStatus(featureDir);
 
   await execution.recordVerification(featureDir, {
@@ -507,13 +568,13 @@ async function main() {
       '--level',
       'L2',
       '--target',
-      'shell',
+      'codex',
       '--execution-model',
-      'cli-driven',
+      'controller',
       '--harness-interactive',
-      'false',
+      'true',
       '--native-subagents',
-      'unsupported',
+      'supported',
     ]);
 
     assertContains(

@@ -1,10 +1,21 @@
-import type { HarnessCapability } from './CapabilityProbeService';
-export type RuntimeExecutionAdapterPreference = 'auto' | 'orca' | 'native' | 'cli' | 'generic';
-export type RuntimeExecutionAdapterKind = 'orca' | 'native' | 'cli' | 'generic';
+/**
+ * `orca`, `cli`, and `generic` are retained as legacy preference inputs so an
+ * existing environment receives a migration diagnostic instead of an unknown
+ * value. New resolutions are always native-only.
+ */
+export type RuntimeExecutionAdapterPreference = 'auto' | 'native' | 'orca' | 'cli' | 'generic';
+export type RuntimeExecutionAdapterKind = 'native' | 'orca' | 'cli' | 'generic';
 export interface RuntimeExecutionAdapterCommand {
     bin: string;
     args: string[];
     environment?: Record<string, string>;
+}
+export interface RuntimeNativeSubagentContract {
+    target: string;
+    primitive: string;
+    dispatch: string;
+    wait: string;
+    result: string;
 }
 export interface RuntimeExecutionAdapterCandidate {
     id: string;
@@ -17,6 +28,7 @@ export interface RuntimeExecutionAdapterCandidate {
     supportsParallel: boolean;
     requiresControllerAction: boolean;
     commandTemplates: RuntimeExecutionAdapterCommand[];
+    nativeSubagent?: RuntimeNativeSubagentContract | null;
 }
 export interface RuntimeExecutionAdapterResolution {
     version: string;
@@ -39,6 +51,7 @@ export interface RuntimeExecutionAdapterResolveInput {
     requiresIndependentWorker?: boolean;
     env?: NodeJS.ProcessEnv;
     now?: Date;
+    /** @deprecated Native adapter resolution is deterministic and no longer writes a probe cache. */
     cacheFilePath?: string;
 }
 interface CommandResult {
@@ -47,35 +60,29 @@ interface CommandResult {
     stderr: string;
     error?: string;
 }
+/** @deprecated Runtime adapter resolution never invokes commands. */
 export type RuntimeAdapterCommandRunner = (bin: string, args: string[], options: {
     cwd: string;
     timeoutMs: number;
     environment?: Record<string, string>;
 }) => CommandResult;
 /**
- * Resolves the concrete worker adapter for the current runtime. Detection is capability-based:
- * an Orca process name is never sufficient without a callable CLI and current-worktree proof.
+ * Resolves the current model harness native subagent contract.
+ *
+ * OSpec deliberately does not probe Orca, PATH binaries, or agent CLIs. A
+ * session-bound capability assertion from the active model harness is the only
+ * authority that can make an adapter executable.
  */
+import type { HarnessCapability } from './CapabilityProbeService';
 export declare class RuntimeExecutionAdapterService {
-    private readonly commandRunner;
-    private readonly platform;
-    private readonly pathExists;
-    private readonly resolutionCache;
-    constructor(commandRunner?: RuntimeAdapterCommandRunner, platform?: NodeJS.Platform, pathExists?: (candidate: string) => boolean);
+    /**
+     * The constructor parameters remain for source compatibility with 1.8.1
+     * callers that injected probe functions. They are intentionally ignored.
+     */
+    constructor(_commandRunner?: RuntimeAdapterCommandRunner, _platform?: NodeJS.Platform, _pathExists?: (candidate: string) => boolean);
     resolve(input: RuntimeExecutionAdapterResolveInput): RuntimeExecutionAdapterResolution;
-    private probeOrca;
-    private probeNative;
-    private probeTargetCli;
-    private buildGenericCandidate;
-    private unavailable;
-    private isCommandAvailable;
-    private runCommand;
-    private commandTemplate;
-    private resolveInvocation;
-    private pathApi;
-    private cacheKey;
-    private readPersistentCache;
-    private writePersistentCache;
+    private buildNativeCandidate;
+    private getAvailabilityReason;
 }
 export declare function createRuntimeExecutionAdapterService(): RuntimeExecutionAdapterService;
 export {};
