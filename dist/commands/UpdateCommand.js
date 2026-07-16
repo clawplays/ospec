@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdateCommand = void 0;
 const fs_1 = require("fs");
+const crypto_1 = require("crypto");
 const os_1 = require("os");
 const path_1 = require("path");
 const services_1 = require("../services");
@@ -42,11 +43,27 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         ]));
         const createdFiles = [...protocolResult.createdFiles, ...toolingResult.createdFiles, ...pluginResult.createdFiles];
         const skippedFiles = [...protocolResult.skippedFiles, ...toolingResult.skippedFiles, ...pluginResult.skippedFiles];
+        const updateProvenance = await this.writeUpdateProvenance(targetPath, {
+            cliVersion: cliVersionMetadataSync.currentCliVersion,
+            paths: [
+                '.ospec/asset-sources.json',
+                ...createdFiles,
+                ...refreshedFiles,
+                ...legacyRepair.createdPaths,
+                ...legacyRepair.refreshedPaths,
+                ...legacyKnowledgeMigration.migratedPaths,
+                ...legacyKnowledgeMigration.removedPaths,
+                ...toolingResult.migratedFiles,
+                ...toolingResult.removedLegacyFiles,
+                ...archiveResult.migratedChanges.flatMap(change => [change.from, change.to]),
+            ],
+        });
         this.success(`Updated OSpec assets for ${protocolResult.projectName}`);
         this.info(`  document language: ${protocolResult.documentLanguage}`);
         this.info(`  created: ${createdFiles.length}`);
         this.info(`  refreshed: ${refreshedFiles.length}`);
         this.info(`  skipped: ${skippedFiles.length}`);
+        this.info(`  update provenance: ${updateProvenance.files.length} managed path(s)`);
         if (legacyRepair.performed) {
             this.info(`  legacy project repaired: ${legacyRepair.markers.join(', ')}`);
             if (legacyRepair.createdPaths.length > 0) {
@@ -118,6 +135,67 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         this.info('  note: it auto-upgrades already-enabled plugin npm packages only when a newer compatible version is available');
         this.info('  note: it does not upgrade the CLI itself');
         this.info('  note: it does not enable, disable, or migrate active or queued changes automatically');
+    }
+    async writeUpdateProvenance(rootDir, input) {
+        const provenanceRelativePath = '.ospec/update-provenance.json';
+        const provenancePath = (0, path_1.join)(rootDir, '.ospec', 'update-provenance.json');
+        const normalizedRoot = (0, path_1.resolve)(rootDir);
+        const candidatePaths = new Set();
+        for (const rawPath of input.paths) {
+            for (const pathPart of String(rawPath || '').split(/\s+->\s+/)) {
+                const trimmed = pathPart.trim();
+                if (!trimmed)
+                    continue;
+                const absolutePath = (0, path_1.resolve)(normalizedRoot, trimmed);
+                const relativePath = (0, path_1.relative)(normalizedRoot, absolutePath).replace(/\\/g, '/');
+                if (!relativePath
+                    || relativePath === provenanceRelativePath
+                    || relativePath === '.git'
+                    || relativePath.startsWith('.git/')
+                    || relativePath === '..'
+                    || relativePath.startsWith('../')) {
+                    continue;
+                }
+                candidatePaths.add(relativePath);
+            }
+        }
+        const files = [];
+        const capture = async (relativePath) => {
+            const absolutePath = (0, path_1.join)(normalizedRoot, ...relativePath.split('/'));
+            const stat = await fs_1.promises.stat(absolutePath).catch(() => null);
+            if (!stat) {
+                files.push({ path: relativePath, kind: 'missing', contentHash: null });
+                return;
+            }
+            if (stat.isDirectory()) {
+                const entries = await fs_1.promises.readdir(absolutePath, { withFileTypes: true });
+                for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+                    await capture(`${relativePath}/${entry.name}`);
+                }
+                return;
+            }
+            if (!stat.isFile())
+                return;
+            const content = await fs_1.promises.readFile(absolutePath);
+            files.push({
+                path: relativePath,
+                kind: 'file',
+                contentHash: (0, crypto_1.createHash)('sha256').update(content).digest('hex'),
+            });
+        };
+        for (const relativePath of Array.from(candidatePaths).sort()) {
+            await capture(relativePath);
+        }
+        const deduplicatedFiles = Array.from(new Map(files.map(file => [file.path, file])).values())
+            .sort((left, right) => left.path.localeCompare(right.path));
+        await services_1.services.fileService.writeJSON(provenancePath, {
+            version: '1.0',
+            generatedAt: new Date().toISOString(),
+            ospecCliVersion: input.cliVersion,
+            source: 'ospec update',
+            files: deduplicatedFiles,
+        });
+        return { path: provenancePath, files: deduplicatedFiles };
     }
     async repairLegacyProjectForUpdate(rootDir, structure) {
         if (structure.initialized) {

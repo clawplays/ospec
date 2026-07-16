@@ -8,6 +8,7 @@ export declare const FILE_NAMES: {
     BUILD_INDEX_SCRIPT: string;
     AI_GUIDE: string;
     EXECUTION_PROTOCOL: string;
+    UPDATE_PROVENANCE: string;
     PROPOSAL: string;
     DESIGN: string;
     IMPLEMENTATION_PLAN: string;

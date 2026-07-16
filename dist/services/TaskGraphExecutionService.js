@@ -2986,6 +2986,38 @@ class TaskGraphExecutionService {
                 && String(lastCompletion?.payload.reviewContextHash || '') === currentReviewContextHash
                 ? Math.max(0, Number(lastCompletion?.payload.noProgressCount) || 0)
                 : 0;
+            let overrideDispatchWindow = null;
+            const activeRecord = documentReviewLedgerRecord(activeDispatch);
+            const activeOverrideDecisionId = String(activeRecord.roundOverrideDecisionId || '').trim();
+            const activeOverrideSelectedAt = String(activeRecord.roundOverrideSelectedAt || '').trim();
+            const activeOverrideDeadline = String(activeRecord.roundOverrideDispatchDeadline || '').trim();
+            if (activeOverrideDecisionId
+                && Number.isFinite(Date.parse(activeOverrideSelectedAt))
+                && Number.isFinite(Date.parse(activeOverrideDeadline))) {
+                const deadlineMs = Date.parse(activeOverrideDeadline);
+                overrideDispatchWindow = {
+                    decisionId: activeOverrideDecisionId,
+                    round: Math.max(1, Number(activeRecord.round) || completedById.size + 1),
+                    selectedAt: new Date(Date.parse(activeOverrideSelectedAt)).toISOString(),
+                    deadline: new Date(deadlineMs).toISOString(),
+                    remainingMs: Math.max(0, deadlineMs - now),
+                    expired: now >= deadlineMs,
+                };
+            }
+            else if (completedById.size >= maxCompletedRounds && currentReviewContextHash) {
+                const grant = await this.findDocumentReviewRoundOverrideDecisionUnlocked(resolvedChangePath, stage, currentReviewContextHash, completedById.size + 1, ledger);
+                if (grant) {
+                    const deadlineMs = Date.parse(grant.selectedAt) + maxMinutes * 60000;
+                    overrideDispatchWindow = {
+                        decisionId: grant.decisionId,
+                        round: completedById.size + 1,
+                        selectedAt: grant.selectedAt,
+                        deadline: new Date(deadlineMs).toISOString(),
+                        remainingMs: Math.max(0, deadlineMs - now),
+                        expired: now >= deadlineMs,
+                    };
+                }
+            }
             stages[stage] = {
                 stage,
                 completedRounds: completedById.size,
@@ -3000,6 +3032,7 @@ class TaskGraphExecutionService {
                     minutes: Math.max(0, maxMinutes - elapsedMs / 60000),
                     tokens: budgetTokens === null ? null : Math.max(0, budgetTokens - tokenUsage - tokenReservation),
                 },
+                overrideDispatchWindow,
                 currentDispatch: activeDispatch ? {
                     id: activeDispatch.dispatchId,
                     heartbeatDueAt: String(heartbeat?.payload.heartbeatDueAt || '') || null,
@@ -3219,6 +3252,8 @@ class TaskGraphExecutionService {
             round: governance.round,
             tokenReservation: mode === 'specialist' ? governance.tokenReservation : 0,
             roundOverrideDecisionId: governance.roundOverrideDecisionId,
+            roundOverrideSelectedAt: governance.roundOverrideSelectedAt,
+            roundOverrideDispatchDeadline: governance.roundOverrideDispatchDeadline,
             usage: null,
             priorDispatchId: convergence.priorDispatchId,
             priorFindings: convergence.priorFindings,
@@ -4188,8 +4223,15 @@ class TaskGraphExecutionService {
                 && Boolean(documentReviewLedgerRecord(event).reviewerCompletedAt))));
         const completed = [...new Map(completedCandidates.map(event => [event.dispatchId, event])).values()];
         const round = completed.length + 1;
-        if (mode !== 'specialist')
-            return { round, tokenReservation: 0, roundOverrideDecisionId: null };
+        if (mode !== 'specialist') {
+            return {
+                round,
+                tokenReservation: 0,
+                roundOverrideDecisionId: null,
+                roundOverrideSelectedAt: null,
+                roundOverrideDispatchDeadline: null,
+            };
+        }
         const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
         const statePath = path.join(changePath, 'artifacts', 'loop', 'state.json');
         const stopPath = path.join(changePath, 'artifacts', 'loop', 'STOP');
@@ -4211,11 +4253,14 @@ class TaskGraphExecutionService {
             ?? governance.tokenReservation
             ?? governance.reservationTokens, DEFAULT_DOCUMENT_REVIEW_TOKEN_RESERVATION);
         let roundOverrideDecisionId = null;
+        let roundOverrideSelectedAt = null;
         if (completed.length >= maxRounds) {
-            roundOverrideDecisionId = await this.findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger);
-            if (!roundOverrideDecisionId) {
+            const roundOverride = await this.findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger);
+            if (!roundOverride) {
                 throw new Error(`Document review ${stage} reached its completed-round limit of ${maxRounds}; one existing required user decision bound to stage=${stage}, reviewContextHash=${reviewContextHash}, round=${round}, and exactly one extra round is required.`);
             }
+            roundOverrideDecisionId = roundOverride.decisionId;
+            roundOverrideSelectedAt = roundOverride.selectedAt;
         }
         if (await this.fileService.exists(stopPath)) {
             throw new Error(`Document review ${stage} dispatch blocked because the Loop STOP file is present.`);
@@ -4226,13 +4271,24 @@ class TaskGraphExecutionService {
         const stopConditions = config?.stopConditions || {};
         const now = Date.now();
         const stageMaxMinutes = Math.min(30, this.positiveIntegerOrDefault(stageGovernance.maxMinutes, 30));
+        const roundOverrideSelectedAtMs = roundOverrideSelectedAt ? Date.parse(roundOverrideSelectedAt) : Number.NaN;
+        const roundOverrideDispatchDeadlineMs = Number.isFinite(roundOverrideSelectedAtMs)
+            ? roundOverrideSelectedAtMs + stageMaxMinutes * 60000
+            : Number.NaN;
+        if (roundOverrideDecisionId && roundOverrideSelectedAtMs > now) {
+            throw new Error(`Document review ${stage} round ${round} authorization ${roundOverrideDecisionId} has a future selectedAt timestamp.`);
+        }
+        if (roundOverrideDecisionId && now >= roundOverrideDispatchDeadlineMs) {
+            throw new Error(`Document review ${stage} round ${round} authorization ${roundOverrideDecisionId} expired at ${new Date(roundOverrideDispatchDeadlineMs).toISOString()}; obtain a fresh exact user authorization before dispatch.`);
+        }
         const firstStageActivity = ledger.events
             .filter(event => event.stage === stage)
             .map(event => Date.parse(event.at))
             .filter(Number.isFinite)
             .sort((left, right) => left - right)[0];
         if (Number.isFinite(firstStageActivity)
-            && now - firstStageActivity >= stageMaxMinutes * 60000) {
+            && now - firstStageActivity >= stageMaxMinutes * 60000
+            && !roundOverrideDecisionId) {
             throw new Error(`Document review ${stage} dispatch blocked because its ${stageMaxMinutes}-minute stage budget was reached.`);
         }
         if (stopConditions.maxIterations !== null && stopConditions.maxIterations !== undefined
@@ -4295,7 +4351,15 @@ class TaskGraphExecutionService {
                 throw new Error(`Document review ${stage} dispatch needs a ${tokenReservation}-token reservation but its stage budget has only ${Math.max(0, Math.floor(remaining || 0))} tokens remaining.`);
             }
         }
-        return { round, tokenReservation, roundOverrideDecisionId };
+        return {
+            round,
+            tokenReservation,
+            roundOverrideDecisionId,
+            roundOverrideSelectedAt,
+            roundOverrideDispatchDeadline: Number.isFinite(roundOverrideDispatchDeadlineMs)
+                ? new Date(roundOverrideDispatchDeadlineMs).toISOString()
+                : null,
+        };
     }
     async findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger) {
         const consumed = new Set(ledger.events
@@ -4308,6 +4372,7 @@ class TaskGraphExecutionService {
         const entries = (await this.fileService.readDir(decisionsDir))
             .filter(entry => entry.endsWith('.json') && entry !== DECISIONS_INDEX_FILE)
             .sort();
+        const grants = [];
         for (const entry of entries) {
             const raw = await this.fileService.readJSON(path.join(decisionsDir, entry));
             const id = String(raw?.id || entry.replace(/\.json$/i, '')).trim();
@@ -4324,9 +4389,13 @@ class TaskGraphExecutionService {
                 || Number(binding?.round) !== round
                 || Number(binding?.extraRounds ?? binding?.extra_rounds) !== 1)
                 continue;
-            return id;
+            const selectedAtMs = Date.parse(String(raw?.selectedAt || raw?.selected_at || ''));
+            if (!Number.isFinite(selectedAtMs))
+                continue;
+            grants.push({ decisionId: id, selectedAt: new Date(selectedAtMs).toISOString(), selectedAtMs });
         }
-        return null;
+        grants.sort((left, right) => right.selectedAtMs - left.selectedAtMs || left.decisionId.localeCompare(right.decisionId));
+        return grants[0] || null;
     }
     positiveIntegerOrDefault(value, fallback) {
         const parsed = Number(value);
@@ -5208,8 +5277,19 @@ class TaskGraphExecutionService {
                     head: null,
                     dirty: false,
                     statusEntries: [],
+                    goalOwnedStatusEntries: [],
+                    generatedStatusEntries: [],
+                    updateManagedStatusEntries: [],
+                    blockingStatusEntries: [],
                     worktrees: [],
                     currentWorktree: null,
+                },
+                ownership: {
+                    mode: 'blocked',
+                    goalOwnedPaths: [],
+                    generatedPaths: [],
+                    updateProvenancePath: null,
+                    updateProvenanceHash: null,
                 },
                 blockers,
                 warnings,
@@ -5227,12 +5307,34 @@ class TaskGraphExecutionService {
                 const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
                 return files.some(file => !this.isGoalWorkspaceControlPath(file, changeRelative, projectRelative));
             });
+            const goalOwnedPaths = await this.readGoalOwnedWorkspacePaths(resolvedChangePath, gitRoot, projectRoot);
+            const generatedPaths = await this.readGoalGeneratedWorkspacePaths(resolvedChangePath, gitRoot, projectRoot);
+            const updateProvenance = await this.readUpdateProvenanceSnapshot(projectRoot, gitRoot);
+            if (updateProvenance.warning)
+                warnings.push(updateProvenance.warning);
+            const goalOwnedStatusEntries = statusEntries.filter(entry => this.workspaceEntryMatchesPaths(entry, goalOwnedPaths));
+            const afterGoalOwnership = statusEntries.filter(entry => !this.workspaceEntryMatchesPaths(entry, goalOwnedPaths));
+            const generatedStatusEntries = afterGoalOwnership.filter(entry => this.workspaceEntryMatchesPaths(entry, generatedPaths));
+            const afterGeneratedOwnership = afterGoalOwnership.filter(entry => !this.workspaceEntryMatchesPaths(entry, generatedPaths));
+            const updateManagedStatusEntries = [];
+            const blockingStatusEntries = [];
+            for (const entry of afterGeneratedOwnership) {
+                if (await this.isUpdateManagedWorkspaceEntry(entry, updateProvenance, gitRoot)) {
+                    updateManagedStatusEntries.push(entry);
+                }
+                else {
+                    blockingStatusEntries.push(entry);
+                }
+            }
             const worktreesOutput = this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '';
             const worktrees = this.parseGitWorktrees(worktreesOutput);
             const currentWorktree = this.findCurrentWorktree(gitRoot, worktrees);
             const dirty = statusEntries.length > 0;
-            if (dirty) {
-                blockers.push(`Workspace has ${statusEntries.length} uncommitted file change(s); defer multi-agent dispatch or use an isolated worktree.`);
+            if (blockingStatusEntries.length > 0) {
+                blockers.push(`Workspace has ${blockingStatusEntries.length} unowned uncommitted file change(s); defer multi-agent dispatch or use an isolated worktree.`);
+            }
+            if (goalOwnedStatusEntries.length > 0 || generatedStatusEntries.length > 0 || updateManagedStatusEntries.length > 0) {
+                warnings.push(`Workspace resume accepted ${goalOwnedStatusEntries.length} Goal-owned, ${generatedStatusEntries.length} task-generated, and ${updateManagedStatusEntries.length} update-managed uncommitted change(s); any path outside persisted ownership remains blocked.`);
             }
             if (branch) {
                 const sameBranchWorktrees = worktrees.filter(worktree => worktree.branch === branch);
@@ -5262,8 +5364,23 @@ class TaskGraphExecutionService {
                     head,
                     dirty,
                     statusEntries,
+                    goalOwnedStatusEntries,
+                    generatedStatusEntries,
+                    updateManagedStatusEntries,
+                    blockingStatusEntries,
                     worktrees,
                     currentWorktree,
+                },
+                ownership: {
+                    mode: status !== 'ready'
+                        ? 'blocked'
+                        : dirty
+                            ? 'goal_resume'
+                            : 'clean',
+                    goalOwnedPaths,
+                    generatedPaths,
+                    updateProvenancePath: updateProvenance.path,
+                    updateProvenanceHash: updateProvenance.contentHash,
                 },
                 blockers,
                 warnings,
@@ -5550,20 +5667,46 @@ class TaskGraphExecutionService {
                 const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
                 return files.some(file => !this.isGoalWorkspaceControlPath(file, changeRelative, projectRelative));
             };
-            const allowed = allowedTaskPaths
-                .map(item => String(item || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, ''))
-                .filter(item => item.length > 0
-                && !path.posix.isAbsolute(item)
-                && item !== '..'
-                && !item.startsWith('../')
-                && !item.includes('/../'))
-                .map(item => projectRelative && projectRelative !== '.' ? `${projectRelative}/${item}` : item);
-            const isExpectedTaskChange = (entry) => {
-                const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
-                return files.every(file => allowed.some(target => file === target || file.startsWith(`${target}/`)));
-            };
-            const statusEntries = this.parseGitStatusEntries(statusOutput).filter(outsideChange).filter(entry => !isExpectedTaskChange(entry));
-            const recordedStatusEntries = (Array.isArray(artifact.git.statusEntries) ? artifact.git.statusEntries : []).filter(outsideChange);
+            const derivedGoalOwnedPaths = await this.readGoalOwnedWorkspacePaths(resolvedChangePath, gitRoot, projectRoot);
+            const derivedGeneratedPaths = await this.readGoalGeneratedWorkspacePaths(resolvedChangePath, gitRoot, projectRoot);
+            const allowed = Array.from(new Set([
+                ...derivedGoalOwnedPaths,
+                ...derivedGeneratedPaths,
+                ...allowedTaskPaths
+                    .map(item => String(item || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, ''))
+                    .filter(item => item.length > 0
+                    && !path.posix.isAbsolute(item)
+                    && item !== '..'
+                    && !item.startsWith('../')
+                    && !item.includes('/../'))
+                    .map(item => projectRelative && projectRelative !== '.' ? `${projectRelative}/${item}` : item),
+            ]));
+            const updateProvenance = await this.readUpdateProvenanceSnapshot(projectRoot, gitRoot);
+            const provenanceWasUsed = Array.isArray(artifact?.git?.updateManagedStatusEntries)
+                && artifact.git.updateManagedStatusEntries.length > 0;
+            const recordedProvenanceHash = provenanceWasUsed
+                && typeof artifact?.ownership?.updateProvenanceHash === 'string'
+                ? artifact.ownership.updateProvenanceHash
+                : null;
+            if (recordedProvenanceHash
+                && (!updateProvenance.valid || updateProvenance.contentHash !== recordedProvenanceHash)) {
+                return { ready: false, reason: 'OSpec update provenance changed after workspace inspection; rerun workspace inspection.' };
+            }
+            const statusEntries = [];
+            for (const entry of this.parseGitStatusEntries(statusOutput).filter(outsideChange)) {
+                if (this.workspaceEntryMatchesPaths(entry, allowed))
+                    continue;
+                if (recordedProvenanceHash
+                    && await this.isUpdateManagedWorkspaceEntry(entry, updateProvenance, gitRoot)) {
+                    continue;
+                }
+                statusEntries.push(entry);
+            }
+            const recordedStatusEntries = (Array.isArray(artifact.git.blockingStatusEntries)
+                ? artifact.git.blockingStatusEntries
+                : Array.isArray(artifact.git.statusEntries)
+                    ? artifact.git.statusEntries
+                    : []).filter(outsideChange);
             if (gitRoot !== path.resolve(artifact.git.root)
                 || head !== artifact.git.head
                 || branch !== (artifact.git.branch || null)
@@ -8814,6 +8957,10 @@ class TaskGraphExecutionService {
             [/^## Safety Notes$/u, '## 安全说明'],
             [/^## Artifact Boundary$/u, '## Artifact 边界'],
             [/^## Changed Files$/u, '## 变更文件'],
+            [/^## Goal-Owned Changes$/u, '## Goal 归属的变更'],
+            [/^## Task-Generated Changes$/u, '## Task 生成的变更'],
+            [/^## Update-Managed Changes$/u, '## Update 管理的变更'],
+            [/^## Blocking Changes$/u, '## 阻断变更'],
             [/^## Commands$/u, '## 命令'],
             [/^## Lifecycle$/u, '## 生命周期'],
             [/^## Recommendations$/u, '## 建议'],
@@ -8911,6 +9058,8 @@ class TaskGraphExecutionService {
             'Current branch': '当前分支',
             'Current HEAD': '当前 HEAD',
             'Current workspace dirty': '当前工作区有改动',
+            'Ownership mode': '归属模式',
+            'Update provenance': 'Update 来源证明',
             'Task graph': '任务图',
             'Pending required decisions': '待答必答决策',
             Available: '可用',
@@ -9096,6 +9245,7 @@ class TaskGraphExecutionService {
         }
         return candidates.some(candidate => candidate === '.ospec/session-brief.json'
             || candidate === '.ospec/session-brief.md'
+            || candidate === `.ospec/${constants_1.FILE_NAMES.UPDATE_PROVENANCE}`
             || candidate.startsWith('.ospec/brainstorms/'));
     }
     async syncFeatureStateFromBootstrap(changePath, artifact) {
@@ -9106,9 +9256,15 @@ class TaskGraphExecutionService {
         if (existing.status === 'archived')
             return;
         const completed = new Set(Array.isArray(existing.completed) ? existing.completed : []);
-        if (artifact.documents.proposal.readiness === 'ready')
+        const executionStarted = artifact.execution.taskGraph.exists
+            && (artifact.execution.taskGraph.completed > 0
+                || artifact.execution.taskGraph.running > 0
+                || artifact.execution.session.dispatchCount > 0);
+        const documentReadyForProgress = (readiness) => readiness === 'ready'
+            || (executionStarted && readiness === 'draft');
+        if (documentReadyForProgress(artifact.documents.proposal.readiness))
             completed.add('proposal_complete');
-        if (artifact.documents.tasks.readiness === 'ready' && artifact.execution.taskGraph.exists)
+        if (documentReadyForProgress(artifact.documents.tasks.readiness) && artifact.execution.taskGraph.exists)
             completed.add('tasks_complete');
         const graphComplete = artifact.execution.taskGraph.taskCount > 0
             && artifact.execution.taskGraph.completed === artifact.execution.taskGraph.taskCount
@@ -9234,7 +9390,7 @@ class TaskGraphExecutionService {
             : options.checklistRequired
                 ? false
                 : null;
-        const hasDraftMarker = /\b(TBD|TODO)\b|<[^>\n]+>/.test(content);
+        const hasDraftMarker = /\b(TBD|TODO)\b/.test(content);
         let readiness = 'ready';
         if (trimmedContent.length === 0) {
             readiness = 'empty';
@@ -9421,6 +9577,12 @@ class TaskGraphExecutionService {
         const blockers = [];
         const warnings = [];
         const relativeChangePath = this.toProjectRelativeChangePath(input.projectRoot, input.changePath);
+        const executionStarted = input.execution.taskGraph.exists
+            && (input.execution.taskGraph.completed > 0
+                || input.execution.taskGraph.running > 0
+                || input.execution.session.dispatchCount > 0);
+        const documentReadyForStage = (documentStatus) => documentStatus.readiness === 'ready'
+            || (executionStarted && documentStatus.readiness === 'draft');
         const documentEntries = [
             ['proposal.md', input.documents.proposal],
             ['design.md', input.documents.design],
@@ -9438,7 +9600,7 @@ class TaskGraphExecutionService {
                 warnings.push(`${label} still looks like a draft; review placeholders or unchecked setup items.`);
             }
         }
-        if (input.documents.proposal.readiness !== 'ready') {
+        if (!documentReadyForStage(input.documents.proposal)) {
             return {
                 status: 'needs_proposal',
                 blockers,
@@ -9446,7 +9608,7 @@ class TaskGraphExecutionService {
                 nextInstruction: 'Create or complete proposal.md before design, planning, task graph, or implementation work.',
             };
         }
-        if (input.documents.design.readiness !== 'ready') {
+        if (!documentReadyForStage(input.documents.design)) {
             return {
                 status: 'needs_design',
                 blockers,
@@ -9454,7 +9616,7 @@ class TaskGraphExecutionService {
                 nextInstruction: 'Draft or update design.md from proposal.md and project context before implementation planning.',
             };
         }
-        if (input.documents.implementationPlan.readiness !== 'ready') {
+        if (!documentReadyForStage(input.documents.implementationPlan)) {
             return {
                 status: 'needs_plan',
                 blockers,
@@ -9749,6 +9911,191 @@ class TaskGraphExecutionService {
             };
         })
             .filter(entry => entry.file.length > 0);
+    }
+    workspaceEntryPaths(entry) {
+        return entry.file
+            .replace(/^"|"$/g, '')
+            .replace(/\\/g, '/')
+            .split(/\s+->\s+/)
+            .map(file => file.replace(/^"|"$/g, '').trim().replace(/^\.\//, '').replace(/\/$/, ''))
+            .filter(Boolean);
+    }
+    workspaceEntryMatchesPaths(entry, allowedPaths) {
+        const files = this.workspaceEntryPaths(entry);
+        return files.length > 0 && files.every(file => allowedPaths.some(target => file === target || file.startsWith(`${target}/`)));
+    }
+    normalizeProjectOwnedPath(projectRoot, gitRoot, value) {
+        const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+        if (!normalized
+            || path.posix.isAbsolute(normalized)
+            || normalized === '..'
+            || normalized.startsWith('../')
+            || normalized.includes('/../')) {
+            return null;
+        }
+        const projectRelative = path.relative(gitRoot, projectRoot).replace(/\\/g, '/').replace(/\/$/, '');
+        return projectRelative && projectRelative !== '.' ? `${projectRelative}/${normalized}` : normalized;
+    }
+    async readGoalOwnedWorkspacePaths(changePath, gitRoot, projectRoot) {
+        const graphPath = path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        if (!(await this.fileService.exists(graphPath)))
+            return [];
+        try {
+            const graph = await this.fileService.readJSON(graphPath);
+            const tasks = Array.isArray(graph?.tasks)
+                ? graph.tasks.map((task, index) => normalizeTask(task, index))
+                : [];
+            return Array.from(new Set(tasks
+                .filter(task => task.status !== 'PENDING')
+                .flatMap(task => task.targetFiles)
+                .map((target) => this.normalizeProjectOwnedPath(projectRoot, gitRoot, target))
+                .filter((target) => Boolean(target))))
+                .sort();
+        }
+        catch {
+            return [];
+        }
+    }
+    async readGoalGeneratedWorkspacePaths(changePath, gitRoot, projectRoot) {
+        const graphPath = path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        if (!(await this.fileService.exists(graphPath)))
+            return [];
+        try {
+            const graph = await this.fileService.readJSON(graphPath);
+            const tasks = Array.isArray(graph?.tasks)
+                ? graph.tasks.map((task, index) => normalizeTask(task, index))
+                : [];
+            const generatedPaths = new Set();
+            const resolvedProjectRoot = path.resolve(projectRoot);
+            for (const task of tasks) {
+                if (task.status === 'PENDING'
+                    || !task.verificationCommands.some(command => /(?:^|\s)(?:build|typecheck|tsc)(?::[^\s]+)?(?:\s|$)/i.test(command))) {
+                    continue;
+                }
+                for (const target of task.targetFiles) {
+                    const normalized = String(target || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+                    if (!normalized || path.posix.isAbsolute(normalized) || normalized === '..' || normalized.startsWith('../') || normalized.includes('/../'))
+                        continue;
+                    const resolvedTarget = path.resolve(projectRoot, normalized);
+                    if (!this.isPathWithin(resolvedProjectRoot, resolvedTarget))
+                        continue;
+                    let current = normalized.endsWith('/') || path.extname(resolvedTarget) === ''
+                        ? resolvedTarget
+                        : path.dirname(resolvedTarget);
+                    while (this.isPathWithin(resolvedProjectRoot, current)) {
+                        if (await this.fileService.exists(path.join(current, 'tsconfig.json'))) {
+                            const generated = this.normalizeProjectOwnedPath(projectRoot, gitRoot, path.relative(projectRoot, path.join(current, 'tsconfig.tsbuildinfo')));
+                            if (generated)
+                                generatedPaths.add(generated);
+                            break;
+                        }
+                        if (current === resolvedProjectRoot)
+                            break;
+                        const parent = path.dirname(current);
+                        if (parent === current)
+                            break;
+                        current = parent;
+                    }
+                }
+            }
+            return [...generatedPaths].sort();
+        }
+        catch {
+            return [];
+        }
+    }
+    async readCurrentCliVersion() {
+        try {
+            const packageJson = JSON.parse(await fs_1.promises.readFile(path.join(__dirname, '..', '..', 'package.json'), 'utf8'));
+            return typeof packageJson?.version === 'string' && packageJson.version.trim()
+                ? packageJson.version.trim()
+                : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    async readUpdateProvenanceSnapshot(projectRoot, gitRoot) {
+        const provenancePath = path.join(projectRoot, '.ospec', constants_1.FILE_NAMES.UPDATE_PROVENANCE);
+        if (!(await this.fileService.exists(provenancePath))) {
+            return { path: null, contentHash: null, valid: false, files: new Map(), warning: null };
+        }
+        try {
+            const content = await this.fileService.readFile(provenancePath);
+            const artifact = JSON.parse(content);
+            const currentCliVersion = await this.readCurrentCliVersion();
+            if (artifact?.version !== '1.0'
+                || artifact?.source !== 'ospec update'
+                || !currentCliVersion
+                || artifact.ospecCliVersion !== currentCliVersion
+                || !Array.isArray(artifact.files)) {
+                return {
+                    path: provenancePath,
+                    contentHash: (0, crypto_1.createHash)('sha256').update(content, 'utf8').digest('hex'),
+                    valid: false,
+                    files: new Map(),
+                    warning: 'OSpec update provenance is stale or invalid; update-managed dirty files will remain blocked.',
+                };
+            }
+            const files = new Map();
+            for (const record of artifact.files) {
+                const normalizedPath = this.normalizeProjectOwnedPath(projectRoot, gitRoot, record?.path);
+                const validHash = record?.kind === 'file'
+                    ? typeof record.contentHash === 'string' && /^[a-f0-9]{64}$/.test(record.contentHash)
+                    : record?.kind === 'missing' && record.contentHash === null;
+                if (!normalizedPath || !validHash || files.has(normalizedPath)) {
+                    return {
+                        path: provenancePath,
+                        contentHash: (0, crypto_1.createHash)('sha256').update(content, 'utf8').digest('hex'),
+                        valid: false,
+                        files: new Map(),
+                        warning: 'OSpec update provenance contains an unsafe path, duplicate, or invalid content hash; update-managed dirty files will remain blocked.',
+                    };
+                }
+                files.set(normalizedPath, record);
+            }
+            return {
+                path: provenancePath,
+                contentHash: (0, crypto_1.createHash)('sha256').update(content, 'utf8').digest('hex'),
+                valid: true,
+                files,
+                warning: null,
+            };
+        }
+        catch (error) {
+            return {
+                path: provenancePath,
+                contentHash: null,
+                valid: false,
+                files: new Map(),
+                warning: `OSpec update provenance could not be validated (${error?.message || error}); update-managed dirty files will remain blocked.`,
+            };
+        }
+    }
+    async isUpdateManagedWorkspaceEntry(entry, snapshot, gitRoot) {
+        if (!snapshot.valid)
+            return false;
+        const files = this.workspaceEntryPaths(entry);
+        if (files.length === 0)
+            return false;
+        for (const file of files) {
+            const record = snapshot.files.get(file);
+            if (!record)
+                return false;
+            const absolutePath = path.join(gitRoot, ...file.split('/'));
+            const stat = await fs_1.promises.stat(absolutePath).catch(() => null);
+            if (record.kind === 'missing') {
+                if (stat)
+                    return false;
+                continue;
+            }
+            if (!stat?.isFile())
+                return false;
+            const contentHash = (0, crypto_1.createHash)('sha256').update(await fs_1.promises.readFile(absolutePath)).digest('hex');
+            if (contentHash !== record.contentHash)
+                return false;
+        }
+        return true;
     }
     parseGitWorktrees(output) {
         const worktrees = [];
@@ -12469,6 +12816,18 @@ class TaskGraphExecutionService {
         const changedFiles = artifact.git.statusEntries.length > 0
             ? artifact.git.statusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
             : '- None';
+        const goalOwnedFiles = artifact.git.goalOwnedStatusEntries.length > 0
+            ? artifact.git.goalOwnedStatusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
+            : '- None';
+        const generatedFiles = artifact.git.generatedStatusEntries.length > 0
+            ? artifact.git.generatedStatusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
+            : '- None';
+        const updateManagedFiles = artifact.git.updateManagedStatusEntries.length > 0
+            ? artifact.git.updateManagedStatusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
+            : '- None';
+        const blockingFiles = artifact.git.blockingStatusEntries.length > 0
+            ? artifact.git.blockingStatusEntries.map(entry => `- ${entry.code}: ${entry.file}`).join('\n')
+            : '- None';
         const worktrees = artifact.git.worktrees.length > 0
             ? artifact.git.worktrees
                 .map(worktree => `- ${worktree.path}${worktree.branch ? ` (${worktree.branch})` : worktree.detached ? ' (detached)' : ''}`)
@@ -12486,6 +12845,8 @@ class TaskGraphExecutionService {
             `- Branch: ${artifact.git.branch || 'not detected'}`,
             `- HEAD: ${artifact.git.head || 'not detected'}`,
             `- Dirty: ${artifact.git.dirty ? 'yes' : 'no'}`,
+            `- Ownership mode: ${artifact.ownership.mode}`,
+            `- Update provenance: ${artifact.ownership.updateProvenancePath || 'not available'}`,
             '',
             '## Blockers',
             '',
@@ -12498,6 +12859,22 @@ class TaskGraphExecutionService {
             '## Changed Files',
             '',
             changedFiles,
+            '',
+            '## Goal-Owned Changes',
+            '',
+            goalOwnedFiles,
+            '',
+            '## Task-Generated Changes',
+            '',
+            generatedFiles,
+            '',
+            '## Update-Managed Changes',
+            '',
+            updateManagedFiles,
+            '',
+            '## Blocking Changes',
+            '',
+            blockingFiles,
             '',
             '## Worktrees',
             '',

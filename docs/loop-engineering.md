@@ -35,6 +35,8 @@ Each tick follows the persisted task graph and evidence instead of asking an age
 
 The loop stores the current batch and per-item `issued/running/completed/failed/expired` state in `artifacts/loop/state.json`. Only the issuing tick returns items in `actions`; observation ticks return the durable `pending` record with an empty action list, preventing duplicate launches. Heartbeat leases let a later session distinguish a live child from an orphan. Expired or explicitly released orphans are marked failed and requeued with fresh context; completed siblings are not duplicated.
 
+A hard workflow gate persists Loop status as `blocked` and returns `stopped: true`; it is not active execution. After resolving the reported condition, `ospec loop resume` moves the state back to `idle` so the next tick can reevaluate every gate. Resume does not bypass required decisions, workspace ownership, document review, task-graph, capability, or L3 safety checks.
+
 ## Fresh context and packet references
 
 Implementation and review actions are intentionally small:
@@ -59,6 +61,8 @@ Failures and non-approved decisions remain visible as feedback and feed the retr
 
 Specialist design/plan reviewers and Loop task/final reviewers require a fresh native subagent. Reviews bind to the exact child, target, and controller capability session. Completion validates the decision, document hash, and structured findings before reporting success. Approved document hashes and current PASSED verification snapshots remain reusable only while their inputs are unchanged.
 
+The two automatic specialist document-review rounds and their base stage time remain bounded. When the user explicitly authorizes one exact extra round, that decision opens one dispatch-only window anchored at the decision's `selectedAt` time instead of being rejected by an already exhausted base stage lifetime. The window is capped at the stage's maximum 30-minute duration, is consumed by one matching dispatch, and does not bypass Loop expiry, elapsed/token budgets, STOP, no-progress, context, or executor-provenance guards. `ospec loop status` reports base minutes and the override round/deadline separately.
+
 ## Safety levels and guards
 
 Choose the initial level with `ospec goal <name> --level L1|L2|L3`:
@@ -79,6 +83,8 @@ Required user decisions block every level; L3 never auto-selects them. Before is
 - explicit pause and the `artifacts/loop/STOP` sentinel.
 
 Controller ticks and task-graph completion mutations use cross-process leases. JSON state uses same-directory atomic replacement so readers never observe partial documents. Token accounting combines executor-reported counters with authoritative usage sidecars and deduplicates matching usage keys. Before a task-graph dispatch/review/retry mutation, the remaining token budget limits batch size; the selected batch divides that remainder into persisted per-action reservations/allowances that executors must honor and report against. Unknown fields remain unknown instead of being estimated.
+
+Workspace safety is ownership-based when resuming an existing Goal. Dirty paths are accepted only when they are exact targets of non-`PENDING` tasks, exact package-local `tsconfig.tsbuildinfo` output derived from a started task's declared build/typecheck command, or match current-version, SHA-256-bound `.ospec/update-provenance.json` written by `ospec update`. The report separates Goal-owned, task-generated, update-managed, and blocking changes. There is no generated-file wildcard: `PENDING` task outputs, metadata outside the owning task package, unknown files, stale provenance, and hash mismatches remain `needs_isolation`; provenance is rebound only when it was actually used to accept a dirty path.
 
 ## Commands
 
@@ -138,8 +144,10 @@ Repeatable flags such as `--allow-path`, `--allow-command`, `--allow-command-pol
 
 ## Engineering issue register
 
+- [Fixed in 1.8.8: authorized extra document review could not outlive the base stage budget](dev/known-issue-extra-document-review-stage-budget.md): an exact user-bound extra round now receives one bounded dispatch window from `selectedAt`, while Loop lifetime, token, STOP, no-progress, context, and one-time-consumption guards remain enforced.
+- [Fixed in 1.8.8: resumed Goals could not distinguish their dirty workspace](dev/known-issue-resumed-goal-workspace-ownership.md): workspace readiness now accepts exact non-`PENDING` task targets, exact task-generated TypeScript build metadata, and current hash-verified `ospec update` output while every unknown or tampered path still fails closed. Hard gates persist as resumable `blocked` state, and executed legacy Goals no longer route backwards because of valid angle-bracket technical notation.
 - [Fixed in 1.8.7: Goal progress drift across evidence, task graph, and `tasks.md`](dev/known-issue-goal-progress-projection-drift.md): Goal progress now reconciles validated review evidence into the raw graph and exact `task-*` checklist lines under the task-graph mutation lease. Legacy 1.8.6 Goals are backfilled on resume without redispatch, while ambiguous Markdown fails closed with `progress-projection.json` diagnostics.
 - [Parallel tasks can race through shared verification resources](dev/known-issue-parallel-verification-resource-conflicts.md): dependency/file-safe implementation tasks may still run build, test, capture, port, cache, or junction mutations concurrently in one worktree. Until the scheduler models these resources, serialize or rerun shared authoritative verification after the batch settles.
-- [Controllers can miss child heartbeat deadlines](dev/known-issue-multi-child-heartbeat-fairness.md): bounded native waits do not guarantee timely heartbeat scheduling, and multi-item batches add sibling-starvation risk. Late pre-lease evidence remains recoverable, but the controller algorithm and diagnostics need stronger support.
+- [Controllers can miss child heartbeat deadlines](dev/known-issue-multi-child-heartbeat-fairness.md): 1.8.8 moves the initial claim target to 60 seconds before lease expiry to avoid false early warnings while a child starts, but bounded native waits still do not guarantee renewal fairness. Multi-item sibling starvation, batch heartbeat, and durable lateness diagnostics remain open.
 - [Repair limits expose lifetime counts as if they were new work](dev/known-issue-repair-limit-lifetime-accounting.md): upgraded Goals can report a confusing state such as `7/2`, and authorizing two additional rounds requires an absolute ceiling of 9. Preserve the history, explain the arithmetic, and prefer task- and finding-scoped incremental grants in a future runtime.
 - [Stage-blind repairs can ping-pong a shared artifact](dev/known-issue-stage-aware-shared-artifact-repair-ping-pong.md): an upstream source task can require `ready_for_implementation` while a transitive descendant legitimately advances the same record to `accepted`. Revalidate old findings before repair, model stage ownership, and stop contradictory postconditions before they consume repair rounds.

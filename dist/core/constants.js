@@ -32,6 +32,7 @@ exports.FILE_NAMES = {
     BUILD_INDEX_SCRIPT: '.ospec/tools/build-index-auto.cjs',
     AI_GUIDE: 'ai-guide.md',
     EXECUTION_PROTOCOL: 'execution-protocol.md',
+    UPDATE_PROVENANCE: 'update-provenance.json',
     PROPOSAL: 'proposal.md',
     DESIGN: 'design.md',
     IMPLEMENTATION_PLAN: 'implementation-plan.md',

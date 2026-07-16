@@ -344,6 +344,8 @@ export interface TaskDocumentReviewDispatchRecord {
     round?: number;
     tokenReservation?: number;
     roundOverrideDecisionId?: string | null;
+    roundOverrideSelectedAt?: string | null;
+    roundOverrideDispatchDeadline?: string | null;
     usage?: TaskExecutionUsage | null;
     priorDispatchId?: string | null;
     priorFindings?: unknown[];
@@ -398,6 +400,14 @@ export interface TaskDocumentReviewGovernanceStageSummary {
         minutes: number;
         tokens: number | null;
     };
+    overrideDispatchWindow: {
+        decisionId: string;
+        round: number;
+        selectedAt: string;
+        deadline: string;
+        remainingMs: number;
+        expired: boolean;
+    } | null;
     currentDispatch: {
         id: string;
         heartbeatDueAt: string | null;
@@ -612,8 +622,19 @@ export interface TaskWorkspaceStatusArtifact {
         head: string | null;
         dirty: boolean;
         statusEntries: TaskWorkspaceStatusEntry[];
+        goalOwnedStatusEntries: TaskWorkspaceStatusEntry[];
+        generatedStatusEntries: TaskWorkspaceStatusEntry[];
+        updateManagedStatusEntries: TaskWorkspaceStatusEntry[];
+        blockingStatusEntries: TaskWorkspaceStatusEntry[];
         worktrees: TaskWorkspaceGitWorktree[];
         currentWorktree: TaskWorkspaceGitWorktree | null;
+    };
+    ownership: {
+        mode: 'clean' | 'goal_resume' | 'blocked';
+        goalOwnedPaths: string[];
+        generatedPaths: string[];
+        updateProvenancePath: string | null;
+        updateProvenanceHash: string | null;
     };
     blockers: string[];
     warnings: string[];
@@ -1841,6 +1862,14 @@ export declare class TaskGraphExecutionService {
     private runGit;
     private readGitOutput;
     private parseGitStatusEntries;
+    private workspaceEntryPaths;
+    private workspaceEntryMatchesPaths;
+    private normalizeProjectOwnedPath;
+    private readGoalOwnedWorkspacePaths;
+    private readGoalGeneratedWorkspacePaths;
+    private readCurrentCliVersion;
+    private readUpdateProvenanceSnapshot;
+    private isUpdateManagedWorkspaceEntry;
     private parseGitWorktrees;
     private normalizeGitBranchName;
     private findCurrentWorktree;

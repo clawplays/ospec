@@ -2,7 +2,7 @@
 
 ## Status
 
-- State: open
+- State: open; initial first-claim timing partially mitigated in 1.8.8
 - First confirmed: 2026-07-16
 - Affected release: 1.8.6 controller-driven native execution
 - Severity: high orphan/duplicate-work risk; no data loss in the confirmed incident
@@ -15,6 +15,8 @@ OSpec 1.8.6 correctly separates a short heartbeat target (`heartbeatDueAt`), a l
 In real runs, a controller can spend too long reasoning, running tools, or waiting on a child and let `heartbeatDueAt` pass. Multi-item batches add a fairness failure mode: the controller can poll or process children sequentially and refresh only the child it is currently handling while a sibling remains live and overdue. If the controller returns before `leaseExpiresAt`, a late heartbeat or authoritative evidence can still recover the action, but the safety margin has been consumed. A slightly longer delay can make OSpec classify a live child as orphaned and requeue work that is still running.
 
 This is different from the pre-1.8.6 indefinite-wait problem. Every individual wait may be bounded while batch-wide heartbeat fairness is still violated.
+
+OSpec 1.8.8 moves the initial unclaimed action heartbeat target from the midpoint of the five-minute lease to 60 seconds before lease expiry. This prevents normal child startup and claim overhead from producing an early overdue signal while preserving a recovery buffer. Once an executor claims the item, renewals still use the midpoint of the renewed lease. This is a scoped mitigation, not a solution to renewal fairness, unclaimed sibling launch fairness, batch heartbeat, or lateness observability.
 
 ## Confirmed Incident
 
@@ -335,4 +337,4 @@ Add service and controller-contract tests for:
 
 ## Release Guidance
 
-Treat this as a runtime reliability change requiring a new release. Verification must include focused fake-clock lifecycle tests, multi-child controller integration tests, full Loop regression, migration compatibility, generated asset synchronization, package smoke tests, and a live two-child observation proving no sibling misses its heartbeat target.
+The 1.8.8 initial-claim adjustment may ship independently because it changes only the pre-claim warning window and retains the existing hard lease. Do not mark this issue fixed from that mitigation. The complete runtime reliability change still requires focused fake-clock lifecycle tests, multi-child controller integration tests, full Loop regression, migration compatibility, generated asset synchronization, package smoke tests, and a live two-child observation proving no sibling misses its heartbeat target.

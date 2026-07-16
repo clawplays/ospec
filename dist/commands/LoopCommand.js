@@ -266,7 +266,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         for (const stage of ['design', 'plan']) {
             const review = reviewGovernance.stages[stage];
-            console.log(`Review ${stage}: rounds=${review.completedRounds}/${review.guardLimits.maxCompletedRounds} active=${review.activeRound ?? 'none'} minutes-left=${review.guardRemaining.minutes} tokens-left=${review.guardRemaining.tokens ?? 'unbounded'} cache-hits=${review.cacheHits} no-progress=${review.noProgressCount}/${review.guardLimits.noProgressLimit} heartbeat-due=${review.currentDispatch?.heartbeatDueAt || 'none'}`);
+            console.log(`Review ${stage}: rounds=${review.completedRounds}/${review.guardLimits.maxCompletedRounds} active=${review.activeRound ?? 'none'} minutes-left=${review.guardRemaining.minutes} tokens-left=${review.guardRemaining.tokens ?? 'unbounded'} cache-hits=${review.cacheHits} no-progress=${review.noProgressCount}/${review.guardLimits.noProgressLimit} heartbeat-due=${review.currentDispatch?.heartbeatDueAt || 'none'} override-round=${review.overrideDispatchWindow?.round ?? 'none'} override-deadline=${review.overrideDispatchWindow?.deadline || 'none'} override-expired=${review.overrideDispatchWindow?.expired ?? 'none'}`);
         }
         if (state.lastFeedback)
             console.log(`Last feedback: ${state.lastFeedback}`);

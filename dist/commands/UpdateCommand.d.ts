@@ -2,6 +2,7 @@ import { BaseCommand } from './BaseCommand';
 export declare class UpdateCommand extends BaseCommand {
     private getPluginRegistryService;
     execute(rootDir?: string): Promise<void>;
+    private writeUpdateProvenance;
     private repairLegacyProjectForUpdate;
     private detectLegacyProjectMarkers;
     private syncProjectTooling;

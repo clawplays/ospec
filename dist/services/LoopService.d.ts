@@ -5,7 +5,7 @@ import { LayoutConfigInput } from './TriageService';
 import { RuntimeExecutionModelSelectionInput, RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService, RuntimeNativeHarnessExecutionMetadata } from './RuntimeExecutionAdapterService';
 import { TaskGraphExecutionService, TaskVerificationLoopBinding, TaskWorkerToolTarget } from './TaskGraphExecutionService';
 export type LoopSafetyLevel = 'L1' | 'L2' | 'L3';
-export type LoopStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'done';
+export type LoopStatus = 'idle' | 'running' | 'blocked' | 'paused' | 'stopped' | 'done';
 /** `cli-driven` is retained only so callers can receive a migration error. */
 export type LoopExecutionModel = 'controller' | 'cli-driven';
 export type LoopActionKind = 'implementation' | 'task-review' | 'final-review' | 'verification' | 'legacy';

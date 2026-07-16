@@ -1,0 +1,29 @@
+{
+  "title_suffix": "safe Goal recovery and authorized review continuation",
+  "summary": "OSpec 1.8.8 lets interrupted Goals resume without weakening workspace or review governance. Non-PENDING task targets, exact task-generated TypeScript build metadata, and current-version ospec update output have bounded ownership, while unknown, future-task, stale, or tampered paths still fail closed. An explicitly authorized extra design or plan review now receives one finite dispatch window even when the base 30-minute stage lifetime is exhausted. Hard Loop gates persist as blocked, bootstrap preserves valid technical notation, and the initial child claim target leaves a clear recovery buffer before lease expiry.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.7...1.8.8",
+  "new": [
+    "Added .ospec/update-provenance.json with current CLI version, exact managed paths, file or missing state, and SHA-256 hashes after ospec update.",
+    "Added a durable blocked Loop status for hard workflow gates, with explicit resume back to idle for gate reevaluation.",
+    "Added separate Goal-owned, task-generated, update-managed, and blocking workspace projections to JSON and Markdown status artifacts.",
+    "Added an observable one-time override dispatch window with decision, round, selected-at, deadline, remaining-time, and expiry fields."
+  ],
+  "improved": [
+    "Existing Goals may retain dirty target paths only after their task leaves PENDING; future task targets and unrelated files remain isolated.",
+    "Update provenance covers created, refreshed, removed, migrated, plugin, knowledge, tooling, and both sides of archive-layout moves.",
+    "The initial unclaimed action heartbeat target is now 60 seconds before the five-minute lease expiry; claimed-action renewals retain the existing midpoint schedule.",
+    "Started tasks with declared build or typecheck verification may retain only the exact default tsconfig.tsbuildinfo beside the nearest owning tsconfig.json; no generated-file wildcard is used."
+  ],
+  "fixed": [
+    "Fixed valid resumed Goals repeatedly stopping at needs_isolation because implementation files and ospec update output were indistinguishable from unrelated edits.",
+    "Fixed stale unused update provenance blocking an otherwise clean or Goal-owned workspace, while preserving tamper detection whenever provenance accepted a dirty path.",
+    "Fixed hard gates being persisted as running at the gate step and therefore appearing to make progress when no action could execute.",
+    "Fixed valid technical notation such as canonical <route>.json being treated as an unfinished document placeholder and routing an executing Goal backwards.",
+    "Fixed an exact user-authorized third design or plan review being rejected after repair and user-wait time exhausted the original 30-minute stage lifetime.",
+    "Fixed dedicated dirty Goal worktrees remaining blocked on package-local TypeScript build metadata produced by their own declared verification command."
+  ],
+  "docs": [
+    "Documented the confirmed stopped Mobile Dev and Web incidents, the Goal/task-generated workspace contract, update recovery procedure, blocked Loop semantics, and the remaining multi-child heartbeat fairness gap.",
+    "Documented the confirmed AIHub plan-review budget incident, one-time authorization window, expiry and reauthorization behavior, and preserved global safety guards."
+  ]
+}

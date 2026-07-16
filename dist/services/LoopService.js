@@ -53,6 +53,7 @@ const LOOP_CONTROLLER_LOCK_FILE = 'controller.lock';
 const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
 const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
+const INITIAL_ACTION_HEARTBEAT_BUFFER_MS = 60 * 1000;
 const MAX_ACTION_LEASE_MS = 30 * 60 * 1000;
 const DEFAULT_IMPLEMENTATION_MAX_RUNTIME_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_REVIEW_MAX_RUNTIME_MS = 60 * 60 * 1000;
@@ -529,7 +530,7 @@ class LoopService {
                     throw new Error(`Cannot resume Loop while Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`);
                 }
             }
-            if (state.status === 'paused' || state.status === 'stopped')
+            if (state.status === 'blocked' || state.status === 'paused' || state.status === 'stopped')
                 state.status = 'idle';
             state.comprehensionDebtCounter = 0;
             state.noProgressCount = 0;
@@ -894,7 +895,7 @@ class LoopService {
                 status: 'issued',
                 issuedAt: pending.issuedAt,
                 heartbeatAt: null,
-                heartbeatDueAt: new Date(leaseBaseMs + Math.floor(DEFAULT_ACTION_LEASE_MS / 2)).toISOString(),
+                heartbeatDueAt: new Date(leaseBaseMs + DEFAULT_ACTION_LEASE_MS - INITIAL_ACTION_HEARTBEAT_BUFFER_MS).toISOString(),
                 leaseExpiresAt: new Date(leaseBaseMs + DEFAULT_ACTION_LEASE_MS).toISOString(),
                 absoluteExpiresAt: new Date(leaseBaseMs + this.actionMaxRuntimeMs(item.kind)).toISOString(),
                 evidenceReadyAt: null,
@@ -1199,12 +1200,13 @@ class LoopService {
             return this.gateResult(resolved, state, trigger, 'Required decision index is damaged or unreadable. Regenerate it with "ospec execute status" before continuing.');
         }
         if (pendingRequired > 0) {
+            state.status = 'blocked';
             state.currentStep = 'gate';
             state.lastTickTs = nowIso;
             await this.writeState(resolved, state);
             const instruction = `Present ${pendingRequired} required user decision(s), do not auto-select the recommended option, and record the actual answers before continuing; no safety level bypasses required decisions.`;
             await this.appendRunLog(resolved, this.logEntry(state, trigger, verifyPassed, instruction));
-            return this.result(resolved, state, null, false, `${pendingRequired} pending required decision(s)`, instruction, verifyPassed, feedback);
+            return this.result(resolved, state, null, true, `${pendingRequired} pending required decision(s)`, instruction, verifyPassed, feedback);
         }
         if (config.level !== 'L1'
             && config.executionModel === 'controller'
@@ -1592,7 +1594,7 @@ class LoopService {
         preparedBatch.diagnostics.effectiveEmitted = items.length;
         state.lastBatchDiagnostics = { ...preparedBatch.diagnostics };
         const actionId = `loop-action-${state.iteration + 1}-${Date.parse(now)}`;
-        const initialHeartbeatDueAt = new Date(Date.parse(now) + Math.floor(DEFAULT_ACTION_LEASE_MS / 2)).toISOString();
+        const initialHeartbeatDueAt = new Date(Date.parse(now) + DEFAULT_ACTION_LEASE_MS - INITIAL_ACTION_HEARTBEAT_BUFFER_MS).toISOString();
         const initialLeaseExpiresAt = new Date(Date.parse(now) + DEFAULT_ACTION_LEASE_MS).toISOString();
         const controllerProvenanceRequired = runtimeAdapter.selected.kind === 'native'
             && this.isControllerCapabilityCurrent(config, issuedAt)
@@ -1911,12 +1913,13 @@ class LoopService {
         };
     }
     async gateResult(changePath, state, trigger, reason) {
+        state.status = 'blocked';
         state.currentStep = 'gate';
         state.lastFeedback = reason;
         state.lastTickTs = this.now().toISOString();
         await this.writeState(changePath, state);
         await this.appendRunLog(changePath, this.logEntry(state, trigger, null, reason));
-        return this.result(changePath, state, null, false, reason, reason, null, reason);
+        return this.result(changePath, state, null, true, reason, reason, null, reason);
     }
     runtimeAdapterGateResult(changePath, state, trigger, kind, adapter) {
         const reasons = adapter.candidates
