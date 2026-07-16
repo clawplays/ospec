@@ -281,7 +281,7 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
     static generateTaskGraphTemplate(featureName, optionalSteps = []) {
         return `${JSON.stringify({
             version: '1.0',
-            contract_version: '1.8.5',
+            contract_version: '1.8.6',
             feature: featureName,
             status: 'pending',
             optional_steps: optionalSteps,

@@ -1111,7 +1111,7 @@ function analyzeTaskGraphDocument(content, options) {
     const graphContract = String(data.contract_version || '').trim();
     const [contractMajor, contractMinor, contractPatch] = graphContract.split('.').map(Number);
     const requiresSerialReason = Number.isFinite(contractMajor)
-        && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 3))));
+        && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 6))));
     const requiresScopeReason = Number.isFinite(contractMajor)
         && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 5))));
     if (tasksFieldValid && tasks.length === 0) {
@@ -1145,7 +1145,7 @@ function analyzeTaskGraphDocument(content, options) {
         if (typeof task.parallelizable !== 'boolean') {
             taskSchemaIssues.push(`${taskLabel}.parallelizable must be a boolean`);
         }
-        if (task.serial_reason !== undefined && (typeof task.serial_reason !== 'string' || task.serial_reason.trim().length === 0)) {
+        if (requiresSerialReason && task.serial_reason !== undefined && (typeof task.serial_reason !== 'string' || task.serial_reason.trim().length === 0)) {
             taskSchemaIssues.push(`${taskLabel}.serial_reason must be a non-empty string when present`);
         }
         if (task.scope_reason !== undefined && task.scope_reason !== null
@@ -1153,7 +1153,7 @@ function analyzeTaskGraphDocument(content, options) {
             taskSchemaIssues.push(`${taskLabel}.scope_reason must be a non-empty string or null when present`);
         }
         if (requiresSerialReason && task.parallelizable === false && (typeof task.serial_reason !== 'string' || task.serial_reason.trim().length === 0)) {
-            executionDetailIssues.push(`${taskLabel}.serial_reason is required for 1.8.3 serial tasks`);
+            executionDetailIssues.push(`${taskLabel}.serial_reason is required for 1.8.6 serial tasks`);
         }
         if (!Array.isArray(task.conflicts_with)) {
             taskSchemaIssues.push(`${taskLabel}.conflicts_with must be an array`);

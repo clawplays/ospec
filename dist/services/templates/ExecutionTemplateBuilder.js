@@ -754,7 +754,7 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
         const context = this.inputs.normalizeFeatureTemplateInput(input);
         const taskGraph = {
             version: '1.0',
-            contract_version: '1.8.5',
+            contract_version: '1.8.6',
             feature: context.feature,
             status: 'pending',
             optional_steps: context.optionalSteps,

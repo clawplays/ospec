@@ -39,7 +39,7 @@ const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'recover'];
+const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
@@ -77,6 +77,9 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                     return;
                 case 'result':
                     await this.recordResult(args);
+                    return;
+                case 'finalize':
+                    await this.recordResult(args, true);
                     return;
                 case 'recover':
                     await this.recover(args);
@@ -218,7 +221,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const state = await services_1.services.loopService.readState(changePath);
         const reviewGovernance = await services_1.services.taskGraphExecutionService.readDocumentReviewGovernanceSummary(changePath);
         if (args.includes('--json')) {
-            console.log(JSON.stringify({ version: '1.8.5', changePath, config, state, reviewGovernance }, null, 2));
+            console.log(JSON.stringify({ version: '1.8.6', changePath, config, state, reviewGovernance }, null, 2));
             return;
         }
         if (args.includes('--brief')) {
@@ -450,6 +453,10 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             options.maxParallelReason = maxParallelReason.toLowerCase() === 'none' ? null : maxParallelReason;
         }
         options.promptMaxChars = nullableNumber('--prompt-max-chars') ?? undefined;
+        options.implementationMaxRuntimeMinutes = nullableNumber('--implementation-max-runtime-minutes') ?? undefined;
+        options.reviewMaxRuntimeMinutes = nullableNumber('--review-max-runtime-minutes') ?? undefined;
+        options.verificationMaxRuntimeMinutes = nullableNumber('--verification-max-runtime-minutes') ?? undefined;
+        options.evidenceResultGraceMinutes = nullableNumber('--evidence-result-grace-minutes') ?? undefined;
         const changePath = await this.resolveChangePath(inputPath);
         const replacesPaths = allowPaths.length > 0;
         const replacesCommands = allowCommands.length > 0 || allowCommandPolicies.length > 0;
@@ -562,14 +569,14 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const state = await services_1.services.loopService.heartbeatExecution(changePath, heartbeat);
         this.success(`Loop heartbeat recorded for ${actionItemId}; pending=${state.pendingControllerAction?.actionId || 'none'}.`);
     }
-    async recordResult(args) {
+    async recordResult(args, finalize = false) {
         const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;
         const actionItemId = this.parseFlagValue(args, '--action-item');
         if (!actionItemId)
-            throw new Error('loop result requires --action-item <id>.');
+            throw new Error(`loop ${finalize ? 'finalize' : 'result'} requires --action-item <id>.`);
         const executorId = this.parseFlagValue(args, '--executor');
         if (!executorId)
-            throw new Error('loop result requires --executor <child-id>.');
+            throw new Error(`loop ${finalize ? 'finalize' : 'result'} requires --executor <child-id>.`);
         const exitValue = this.parseFlagValue(args, '--exit-code');
         const exitCode = exitValue === undefined ? null : Number(exitValue);
         if (exitCode !== null && !Number.isInteger(exitCode))
@@ -580,15 +587,18 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             throw new Error('--tokens-used must be a non-negative number.');
         }
         const changePath = await this.resolveChangePath(inputPath);
-        const state = await services_1.services.loopService.recordExecutionResults(changePath, [{
-                actionItemId,
-                executorId,
-                exitCode,
-                timedOut: args.includes('--timed-out'),
-                tokensUsed,
-                summary: this.parseFlagValue(args, '--summary'),
-            }]);
-        this.success(`Loop result recorded for ${actionItemId}; pending=${state.pendingControllerAction?.actionId || 'none'}.`);
+        const result = {
+            actionItemId,
+            executorId,
+            exitCode,
+            timedOut: args.includes('--timed-out'),
+            tokensUsed,
+            summary: this.parseFlagValue(args, '--summary'),
+        };
+        const state = finalize
+            ? await services_1.services.loopService.finalizeExecutionItem(changePath, result)
+            : await services_1.services.loopService.recordExecutionResults(changePath, [result]);
+        this.success(`Loop ${finalize ? 'finalize' : 'result'} recorded for ${actionItemId}; pending=${state.pendingControllerAction?.actionId || 'none'}.`);
     }
     async recover(args) {
         const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;

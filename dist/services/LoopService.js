@@ -54,6 +54,10 @@ const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
 const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
 const MAX_ACTION_LEASE_MS = 30 * 60 * 1000;
+const DEFAULT_IMPLEMENTATION_MAX_RUNTIME_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_REVIEW_MAX_RUNTIME_MS = 60 * 60 * 1000;
+const DEFAULT_VERIFICATION_MAX_RUNTIME_MS = 60 * 60 * 1000;
+const DEFAULT_EVIDENCE_RESULT_GRACE_MS = 5 * 60 * 1000;
 const UNKNOWN_IMPLEMENTATION_CAPACITY = 2;
 const MIN_ACTION_TOKEN_RESERVATION = 1000;
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
@@ -309,6 +313,14 @@ class LoopService {
             config.efficiency.freshContext = options.freshContext;
         if (options.promptMaxChars !== undefined)
             config.efficiency.promptMaxChars = this.positiveInteger(options.promptMaxChars, 'promptMaxChars');
+        if (options.implementationMaxRuntimeMinutes !== undefined)
+            config.efficiency.implementationMaxRuntimeMinutes = this.positiveInteger(options.implementationMaxRuntimeMinutes, 'implementationMaxRuntimeMinutes');
+        if (options.reviewMaxRuntimeMinutes !== undefined)
+            config.efficiency.reviewMaxRuntimeMinutes = this.positiveInteger(options.reviewMaxRuntimeMinutes, 'reviewMaxRuntimeMinutes');
+        if (options.verificationMaxRuntimeMinutes !== undefined)
+            config.efficiency.verificationMaxRuntimeMinutes = this.positiveInteger(options.verificationMaxRuntimeMinutes, 'verificationMaxRuntimeMinutes');
+        if (options.evidenceResultGraceMinutes !== undefined)
+            config.efficiency.evidenceResultGraceMinutes = this.positiveInteger(options.evidenceResultGraceMinutes, 'evidenceResultGraceMinutes');
         config.version = '2.0';
         await this.fileService.writeJSON(this.configPath(changePath), config);
         return config;
@@ -535,6 +547,10 @@ class LoopService {
                 throw new Error(`Unknown action item for the current pending action (${heartbeat.actionItemId}).`);
             const actionItem = (pending.items || []).find(item => item.id === heartbeat.actionItemId);
             const now = heartbeatNow;
+            const absoluteExpiresAt = Date.parse(itemState.absoluteExpiresAt || '');
+            if (Number.isFinite(absoluteExpiresAt) && absoluteExpiresAt <= now.getTime()) {
+                throw new Error(`Action item ${heartbeat.actionItemId} reached its absolute runtime deadline; recover it before accepting another heartbeat.`);
+            }
             const controllerCurrent = this.isControllerCapabilityCurrent(config, heartbeatNow);
             this.assertActionNativeSession(config, actionItem, heartbeatNow, heartbeat.actionItemId);
             if (itemState.executorId && itemState.executorId !== executorId
@@ -552,8 +568,12 @@ class LoopService {
                 : Math.min(MAX_ACTION_LEASE_MS, this.positiveInteger(heartbeat.leaseMs, 'leaseMs'));
             itemState.status = 'running';
             itemState.heartbeatAt = now.toISOString();
-            itemState.leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
-            itemState.heartbeatDueAt = new Date(now.getTime() + Math.floor(leaseMs / 2)).toISOString();
+            const requestedLeaseExpiry = now.getTime() + leaseMs;
+            const boundedLeaseExpiry = Number.isFinite(absoluteExpiresAt)
+                ? Math.min(requestedLeaseExpiry, absoluteExpiresAt)
+                : requestedLeaseExpiry;
+            itemState.leaseExpiresAt = new Date(boundedLeaseExpiry).toISOString();
+            itemState.heartbeatDueAt = new Date(now.getTime() + Math.floor((boundedLeaseExpiry - now.getTime()) / 2)).toISOString();
             itemState.executorId = executorId;
             if (actionItem?.usageKey
                 && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
@@ -591,6 +611,49 @@ class LoopService {
     async recordExecutionResults(changePath, results) {
         await this.assertExists(changePath);
         return this.withControllerLease(changePath, () => this.recordExecutionResultsUnlocked(changePath, results));
+    }
+    async finalizeExecutionItem(changePath, result) {
+        await this.assertExists(changePath);
+        return this.withControllerLease(changePath, async () => {
+            const state = await this.readState(changePath);
+            const pending = state.pendingControllerAction;
+            if (!pending || pending.status !== 'awaiting-evidence') {
+                throw new Error('Cannot finalize an executor without a pending loop action.');
+            }
+            this.ensurePendingItemStates(pending);
+            const item = (pending.items || []).find(candidate => candidate.id === result.actionItemId);
+            const itemState = (pending.itemStates || []).find(candidate => candidate.actionItemId === result.actionItemId);
+            if (!item || !itemState)
+                throw new Error(`Unknown action item for the current pending action (${result.actionItemId}).`);
+            const executorId = this.requireExecutorId(result.executorId);
+            if (itemState.executorId !== executorId) {
+                throw new Error(`Executor ${executorId} does not own action item ${result.actionItemId}; expected ${itemState.executorId || '(unclaimed)'}.`);
+            }
+            const succeeded = result.timedOut !== true && result.exitCode === 0;
+            if (succeeded) {
+                let evidenceReady = false;
+                if (item.usageKey && (item.kind === 'task-review' || item.kind === 'final-review')) {
+                    evidenceReady = await this.taskGraph.hasReviewLoopEvidence(changePath, {
+                        dispatchId: item.usageKey,
+                        actionId: pending.actionId,
+                        actionItemId: item.id,
+                        executorId,
+                    });
+                }
+                else if (item.kind === 'verification') {
+                    evidenceReady = Boolean(await this.readLatestVerificationEvidence(changePath, pending));
+                }
+                else if (item.taskId) {
+                    const report = await this.taskGraph.getReport(changePath).catch(() => null);
+                    const task = report ? this.allReportTasks(report).find(candidate => candidate.id === item.taskId) : null;
+                    evidenceReady = Boolean(task && ['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT'].includes(task.status));
+                }
+                if (!evidenceReady) {
+                    throw new Error(`Cannot finalize successful action item ${item.id} before its authoritative durable evidence is complete.`);
+                }
+            }
+            return this.recordExecutionResultsUnlocked(changePath, [result]);
+        });
     }
     async recordExecutionResultsUnlocked(changePath, results) {
         await this.assertExists(changePath);
@@ -749,8 +812,20 @@ class LoopService {
             return 0;
         this.ensurePendingItemStates(pending);
         const now = this.now();
-        const expired = (pending.itemStates || []).filter(item => !this.isTerminalItemStatus(item.status)
-            && (force || Date.parse(item.leaseExpiresAt) <= now.getTime()));
+        const expired = (pending.itemStates || []).filter(item => {
+            if (this.isTerminalItemStatus(item.status))
+                return false;
+            const absoluteExpired = Number.isFinite(Date.parse(item.absoluteExpiresAt || ''))
+                && Date.parse(item.absoluteExpiresAt || '') <= now.getTime();
+            const evidenceReady = Number.isFinite(Date.parse(item.evidenceReadyAt || ''));
+            const evidenceResultExpired = Number.isFinite(Date.parse(item.evidenceResultDeadlineAt || ''))
+                ? Date.parse(item.evidenceResultDeadlineAt || '') <= now.getTime()
+                : evidenceReady
+                    && Date.parse(item.evidenceReadyAt || '') + DEFAULT_EVIDENCE_RESULT_GRACE_MS <= now.getTime();
+            return force || (evidenceReady
+                ? evidenceResultExpired
+                : absoluteExpired || Date.parse(item.leaseExpiresAt) <= now.getTime());
+        });
         if (expired.length === 0)
             return 0;
         for (const itemState of expired) {
@@ -766,9 +841,19 @@ class LoopService {
             item.status = 'expired';
             item.completedAt = now.toISOString();
             item.timedOut = true;
+            const absoluteExpired = Number.isFinite(Date.parse(item.absoluteExpiresAt || ''))
+                && Date.parse(item.absoluteExpiresAt || '') <= now.getTime();
+            const evidenceResultExpired = Number.isFinite(Date.parse(item.evidenceResultDeadlineAt || ''))
+                ? Date.parse(item.evidenceResultDeadlineAt || '') <= now.getTime()
+                : Number.isFinite(Date.parse(item.evidenceReadyAt || ''))
+                    && Date.parse(item.evidenceReadyAt || '') + DEFAULT_EVIDENCE_RESULT_GRACE_MS <= now.getTime();
             item.summary = force
                 ? `Orphaned action ${item.actionItemId} was explicitly released for requeue.`
-                : `Action ${item.actionItemId} heartbeat lease expired and was released for requeue.`;
+                : evidenceResultExpired
+                    ? `Action ${item.actionItemId} produced durable evidence but no executor result within the grace period (evidence_complete_executor_result_missing); released for requeue.`
+                    : absoluteExpired
+                        ? `Action ${item.actionItemId} reached its absolute runtime deadline and was released for requeue.`
+                        : `Action ${item.actionItemId} heartbeat lease expired and was released for requeue.`;
             return { actionItemId: item.actionItemId, executorId: item.executorId || 'loop-recovery', exitCode: null, timedOut: true, summary: item.summary };
         });
         state.noProgressCount += 1;
@@ -791,6 +876,10 @@ class LoopService {
                 current.tokenReservation = Math.max(0, Number(current.tokenReservation ?? current.tokenAllowance) || 0);
                 current.heartbeatDueAt = current.heartbeatDueAt
                     || this.recommendedHeartbeatDueAt(current.heartbeatAt || current.issuedAt, current.leaseExpiresAt);
+                current.absoluteExpiresAt = current.absoluteExpiresAt
+                    || new Date(leaseBaseMs + this.actionMaxRuntimeMs(item.kind)).toISOString();
+                current.evidenceReadyAt = current.evidenceReadyAt || null;
+                current.evidenceResultDeadlineAt = current.evidenceResultDeadlineAt || null;
                 return current;
             }
             return {
@@ -800,6 +889,9 @@ class LoopService {
                 heartbeatAt: null,
                 heartbeatDueAt: new Date(leaseBaseMs + Math.floor(DEFAULT_ACTION_LEASE_MS / 2)).toISOString(),
                 leaseExpiresAt: new Date(leaseBaseMs + DEFAULT_ACTION_LEASE_MS).toISOString(),
+                absoluteExpiresAt: new Date(leaseBaseMs + this.actionMaxRuntimeMs(item.kind)).toISOString(),
+                evidenceReadyAt: null,
+                evidenceResultDeadlineAt: null,
                 executorId: null,
                 completedAt: null,
                 exitCode: null,
@@ -824,6 +916,15 @@ class LoopService {
             return leaseExpiresAt;
         }
         return new Date(anchor + Math.floor((expiry - anchor) / 2)).toISOString();
+    }
+    actionMaxRuntimeMs(kind, efficiency) {
+        if (kind === 'implementation' || kind === 'legacy') {
+            return efficiency ? efficiency.implementationMaxRuntimeMinutes * 60 * 1000 : DEFAULT_IMPLEMENTATION_MAX_RUNTIME_MS;
+        }
+        if (kind === 'verification') {
+            return efficiency ? efficiency.verificationMaxRuntimeMinutes * 60 * 1000 : DEFAULT_VERIFICATION_MAX_RUNTIME_MS;
+        }
+        return efficiency ? efficiency.reviewMaxRuntimeMinutes * 60 * 1000 : DEFAULT_REVIEW_MAX_RUNTIME_MS;
     }
     async extendControllerCapabilitySession(changePath, now) {
         const config = await this.readConfig(changePath);
@@ -1013,6 +1114,7 @@ class LoopService {
             await this.writeState(resolved, state);
             return this.result(resolved, state, state.pendingControllerAction, immediateStop.status !== 'paused', immediateStop.reason, immediateStop.instruction, null, null);
         }
+        await this.refreshPendingEvidenceReadiness(resolved, state, nowIso, config.efficiency);
         const recoveredExpired = await this.recoverExpiredActionsUnlocked(resolved, state, false);
         state.status = 'running';
         state.currentStep = 'observe';
@@ -1031,6 +1133,12 @@ class LoopService {
             const executorLifecycleSettled = (state.pendingControllerAction.itemStates || []).length > 0
                 && (state.pendingControllerAction.itemStates || []).every(item => this.isTerminalItemStatus(item.status));
             if (observation.settled && !executorLifecycleSettled) {
+                for (const itemState of state.pendingControllerAction.itemStates || []) {
+                    if (!this.isTerminalItemStatus(itemState.status) && itemState.executorId && !itemState.evidenceReadyAt) {
+                        itemState.evidenceReadyAt = nowIso;
+                        itemState.evidenceResultDeadlineAt = new Date(now.getTime() + config.efficiency.evidenceResultGraceMinutes * 60 * 1000).toISOString();
+                    }
+                }
                 const hardStop = await this.getHardStop(resolved, config, state, now);
                 if (hardStop) {
                     state.status = hardStop.status;
@@ -1112,6 +1220,7 @@ class LoopService {
         }
         let report;
         try {
+            await this.taskGraph.restoreTaskReviewApprovals(resolved);
             report = await this.taskGraph.getReport(resolved);
         }
         catch (error) {
@@ -1384,6 +1493,49 @@ class LoopService {
             feedback: settled ? `Worker task status: ${tasks.map(task => `${task.id}=${task.status}`).join(', ')}.` : `Awaiting ${taskIds.size - tasks.filter(task => ['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT'].includes(task.status)).length} worker completion(s).`,
         };
     }
+    async refreshPendingEvidenceReadiness(changePath, state, nowIso, efficiency) {
+        const pending = state.pendingControllerAction;
+        if (!pending || pending.status !== 'awaiting-evidence')
+            return;
+        this.ensurePendingItemStates(pending);
+        let report;
+        let verificationEvidence;
+        for (const itemState of pending.itemStates || []) {
+            if (this.isTerminalItemStatus(itemState.status) || !itemState.executorId)
+                continue;
+            const item = (pending.items || []).find(candidate => candidate.id === itemState.actionItemId);
+            if (!item)
+                continue;
+            let ready = false;
+            if (item.usageKey && (item.kind === 'task-review' || item.kind === 'final-review')) {
+                ready = await this.taskGraph.hasReviewLoopEvidence(changePath, {
+                    dispatchId: item.usageKey,
+                    actionId: pending.actionId,
+                    actionItemId: item.id,
+                    executorId: itemState.executorId,
+                });
+            }
+            else if (item.kind === 'verification' || item.kind === 'legacy') {
+                verificationEvidence ?? (verificationEvidence = await this.readLatestVerificationEvidence(changePath, pending));
+                ready = Boolean(verificationEvidence);
+            }
+            else if (item.taskId) {
+                report ?? (report = await this.taskGraph.getReport(changePath).catch(() => null));
+                const task = report
+                    ? this.allReportTasks(report).find(candidate => candidate.id === item.taskId)
+                    : null;
+                ready = Boolean(task && ['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT'].includes(task.status));
+            }
+            if (ready) {
+                itemState.evidenceReadyAt = itemState.evidenceReadyAt || nowIso;
+                itemState.evidenceResultDeadlineAt = itemState.evidenceResultDeadlineAt || new Date(Date.parse(itemState.evidenceReadyAt) + efficiency.evidenceResultGraceMinutes * 60 * 1000).toISOString();
+            }
+            else {
+                itemState.evidenceReadyAt = null;
+                itemState.evidenceResultDeadlineAt = null;
+            }
+        }
+    }
     async readLatestVerificationEvidence(changePath, pending) {
         const evidencePath = path.join(changePath, 'artifacts', 'agents', 'verification-evidence.json');
         if (!(await this.fileService.exists(evidencePath)))
@@ -1461,7 +1613,8 @@ class LoopService {
             item.tokenAllowance = allowances.shift() ?? null;
             item.heartbeatCommand = `ospec loop heartbeat ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id>`;
             item.heartbeatDueAt = initialHeartbeatDueAt;
-            item.resultCommand = `ospec loop result ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id> --exit-code <code> --summary "..."`;
+            item.absoluteExpiresAt = new Date(Date.parse(now) + this.actionMaxRuntimeMs(item.kind, config.efficiency)).toISOString();
+            item.resultCommand = `ospec loop finalize ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id> --exit-code <code> --summary "..."`;
             if (item.kind === 'verification') {
                 item.verificationBinding = await this.taskGraph.bindVerificationLoopAction(changePath, {
                     actionId,
@@ -1528,6 +1681,9 @@ class LoopService {
                 heartbeatAt: null,
                 heartbeatDueAt: initialHeartbeatDueAt,
                 leaseExpiresAt: initialLeaseExpiresAt,
+                absoluteExpiresAt: item.absoluteExpiresAt,
+                evidenceReadyAt: null,
+                evidenceResultDeadlineAt: null,
                 executorId: null,
                 completedAt: null,
                 exitCode: null,
@@ -1858,7 +2014,20 @@ class LoopService {
         };
     }
     defaultEfficiency() {
-        return { maxParallel: 3, maxParallelReason: null, noProgressLimit: 3, maxTaskRepairRounds: 2, maxFinalRepairRounds: 2, comprehensionReviewEvery: 8, freshContext: true, promptMaxChars: 2400 };
+        return {
+            maxParallel: 3,
+            maxParallelReason: null,
+            noProgressLimit: 3,
+            maxTaskRepairRounds: 2,
+            maxFinalRepairRounds: 2,
+            comprehensionReviewEvery: 8,
+            freshContext: true,
+            promptMaxChars: 2400,
+            implementationMaxRuntimeMinutes: 120,
+            reviewMaxRuntimeMinutes: 60,
+            verificationMaxRuntimeMinutes: 60,
+            evidenceResultGraceMinutes: 5,
+        };
     }
     defaultDocumentReviewGovernance() {
         return {

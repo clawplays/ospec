@@ -122,6 +122,10 @@ export interface TaskDocumentationSnapshot {
     path: string;
     exists: boolean;
     contentHash: string | null;
+    /** Added in 1.8.6. Older snapshots remain valid without a kind. */
+    kind?: 'file' | 'directory' | 'missing';
+    /** Deterministic recursive entry count for directory snapshots. */
+    entryCount?: number;
 }
 export interface TaskDocumentationEvidence extends TaskDocumentationSnapshot {
     baselineExists: boolean;
@@ -208,6 +212,8 @@ export interface TaskReviewDispatchRecord {
     targetFiles: string[];
     targetSnapshots: TaskDocumentationSnapshot[];
     targetSnapshotHash: string;
+    /** Content-addressed task/review contract key added in 1.8.6. */
+    reviewContextHash?: string;
     /** Upstream task contracts that this downstream review must regression-check. */
     regressionTaskIds?: string[];
     loopActionId?: string | null;
@@ -1491,6 +1497,13 @@ export declare class TaskGraphExecutionService {
         completedAt: string;
         succeeded: boolean;
     }): Promise<void>;
+    restoreTaskReviewApprovals(changePath: string): Promise<number>;
+    hasReviewLoopEvidence(changePath: string, options: {
+        dispatchId: string;
+        actionId: string;
+        actionItemId: string;
+        executorId: string;
+    }): Promise<boolean>;
     private assertReviewLoopBinding;
     private updateReviewLoopProvenance;
     planReviewFeedback(changePath: string, options?: {
@@ -1532,6 +1545,10 @@ export declare class TaskGraphExecutionService {
     private extendDocumentReviewControllerSession;
     private validateDocumentReviewCompletionArtifact;
     private getDocumentReviewCachePaths;
+    private getTaskReviewCachePaths;
+    private computeTaskReviewContextHash;
+    private readTaskGraphContractVersion;
+    private cacheTaskReviewApproval;
     private cacheDocumentReviewApproval;
     private restoreDocumentReviewCache;
     private appendDocumentReviewRunMetric;
@@ -1743,7 +1760,10 @@ export declare class TaskGraphExecutionService {
     private captureDocumentationSnapshots;
     private normalizeTargetFiles;
     private captureTargetSnapshots;
+    private captureTargetDirectoryTree;
+    private isPathWithin;
     private hashTargetSnapshots;
+    private targetSnapshotsMatchDispatch;
     private prepareReviewArtifactForDispatch;
     private captureDocumentationEvidence;
     private hashMeaningfulDocumentation;

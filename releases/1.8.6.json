@@ -1,0 +1,25 @@
+{
+  "title_suffix": "durable action deadlines and review reuse",
+  "summary": "OSpec 1.8.6 separates the 60-second controller polling boundary from real child runtime, adds configurable absolute action deadlines and an evidence-to-result grace period, and prevents evidence-complete actions from being reissued because a heartbeat expired first. Successful executor completion is now atomic through loop finalize. Directory-aware review snapshots, immutable task-review approval reuse, and safer conflict-batch selection reduce repeated review work without weakening provenance or concurrency guards.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.5...1.8.6",
+  "new": [
+    "Added configurable implementation, review, and verification absolute runtime limits plus a configurable evidence-result grace period.",
+    "Added ospec loop finalize, which validates authoritative durable evidence before accepting a successful executor result while preserving loop result compatibility.",
+    "Added recursive directory target snapshots and immutable task-review approval caching bound to task, tree, graph, verification, and regression context.",
+    "Added the 1.8.6 task-graph contract requiring serial_reason for newly generated serial tasks while keeping older graphs readable."
+  ],
+  "improved": [
+    "Clarified across Codex/GPT, Claude, and other native adapters that 60 seconds is one polling return boundary rather than the maximum AI task runtime.",
+    "Conflict-safe batch selection now considers rotated graph starts and emits the largest discovered safe set without increasing configured or reported capacity.",
+    "Evidence-complete actions retain their result grace period even when the prior heartbeat lease or action deadline expires, and expired siblings requeue independently."
+  ],
+  "fixed": [
+    "Fixed implementation and verification evidence being missed by pre-recovery readiness detection, which could requeue completed work before its executor result arrived.",
+    "Fixed directory targets being recorded like missing files so nested mutations could leave stale task reviews incorrectly reusable.",
+    "Fixed accidental pending review rewrites causing fully proven unchanged task reviews to run again, while preventing NEEDS_CHANGES or changed contexts from entering the cache.",
+    "Fixed greedy graph order selecting one broad conflicting task when two later independent tasks could execute safely in parallel."
+  ],
+  "docs": [
+    "Documented polling versus runtime, hard deadlines, atomic finalize, evidence grace, directory snapshots, immutable approval reuse, conflict-safe selection, and 1.8.6 task-graph compatibility."
+  ]
+}

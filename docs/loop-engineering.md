@@ -19,7 +19,7 @@ Every `ospec execute launch` artifact includes one model-native candidate. It is
 3. the capability target exactly matches the requested target;
 4. `reportedAt` is not in the future and `expiresAt` is still current.
 
-Codex/GPT use `spawn_agent` plus bounded `wait_agent`, Claude uses background Task polling when available, Gemini uses `@generalist`, and OpenCode uses `@mention`. Cursor and Copilot use their registered native agent/task contexts. Every adapter returns from one wait within 60 seconds, refreshes heartbeats before `heartbeatDueAt`, persists finished siblings immediately, and re-ticks. `shell` and `generic` are not executable agent targets. OSpec does not probe Orca, PATH binaries, or agent CLIs, does not write an adapter probe cache, and does not fall back into the current controller context.
+Codex/GPT use `spawn_agent` plus bounded `wait_agent`, Claude uses background Task polling when available, Gemini uses `@generalist`, and OpenCode uses `@mention`. Cursor and Copilot use their registered native agent/task contexts. Every adapter returns from one wait within 60 seconds, refreshes heartbeats before `heartbeatDueAt`, persists finished siblings immediately, and re-ticks. This is a polling boundary, not a child runtime limit. Long-running children continue across polls until their configurable absolute action deadline. `shell` and `generic` are not executable agent targets. OSpec does not probe Orca, PATH binaries, or agent CLIs, does not write an adapter probe cache, and does not fall back into the current controller context.
 
 ## Integrated task-graph cycle
 
@@ -99,13 +99,14 @@ ospec loop configure [path] --max-parallel 3 --interval 10m --fresh-context true
 ospec loop configure [path] --max-iterations 20 --expires-at 2026-12-31T00:00:00Z
 ospec loop configure [path] --budget-tokens 200000 --budget-minutes 120
 ospec loop configure [path] --no-progress-limit 3 --max-task-repair-rounds 2 --max-final-repair-rounds 2 --review-every 8 --prompt-max-chars 2400
+ospec loop configure [path] --implementation-max-runtime-minutes 120 --review-max-runtime-minutes 60 --verification-max-runtime-minutes 60 --evidence-result-grace-minutes 5
 ospec loop configure [path] --allow-path src --allow-command "npm test"
 ospec loop configure [path] --allow-command-policy '{"command":"go","argsPrefix":["test"],"cwd":"src/backend"}'
 ospec loop configure [path] --test-command "npm test" --test-command "npm run build"
 
 # Adapter executor lifecycle (normally driven by the controller)
 ospec loop heartbeat [path] --action-item <id> --executor <child-id> --lease-ms 120000
-ospec loop result [path] --action-item <id> --executor <child-id> --exit-code 0 --summary "completed"
+ospec loop finalize [path] --action-item <id> --executor <child-id> --exit-code 0 --summary "completed"
 ospec loop recover [path] --force   # only when the controller knows the prior session/child is gone
 
 # Specialist design/plan reviewer lifecycle (after spawn, then after wait)
@@ -119,6 +120,8 @@ ospec execute verify [path] --command "npm run test:e2e" --status PASSED --exit-
 ```
 
 Repeatable flags such as `--allow-path`, `--allow-command`, `--allow-command-policy`, `--test-command`, and `--satisfies` may be supplied more than once. Use `none` for nullable stop limits such as `--max-iterations`, `--budget-tokens`, `--budget-minutes`, and `--expires-at` when you intentionally want them unbounded.
+
+`loop finalize` is the preferred completion path. Successful completion validates authoritative implementation, review, or verification evidence before recording the result. Failed or timed-out results remain recordable for retry diagnostics, and legacy `loop result` remains supported. Defaults are 120 minutes for implementation, 60 minutes for review, 60 minutes for verification, and five minutes between durable evidence completion and a missing executor result.
 
 `--allow-command` values must match the complete normalized command. For example, permitting `go test ./internal/... -count=1` requires that full value, not only `go test`. Verification commands may use one exact project-relative working-directory wrapper such as `cd src/backend && go test ./...`; other shell operators, absolute paths, traversal, appended arguments, and cwd-changing arguments are rejected.
 

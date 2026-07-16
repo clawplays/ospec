@@ -77,6 +77,8 @@ Specialist design and plan reviews are bounded in 1.8.3. The default is two comp
 
 1.8.5 prevents native child waits from freezing a Goal controller. Codex/GPT `wait_agent`, Claude Task polling, and every other native adapter must return within 60 seconds, refresh live heartbeats before `heartbeatDueAt`, persist each finished result immediately, and re-tick. Unrelated Git HEAD movement no longer invalidates an unchanged task review, while final review remains bound to both snapshot and HEAD. Unknown native capacity caps implementation batches at two without reducing conflict-safe review parallelism. New broad tasks with more than six targets must be split or include `scope_reason`.
 
+1.8.6 clarifies that 60 seconds limits one controller poll, not the child runtime. Implementation defaults to a 120-minute absolute deadline; review and verification default to 60 minutes, with renewable heartbeat leases and a five-minute evidence-to-result grace period. `ospec loop finalize` validates durable evidence before committing success. Recursive directory snapshots, context-bound approval reuse, and improved conflict-safe selection avoid stale or repeated review without weakening provenance. New 1.8.6 serial tasks require `serial_reason`; older graphs remain readable.
+
 ## Plugin Quick Start
 
 Recommended prompt:
@@ -211,7 +213,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.5
+npm install -g @clawplays/ospec-cli@1.8.6
 ospec update [path]
 ```
 

@@ -610,6 +610,8 @@ class TaskGraphExecutionService {
         }
         const graphContract = String(graph.contract_version || graph.version || '').trim();
         const [contractMajor, contractMinor, contractPatch] = graphContract.split('.').map(Number);
+        const requiresSerialReason = Number.isFinite(contractMajor)
+            && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 6))));
         const requiresScopeReason = Number.isFinite(contractMajor)
             && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 5))));
         for (const task of tasks) {
@@ -635,6 +637,9 @@ class TaskGraphExecutionService {
             }
             if (!task.expectedResult || task.expectedResult.toUpperCase() === 'TBD') {
                 reasons.push('missing_expected_result');
+            }
+            if (requiresSerialReason && !task.parallelizable && !task.serialReason) {
+                reasons.push('missing_serial_reason');
             }
             if (requiresScopeReason
                 && task.targetFiles.length > MAX_UNEXPLAINED_TASK_TARGETS
@@ -2198,6 +2203,9 @@ class TaskGraphExecutionService {
             });
             const targetFiles = this.normalizeTargetFiles(taskReview.task.targetFiles);
             const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+            const targetSnapshotHash = this.hashTargetSnapshots(targetSnapshots);
+            const graphContract = await this.readTaskGraphContractVersion(resolvedChangePath);
+            const reviewContextHash = this.computeTaskReviewContextHash(taskReview.task, targetSnapshotHash, regressionTasks.map(task => task.id), graphContract);
             const record = {
                 id: reviewId,
                 stage: 'review',
@@ -2215,7 +2223,8 @@ class TaskGraphExecutionService {
                 gitHead: reviewPackage.gitHead,
                 targetFiles,
                 targetSnapshots,
-                targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
+                targetSnapshotHash,
+                reviewContextHash,
                 regressionTaskIds: regressionTasks.map(task => task.id),
                 runtimeAdapter: controllerReviewAdapter,
                 // A controller review with an executable independent adapter must
@@ -2460,7 +2469,112 @@ class TaskGraphExecutionService {
             await this.fileService.writeJSON(recordPath, record);
             await this.updateReviewLoopProvenance(resolvedChangePath, record);
             await this.syncWorkerStatusUnlocked(resolvedChangePath);
+            if (options.succeeded)
+                await this.cacheTaskReviewApproval(resolvedChangePath, record);
         });
+    }
+    async restoreTaskReviewApprovals(changePath) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const cacheRoot = path.join(resolvedChangePath, 'artifacts', 'reviews', 'cache', 'task');
+            if (!(await this.fileService.exists(cacheRoot)))
+                return 0;
+            const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+            const rawGraph = await this.fileService.readJSON(graphPath);
+            if (!Array.isArray(rawGraph?.tasks))
+                return 0;
+            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+            const report = await this.getReport(resolvedChangePath);
+            const reportTasks = this.flattenReportTasks(report);
+            const graphContract = String(rawGraph.contract_version || rawGraph.version || '').trim();
+            let restored = 0;
+            for (let index = 0; index < rawGraph.tasks.length; index += 1) {
+                const rawTask = rawGraph.tasks[index];
+                const task = normalizeTask(rawTask, index);
+                if (!TERMINAL_TASK_STATUSES.has(task.status)
+                    || !task.review
+                    || this.normalizeReviewRunDecision(rawTask?.review?.decision) !== 'PENDING')
+                    continue;
+                const currentReviewPath = path.join(resolvedChangePath, rawTask.review.review_artifact || this.getTaskCombinedReviewArtifactRelativePath(task.id));
+                if (await this.fileService.exists(currentReviewPath)) {
+                    const current = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(currentReviewPath));
+                    if (this.normalizeReviewRunDecision(current.data?.decision) !== 'PENDING')
+                        continue;
+                }
+                const targetFiles = this.normalizeTargetFiles(task.targetFiles);
+                const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+                const targetSnapshotHash = this.hashTargetSnapshots(targetSnapshots);
+                const regressionTasks = this.getUpstreamRegressionTasks(task, reportTasks);
+                const contextHash = this.computeTaskReviewContextHash(task, targetSnapshotHash, regressionTasks.map(candidate => candidate.id), graphContract);
+                const cache = this.getTaskReviewCachePaths(resolvedChangePath, task.id, contextHash);
+                if (!(await this.fileService.exists(cache.reviewPath)) || !(await this.fileService.exists(cache.findingsPath)))
+                    continue;
+                const cachedReview = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(cache.reviewPath));
+                const dispatchId = String(cachedReview.data?.review_dispatch_id || '').trim();
+                const dispatchPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(dispatchId)}.json`);
+                if (!dispatchId || !(await this.fileService.exists(dispatchPath)))
+                    continue;
+                const record = await this.fileService.readJSON(dispatchPath);
+                if (record.id !== dispatchId
+                    || record.taskId !== task.id
+                    || record.reviewContextHash !== contextHash
+                    || record.targetSnapshotHash !== targetSnapshotHash
+                    || record.reviewerSucceeded !== true
+                    || !record.reviewerExecutorId
+                    || !record.reviewerClaimedAt
+                    || !record.reviewerCompletedAt
+                    || !APPROVED_REVIEW_DECISIONS.has(this.normalizeReviewRunDecision(cachedReview.data?.decision)))
+                    continue;
+                const findings = await this.fileService.readJSON(cache.findingsPath);
+                if (!Array.isArray(findings?.findings))
+                    continue;
+                await this.fileService.copy(cache.reviewPath, currentReviewPath);
+                await this.fileService.copy(cache.findingsPath, currentReviewPath.replace(/\.md$/i, '.findings.json'));
+                await this.setCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(task.id), dispatchId);
+                restored += 1;
+            }
+            if (restored > 0)
+                await this.syncTaskReviewStateFromArtifacts(resolvedChangePath);
+            return restored;
+        });
+    }
+    async hasReviewLoopEvidence(changePath, options) {
+        const resolvedChangePath = path.resolve(changePath);
+        const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(options.dispatchId)}.json`);
+        if (!(await this.fileService.exists(recordPath)))
+            return false;
+        try {
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.id !== options.dispatchId
+                || record.loopActionId !== options.actionId
+                || record.loopActionItemId !== options.actionItemId
+                || record.reviewerExecutorId !== options.executorId
+                || !record.reviewerClaimedAt)
+                return false;
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            const reviewPath = path.join(resolvedChangePath, record.reviewArtifactPath);
+            const findingsPath = reviewPath.replace(/\.md$/i, '.findings.json');
+            if (!(await this.fileService.exists(reviewPath)) || !(await this.fileService.exists(findingsPath)))
+                return false;
+            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+            const decision = this.normalizeReviewRunDecision(review.data?.decision);
+            const reviewedAt = Date.parse(String(review.data?.reviewed_at || ''));
+            const claimedAt = Date.parse(record.reviewerClaimedAt);
+            if (decision === 'PENDING'
+                || !Number.isFinite(reviewedAt)
+                || !Number.isFinite(claimedAt)
+                || reviewedAt < claimedAt
+                || String(review.data?.review_dispatch_id || '') !== record.id
+                || String(review.data?.loop_action_id || '') !== options.actionId
+                || String(review.data?.loop_action_item_id || '') !== options.actionItemId
+                || String(review.data?.reviewer_executor_id || '') !== options.executorId)
+                return false;
+            await this.readReviewFindings(reviewPath, review.content);
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
     assertReviewLoopBinding(record, options) {
         if (record.id !== options.dispatchId
@@ -3636,6 +3750,52 @@ class TaskGraphExecutionService {
         const base = path.join(changePath, 'artifacts', 'reviews', DOCUMENT_REVIEW_CACHE_DIR, stage, documentHash);
         return { reviewPath: `${base}.md`, findingsPath: `${base}.findings.json` };
     }
+    getTaskReviewCachePaths(changePath, taskId, reviewContextHash) {
+        const base = path.join(changePath, 'artifacts', 'reviews', 'cache', 'task', this.toFileSafeId(taskId), reviewContextHash);
+        return { reviewPath: `${base}.md`, findingsPath: `${base}.findings.json` };
+    }
+    computeTaskReviewContextHash(task, targetSnapshotHash, regressionTaskIds, graphContract) {
+        const context = {
+            contract: graphContract,
+            task: {
+                id: task.id,
+                title: task.title,
+                targetFiles: this.normalizeTargetFiles(task.targetFiles),
+                verificationCommands: [...task.verificationCommands],
+                expectedResult: task.expectedResult,
+                context: task.context,
+                interfaces: [...task.interfaces],
+                documentationUpdates: [...task.documentationUpdates],
+            },
+            targetSnapshotHash,
+            regressionTaskIds: [...regressionTaskIds].sort(),
+        };
+        return (0, crypto_1.createHash)('sha256').update(JSON.stringify(context), 'utf8').digest('hex');
+    }
+    async readTaskGraphContractVersion(changePath) {
+        const graphPath = path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        const graph = await this.fileService.readJSON(graphPath);
+        return String(graph?.contract_version || graph?.version || '').trim();
+    }
+    async cacheTaskReviewApproval(changePath, record) {
+        if (!record.taskId || !record.reviewContextHash)
+            return;
+        const validation = await this.validateTaskReviewEvidence(changePath, record.taskId);
+        if (!validation.ready)
+            return;
+        const reviewArtifactPath = path.join(changePath, record.reviewArtifactPath);
+        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
+        if (!(await this.fileService.exists(reviewArtifactPath)) || !(await this.fileService.exists(findingsPath)))
+            return;
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        if (!APPROVED_REVIEW_DECISIONS.has(this.normalizeReviewRunDecision(review.data?.decision)))
+            return;
+        const cache = this.getTaskReviewCachePaths(changePath, record.taskId, record.reviewContextHash);
+        if (!(await this.fileService.exists(cache.reviewPath)))
+            await this.fileService.copy(reviewArtifactPath, cache.reviewPath);
+        if (!(await this.fileService.exists(cache.findingsPath)))
+            await this.fileService.copy(findingsPath, cache.findingsPath);
+    }
     async cacheDocumentReviewApproval(changePath, record) {
         const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
         const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
@@ -4352,7 +4512,7 @@ class TaskGraphExecutionService {
                     const graphContract = String(graph?.contract_version || graph?.version || '').trim();
                     const [graphMajor, graphMinor, graphPatch] = graphContract.split('.').map((part) => Number(part));
                     const requiresSerialReason = Number.isFinite(graphMajor)
-                        && (graphMajor > 1 || (graphMajor === 1 && (graphMinor > 8 || (graphMinor === 8 && graphPatch >= 3))))
+                        && (graphMajor > 1 || (graphMajor === 1 && (graphMinor > 8 || (graphMinor === 8 && graphPatch >= 6))))
                         || graphContract === DOCUMENT_REVIEW_CONTRACT_VERSION;
                     const requiresScopeReason = Number.isFinite(graphMajor)
                         && (graphMajor > 1 || (graphMajor === 1 && (graphMinor > 8 || (graphMinor === 8 && graphPatch >= 5))));
@@ -5310,7 +5470,7 @@ class TaskGraphExecutionService {
             }
             const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
             const currentSnapshots = await this.captureTargetSnapshots(projectRoot, dispatch.targetFiles);
-            const targetSnapshotChanged = this.hashTargetSnapshots(currentSnapshots) !== dispatch.targetSnapshotHash;
+            const targetSnapshotChanged = !this.targetSnapshotsMatchDispatch(currentSnapshots, dispatch.targetSnapshots, dispatch.targetSnapshotHash);
             let downstreamCarryForward = false;
             if (targetSnapshotChanged) {
                 const carryForward = taskId
@@ -6265,13 +6425,22 @@ class TaskGraphExecutionService {
         return reasons;
     }
     selectNonConflictingBatch(tasks) {
-        const selectedTasks = [];
-        for (const task of tasks) {
-            if (selectedTasks.every(selectedTask => !tasksConflict(task, selectedTask))) {
-                selectedTasks.push(task);
+        if (tasks.length <= 1)
+            return [...tasks];
+        let best = [];
+        for (let start = 0; start < tasks.length; start += 1) {
+            const ordered = [tasks[start], ...tasks.slice(0, start), ...tasks.slice(start + 1)];
+            const selected = [];
+            for (const task of ordered) {
+                if (selected.every(selectedTask => !tasksConflict(task, selectedTask))) {
+                    selected.push(task);
+                }
             }
+            if (selected.length > best.length)
+                best = selected;
         }
-        return selectedTasks;
+        const selectedIds = new Set(best.map(task => task.id));
+        return tasks.filter(task => selectedIds.has(task.id));
     }
     isTaskReviewRequired(task) {
         // One combined code review (spec compliance + code quality) gates each task.
@@ -6882,7 +7051,7 @@ class TaskGraphExecutionService {
             }
             const projectRoot = await this.findProjectRootForOptionalSession(changePath);
             const currentSnapshots = await this.captureTargetSnapshots(projectRoot, currentTargetFiles);
-            if (this.hashTargetSnapshots(currentSnapshots) !== record.targetSnapshotHash) {
+            if (!this.targetSnapshotsMatchDispatch(currentSnapshots, record.targetSnapshots, record.targetSnapshotHash)) {
                 return false;
             }
             const currentHead = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null;
@@ -7800,36 +7969,132 @@ class TaskGraphExecutionService {
     }
     async captureTargetSnapshots(projectRoot, targetFiles) {
         const snapshots = [];
+        const canonicalProjectRoot = await fs_1.promises.realpath(projectRoot).catch(() => path.resolve(projectRoot));
         for (const targetPath of this.normalizeTargetFiles(targetFiles)) {
             const absolutePath = path.resolve(projectRoot, ...targetPath.split('/'));
             const relative = path.relative(projectRoot, absolutePath);
             if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-                snapshots.push({ path: targetPath, exists: false, contentHash: null });
+                snapshots.push({ path: targetPath, exists: false, contentHash: null, kind: 'missing' });
                 continue;
             }
             try {
-                const content = await fs_1.promises.readFile(absolutePath);
-                snapshots.push({
-                    path: targetPath,
-                    exists: true,
-                    contentHash: (0, crypto_1.createHash)('sha256').update(content).digest('hex'),
-                });
+                const stat = await fs_1.promises.lstat(absolutePath);
+                if (stat.isSymbolicLink()) {
+                    throw new Error(`Task review target may not be a symbolic link or junction (${targetPath}).`);
+                }
+                const canonicalTarget = await fs_1.promises.realpath(absolutePath);
+                if (!this.isPathWithin(canonicalProjectRoot, canonicalTarget)) {
+                    throw new Error(`Task review target resolves outside the project root (${targetPath}).`);
+                }
+                if (stat.isFile()) {
+                    const content = await fs_1.promises.readFile(absolutePath);
+                    snapshots.push({
+                        path: targetPath,
+                        exists: true,
+                        contentHash: (0, crypto_1.createHash)('sha256').update(content).digest('hex'),
+                        kind: 'file',
+                    });
+                    continue;
+                }
+                if (stat.isDirectory()) {
+                    const tree = await this.captureTargetDirectoryTree(canonicalProjectRoot, absolutePath, targetPath);
+                    snapshots.push({
+                        path: targetPath,
+                        exists: true,
+                        contentHash: tree.contentHash,
+                        kind: 'directory',
+                        entryCount: tree.entryCount,
+                    });
+                    continue;
+                }
+                throw new Error(`Task review target has an unsupported filesystem type (${targetPath}).`);
             }
-            catch {
-                snapshots.push({ path: targetPath, exists: false, contentHash: null });
+            catch (error) {
+                if (error?.code === 'ENOENT') {
+                    snapshots.push({ path: targetPath, exists: false, contentHash: null, kind: 'missing' });
+                    continue;
+                }
+                throw error;
             }
         }
         return snapshots;
     }
+    async captureTargetDirectoryTree(canonicalProjectRoot, directory, targetPath) {
+        const entries = [];
+        const visit = async (current, relativeDirectory) => {
+            const children = await fs_1.promises.readdir(current, { withFileTypes: true });
+            children.sort((left, right) => left.name.localeCompare(right.name));
+            if (children.length === 0 && relativeDirectory) {
+                entries.push({ path: relativeDirectory.replace(/\\/g, '/'), kind: 'directory', contentHash: null });
+            }
+            for (const child of children) {
+                const childPath = path.join(current, child.name);
+                const relativePath = path.join(relativeDirectory, child.name).replace(/\\/g, '/');
+                const stat = await fs_1.promises.lstat(childPath);
+                if (stat.isSymbolicLink()) {
+                    throw new Error(`Task review directory target contains a symbolic link or junction (${targetPath}/${relativePath}).`);
+                }
+                const canonicalChild = await fs_1.promises.realpath(childPath);
+                if (!this.isPathWithin(canonicalProjectRoot, canonicalChild)) {
+                    throw new Error(`Task review directory target escapes the project root (${targetPath}/${relativePath}).`);
+                }
+                if (stat.isDirectory()) {
+                    entries.push({ path: relativePath, kind: 'directory', contentHash: null });
+                    await visit(childPath, relativePath);
+                    continue;
+                }
+                if (!stat.isFile()) {
+                    throw new Error(`Task review directory target contains an unsupported filesystem entry (${targetPath}/${relativePath}).`);
+                }
+                const content = await fs_1.promises.readFile(childPath);
+                entries.push({
+                    path: relativePath,
+                    kind: 'file',
+                    contentHash: (0, crypto_1.createHash)('sha256').update(content).digest('hex'),
+                });
+            }
+        };
+        await visit(directory, '');
+        return {
+            contentHash: (0, crypto_1.createHash)('sha256').update(JSON.stringify(entries), 'utf8').digest('hex'),
+            entryCount: entries.length,
+        };
+    }
+    isPathWithin(root, candidate) {
+        const relative = path.relative(root, candidate);
+        return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    }
     hashTargetSnapshots(snapshots) {
+        const versioned = snapshots.some(snapshot => Boolean(snapshot.kind));
         const normalized = [...snapshots]
-            .map(snapshot => ({
-            path: String(snapshot.path || '').replace(/\\/g, '/'),
-            exists: snapshot.exists === true,
-            contentHash: snapshot.contentHash || null,
-        }))
+            .map(snapshot => versioned
+            ? {
+                path: String(snapshot.path || '').replace(/\\/g, '/'),
+                exists: snapshot.exists === true,
+                contentHash: snapshot.contentHash || null,
+                kind: snapshot.kind || (snapshot.exists ? 'file' : 'missing'),
+                entryCount: snapshot.kind === 'directory' ? Math.max(0, Number(snapshot.entryCount) || 0) : null,
+            }
+            : {
+                path: String(snapshot.path || '').replace(/\\/g, '/'),
+                exists: snapshot.exists === true,
+                contentHash: snapshot.contentHash || null,
+            })
             .sort((left, right) => left.path.localeCompare(right.path));
         return (0, crypto_1.createHash)('sha256').update(JSON.stringify(normalized), 'utf8').digest('hex');
+    }
+    targetSnapshotsMatchDispatch(currentSnapshots, dispatchSnapshots, dispatchHash) {
+        if (dispatchSnapshots.some(snapshot => Boolean(snapshot.kind))) {
+            return this.hashTargetSnapshots(currentSnapshots) === dispatchHash;
+        }
+        if (currentSnapshots.some(snapshot => snapshot.kind === 'directory'))
+            return false;
+        const legacyProjection = currentSnapshots.map(snapshot => ({
+            path: snapshot.path,
+            exists: snapshot.kind === 'file',
+            contentHash: snapshot.kind === 'file' ? snapshot.contentHash : null,
+        }));
+        return this.hashTargetSnapshots(legacyProjection) === dispatchHash;
     }
     async prepareReviewArtifactForDispatch(changePath, record) {
         const reviewArtifactPath = path.join(changePath, record.reviewArtifactPath);

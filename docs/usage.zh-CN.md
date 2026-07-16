@@ -77,6 +77,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.5 防止原生 child 的等待让 Goal controller 长时间卡死。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它所有 native adapter 的单次等待都必须在 60 秒内返回，在 `heartbeatDueAt` 前续租，完成一个结果就立即持久化一个，并重新 tick。只有 Git HEAD 变化但 task 目标快照未变时，不再重复 task review；final review 仍严格绑定快照和 HEAD。未知 native capacity 时 implementation 批次最多两个，但不会降低互不冲突的 review 并行度。新 task 超过六个目标时必须拆分，或填写 `scope_reason`。
 
+1.8.6 明确 60 秒只是 controller 的单次轮询上限，不是 child 的执行上限。implementation 的绝对期限默认 120 分钟，review 和 verification 默认 60 分钟；短 heartbeat 租约可续期，证据完成后另有默认 5 分钟的结果回传宽限。`ospec loop finalize` 会先校验持久证据再提交成功结果。递归目录快照、按完整上下文绑定的批准缓存和改进的无冲突批次选择，可减少陈旧或重复 review，同时不放宽来源校验。1.8.6 新图中的串行 task 必须填写 `serial_reason`，旧图继续可读。
+
 ## 插件快速开始
 
 推荐提示词：
@@ -211,7 +213,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.5
+npm install -g @clawplays/ospec-cli@1.8.6
 ospec update [path]
 ```
 

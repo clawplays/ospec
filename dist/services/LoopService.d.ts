@@ -76,6 +76,10 @@ export interface LoopEfficiency {
     comprehensionReviewEvery: number;
     freshContext: boolean;
     promptMaxChars: number;
+    implementationMaxRuntimeMinutes: number;
+    reviewMaxRuntimeMinutes: number;
+    verificationMaxRuntimeMinutes: number;
+    evidenceResultGraceMinutes: number;
 }
 export interface LoopActionItem {
     id: string;
@@ -92,6 +96,7 @@ export interface LoopActionItem {
     tokenAllowance?: number | null;
     heartbeatCommand?: string;
     heartbeatDueAt?: string;
+    absoluteExpiresAt?: string;
     resultCommand?: string;
     verificationCommand?: string | null;
     verificationBinding?: TaskVerificationLoopBinding;
@@ -127,6 +132,9 @@ export interface PendingControllerActionItemState {
     heartbeatAt: string | null;
     heartbeatDueAt?: string;
     leaseExpiresAt: string;
+    absoluteExpiresAt?: string;
+    evidenceReadyAt?: string | null;
+    evidenceResultDeadlineAt?: string | null;
     executorId: string | null;
     completedAt: string | null;
     exitCode: number | null;
@@ -272,6 +280,10 @@ export interface LoopConfigureOptions {
     comprehensionReviewEvery?: number;
     freshContext?: boolean;
     promptMaxChars?: number;
+    implementationMaxRuntimeMinutes?: number;
+    reviewMaxRuntimeMinutes?: number;
+    verificationMaxRuntimeMinutes?: number;
+    evidenceResultGraceMinutes?: number;
     nativeHarnessMetadata?: RuntimeNativeHarnessExecutionMetadata | null;
 }
 export interface LoopServiceDependencies {
@@ -328,6 +340,7 @@ export declare class LoopService {
         force?: boolean;
     }): Promise<LoopState>;
     recordExecutionResults(changePath: string, results: LoopExecutionResult[]): Promise<LoopState>;
+    finalizeExecutionItem(changePath: string, result: LoopExecutionResult): Promise<LoopState>;
     private recordExecutionResultsUnlocked;
     private countPendingRequiredDecisions;
     private validateDocumentReviewReadiness;
@@ -337,6 +350,7 @@ export declare class LoopService {
     private ensurePendingItemStates;
     private requireExecutorId;
     private recommendedHeartbeatDueAt;
+    private actionMaxRuntimeMs;
     private extendControllerCapabilitySession;
     private isTerminalItemStatus;
     private executionResultMatches;
@@ -354,6 +368,7 @@ export declare class LoopService {
     }): Promise<LoopTickResult>;
     private runOnceUnlocked;
     private observePending;
+    private refreshPendingEvidenceReadiness;
     private readLatestVerificationEvidence;
     private issueAction;
     private workerAction;
