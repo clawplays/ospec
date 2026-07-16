@@ -139,11 +139,11 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
         // Add core tasks.
         if (coreRequiredSteps.length > 0) {
             coreRequiredSteps.forEach((step, index) => {
-                content += `- [ ] ${step}\n`;
+                content += `- [ ] ${index === 0 ? 'task-1 ' : ''}${step}\n`;
             });
         }
         else {
-            content += `- [ ] 实现功能\n`;
+            content += `- [ ] task-1 实现功能\n`;
             content += `- [ ] 更新文档\n`;
             content += `- [ ] 更新索引\n`;
             content += `- [ ] 运行测试\n`;

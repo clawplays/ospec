@@ -1,0 +1,25 @@
+{
+  "title_suffix": "durable Goal progress reconciliation",
+  "summary": "OSpec 1.8.7 keeps validated task-review evidence, the raw task graph, and tasks.md in one recoverable progress projection. Existing 1.8.6 Goals are backfilled during resume without redispatch, while ambiguous or stale checklist mappings fail closed with structured diagnostics before verification or archive.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.6...1.8.7",
+  "new": [
+    "Added an idempotent Goal progress reconciler protected by the task-graph mutation lease.",
+    "Added artifacts/agents/progress-projection.json with graph and checklist hashes, accepted and pending task IDs, review repairs, and line-specific blockers.",
+    "Added same-directory atomic text replacement for crash-safe tasks.md projection."
+  ],
+  "improved": [
+    "Bootstrap, Loop resume and tick, worker sync, verification, finalize, archive preflight, and execution status now reconcile legacy Goal progress before making scheduling or completion decisions.",
+    "Execution status reports accepted checklist progress, raw graph review repairs, unmatched accepted tasks, and projection state.",
+    "Worker status no longer reports archive readiness while planned tasks remain unaccepted."
+  ],
+  "fixed": [
+    "Fixed completed and independently approved Goal tasks remaining unchecked in tasks.md, which could block verification and archive after days of valid work.",
+    "Fixed current validated review artifacts disagreeing with stale PENDING decisions in task-graph.json.",
+    "Fixed legacy completed tasks without review state throwing during reconciliation; they now remain safely pending.",
+    "Fixed internal final-repair tasks being mistaken for missing plan checklist items.",
+    "Fixed task ID prefix and dependency mentions causing unsafe or ambiguous checklist matching."
+  ],
+  "docs": [
+    "Documented the confirmed Mobile and Web incidents, reconciliation contract, migration behavior, diagnostics, and operator recovery guidance."
+  ]
+}

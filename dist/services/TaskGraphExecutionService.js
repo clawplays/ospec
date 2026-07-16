@@ -115,6 +115,7 @@ const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']
 const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_ORCHESTRATION_MAX_ROUNDS = 10;
 const TASK_GRAPH_MUTATION_LOCK_FILE = 'task-graph-mutation.lock';
+const GOAL_PROGRESS_PROJECTION_FILE = 'progress-projection.json';
 const TASK_GRAPH_MUTATION_LOCK_TIMEOUT_MS = 30 * 1000;
 const STALE_TASK_GRAPH_MUTATION_LOCK_MS = 2 * 60 * 1000;
 const TASK_GRAPH_MUTATION_LOCK_HEARTBEAT_MS = 30 * 1000;
@@ -1970,7 +1971,7 @@ class TaskGraphExecutionService {
     }
     async syncWorkerStatusUnlocked(changePath) {
         const resolvedChangePath = path.resolve(changePath);
-        await this.syncTaskReviewStateFromArtifacts(resolvedChangePath);
+        const progressProjection = await this.reconcileGoalProgressUnlocked(resolvedChangePath);
         const report = await this.getReport(resolvedChangePath);
         await this.ingestReviewUsageSidecars(resolvedChangePath, report.feature);
         const rawGraph = await this.fileService.readJSON(report.graphPath);
@@ -2049,9 +2050,14 @@ class TaskGraphExecutionService {
             qualityReviewerStatus,
             controllerStatus,
             verificationChecklistComplete,
-            nextInstruction: controllerStatus === 'DONE' && verificationChecklistComplete
-                ? 'Worker status is synchronized and archive-ready for the worker gate.'
-                : 'Worker status is synchronized. Complete remaining review or verification evidence before archive.',
+            progressProjection,
+            nextInstruction: progressProjection.status === 'blocked'
+                ? `Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`
+                : controllerStatus === 'DONE'
+                    && verificationChecklistComplete
+                    && progressProjection.uncheckedTaskIds.length === 0
+                    ? 'Worker status is synchronized and archive-ready for the worker gate.'
+                    : 'Worker status is synchronized. Complete remaining review or verification evidence before archive.',
         };
     }
     async review(changePath, options = {}) {
@@ -2534,7 +2540,7 @@ class TaskGraphExecutionService {
                 restored += 1;
             }
             if (restored > 0)
-                await this.syncTaskReviewStateFromArtifacts(resolvedChangePath);
+                await this.reconcileGoalProgressUnlocked(resolvedChangePath);
             return restored;
         });
     }
@@ -6093,6 +6099,14 @@ class TaskGraphExecutionService {
         const reportPath = this.getBootstrapReportPath(resolvedChangePath);
         const blockers = [];
         const warnings = [];
+        const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        const graphExists = await this.fileService.exists(graphPath);
+        if (graphExists) {
+            const progressProjection = await this.reconcileGoalProgress(resolvedChangePath);
+            if (progressProjection.status === 'blocked') {
+                blockers.push(`Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`);
+            }
+        }
         const documents = {
             proposal: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.PROPOSAL, { allowUncheckedChecklist: true }),
             design: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.DESIGN),
@@ -6101,8 +6115,6 @@ class TaskGraphExecutionService {
             verification: await this.readBootstrapDocumentStatus(resolvedChangePath, constants_1.FILE_NAMES.VERIFICATION, { checklistRequired: true }),
         };
         let report = null;
-        const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
-        const graphExists = await this.fileService.exists(graphPath);
         const graphIssues = [];
         if (graphExists) {
             try {
@@ -7212,52 +7224,237 @@ class TaskGraphExecutionService {
         }
         return 'PENDING';
     }
-    async syncTaskReviewStateFromArtifacts(changePath) {
-        const graphPath = path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
-        if (!(await this.fileService.exists(graphPath))) {
-            return;
+    async reconcileGoalProgress(changePath) {
+        return this.withTaskGraphMutationLease(changePath, () => this.reconcileGoalProgressUnlocked(changePath));
+    }
+    async reconcileGoalProgressUnlocked(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        const tasksPath = path.join(resolvedChangePath, constants_1.FILE_NAMES.TASKS);
+        const projectionPath = path.join(resolvedChangePath, 'artifacts', 'agents', GOAL_PROGRESS_PROJECTION_FILE);
+        const [graphExists, tasksExists] = await Promise.all([
+            this.fileService.exists(graphPath),
+            this.fileService.exists(tasksPath),
+        ]);
+        const issues = [];
+        if (!graphExists)
+            issues.push(`Task graph is missing: ${graphPath}`);
+        if (!tasksExists)
+            issues.push(`Task checklist is missing: ${tasksPath}`);
+        const graphContent = graphExists ? await this.fileService.readFile(graphPath) : null;
+        const tasksContent = tasksExists ? await this.fileService.readFile(tasksPath) : null;
+        let rawGraph = null;
+        if (graphContent !== null) {
+            try {
+                rawGraph = JSON.parse(graphContent.replace(/^\uFEFF/, ''));
+            }
+            catch (error) {
+                issues.push(`Task graph cannot be parsed: ${error?.message || error}`);
+            }
         }
-        const rawGraph = await this.fileService.readJSON(graphPath);
-        if (!Array.isArray(rawGraph?.tasks)) {
-            return;
+        if (rawGraph && !Array.isArray(rawGraph.tasks)) {
+            issues.push('Task graph does not contain a tasks array.');
         }
-        let changed = false;
+        const reviewDecisionsRepaired = [];
+        let graphChanged = false;
+        if (rawGraph && Array.isArray(rawGraph.tasks)) {
+            const graphBefore = JSON.stringify(rawGraph);
+            reviewDecisionsRepaired.push(...await this.syncTaskReviewStateFromArtifactsUnlocked(resolvedChangePath, rawGraph));
+            graphChanged = graphBefore !== JSON.stringify(rawGraph);
+        }
+        const graphTaskIds = Array.isArray(rawGraph?.tasks)
+            ? rawGraph.tasks
+                .map((task) => typeof task?.id === 'string' ? task.id.trim() : '')
+                .filter((taskId) => taskId.startsWith('task-'))
+            : [];
+        const graphTaskIdSet = new Set(graphTaskIds);
+        const duplicateTaskIds = this.findDuplicateStrings(graphTaskIds);
+        const taskLineMap = new Map();
+        const ambiguousLines = [];
+        const lines = tasksContent === null ? [] : tasksContent.split(/\r?\n/);
+        for (let index = 0; index < lines.length; index += 1) {
+            const checklist = lines[index].match(/^(\s*[-*+]\s+\[)[ xX](\]\s+)(.*)$/u);
+            if (!checklist)
+                continue;
+            const parsed = this.parsePrimaryTaskChecklistId(checklist[3]);
+            if (!parsed)
+                continue;
+            if (parsed.ambiguousTaskIds.length > 0) {
+                ambiguousLines.push({
+                    line: index + 1,
+                    taskIds: [parsed.taskId, ...parsed.ambiguousTaskIds],
+                });
+                continue;
+            }
+            const matchingLines = taskLineMap.get(parsed.taskId) || [];
+            matchingLines.push(index);
+            taskLineMap.set(parsed.taskId, matchingLines);
+        }
+        for (const [taskId, matchingLines] of taskLineMap) {
+            if (matchingLines.length > 1)
+                duplicateTaskIds.push(taskId);
+        }
+        const uniqueDuplicateTaskIds = [...new Set(duplicateTaskIds)].sort((left, right) => left.localeCompare(right));
+        const unknownTaskIds = [...taskLineMap.keys()]
+            .filter(taskId => !graphTaskIdSet.has(taskId))
+            .sort((left, right) => left.localeCompare(right));
+        const acceptedTaskIds = Array.isArray(rawGraph?.tasks)
+            ? rawGraph.tasks
+                .filter((task) => TERMINAL_TASK_STATUSES.has(normalizeStatus(task?.status) || 'PENDING')
+                && APPROVED_REVIEW_DECISIONS.has(this.normalizeReviewRunDecision(normalizeStatus(task?.review?.decision) || 'PENDING'))
+                && String(task?.id || '').trim().startsWith('task-'))
+                .map((task) => String(task.id).trim())
+            : [];
+        const acceptedTaskIdSet = new Set(acceptedTaskIds);
+        const unmatchedAcceptedTaskIds = [...new Set(acceptedTaskIds)]
+            .filter(taskId => (taskLineMap.get(taskId)?.length || 0) !== 1)
+            .sort((left, right) => left.localeCompare(right));
+        const checkedTaskIds = [...new Set(graphTaskIds)]
+            .filter(taskId => acceptedTaskIdSet.has(taskId) && (taskLineMap.get(taskId)?.length || 0) === 1)
+            .sort((left, right) => left.localeCompare(right));
+        const uncheckedTaskIds = [...new Set(graphTaskIds)]
+            .filter(taskId => !acceptedTaskIdSet.has(taskId) && (taskLineMap.get(taskId)?.length || 0) === 1)
+            .sort((left, right) => left.localeCompare(right));
+        if (uniqueDuplicateTaskIds.length > 0) {
+            issues.push(`Duplicate task checklist or graph IDs: ${uniqueDuplicateTaskIds.join(', ')}`);
+        }
+        if (unknownTaskIds.length > 0) {
+            issues.push(`tasks.md contains task IDs not present in the task graph: ${unknownTaskIds.join(', ')}`);
+        }
+        if (unmatchedAcceptedTaskIds.length > 0) {
+            issues.push(`Accepted task IDs do not have exactly one tasks.md checklist line: ${unmatchedAcceptedTaskIds.join(', ')}`);
+        }
+        if (ambiguousLines.length > 0) {
+            issues.push(`Ambiguous task checklist lines: ${ambiguousLines.map(item => `${item.line} (${item.taskIds.join(', ')})`).join('; ')}`);
+        }
+        const status = issues.length === 0 ? 'current' : 'blocked';
+        let nextTasksContent = tasksContent;
+        let tasksChanged = false;
+        if (status === 'current' && tasksContent !== null) {
+            const nextLines = [...lines];
+            for (const [taskId, matchingLines] of taskLineMap) {
+                if (matchingLines.length !== 1 || !graphTaskIdSet.has(taskId))
+                    continue;
+                const lineIndex = matchingLines[0];
+                const marker = acceptedTaskIdSet.has(taskId) ? 'x' : ' ';
+                nextLines[lineIndex] = nextLines[lineIndex].replace(/^(\s*[-*+]\s+\[)[ xX](\])/u, `$1${marker}$2`);
+            }
+            const newline = tasksContent.includes('\r\n') ? '\r\n' : '\n';
+            nextTasksContent = nextLines.join(newline);
+            tasksChanged = nextTasksContent !== tasksContent;
+        }
+        if (graphChanged)
+            await this.fileService.writeJSON(graphPath, rawGraph);
+        if (tasksChanged && nextTasksContent !== null)
+            await this.fileService.writeFileAtomic(tasksPath, nextTasksContent);
+        const feature = typeof rawGraph?.feature === 'string' && rawGraph.feature.trim().length > 0
+            ? rawGraph.feature.trim()
+            : await this.readFeatureName(resolvedChangePath).catch(() => path.basename(resolvedChangePath));
+        const previousProjection = await this.fileService.exists(projectionPath)
+            ? await this.fileService.readJSON(projectionPath).catch(() => null)
+            : null;
+        const priorRepairs = Array.isArray(previousProjection?.reviewDecisionsRepaired)
+            ? previousProjection.reviewDecisionsRepaired.filter((taskId) => typeof taskId === 'string')
+            : [];
+        const stableProjection = {
+            version: '1.0',
+            feature,
+            status,
+            sources: {
+                graphPath: this.toChangeRelativePath(resolvedChangePath, graphPath),
+                graphHash: rawGraph ? this.hashProgressProjectionContent(JSON.stringify(rawGraph, null, 2)) : null,
+                tasksPath: this.toChangeRelativePath(resolvedChangePath, tasksPath),
+                tasksHash: nextTasksContent === null ? null : this.hashProgressProjectionContent(nextTasksContent),
+            },
+            reviewDecisionsRepaired: [...new Set([...priorRepairs, ...reviewDecisionsRepaired])]
+                .sort((left, right) => left.localeCompare(right)),
+            checkedTaskIds,
+            uncheckedTaskIds,
+            unmatchedAcceptedTaskIds,
+            duplicateTaskIds: uniqueDuplicateTaskIds,
+            unknownTaskIds,
+            ambiguousLines,
+            issues,
+        };
+        const previousStableProjection = previousProjection
+            ? (({ projectedAt: _projectedAt, ...rest }) => rest)(previousProjection)
+            : null;
+        const projectionChanged = JSON.stringify(previousStableProjection) !== JSON.stringify(stableProjection);
+        if (projectionChanged) {
+            await this.fileService.writeJSON(projectionPath, {
+                ...stableProjection,
+                projectedAt: new Date().toISOString(),
+            });
+        }
+        return {
+            changePath: resolvedChangePath,
+            graphPath,
+            tasksPath,
+            projectionPath,
+            status,
+            graphChanged,
+            tasksChanged,
+            projectionChanged,
+            reviewDecisionsRepaired: [...new Set(reviewDecisionsRepaired)].sort((left, right) => left.localeCompare(right)),
+            checkedTaskIds,
+            uncheckedTaskIds,
+            unmatchedAcceptedTaskIds,
+            duplicateTaskIds: uniqueDuplicateTaskIds,
+            unknownTaskIds,
+            ambiguousLines,
+            issues,
+        };
+    }
+    async syncTaskReviewStateFromArtifactsUnlocked(changePath, rawGraph) {
+        if (!Array.isArray(rawGraph?.tasks))
+            return [];
+        const repairedTaskIds = [];
         for (const rawTask of rawGraph.tasks) {
-            if (!rawTask || typeof rawTask !== 'object' || Array.isArray(rawTask) || !rawTask.review) {
+            if (!rawTask || typeof rawTask !== 'object' || Array.isArray(rawTask) || !rawTask.review)
                 continue;
-            }
             const taskId = typeof rawTask.id === 'string' && rawTask.id.trim().length > 0 ? rawTask.id.trim() : '';
-            if (!taskId) {
+            if (!taskId)
                 continue;
-            }
             rawTask.review = typeof rawTask.review === 'object' && !Array.isArray(rawTask.review)
                 ? rawTask.review
                 : {};
-            // Combined per-task code review (primary): one review.md gates the task.
             const reviewArtifact = typeof rawTask.review.review_artifact === 'string' && rawTask.review.review_artifact.trim().length > 0
                 ? rawTask.review.review_artifact.trim()
                 : this.getTaskCombinedReviewArtifactRelativePath(taskId);
-            if (rawTask.review.review_artifact !== reviewArtifact) {
-                rawTask.review.review_artifact = reviewArtifact;
-                changed = true;
-            }
-            const reviewPath = path.join(changePath, reviewArtifact);
-            if (await this.fileService.exists(reviewPath)) {
-                const nextDecision = this.normalizeReviewRunDecision(await this.readReviewDecision(reviewPath));
-                if (rawTask.review.decision !== nextDecision) {
-                    rawTask.review.decision = nextDecision;
-                    changed = true;
-                }
+            rawTask.review.review_artifact = reviewArtifact;
+            const nextDecision = this.normalizeReviewRunDecision(await this.readReviewDecision(path.join(changePath, reviewArtifact)));
+            if (rawTask.review.decision !== nextDecision) {
+                rawTask.review.decision = nextDecision;
+                repairedTaskIds.push(taskId);
             }
         }
-        const nextStatus = this.deriveGraphStatus(rawGraph);
-        if (rawGraph.status !== nextStatus) {
-            rawGraph.status = nextStatus;
-            changed = true;
+        rawGraph.status = this.deriveGraphStatus(rawGraph);
+        return repairedTaskIds;
+    }
+    parsePrimaryTaskChecklistId(content) {
+        const match = content.match(/^`(task-[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)*)`(?=$|[\s:：,，/])/u)
+            || content.match(/^(task-[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)*)(?=$|[\s:：,，/])/u);
+        if (!match)
+            return null;
+        const remainder = content.slice(match[0].length);
+        const adjacent = remainder.match(/^\s*(?:[,，/&+]\s*)?`?(task-[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)*)`?(?=$|[\s:：,，/])/u);
+        return {
+            taskId: match[1],
+            ambiguousTaskIds: adjacent && adjacent[1] !== match[1] ? [adjacent[1]] : [],
+        };
+    }
+    findDuplicateStrings(values) {
+        const seen = new Set();
+        const duplicates = new Set();
+        for (const value of values) {
+            if (seen.has(value))
+                duplicates.add(value);
+            seen.add(value);
         }
-        if (changed) {
-            await this.fileService.writeJSON(graphPath, rawGraph);
-        }
+        return [...duplicates].sort((left, right) => left.localeCompare(right));
+    }
+    hashProgressProjectionContent(content) {
+        return (0, crypto_1.createHash)('sha256').update(content).digest('hex');
     }
     async readReviewDecision(reviewPath) {
         if (!(await this.fileService.exists(reviewPath))) {

@@ -142,8 +142,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async status(inputPath) {
         const changePath = await this.resolveChangePath(inputPath);
+        const progressProjection = await services_1.services.taskGraphExecutionService.reconcileGoalProgress(changePath);
         const report = await services_1.services.taskGraphExecutionService.getReport(changePath);
-        this.printStatus(report);
+        this.printStatus(report, progressProjection);
     }
     async bootstrap(inputPath) {
         const changePath = await this.resolveChangePath(inputPath);
@@ -418,7 +419,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const projectConfig = await services_1.services.configManager.loadConfig(resolvedCandidatePath).catch(() => null);
         return (0, ProjectLayout_1.resolveManagedPath)(resolvedCandidatePath, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}/${activeNames[0]}`, projectConfig);
     }
-    printStatus(report) {
+    printStatus(report, progressProjection) {
         const scheduling = report.scheduling || {
             graphSafeCount: report.dispatchableTasks.length,
             serialWithoutReason: [],
@@ -430,6 +431,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             console.log(`graphSafe=${scheduling.graphSafeCount} serialReasonMissing=${scheduling.serialWithoutReason.join(',') || 'none'} deferred=${scheduling.deferred.length}`);
             if (report.decisions) {
                 console.log(`pendingRequiredDecisions=${report.decisions.pendingRequired}`);
+            }
+            if (progressProjection) {
+                console.log(`progressProjection=${progressProjection.status} accepted=${progressProjection.checkedTaskIds.length}/${report.taskCount} reviewRepairs=${progressProjection.reviewDecisionsRepaired.length}`);
             }
             console.log(`dispatchable: ${d}`);
             console.log(`next: ${report.nextInstruction}`);
@@ -449,6 +453,12 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Invalid: ${report.invalidTasks.length}`);
         console.log(`Completed: ${report.completedTasks.length}`);
         console.log(`Concerns: ${report.concernTasks.length}`);
+        if (progressProjection) {
+            console.log(`Progress projection: ${progressProjection.status}`);
+            console.log(`Accepted tasks projected: ${progressProjection.checkedTaskIds.length}/${report.taskCount}`);
+            console.log(`Raw graph review repairs: ${progressProjection.reviewDecisionsRepaired.length}`);
+            console.log(`Unmatched accepted task IDs: ${progressProjection.unmatchedAcceptedTaskIds.length}`);
+        }
         console.log(`Graph-safe batch: ${scheduling.graphSafeCount}`);
         console.log(`Serial reason missing: ${scheduling.serialWithoutReason.join(', ') || 'none'}`);
         if (report.decisions) {
@@ -1015,6 +1025,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Quality reviewer: ${result.qualityReviewerStatus}`);
         console.log(`Controller: ${result.controllerStatus}`);
         console.log(`Verification checklist complete: ${result.verificationChecklistComplete ? 'yes' : 'no'}`);
+        console.log(`Progress projection: ${result.progressProjection.status}`);
+        console.log(`Accepted tasks projected: ${result.progressProjection.checkedTaskIds.length}`);
+        console.log(`Raw graph review repairs: ${result.progressProjection.reviewDecisionsRepaired.length}`);
         if (bootstrap) {
             console.log(`Feature state: ${bootstrap.status}`);
             console.log(`Bootstrap: ${bootstrap.artifactPath}`);

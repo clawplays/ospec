@@ -76,6 +76,12 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             const featureState = await services_1.services.fileService.readJSON(statePath);
             const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(targetPath, featureState);
             const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
+            if (isGoalWorkflow) {
+                const progressProjection = await services_1.services.taskGraphExecutionService.reconcileGoalProgress(targetPath);
+                if (progressProjection.status === 'blocked') {
+                    throw new Error(`Goal progress cannot be reconciled before archive: ${progressProjection.issues.join('; ')}`);
+                }
+            }
             const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
             const proposal = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(proposalPath));
             const tasks = (0, helpers_1.parseFrontmatterDocument)(await services_1.services.fileService.readFile(tasksPath));

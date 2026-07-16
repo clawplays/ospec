@@ -646,7 +646,7 @@ async function main() {
 
     assertContains(
       tasksContent,
-      '- [ ] Implement the change',
+      '- [ ] task-1 Implement the change',
       'tasks checklist format',
     );
 

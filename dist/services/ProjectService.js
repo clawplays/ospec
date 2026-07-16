@@ -15,6 +15,7 @@ const helpers_1 = require("../utils/helpers");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
+const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
 const AGENT_WORKER_ALLOWED_STATUSES = [
     'DONE',
     'DONE_WITH_CONCERNS',
@@ -666,6 +667,16 @@ class ProjectService {
         const expectedParent = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, projectConfig);
         if (path_1.default.dirname(resolvedFeaturePath) !== expectedParent) {
             throw new Error('Finalize target must be a change directory under changes/active.');
+        }
+        const progressStatePath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE);
+        const progressState = await this.fileService.readJSON(progressStatePath);
+        const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(resolvedFeaturePath, progressState);
+        if (workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE) {
+            const progressProjection = await new TaskGraphExecutionService_1.TaskGraphExecutionService(this.fileService)
+                .reconcileGoalProgress(resolvedFeaturePath);
+            if (progressProjection.status === 'blocked') {
+                throw new Error(`Change progress cannot be reconciled before finalize: ${progressProjection.issues.join('; ')}`);
+            }
         }
         await this.rebuildIndex(projectRoot);
         const item = await this.getActiveChangeStatusItem(resolvedFeaturePath);

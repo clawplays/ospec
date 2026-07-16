@@ -373,7 +373,7 @@ ${this.formatReferenceList(moduleSkills, '待补充')}
 
 ## 任务清单
 
-- [ ] 完成实现
+- [ ] task-1 完成实现
 - [ ] 对齐项目规划文档与本次 change 的边界
 - [ ] 更新涉及模块的 \`SKILL.md\`
 - [ ] 更新相关 API / 设计 / 计划文档
@@ -390,7 +390,7 @@ ${this.formatReferenceList(moduleSkills, 'TBD')}
 
 ## Task Checklist
 
-- [ ] Implement the change
+- [ ] task-1 Implement the change
 - [ ] Align project planning docs with this change boundary
 - [ ] Update affected \`SKILL.md\` files
 - [ ] Update related API / design / planning docs
@@ -407,7 +407,7 @@ ${this.formatReferenceList(moduleSkills, '未定')}
 
 ## タスクチェックリスト
 
-- [ ] change を実装する
+- [ ] task-1 change を実装する
 - [ ] この change の境界に合わせてプロジェクト計画文書を揃える
 - [ ] 影響を受ける \`SKILL.md\` を更新する
 - [ ] 関連する API / 設計 / 計画文書を更新する
@@ -424,7 +424,7 @@ ${this.formatReferenceList(moduleSkills, 'قيد التحديد')}
 
 ## قائمة المهام
 
-- [ ] نفّذ التغيير
+- [ ] task-1 نفّذ التغيير
 - [ ] وحّد وثائق تخطيط المشروع مع حدود هذا change
 - [ ] حدّث ملفات \`SKILL.md\` المتأثرة
 - [ ] حدّث وثائق API / التصميم / التخطيط ذات الصلة

@@ -192,7 +192,30 @@ export interface TaskWorkerStatusSyncResult {
     qualityReviewerStatus: TaskGraphCompletionStatus | 'PENDING';
     controllerStatus: TaskGraphCompletionStatus | 'PENDING';
     verificationChecklistComplete: boolean;
+    progressProjection: GoalProgressReconciliationResult;
     nextInstruction: string;
+}
+export interface GoalProgressAmbiguousLine {
+    line: number;
+    taskIds: string[];
+}
+export interface GoalProgressReconciliationResult {
+    changePath: string;
+    graphPath: string;
+    tasksPath: string;
+    projectionPath: string;
+    status: 'current' | 'blocked';
+    graphChanged: boolean;
+    tasksChanged: boolean;
+    projectionChanged: boolean;
+    reviewDecisionsRepaired: string[];
+    checkedTaskIds: string[];
+    uncheckedTaskIds: string[];
+    unmatchedAcceptedTaskIds: string[];
+    duplicateTaskIds: string[];
+    unknownTaskIds: string[];
+    ambiguousLines: GoalProgressAmbiguousLine[];
+    issues: string[];
 }
 export interface TaskReviewDispatchRecord {
     id: string;
@@ -1730,7 +1753,12 @@ export declare class TaskGraphExecutionService {
     private normalizeDebugEvidenceRecord;
     private isDebugEvidenceStatus;
     private readReviewWorkerStatus;
-    private syncTaskReviewStateFromArtifacts;
+    reconcileGoalProgress(changePath: string): Promise<GoalProgressReconciliationResult>;
+    private reconcileGoalProgressUnlocked;
+    private syncTaskReviewStateFromArtifactsUnlocked;
+    private parsePrimaryTaskChecklistId;
+    private findDuplicateStrings;
+    private hashProgressProjectionContent;
     private readReviewDecision;
     private selectNextReviewStage;
     private selectNextReviewFeedbackStage;

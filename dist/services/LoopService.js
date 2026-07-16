@@ -522,6 +522,13 @@ class LoopService {
         return this.withControllerLease(changePath, async () => {
             const state = await this.readState(changePath);
             await this.recoverExpiredActionsUnlocked(changePath, state, false);
+            const graphPath = path.join(path.resolve(changePath), 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+            if (await this.fileService.exists(graphPath)) {
+                const progressProjection = await this.taskGraph.reconcileGoalProgress(changePath);
+                if (progressProjection.status === 'blocked') {
+                    throw new Error(`Cannot resume Loop while Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`);
+                }
+            }
             if (state.status === 'paused' || state.status === 'stopped')
                 state.status = 'idle';
             state.comprehensionDebtCounter = 0;
@@ -1221,6 +1228,10 @@ class LoopService {
         let report;
         try {
             await this.taskGraph.restoreTaskReviewApprovals(resolved);
+            const progressProjection = await this.taskGraph.reconcileGoalProgress(resolved);
+            if (progressProjection.status === 'blocked') {
+                return this.gateResult(resolved, state, trigger, `Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`);
+            }
             report = await this.taskGraph.getReport(resolved);
         }
         catch (error) {

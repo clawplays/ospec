@@ -79,6 +79,9 @@ class VerificationService {
         const featureState = await services.fileService.readJSON(statePath);
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(targetPath, featureState);
         const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
+        const progressProjection = isGoalWorkflow && taskGraphExists
+            ? await services.taskGraphExecutionService.reconcileGoalProgress(targetPath)
+            : null;
         const reviewArtifactSet = await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(services.fileService, targetPath);
         const reviewArtifactsReady = reviewArtifactSet.missing.length === 0;
         const projectRoot = await this.findProjectRoot(targetPath);
@@ -92,6 +95,13 @@ class VerificationService {
         ];
         checks.push({ name: 'workflow_profile', status: 'pass', message: `Workflow profile is ${workflowProfile}` });
         if (isGoalWorkflow) {
+            checks.push({
+                name: 'goal.progress_projection',
+                status: progressProjection?.status === 'current' ? 'pass' : 'fail',
+                message: progressProjection?.status === 'current'
+                    ? `Goal progress is reconciled (${progressProjection.checkedTaskIds.length} accepted task(s) projected)`
+                    : progressProjection?.issues.join('; ') || 'Goal progress cannot be reconciled without a task graph',
+            });
             checks.push({ name: 'design.md', status: designExists ? 'pass' : 'fail', message: designExists ? 'Design file exists' : 'design.md is missing' }, { name: 'implementation-plan.md', status: implementationPlanExists ? 'pass' : 'fail', message: implementationPlanExists ? 'Implementation plan file exists' : 'implementation-plan.md is missing' }, { name: 'artifacts/agents/task-graph.json', status: taskGraphExists ? 'pass' : 'fail', message: taskGraphExists ? 'Task graph artifact exists' : 'artifacts/agents/task-graph.json is missing' }, {
                 name: 'artifacts/reviews/final-review.md',
                 status: reviewArtifactsReady ? 'pass' : 'fail',

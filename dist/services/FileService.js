@@ -108,6 +108,24 @@ class FileService {
             throw new errors_1.FileOperationError(`Failed to write file: ${filePath}`, { error });
         }
     }
+    async writeFileAtomic(filePath, content) {
+        let tempPath;
+        try {
+            const directory = path.dirname(filePath);
+            await fs_1.promises.mkdir(directory, { recursive: true });
+            tempPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${(0, crypto_1.randomUUID)()}.tmp`);
+            await fs_1.promises.writeFile(tempPath, content, { encoding: 'utf-8', flag: 'wx' });
+            await queuedAtomicReplace(tempPath, filePath);
+        }
+        catch (error) {
+            throw new errors_1.FileOperationError(`Failed to write file atomically: ${filePath}`, { error });
+        }
+        finally {
+            if (tempPath) {
+                await fs_1.promises.rm(tempPath, { force: true }).catch(() => undefined);
+            }
+        }
+    }
     async appendFile(filePath, content) {
         try {
             await fs_1.promises.mkdir(path.dirname(filePath), { recursive: true });
