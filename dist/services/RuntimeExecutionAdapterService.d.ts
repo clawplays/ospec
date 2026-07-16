@@ -16,6 +16,57 @@ export interface RuntimeNativeSubagentContract {
     dispatch: string;
     wait: string;
     result: string;
+    pollIntervalMs: number;
+    maxWaitMs: number;
+    heartbeatBeforeDue: true;
+    persistResultsIncrementally: true;
+    retickAfterPoll: true;
+}
+export type RuntimeModelConfigurationSource = 'target' | 'default' | 'harness-default';
+export type RuntimeModelSelectionControl = 'enforced' | 'advisory' | 'uncontrolled';
+export type RuntimeObservedModelEvidenceSource = 'provider' | 'usage';
+export type RuntimeParallelCapacitySource = 'harness-report' | 'registered-contract' | 'unavailable';
+export interface RuntimeObservedModelEvidence {
+    model: string;
+    source: RuntimeObservedModelEvidenceSource;
+    evidenceId: string;
+}
+export interface RuntimeExecutionModelSelectionInput {
+    requestedModel?: string | null;
+    configuredModel?: string | null;
+    configurationSource?: RuntimeModelConfigurationSource;
+}
+/**
+ * Optional execution metadata reported by the current native model harness.
+ * The report is trusted only when its target and controller session match the
+ * current session-bound HarnessCapability.
+ */
+export interface RuntimeNativeHarnessExecutionMetadata {
+    target: string;
+    controllerSessionReportedAt: string;
+    modelSelectionControl?: RuntimeModelSelectionControl;
+    observedModelEvidence?: RuntimeObservedModelEvidence | null;
+    parallelism?: {
+        supportsParallel: boolean;
+        capacity?: number | null;
+    } | null;
+}
+export interface RuntimeExecutionModelSelectionMetadata {
+    requestedModel: string | null;
+    configuredModel: string | null;
+    observedModel: string | null;
+    configurationSource: RuntimeModelConfigurationSource;
+    selectionControl: RuntimeModelSelectionControl;
+    observationEvidence: {
+        source: RuntimeObservedModelEvidenceSource;
+        evidenceId: string;
+    } | null;
+}
+export interface RuntimeExecutionParallelismMetadata {
+    supportsParallel: boolean;
+    capacity: number | null;
+    capacityKnown: boolean;
+    source: RuntimeParallelCapacitySource;
 }
 export interface RuntimeExecutionAdapterCandidate {
     id: string;
@@ -29,6 +80,10 @@ export interface RuntimeExecutionAdapterCandidate {
     requiresControllerAction: boolean;
     commandTemplates: RuntimeExecutionAdapterCommand[];
     nativeSubagent?: RuntimeNativeSubagentContract | null;
+    /** Additive in 1.8.3; older serialized candidates remain valid without it. */
+    modelSelection?: RuntimeExecutionModelSelectionMetadata;
+    /** Additive in 1.8.3; `supportsParallel` remains the compatibility field. */
+    parallelism?: RuntimeExecutionParallelismMetadata;
 }
 export interface RuntimeExecutionAdapterResolution {
     version: string;
@@ -51,6 +106,8 @@ export interface RuntimeExecutionAdapterResolveInput {
     requiresIndependentWorker?: boolean;
     env?: NodeJS.ProcessEnv;
     now?: Date;
+    modelSelection?: RuntimeExecutionModelSelectionInput;
+    nativeHarness?: RuntimeNativeHarnessExecutionMetadata | null;
     /** @deprecated Native adapter resolution is deterministic and no longer writes a probe cache. */
     cacheFilePath?: string;
 }
@@ -82,6 +139,9 @@ export declare class RuntimeExecutionAdapterService {
     constructor(_commandRunner?: RuntimeAdapterCommandRunner, _platform?: NodeJS.Platform, _pathExists?: (candidate: string) => boolean);
     resolve(input: RuntimeExecutionAdapterResolveInput): RuntimeExecutionAdapterResolution;
     private buildNativeCandidate;
+    private resolveModelSelection;
+    private normalizeObservedModelEvidence;
+    private resolveParallelism;
     private getAvailabilityReason;
 }
 export declare function createRuntimeExecutionAdapterService(): RuntimeExecutionAdapterService;

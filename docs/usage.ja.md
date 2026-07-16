@@ -18,6 +18,12 @@ ospec new <change-name> [path]
 ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
+ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N
+ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
+ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute doc-review [changes/active/<change>] [--stage design|plan]
@@ -61,6 +67,14 @@ ospec plugins status [path]
 ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
+
+`loop configure --allow-path`、`--allow-command`、`--allow-command-policy` は、選択した allowlist グループ全体を置換して差分を表示し、暗黙には追加しません。L3 では task graph の `derive -> check -> apply` を優先してください。apply は CAS hash を使い、権限拡張には明示的な `--approve-expansion` が必要です。
+
+1.8.3 では design/plan specialist review に既定で stage ごと 2 completed rounds、30 分、no-progress circuit breaker を適用します。cache hit、pending reuse、heartbeat、同じ dispatch の recovery は round を消費しません。`--force` は guard を迂回できず、追加 round には stage、現在の review-context hash、round、明示的な `--review-approval-option` に結び付いた required user decision が必要です。その approval option の選択だけが 1 回の dispatch を許可します。
+
+1.8.4 では task ごとの自動 review-repair と grouped final-review repair をそれぞれ既定で 2 round に制限します。変更された全 path が完了済みの推移的 downstream task に帰属できる場合にだけ upstream の承認済み review を維持し、downstream reviewer packet に upstream contract を regression obligation として追加します。final review が `BLOCKED` の場合は blocker の解決まで停止します。未解決 findings を確認し、ユーザーが明示的に承認した場合に限り `--max-task-repair-rounds N` または `--max-final-repair-rounds N` を引き上げてください。
+
+1.8.5 では native child の待機による Goal controller の長時間停止を防ぎます。Codex/GPT の `wait_agent`、Claude Task polling、その他すべての native adapter は 60 秒以内に制御を返し、`heartbeatDueAt` 前に heartbeat を更新し、完了した結果を直ちに保存して再 tick します。task の target snapshot が不変なら Git HEAD の移動だけで再 review せず、final review は snapshot と HEAD の両方に厳密に拘束されます。native capacity が不明な implementation batch は 2 件までですが、安全な review 並列性は維持します。6 個を超える target を持つ新しい task は分割するか `scope_reason` が必要です。
 
 ## プラグインの最短手順
 
@@ -196,7 +210,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.2
+npm install -g @clawplays/ospec-cli@1.8.5
 ospec update [path]
 ```
 

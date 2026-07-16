@@ -40,7 +40,8 @@ tags: [conventions, workflow, change, ospec]
 - `Announce-Before-Act`: ワークフローを黙って実行しない。OSpec skill・段階、コマンドと生成物、選択された runtime adapter、worker 数、実際の機構、blocking gate を伝える
 - `Brainstorm-First`: 各 goal は設計を確定する前に短いブレインストーミングから始め、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項を 1 つずつユーザーに質問する。黙った仮定より durable な decision gate を優先し、ユーザーが明示的に委任した場合のみ `design.md` に要確認の仮定として記録する
 - `implementation-plan.md` は確定した `design.md` から導き、対象ファイル、期待結果、検証コマンド、依存関係、並行可能な作業、競合を記録する
-- `artifacts/agents/task-graph.json` は `implementation-plan.md` から導く。各 task には id、状態、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role を含める
+- `artifacts/agents/task-graph.json` は `implementation-plan.md` から導く。各 task には id、状態、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role を含める。生成した serial task には `serial_reason` も必要で、明示的な single-worker limit には `maxParallelReason` を記録する。6 個を超える target を持つ task は分割するか、atomic boundary の具体的な `scope_reason` を記録する
+- L3 では task graph から exact allowlist を CAS と明示的な expansion approval で derive/check/apply する。configure flag の反復は append ではなく replace である
 - `tasks.md` は `artifacts/agents/task-graph.json` から導く。`tasks.md` が既にあり上流文書がテンプレートのままなら、先に上流文書を更新してから tasks を整合させる
 - classic change では `tasks.md` を `proposal.md` と実装範囲から直接導く
 

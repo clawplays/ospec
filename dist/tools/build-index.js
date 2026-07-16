@@ -1108,6 +1108,12 @@ function analyzeTaskGraphDocument(content, options) {
     const executionDetailIssues = [];
     const taskIds = new Set();
     const duplicateTaskIds = new Set();
+    const graphContract = String(data.contract_version || '').trim();
+    const [contractMajor, contractMinor, contractPatch] = graphContract.split('.').map(Number);
+    const requiresSerialReason = Number.isFinite(contractMajor)
+        && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 3))));
+    const requiresScopeReason = Number.isFinite(contractMajor)
+        && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 5))));
     if (tasksFieldValid && tasks.length === 0) {
         taskSchemaIssues.push('tasks must contain at least one task');
     }
@@ -1139,11 +1145,25 @@ function analyzeTaskGraphDocument(content, options) {
         if (typeof task.parallelizable !== 'boolean') {
             taskSchemaIssues.push(`${taskLabel}.parallelizable must be a boolean`);
         }
+        if (task.serial_reason !== undefined && (typeof task.serial_reason !== 'string' || task.serial_reason.trim().length === 0)) {
+            taskSchemaIssues.push(`${taskLabel}.serial_reason must be a non-empty string when present`);
+        }
+        if (task.scope_reason !== undefined && task.scope_reason !== null
+            && (typeof task.scope_reason !== 'string' || task.scope_reason.trim().length === 0)) {
+            taskSchemaIssues.push(`${taskLabel}.scope_reason must be a non-empty string or null when present`);
+        }
+        if (requiresSerialReason && task.parallelizable === false && (typeof task.serial_reason !== 'string' || task.serial_reason.trim().length === 0)) {
+            executionDetailIssues.push(`${taskLabel}.serial_reason is required for 1.8.3 serial tasks`);
+        }
         if (!Array.isArray(task.conflicts_with)) {
             taskSchemaIssues.push(`${taskLabel}.conflicts_with must be an array`);
         }
         if (!Array.isArray(task.target_files)) {
             taskSchemaIssues.push(`${taskLabel}.target_files must be an array`);
+        }
+        else if (requiresScopeReason && task.target_files.length > 6
+            && (typeof task.scope_reason !== 'string' || task.scope_reason.trim().length === 0)) {
+            executionDetailIssues.push(`${taskLabel}.scope_reason is required for 1.8.5 tasks with more than 6 target_files`);
         }
         if (!Array.isArray(task.verification_commands)) {
             taskSchemaIssues.push(`${taskLabel}.verification_commands must be an array`);

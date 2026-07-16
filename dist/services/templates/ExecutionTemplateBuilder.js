@@ -754,6 +754,7 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
         const context = this.inputs.normalizeFeatureTemplateInput(input);
         const taskGraph = {
             version: '1.0',
+            contract_version: '1.8.5',
             feature: context.feature,
             status: 'pending',
             optional_steps: context.optionalSteps,
@@ -771,6 +772,8 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
                     status: 'PENDING',
                     depends_on: [],
                     parallelizable: false,
+                    serial_reason: 'Template placeholder; replace with a concrete dependency, conflict, or parallel task split before review.',
+                    scope_reason: null,
                     conflicts_with: [],
                     target_files: [],
                     verification_commands: [],

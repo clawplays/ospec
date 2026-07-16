@@ -281,6 +281,7 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
     static generateTaskGraphTemplate(featureName, optionalSteps = []) {
         return `${JSON.stringify({
             version: '1.0',
+            contract_version: '1.8.5',
             feature: featureName,
             status: 'pending',
             optional_steps: optionalSteps,
@@ -297,6 +298,8 @@ optional_steps: [${optionalSteps.map((s) => `"${s}"`).join(', ')}]
                     status: 'PENDING',
                     depends_on: [],
                     parallelizable: false,
+                    serial_reason: 'Template placeholder; replace with a concrete dependency, conflict, or parallel task split before review.',
+                    scope_reason: null,
                     conflicts_with: [],
                     target_files: [],
                     verification_commands: [],

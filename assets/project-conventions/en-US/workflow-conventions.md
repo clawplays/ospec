@@ -40,7 +40,8 @@ This document fixes the OSpec execution flow inside the project so requirements 
 - `Announce-Before-Act`: never run the workflow silently — announce the OSpec skill and stage, command and artifact, selected runtime adapter, worker count, actual mechanism, and any blocking gate
 - `Brainstorm-First`: open each goal with a short brainstorming pass before locking design; surface open questions for direction, architecture, API, data, UI, risk, and scope and ask the user one at a time; prefer raising a durable decision gate over a silent assumption, and only record an autonomous assumption in `design.md` when the user explicitly defers, labeled as an assumption to confirm
 - Derive `implementation-plan.md` from the accepted `design.md`, including target files, expected results, verification commands, dependencies, parallelizable work, and conflicts
-- Derive `artifacts/agents/task-graph.json` from `implementation-plan.md`; each task must include id, status, dependencies, parallel safety, conflicts, target files, verification commands, expected result, and worker role
+- Derive `artifacts/agents/task-graph.json` from `implementation-plan.md`; each task must include id, status, dependencies, parallel safety, conflicts, target files, verification commands, expected result, and worker role. Generated serial tasks also require `serial_reason`; record `maxParallelReason` for an explicit single-worker limit. Split tasks with more than six targets or record a concrete `scope_reason` for one atomic boundary
+- For L3 derive/check/apply the exact task-graph allowlist with CAS and explicit expansion approval; repeated configure flags replace rather than append
 - Derive `tasks.md` from `artifacts/agents/task-graph.json`; if `tasks.md` exists while upstream docs are still templates, update upstream docs first and then reconcile tasks
 - For classic changes, derive `tasks.md` directly from `proposal.md` and the implementation scope
 

@@ -1,0 +1,49 @@
+{
+  "title_suffix": "bounded Goal execution and convergent review workflows",
+  "summary": "OSpec 1.8.5 is the cumulative release of the previously unreleased 1.8.3, 1.8.4, and 1.8.5 work since 1.8.2. Goal reviews now have bounded governance and repair loops, task-graph L3 permissions are derived and applied atomically, and concurrency and model-capacity decisions are explicit. Dependent reviews carry upstream regression obligations instead of alternating indefinitely, while every native child uses bounded waits, heartbeat renewal, incremental result persistence, and re-ticks. Unchanged task snapshots survive unrelated Git HEAD movement, final review remains strictly bound, and broad tasks require an explicit scope reason.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.2...1.8.5",
+  "new": [
+    "Added a hash-chained document-review ledger, immutable per-dispatch history, deterministic mechanical preflight, review-context hashes, conservative token reservations, and one-use user-authorized extra-round decisions.",
+    "Added loop allowlist derive/check/apply/clear with exact task paths, canonical cwd plus token-vector commands, CAS hashes, explicit expansion approval, and confirmed clearing.",
+    "Added batch diagnostics, maxParallelReason, serial_reason guidance, heartbeatDueAt, concise/JSON Loop status, and additive runtime model/capacity truth metadata.",
+    "Added upstream regression obligations to downstream task-review packets whenever dependent tasks share target files.",
+    "Added independent Loop efficiency settings and CLI flags for task-review and grouped final-review repair, each defaulting to two automatic rounds.",
+    "Added durable retry trigger metadata so manual, worker-status, and task-review retries are counted independently.",
+    "Added machine-readable native wait fields for a 30-second polling cadence, 60-second maximum wait, heartbeat-before-due, incremental result persistence, and re-tick behavior across every registered native harness.",
+    "Added heartbeatDueAt directly to emitted action items so controllers can schedule the first lease refresh without reconstructing pending state.",
+    "Added scope_reason to 1.8.5 task graphs; tasks with more than six target files must be split or explain one atomic bounded ownership boundary."
+  ],
+  "improved": [
+    "Document-review packets now carry all prior finding IDs, resolution evidence, bounded document diffs, history paths, and guard usage while still requiring a complete current-document review.",
+    "Loop planning resolves the native adapter before mutation and distinguishes configured maximum, graph-safe candidates, token-funded candidates, known or unknown harness capacity, effective emission, and deferral reasons.",
+    "Managed Goal guidance and localized project templates now prefer packet-first brief status, findings-sidecar-first convergence, exact task-graph allowlist derivation, and explicit reasons for serialization.",
+    "Logical model profiles resolve against the actual dispatch or review target, including launch overrides, while requested/configured and provider-observed models remain separate.",
+    "Task-review freshness now distinguishes unattributed file drift from changes owned by a completed transitive downstream task.",
+    "Repair-limit gates report exact task or final-wave counts and require explicit user authorization before the configured limit is raised.",
+    "Unknown-capacity native harnesses now emit at most two implementation actions while retaining configured parallel task-review execution; reported harness capacity remains authoritative.",
+    "Controller prompts and the packaged Codex Goal skill now require bounded wait_agent or native polling, per-child heartbeat refresh, immediate sibling result persistence, and a new Loop tick after every poll."
+  ],
+  "fixed": [
+    "Fixed design and plan document-review retries bypassing Loop round, deadline, time, token, STOP/pause, and no-progress guards, which could create unbounded reviewer loops before implementation began.",
+    "Fixed negative document-review findings being deleted on redispatch, negative decisions occupying approval-cache slots, and cache keys omitting authoritative upstream review context.",
+    "Fixed repeated loop configure allowlist flags silently replacing earlier values without a replacement warning or diff, including string and structured command-policy replacement.",
+    "Fixed retry/review batches being selected with slice before conflict validation and mutating earlier items before a later item failed; unsafe batches now fail closed or commit transactionally.",
+    "Fixed maxParallel=1 and parallelizable=false plans lacking an observable reason, and fixed status hiding whether graph conflicts, token funding, configuration, or harness capacity reduced concurrency.",
+    "Fixed runtime model metadata resolving from a recommended target instead of the actual native target and claiming configured intent as an observed provider model.",
+    "Fixed missing heartbeat due times, zero-emission diagnostics, and insufficient remaining token budgets incorrectly allowing one more action.",
+    "Fixed exact task-graph L3 paths losing their provenance after command-only configuration, and blocked command working-directory symlink or junction escapes during derivation and enforcement.",
+    "Fixed extra document-review rounds accepting non-approval choices, malformed or ambiguous finding IDs and convergence resolution sidecars, tampered convergence history bypassing prior findings, and interrupted immutable snapshots becoming unrecoverable.",
+    "Added a current target/session-bound ingestion channel for provider-observed model evidence and reported native parallel capacity.",
+    "Fixed dependent tasks with overlapping target files repeatedly invalidating already-approved upstream reviews and causing implementation/review ping-pong.",
+    "Fixed task-review and grouped final-review repair loops having no dedicated round guard when status fingerprints kept changing and reset the generic no-progress counter.",
+    "Fixed BLOCKED final reviews entering a grouped repair path that only accepts NEEDS_CHANGES and then throwing an execution error.",
+    "Fixed task reviews being invalidated and re-dispatched when Git HEAD changed but every reviewed target file remained byte-for-byte unchanged.",
+    "Fixed native controller guidance allowing one indefinite Claude Task, Codex wait_agent, or other harness wait to prevent Loop observation, heartbeat renewal, and progress for hours.",
+    "Fixed final-review documentation incorrectly claiming that BLOCKED creates grouped repair; BLOCKED remains a blocker-resolution gate and only NEEDS_CHANGES creates a repair wave."
+  ],
+  "docs": [
+    "Updated the Loop execution contract, README, four usage guides, four AI guides, four execution protocols, four project conventions, project template generator, CLI help, and managed Codex Goal skill for the 1.8.3 contracts.",
+    "Documented the 1.8.4 review carry-forward provenance rules, regression obligations, repair-round guard, and CLI configuration surface.",
+    "Documented the 1.8.5 review freshness split, cross-harness bounded execution contract, unknown-capacity implementation guard, broad-task scope requirement, and corrected final-review behavior."
+  ]
+}

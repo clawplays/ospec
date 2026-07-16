@@ -1,0 +1,22 @@
+{
+  "title_suffix": "convergent task reviews and bounded repair loops",
+  "summary": "OSpec 1.8.4 fixes Goal workflows that repeatedly alternated implementation and review work. Approved upstream reviews can remain valid only when every changed target is attributable to a completed transitive downstream task, and downstream review packets inherit explicit upstream regression obligations. Automatic task-review repair and grouped final-review repair are independently bounded to two rounds by default, while blocked final reviews stop for blocker resolution.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.3...1.8.4",
+  "new": [
+    "Added upstream regression obligations to downstream task-review packets whenever dependent tasks share target files.",
+    "Added independent Loop efficiency settings and CLI flags for task-review and grouped final-review repair, each defaulting to two automatic rounds.",
+    "Added durable retry trigger metadata so manual, worker-status, and task-review retries are counted independently."
+  ],
+  "improved": [
+    "Task-review freshness now distinguishes unattributed file drift from changes owned by a completed transitive downstream task.",
+    "Repair-limit gates report exact task or final-wave counts and require explicit user authorization before the configured limit is raised."
+  ],
+  "fixed": [
+    "Fixed dependent tasks with overlapping target files repeatedly invalidating already-approved upstream reviews and causing implementation/review ping-pong.",
+    "Fixed task-review and grouped final-review repair loops having no dedicated round guard when status fingerprints kept changing and reset the generic no-progress counter.",
+    "Fixed BLOCKED final reviews entering a grouped repair path that only accepts NEEDS_CHANGES and then throwing an execution error."
+  ],
+  "docs": [
+    "Documented the 1.8.4 review carry-forward provenance rules, regression obligations, repair-round guard, and CLI configuration surface."
+  ]
+}

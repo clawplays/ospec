@@ -31,6 +31,10 @@ export interface TaskWorkerProfile {
     modelProfile: AgentModelProfileId;
     model: string | null;
     modelSelectionSource: 'configured' | 'harness-default';
+    resolvedTarget?: TaskWorkerToolTarget;
+    modelConfigurationSource?: 'target' | 'default' | 'harness-default';
+    requestedModel?: string | null;
+    configuredModel?: string | null;
 }
 export interface TaskGraphExecutionTask {
     id: string;
@@ -38,6 +42,8 @@ export interface TaskGraphExecutionTask {
     status: string;
     dependsOn: string[];
     parallelizable: boolean;
+    serialReason: string | null;
+    scopeReason: string | null;
     conflictsWith: string[];
     targetFiles: string[];
     verificationCommands: string[];
@@ -70,7 +76,18 @@ export interface TaskGraphExecutionReport {
     decisions: TaskUserDecisionSnapshot;
     checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     issues: string[];
+    scheduling: TaskGraphSchedulingDiagnostics;
     nextInstruction: string;
+}
+export interface TaskGraphSchedulingDeferredTask {
+    taskId: string;
+    reasons: string[];
+}
+export interface TaskGraphSchedulingDiagnostics {
+    readyCount: number;
+    graphSafeCount: number;
+    serialWithoutReason: string[];
+    deferred: TaskGraphSchedulingDeferredTask[];
 }
 export type TaskGraphCompletionStatus = 'DONE' | 'DONE_WITH_CONCERNS' | 'NEEDS_CONTEXT' | 'BLOCKED';
 export type TaskReviewStage = 'spec' | 'quality' | 'review';
@@ -191,6 +208,8 @@ export interface TaskReviewDispatchRecord {
     targetFiles: string[];
     targetSnapshots: TaskDocumentationSnapshot[];
     targetSnapshotHash: string;
+    /** Upstream task contracts that this downstream review must regression-check. */
+    regressionTaskIds?: string[];
     loopActionId?: string | null;
     loopActionItemId?: string | null;
     controllerSessionReportedAt?: string | null;
@@ -222,6 +241,12 @@ export interface TaskReviewDispatchResult {
     dispatch: TaskReviewDispatchRecord;
     projectSession: TaskBootstrapProjectSessionSnapshot;
     warnings: string[];
+    nextInstruction: string;
+}
+export interface TaskReviewDispatchBatchResult {
+    changePath: string;
+    reviews: TaskReviewDispatchResult[];
+    dispatches: TaskReviewDispatchRecord[];
     nextInstruction: string;
 }
 export interface TaskReviewFeedbackPlan {
@@ -284,6 +309,21 @@ export interface TaskDocumentReviewDispatchRecord {
     recordPath: string;
     documentPath: string;
     documentHash: string;
+    /** Binds every authoritative input for this review stage, not only the target document. */
+    reviewContextHash?: string;
+    reviewContractVersion?: string;
+    round?: number;
+    tokenReservation?: number;
+    roundOverrideDecisionId?: string | null;
+    usage?: TaskExecutionUsage | null;
+    priorDispatchId?: string | null;
+    priorFindings?: unknown[];
+    priorFindingIds?: string[];
+    boundedDocumentDiff?: string | null;
+    boundedDocumentDiffTruncated?: boolean;
+    mechanicalPreflight?: TaskDocumentReviewMechanicalPreflight;
+    resultSnapshotPath?: string | null;
+    resultManifestHash?: string | null;
     reviewArtifactPath: string;
     documentReadiness: TaskBootstrapDocumentReadiness;
     mode: 'specialist' | 'inline_preflight';
@@ -298,8 +338,50 @@ export interface TaskDocumentReviewDispatchRecord {
     reviewerClaimedAt?: string | null;
     reviewerHeartbeatAt?: string | null;
     reviewerLeaseExpiresAt?: string | null;
+    heartbeatDueAt?: string | null;
     reviewerCompletedAt?: string | null;
     reviewerSucceeded?: boolean | null;
+}
+export interface TaskDocumentReviewMechanicalPreflight {
+    version: '1.0';
+    stage: TaskDocumentReviewStage;
+    checkedAt: string;
+    checks: string[];
+    warnings: string[];
+    errors: string[];
+}
+export interface TaskDocumentReviewGovernanceStageSummary {
+    stage: TaskDocumentReviewStage;
+    completedRounds: number;
+    activeRound: number | null;
+    elapsedMs: number;
+    tokenReservation: number;
+    tokenUsage: number | null;
+    cacheHits: number;
+    guardLimits: {
+        maxCompletedRounds: number;
+        maxMinutes: number;
+        budgetTokens: number | null;
+        noProgressLimit: number;
+    };
+    guardRemaining: {
+        rounds: number;
+        minutes: number;
+        tokens: number | null;
+    };
+    currentDispatch: {
+        id: string;
+        heartbeatDueAt: string | null;
+        leaseExpiresAt: string | null;
+    } | null;
+    lastDecision: string | null;
+    noProgressCount: number;
+}
+export interface TaskDocumentReviewGovernanceSummary {
+    version: '1.0';
+    contractVersion: string;
+    ledgerPath: string;
+    stages: Record<TaskDocumentReviewStage, TaskDocumentReviewGovernanceStageSummary>;
 }
 export interface TaskLoopReadinessResult {
     ready: boolean;
@@ -871,6 +953,13 @@ export interface TaskUserDecisionOption {
     label: string;
     description: string;
 }
+export interface TaskDocumentReviewOverrideBinding {
+    stage: TaskDocumentReviewStage;
+    reviewContextHash: string;
+    round: number;
+    extraRounds: 1;
+    approvalOptionId: string;
+}
 export interface TaskUserDecisionRecord {
     version: string;
     feature: string;
@@ -886,6 +975,7 @@ export interface TaskUserDecisionRecord {
     updatedAt: string;
     selectedAt: string | null;
     answeredBy?: 'user' | null;
+    documentReviewOverride?: TaskDocumentReviewOverrideBinding | null;
     recordPath: string;
     reportPath: string;
     nextInstruction: string;
@@ -1254,6 +1344,7 @@ export interface TaskWorkerRetryRecord {
     createdAt: string;
     previousStatus: string;
     previousRunId: string | null;
+    trigger?: 'manual' | 'worker_status' | 'task_review';
     summary: string | null;
     recordPath: string;
     reportPath: string;
@@ -1262,6 +1353,12 @@ export interface TaskWorkerRetryResult {
     changePath: string;
     retryRecord: TaskWorkerRetryRecord;
     dispatch: TaskDispatchResult;
+    nextInstruction: string;
+}
+export interface TaskWorkerRetryBatchResult {
+    changePath: string;
+    retries: TaskWorkerRetryResult[];
+    dispatches: TaskDispatchRecord[];
     nextInstruction: string;
 }
 export interface TaskReviewRunResult {
@@ -1278,6 +1375,9 @@ export declare class TaskGraphExecutionService {
     private reportDocumentLanguageCache;
     constructor(fileService: FileService, runtimeAdapterService?: RuntimeExecutionAdapterService);
     getReport(changePath: string): Promise<TaskGraphExecutionReport>;
+    selectConflictSafeTasks(tasks: TaskGraphExecutionTask[], options?: {
+        respectParallelizable?: boolean;
+    }): TaskGraphExecutionTask[];
     dispatch(changePath: string, options?: {
         taskId?: string;
         limit?: number;
@@ -1294,6 +1394,7 @@ export declare class TaskGraphExecutionService {
     }): Promise<TaskWorkerLaunchPlanResult>;
     private planLaunchUnlocked;
     private readRuntimeHarnessCapability;
+    private readRuntimeHarnessExecutionMetadata;
     /**
      * Build the loop/agent-primitive plan for a goal|loop launch. OSpec only
      * produces controller instructions; the model harness owns native dispatch.
@@ -1318,8 +1419,20 @@ export declare class TaskGraphExecutionService {
         runId?: string;
         summary?: string;
         force?: boolean;
+        trigger?: 'manual' | 'worker_status' | 'task_review';
     }): Promise<TaskWorkerRetryResult>;
+    retryWorkerRuns(changePath: string, options: {
+        tasks: Array<{
+            taskId: string;
+            runId?: string;
+            summary?: string;
+            force?: boolean;
+            trigger?: 'manual' | 'worker_status' | 'task_review';
+        }>;
+    }): Promise<TaskWorkerRetryBatchResult>;
     private retryWorkerRunUnlocked;
+    countTaskReviewRepairRounds(changePath: string, taskId: string): Promise<number>;
+    countFinalReviewRepairWaves(changePath: string): Promise<number>;
     orchestrate(changePath: string, options?: {
         command?: string;
         target?: TaskWorkerToolTarget;
@@ -1352,6 +1465,9 @@ export declare class TaskGraphExecutionService {
         stage?: TaskReviewStage;
         taskId?: string;
     }): Promise<TaskReviewDispatchResult>;
+    reviewTasks(changePath: string, options: {
+        taskIds: string[];
+    }): Promise<TaskReviewDispatchBatchResult>;
     private reviewUnlocked;
     bindReviewLoopAction(changePath: string, options: {
         dispatchId: string;
@@ -1393,18 +1509,23 @@ export declare class TaskGraphExecutionService {
         skip?: boolean;
         summary?: string;
         answeredBy?: 'user';
+        documentReviewOverride?: TaskDocumentReviewOverrideBinding;
     }): Promise<TaskUserDecisionResult>;
     reviewDocument(changePath: string, options?: {
         stage?: TaskDocumentReviewStage;
         force?: boolean;
     }): Promise<TaskDocumentReviewDispatchResult>;
+    readDocumentReviewGovernanceSummary(changePath: string): Promise<TaskDocumentReviewGovernanceSummary>;
     private reviewDocumentUnlocked;
     private buildDocumentReviewNextInstruction;
     claimDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
     heartbeatDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
-    completeDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
+    completeDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string, options?: {
+        usageFile?: string;
+    }): Promise<TaskDocumentReviewDispatchRecord>;
     private documentReviewExecutorLeaseExpiresAt;
     private isDocumentReviewExecutorLeaseExpired;
+    private documentReviewHeartbeatDueAt;
     private releaseDocumentReviewExecutorClaimUnlocked;
     private readCurrentDocumentReviewDispatch;
     private updateDocumentReviewExecutorProvenance;
@@ -1414,6 +1535,26 @@ export declare class TaskGraphExecutionService {
     private cacheDocumentReviewApproval;
     private restoreDocumentReviewCache;
     private appendDocumentReviewRunMetric;
+    private getDocumentReviewLedgerPath;
+    private canonicalJson;
+    private cloneJson;
+    private documentReviewLedgerEventHash;
+    private validateDocumentReviewLedger;
+    private ensureDocumentReviewLedgerUnlocked;
+    private appendDocumentReviewLedgerEvent;
+    private appendDocumentReviewLedgerEventUnlocked;
+    private recoverDocumentReviewDispatchProjectionUnlocked;
+    private computeDocumentReviewContextHash;
+    private assertDocumentReviewDispatchGovernanceUnlocked;
+    private findDocumentReviewRoundOverrideDecisionUnlocked;
+    private positiveIntegerOrDefault;
+    private readDocumentReviewConvergenceContextUnlocked;
+    private buildBoundedDocumentDiff;
+    private snapshotDocumentReviewResultUnlocked;
+    private validateDocumentReviewResultSnapshot;
+    private runDocumentReviewMechanicalPreflight;
+    private tokenizeDocumentReviewCommand;
+    private parseDocumentReviewCommand;
     private taskReviewScopeKey;
     private documentReviewScopeKey;
     private getCurrentReviewDispatchIndexPath;
@@ -1504,6 +1645,9 @@ export declare class TaskGraphExecutionService {
         target?: TaskHandoffTarget;
     }): Promise<TaskHandoffResult>;
     private selectDispatchableTasks;
+    private withArtifactMutationRollback;
+    private listArtifactFilesRecursive;
+    private getSchedulingDeferralReasons;
     private selectNonConflictingBatch;
     private isTaskReviewRequired;
     private getBlockedTaskReviewInstruction;
@@ -1546,6 +1690,8 @@ export declare class TaskGraphExecutionService {
     private readUserDecisionSnapshot;
     private writeUserDecisionIndex;
     private normalizeUserDecisionRecord;
+    private normalizeDocumentReviewOverrideBinding;
+    private validateStructuredFindingIds;
     private normalizeUserDecisionOptions;
     private getUserDecisionNextInstruction;
     private readVerificationEvidence;
@@ -1588,6 +1734,9 @@ export declare class TaskGraphExecutionService {
     private deriveWorkerStatusDocumentStatus;
     private isVerificationChecklistComplete;
     private writeTaskReviewPackage;
+    private getUpstreamRegressionTasks;
+    private taskTransitivelyDependsOn;
+    private canCarryTaskReviewForwardAfterDownstreamWork;
     private renderGitStatusEntries;
     private ingestReviewUsageSidecars;
     private readExecutionUsageFile;

@@ -39,7 +39,7 @@ const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'tick-plan', 'heartbeat', 'result', 'recover'];
+const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'recover'];
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
@@ -55,7 +55,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                     await this.tickPlan(args[0]);
                     return;
                 case 'status':
-                    await this.status(args[0]);
+                    await this.status(args);
                     return;
                 case 'pause':
                     await this.pause(args[0]);
@@ -68,6 +68,9 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                     return;
                 case 'configure':
                     await this.configure(args);
+                    return;
+                case 'allowlist':
+                    await this.allowlist(args);
                     return;
                 case 'heartbeat':
                     await this.heartbeat(args);
@@ -121,6 +124,14 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 if (action.resultCommand)
                     console.log(`    result=${action.resultCommand}`);
             }
+        }
+        if (result.batchDiagnostics) {
+            const batch = result.batchDiagnostics;
+            console.log(`Batch: configured=${batch.configuredMaxParallel} graph-safe=${batch.graphSafeCandidates} token-funded=${batch.tokenFundedLimit} adapter-capacity=${batch.adapterCapacityKnown ? batch.adapterCapacity : 'unknown'} effective=${batch.effectiveEmitted}`);
+            if (batch.configuredMaxParallelReason)
+                console.log(`Batch reason: ${batch.configuredMaxParallelReason}`);
+            if (batch.deferredReasons.length > 0)
+                console.log(`Batch deferred: ${batch.deferredReasons.join(', ')}`);
         }
         if (result.stopped) {
             console.log(`Stopped: ${result.stopReason || 'yes'}`);
@@ -196,7 +207,8 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             current = parent;
         }
     }
-    async status(inputPath) {
+    async status(args) {
+        const inputPath = this.parseOptionalPath(args, [], ['--brief', '--json']);
         const changePath = await this.resolveChangePath(inputPath);
         if (!(await services_1.services.loopService.exists(changePath))) {
             this.warn('No loop is initialized for this change (only goal-profile changes create a loop).');
@@ -204,6 +216,26 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         const config = await services_1.services.loopService.readConfig(changePath);
         const state = await services_1.services.loopService.readState(changePath);
+        const reviewGovernance = await services_1.services.taskGraphExecutionService.readDocumentReviewGovernanceSummary(changePath);
+        if (args.includes('--json')) {
+            console.log(JSON.stringify({ version: '1.8.5', changePath, config, state, reviewGovernance }, null, 2));
+            return;
+        }
+        if (args.includes('--brief')) {
+            const pending = state.pendingControllerAction;
+            const nextHeartbeat = (pending?.itemStates || [])
+                .filter(item => item.status === 'issued' || item.status === 'running')
+                .map(item => item.heartbeatDueAt)
+                .filter(Boolean)
+                .sort()[0] || null;
+            const batch = state.lastBatchDiagnostics;
+            const review = ['design', 'plan'].map(stage => {
+                const summary = reviewGovernance.stages[stage];
+                return `${stage}=${summary.completedRounds}/${summary.guardLimits.maxCompletedRounds}${summary.activeRound ? `+active:${summary.activeRound}` : ''}`;
+            }).join(' ');
+            console.log(`Loop ${state.status}: level=${config.level} step=${state.currentStep} iteration=${state.iteration} parallel=${config.efficiency.maxParallel} reason=${config.efficiency.maxParallelReason || 'not-recorded'} emitted=${batch?.effectiveEmitted ?? 0}/${batch?.graphSafeCandidates ?? 0} deferred=${batch?.deferredReasons?.join(',') || 'none'} reviews=${review} pending=${pending?.items?.length || 0} heartbeat-due=${nextHeartbeat || 'none'}`);
+            return;
+        }
         console.log('\nLoop Status');
         console.log('===========\n');
         console.log(`Change path: ${changePath}`);
@@ -212,7 +244,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log(`Target: ${config.target}`);
         console.log(`Execution model: ${config.executionModel}`);
         console.log(`Schedule: ${config.schedule.interval} (${config.schedule.lifecycle})`);
-        console.log(`Concurrency: ${config.efficiency.maxParallel} fresh-context=${config.efficiency.freshContext ? 'yes' : 'no'}`);
+        console.log(`Concurrency: ${config.efficiency.maxParallel} reason=${config.efficiency.maxParallelReason || 'not recorded'} fresh-context=${config.efficiency.freshContext ? 'yes' : 'no'}`);
         console.log(`Guards: no-progress=${config.efficiency.noProgressLimit} review-every=${config.efficiency.comprehensionReviewEvery}`);
         console.log(`Budgets: iterations=${config.stopConditions.maxIterations ?? 'unbounded'} tokens=${config.stopConditions.budgetTokens ?? 'unbounded'} minutes=${config.stopConditions.budgetMinutes ?? 'unbounded'} expires=${config.stopConditions.expiresAt || 'never'}`);
         console.log(`Status: ${state.status}`);
@@ -222,9 +254,17 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log(`Pending action: ${state.pendingControllerAction ? state.pendingControllerAction.actionId : 'none'}`);
         console.log(`Pending items: ${state.pendingControllerAction?.items?.length || 0}`);
         for (const item of state.pendingControllerAction?.itemStates || []) {
-            console.log(`  - ${item.actionItemId}: ${item.status} executor=${item.executorId || 'unclaimed'} heartbeat=${item.heartbeatAt || 'never'} lease=${item.leaseExpiresAt}`);
+            console.log(`  - ${item.actionItemId}: ${item.status} executor=${item.executorId || 'unclaimed'} heartbeat=${item.heartbeatAt || 'never'} due=${item.heartbeatDueAt} lease=${item.leaseExpiresAt}`);
         }
         console.log(`Usage: tokens=${state.tokensUsed} executor=${state.executorTokensUsed} artifacts=${state.artifactTokensUsed} no-progress=${state.noProgressCount} comprehension-debt=${state.comprehensionDebtCounter}`);
+        if (state.lastBatchDiagnostics) {
+            const batch = state.lastBatchDiagnostics;
+            console.log(`Last batch: graph-safe=${batch.graphSafeCandidates} token-funded=${batch.tokenFundedLimit} adapter-capacity=${batch.adapterCapacityKnown ? batch.adapterCapacity : 'unknown'} emitted=${batch.effectiveEmitted} deferred=${batch.deferredReasons.join(', ') || 'none'}`);
+        }
+        for (const stage of ['design', 'plan']) {
+            const review = reviewGovernance.stages[stage];
+            console.log(`Review ${stage}: rounds=${review.completedRounds}/${review.guardLimits.maxCompletedRounds} active=${review.activeRound ?? 'none'} minutes-left=${review.guardRemaining.minutes} tokens-left=${review.guardRemaining.tokens ?? 'unbounded'} cache-hits=${review.cacheHits} no-progress=${review.noProgressCount}/${review.guardLimits.noProgressLimit} heartbeat-due=${review.currentDispatch?.heartbeatDueAt || 'none'}`);
+        }
         if (state.lastFeedback)
             console.log(`Last feedback: ${state.lastFeedback}`);
         if (config.capability) {
@@ -332,6 +372,25 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         };
         options.nativeSubagentCapability = capability('--native-subagents');
         options.nativeLoopCapability = capability('--native-goal');
+        const nativeHarnessMetadata = scalar('--native-harness-metadata');
+        if (nativeHarnessMetadata !== undefined) {
+            if (nativeHarnessMetadata.toLowerCase() === 'none') {
+                options.nativeHarnessMetadata = null;
+            }
+            else {
+                let parsed;
+                try {
+                    parsed = JSON.parse(nativeHarnessMetadata);
+                }
+                catch {
+                    throw new Error('--native-harness-metadata must be valid JSON or "none".');
+                }
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('--native-harness-metadata must be a JSON object or "none".');
+                }
+                options.nativeHarnessMetadata = parsed;
+            }
+        }
         options.interval = scalar('--interval');
         options.maxIterations = nullableNumber('--max-iterations');
         const expiresAt = scalar('--expires-at');
@@ -371,6 +430,8 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             options.allowCommandPolicies = allowCommandPolicies;
         options.maxParallel = nullableNumber('--max-parallel') ?? undefined;
         options.noProgressLimit = nullableNumber('--no-progress-limit') ?? undefined;
+        options.maxTaskRepairRounds = nullableNumber('--max-task-repair-rounds') ?? undefined;
+        options.maxFinalRepairRounds = nullableNumber('--max-final-repair-rounds') ?? undefined;
         const reviewEvery = scalar('--review-every');
         if (reviewEvery !== undefined) {
             const parsed = Number(reviewEvery);
@@ -384,10 +445,100 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 throw new Error('--fresh-context must be true or false.');
             options.freshContext = freshContext === 'true';
         }
+        const maxParallelReason = scalar('--max-parallel-reason');
+        if (maxParallelReason !== undefined) {
+            options.maxParallelReason = maxParallelReason.toLowerCase() === 'none' ? null : maxParallelReason;
+        }
         options.promptMaxChars = nullableNumber('--prompt-max-chars') ?? undefined;
         const changePath = await this.resolveChangePath(inputPath);
+        const replacesPaths = allowPaths.length > 0;
+        const replacesCommands = allowCommands.length > 0 || allowCommandPolicies.length > 0;
+        const before = replacesPaths || replacesCommands
+            ? await services_1.services.loopService.readConfig(changePath).catch(() => null)
+            : null;
         const config = await services_1.services.loopService.configure(changePath, options);
-        this.success(`Loop configured: target=${config.target}, model=${config.executionModel}, parallel=${config.efficiency.maxParallel}, interval=${config.schedule.interval}.`);
+        this.success(`Loop configured: target=${config.target}, model=${config.executionModel}, parallel=${config.efficiency.maxParallel}, taskRepairRounds=${config.efficiency.maxTaskRepairRounds}, finalRepairRounds=${config.efficiency.maxFinalRepairRounds}, interval=${config.schedule.interval}.`);
+        if (replacesPaths || replacesCommands) {
+            this.warn(`Allowlist replacement applied: paths=${replacesPaths ? 'replaced' : 'unchanged'}, commands=${replacesCommands ? 'replaced' : 'unchanged'}. Repeated configure flags replace the complete selected list; they do not append.`);
+            if (before?.allowlist && config.allowlist) {
+                this.printAllowlistDiff(services_1.services.loopService.diffAllowlists(before.allowlist, config.allowlist));
+            }
+        }
+        if (config.efficiency.maxParallel < 3 && !config.efficiency.maxParallelReason) {
+            this.warn('Concurrency is below the default (3), but no --max-parallel-reason was recorded. The explicit limit is preserved.');
+        }
+    }
+    async allowlist(args) {
+        const operation = String(args[0] || '').toLowerCase();
+        if (!['derive', 'check', 'apply', 'clear'].includes(operation)) {
+            throw new Error('Usage: ospec loop allowlist <derive|check|apply|clear> [path] [--from-task-graph] [--json].');
+        }
+        const operationArgs = args.slice(1);
+        const inputPath = this.parseOptionalPath(operationArgs, ['--expected-current-hash', '--expected-candidate-hash', '--expected-task-graph-hash'], ['--from-task-graph', '--approve-expansion', '--confirm', '--json']);
+        const changePath = await this.resolveChangePath(inputPath);
+        const json = operationArgs.includes('--json');
+        if (operation === 'clear') {
+            if (!operationArgs.includes('--confirm')) {
+                throw new Error('loop allowlist clear requires --confirm because it removes all configured permissions.');
+            }
+            const cleared = await services_1.services.loopService.clearAllowlist(changePath, {
+                expectedCurrentHash: this.parseFlagValue(operationArgs, '--expected-current-hash'),
+            });
+            if (json)
+                console.log(JSON.stringify({ operation, changePath, allowlist: cleared }, null, 2));
+            else
+                this.success(`Loop allowlist cleared for ${changePath}.`);
+            return;
+        }
+        if (!operationArgs.includes('--from-task-graph')) {
+            throw new Error(`loop allowlist ${operation} requires --from-task-graph.`);
+        }
+        let result;
+        if (operation === 'apply') {
+            const expectedCurrentHash = this.parseFlagValue(operationArgs, '--expected-current-hash');
+            const expectedCandidateHash = this.parseFlagValue(operationArgs, '--expected-candidate-hash');
+            if (!expectedCurrentHash || !expectedCandidateHash) {
+                throw new Error('loop allowlist apply requires --expected-current-hash and --expected-candidate-hash from a fresh derive/check result.');
+            }
+            result = await services_1.services.loopService.applyAllowlist(changePath, {
+                expectedCurrentHash,
+                expectedCandidateHash,
+                expectedTaskGraphHash: this.parseFlagValue(operationArgs, '--expected-task-graph-hash'),
+                approveExpansion: operationArgs.includes('--approve-expansion'),
+            });
+        }
+        else {
+            result = operation === 'check'
+                ? await services_1.services.loopService.checkAllowlist(changePath)
+                : await services_1.services.loopService.deriveAllowlist(changePath);
+        }
+        if (json) {
+            console.log(JSON.stringify({ operation, changePath, ...result }, null, 2));
+            return;
+        }
+        console.log(`Allowlist ${operation}: current=${result.currentHash} candidate=${result.candidateHash} task-graph=${result.taskGraphHash}`);
+        console.log(`Status: matches=${result.matchesCurrent ? 'yes' : 'no'} expansion=${result.hasExpansion ? 'yes' : 'no'} applicable=${result.canApply ? 'yes' : 'no'}`);
+        this.printAllowlistDiff(result.diff);
+        if (result.issues.length > 0) {
+            console.log('Issues:');
+            for (const issue of result.issues)
+                console.log(`  - ${issue}`);
+        }
+        if (operation !== 'apply') {
+            console.log(`Apply with: ospec loop allowlist apply "${changePath}" --from-task-graph --expected-current-hash ${result.currentHash} --expected-candidate-hash ${result.candidateHash} --expected-task-graph-hash ${result.taskGraphHash}${result.hasExpansion ? ' --approve-expansion' : ''}`);
+        }
+    }
+    printAllowlistDiff(diff) {
+        const command = (value) => typeof value === 'string' ? value : JSON.stringify(value);
+        console.log(`Allowlist diff: paths +${diff.addedPaths.length}/-${diff.removedPaths.length}, commands +${diff.addedCommands.length}/-${diff.removedCommands.length}`);
+        for (const value of diff.addedPaths)
+            console.log(`  + path ${value}`);
+        for (const value of diff.removedPaths)
+            console.log(`  - path ${value}`);
+        for (const value of diff.addedCommands)
+            console.log(`  + command ${command(value)}`);
+        for (const value of diff.removedCommands)
+            console.log(`  - command ${command(value)}`);
     }
     async heartbeat(args) {
         const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;

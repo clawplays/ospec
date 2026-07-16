@@ -1,0 +1,31 @@
+{
+  "title_suffix": "bounded reviews, explicit concurrency, and atomic L3 permissions",
+  "summary": "OSpec 1.8.3 removes the main avoidable delays and failure modes in the full Goal workflow without weakening its safety gates. Specialist design and plan reviews now have durable round, time, token, and no-progress governance with immutable convergence history. L3 allowlists gain task-graph derivation, compare-and-swap apply, explicit expansion approval, and visible replacement diffs. Scheduling reports why a batch was limited, keeps harness capacity unknown unless reported, and uses the actual runtime target for truthful model selection metadata.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.2...1.8.3",
+  "new": [
+    "Added a hash-chained document-review ledger, immutable per-dispatch history, deterministic mechanical preflight, review-context hashes, conservative token reservations, and one-use user-authorized extra-round decisions.",
+    "Added loop allowlist derive/check/apply/clear with exact task paths, canonical cwd plus token-vector commands, CAS hashes, explicit expansion approval, and confirmed clearing.",
+    "Added batch diagnostics, maxParallelReason, serial_reason guidance, heartbeatDueAt, concise/JSON Loop status, and additive runtime model/capacity truth metadata."
+  ],
+  "improved": [
+    "Document-review packets now carry all prior finding IDs, resolution evidence, bounded document diffs, history paths, and guard usage while still requiring a complete current-document review.",
+    "Loop planning resolves the native adapter before mutation and distinguishes configured maximum, graph-safe candidates, token-funded candidates, known or unknown harness capacity, effective emission, and deferral reasons.",
+    "Managed Goal guidance and localized project templates now prefer packet-first brief status, findings-sidecar-first convergence, exact task-graph allowlist derivation, and explicit reasons for serialization.",
+    "Logical model profiles resolve against the actual dispatch or review target, including launch overrides, while requested/configured and provider-observed models remain separate."
+  ],
+  "fixed": [
+    "Fixed design and plan document-review retries bypassing Loop round, deadline, time, token, STOP/pause, and no-progress guards, which could create unbounded reviewer loops before implementation began.",
+    "Fixed negative document-review findings being deleted on redispatch, negative decisions occupying approval-cache slots, and cache keys omitting authoritative upstream review context.",
+    "Fixed repeated loop configure allowlist flags silently replacing earlier values without a replacement warning or diff, including string and structured command-policy replacement.",
+    "Fixed retry/review batches being selected with slice before conflict validation and mutating earlier items before a later item failed; unsafe batches now fail closed or commit transactionally.",
+    "Fixed maxParallel=1 and parallelizable=false plans lacking an observable reason, and fixed status hiding whether graph conflicts, token funding, configuration, or harness capacity reduced concurrency.",
+    "Fixed runtime model metadata resolving from a recommended target instead of the actual native target and claiming configured intent as an observed provider model.",
+    "Fixed missing heartbeat due times, zero-emission diagnostics, and insufficient remaining token budgets incorrectly allowing one more action.",
+    "Fixed exact task-graph L3 paths losing their provenance after command-only configuration, and blocked command working-directory symlink or junction escapes during derivation and enforcement.",
+    "Fixed extra document-review rounds accepting non-approval choices, malformed or ambiguous finding IDs and convergence resolution sidecars, tampered convergence history bypassing prior findings, and interrupted immutable snapshots becoming unrecoverable.",
+    "Added a current target/session-bound ingestion channel for provider-observed model evidence and reported native parallel capacity."
+  ],
+  "docs": [
+    "Updated the Loop execution contract, README, four usage guides, four AI guides, four execution protocols, four project conventions, project template generator, CLI help, and managed Codex Goal skill for the 1.8.3 contracts."
+  ]
+}

@@ -18,6 +18,12 @@ ospec new <change-name> [path]
 ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
 ospec progress [changes/active/<change>]
 ospec run status [path]
+ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N
+ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
+ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute doc-review [changes/active/<change>] [--stage design|plan]
@@ -62,6 +68,14 @@ ospec plugins status [path]
 ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
+
+`loop configure --allow-path`、`--allow-command` 和 `--allow-command-policy` 会替换所选的完整白名单分组并打印差异，不会静默追加。L3 优先使用基于任务图的 `derive -> check -> apply` 流程；apply 使用 CAS 哈希，权限扩大必须显式传入 `--approve-expansion`。
+
+1.8.3 对设计和计划的 specialist review 增加了边界：默认每阶段最多完成两轮、30 分钟，并启用无进展熔断。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；额外一轮必须有已记录的 required user decision，并绑定阶段、当前 review-context hash、轮次和显式 `--review-approval-option`，只有选择该批准项才能授权一次 dispatch。
+
+1.8.4 进一步把每个 task 的自动 review-repair 和 grouped final-review repair 都限制为默认两轮。只有当全部文件变化都能归因到已完成的传递下游任务时，上游已批准 review 才会继续有效；下游 reviewer 包会继承这些上游合同作为回归义务。final review 为 `BLOCKED` 时会停下解决 blocker，不会错误进入 grouped repair。检查未解决 findings 后，只有获得用户明确授权才能通过 `--max-task-repair-rounds N` 或 `--max-final-repair-rounds N` 提高上限。
+
+1.8.5 防止原生 child 的等待让 Goal controller 长时间卡死。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它所有 native adapter 的单次等待都必须在 60 秒内返回，在 `heartbeatDueAt` 前续租，完成一个结果就立即持久化一个，并重新 tick。只有 Git HEAD 变化但 task 目标快照未变时，不再重复 task review；final review 仍严格绑定快照和 HEAD。未知 native capacity 时 implementation 批次最多两个，但不会降低互不冲突的 review 并行度。新 task 超过六个目标时必须拆分，或填写 `scope_reason`。
 
 ## 插件快速开始
 
@@ -150,7 +164,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 - 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`。它会检查 task graph、review、verification evidence、worker status 和 git 清洁度，只记录建议命令，以及 PR、merge、branch retention、worktree cleanup 的决策提示，不会执行。当 finish plan 已 ready 且没有 required pending decision 时，继续执行 `ospec finalize [changes/active/<change>]`；`ospec archive ... --check` 只是可选 dry-run 预览。
 - 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成一批并行安全的 `artifacts/agents/dispatches/*` worker 任务包和 `artifacts/agents/execution-session.json`。每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior，方便把复杂任务交给更强的 worker，把简单任务保持轻量，并明确不同目标工具如何读取上下文、编辑文件、运行验证和记录完成。再用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制批次大小。required pending user decision 会阻止 dispatch。这两个命令也会同步 `artifacts/agents/worker-status.md`；当 completion 记录 `NEEDS_CONTEXT` 或 `BLOCKED` 时，OSpec 会写入 `artifacts/agents/blockers/` 升级记录，供 controller 跟进。
 - dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run]` 写入 agent 启动计划。`runtimeAdapter` 只接受当前、target 匹配的模型原生 subagent capability，并给出该模型的 native primitive。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在 active dispatch 且 workspace 为 ready，但不会自行启动 worker 进程。
-- 默认多 worker 路径服从 `runtimeAdapter.selected`：先生成并行安全 batch；所选 adapter 支持并行时，每个安全 packet 启动一个 worker。首选 adapter 探测失败会自动继续安全降级；普通实现任务最终可在当前控制器串行完成，独立 review 仍必须使用独立执行器。每个结果都用 `ospec execute complete` 持久化。
+- 多 worker 执行服从 `runtimeAdapter.selected.nativeSubagent`：先生成并行安全 batch；所选 adapter 支持并行时，每个安全 packet 启动一个 worker。capability 缺失、过期或 target 不匹配时必须阻断，不得降级到 agent CLI 或当前 controller。所有 native wait 单次最多 60 秒，每个完成结果都立即持久化并重新 tick。
 - `ospec execute orchestrate`、`ospec execute launch ... --run --command "..."` 和 `ospec execute review ... --run --command "..."` 已移除 agent 执行能力；它们会在启动进程或创建 run artifact 之前返回迁移错误。
 - blocked、needs-context 或 failed worker run 的问题修复后，用 `ospec execute retry [changes/active/<change>] --task task-id` 写入 `artifacts/agents/retries/`，把 task 重新打开，并生成新的 dispatch packet。已完成任务不会被默认重试；确需覆盖时必须显式传 `--force`。
 - 每个 worker task 完成后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 做一次合并 code review（一次同时审 spec 符合性与代码质量）。单任务决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等这一次合并 review 通过后才可派发。
@@ -197,7 +211,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.2
+npm install -g @clawplays/ospec-cli@1.8.5
 ospec update [path]
 ```
 

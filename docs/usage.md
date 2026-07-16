@@ -18,6 +18,12 @@ ospec new <change-name> [path]
 ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
 ospec progress [changes/active/<change>]
 ospec run status [path]
+ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N
+ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
+ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute doc-review [changes/active/<change>] [--stage design|plan]
@@ -62,6 +68,14 @@ ospec plugins status [path]
 ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
+
+`loop configure --allow-path`, `--allow-command`, and `--allow-command-policy` replace the complete selected allowlist group and print a diff; they never append silently. Prefer the task-graph `derive -> check -> apply` flow for L3. Apply uses compare-and-swap hashes, and permission expansion requires explicit `--approve-expansion`.
+
+Specialist design and plan reviews are bounded in 1.8.3. The default is two completed rounds and 30 minutes per stage with a no-progress circuit breaker. Cache hits, pending reuse, heartbeats, and recovery of the same dispatch do not consume rounds. A guard cannot be bypassed with `--force`; one extra round requires an existing required user decision bound to the stage, current review-context hash, round, and explicit `--review-approval-option`. Only that exact selected option authorizes one dispatch.
+
+1.8.4 bounds automatic task-review repair and grouped final-review repair to two rounds each. Approved upstream reviews remain valid across shared-file edits only when every changed path is attributable to a completed transitive downstream task; that downstream review packet inherits the upstream contracts as regression obligations. A blocked final review stops for blocker resolution instead of entering grouped repair. Use `--max-task-repair-rounds N` or `--max-final-repair-rounds N` only with explicit user authorization after inspecting unresolved findings.
+
+1.8.5 prevents native child waits from freezing a Goal controller. Codex/GPT `wait_agent`, Claude Task polling, and every other native adapter must return within 60 seconds, refresh live heartbeats before `heartbeatDueAt`, persist each finished result immediately, and re-tick. Unrelated Git HEAD movement no longer invalidates an unchanged task review, while final review remains bound to both snapshot and HEAD. Unknown native capacity caps implementation batches at two without reducing conflict-safe review parallelism. New broad tasks with more than six targets must be split or include `scope_reason`.
 
 ## Plugin Quick Start
 
@@ -197,7 +211,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.2
+npm install -g @clawplays/ospec-cli@1.8.5
 ospec update [path]
 ```
 

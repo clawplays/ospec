@@ -40,7 +40,8 @@ tags: [conventions, workflow, change, ospec]
 - `Announce-Before-Act`：绝不静默执行——宣告 OSpec skill 与阶段、命令与产物、所选 runtime adapter、worker 数量与实际机制，以及进度被哪个门禁阻塞
 - `Brainstorm-First`：每个 goal 开局先做一次简短头脑风暴再锁定设计，把方向、架构、API、数据、UI、风险、范围的未决问题逐个问用户；优先升起持久 decision gate 而非静默假设，仅当用户明确让 AI 自行决定时才在 `design.md` 写入假设并标注待确认
 - `implementation-plan.md` 必须从已确认的 `design.md` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突
-- `artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色
+- `artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色。生成的串行 task 还必须包含 `serial_reason`；显式限制为单 worker 时记录 `maxParallelReason`。超过六个目标的 task 必须拆分，或用具体的 `scope_reason` 说明其原子边界
+- L3 使用 CAS 和显式扩权确认从任务图 derive/check/apply 精确白名单；重复 configure 参数是替换而非追加
 - `tasks.md` 必须从 `artifacts/agents/task-graph.json` 推导；若 `tasks.md` 已存在但上游文档仍是模板，先补上游文档再对齐任务
 - 执行经典 change 时，`tasks.md` 直接从 `proposal.md` 和实现范围推导
 

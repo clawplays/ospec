@@ -18,6 +18,12 @@ ospec new <change-name> [path]
 ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
+ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N
+ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
+ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
+ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute doc-review [changes/active/<change>] [--stage design|plan]
@@ -61,6 +67,14 @@ ospec plugins status [path]
 ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
+
+تستبدل الخيارات `loop configure --allow-path` و`--allow-command` و`--allow-command-policy` مجموعة allowlist المحددة بالكامل وتعرض الفرق، ولا تضيف صلاحيات ضمنيا. في L3 استخدم مسار task graph: `derive -> check -> apply`. يستخدم apply قيم CAS، ويتطلب توسيع الصلاحيات الخيار الصريح `--approve-expansion`.
+
+يضع الإصدار 1.8.3 حدودا لمراجعات design وplan المتخصصة: افتراضيا جولتان مكتملتان و30 دقيقة لكل stage مع قاطع no-progress. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز؛ وتتطلب الجولة الإضافية required user decision مسجلا ومرتبطا بالـ stage وreview-context hash الحالي ورقم الجولة وخيار `--review-approval-option` الصريح، ولا يسمح إلا اختيار هذا الخيار بعملية dispatch واحدة.
+
+يحدد الإصدار 1.8.4 كل من task-review repair التلقائية وgrouped final-review repair بجولتين افتراضيا. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair. لا ترفع `--max-task-repair-rounds N` أو `--max-final-repair-rounds N` إلا بعد فحص findings غير المحلولة والحصول على تفويض صريح من المستخدم.
+
+يمنع الإصدار 1.8.5 انتظار native child من تجميد Goal controller. يجب أن يعيد `wait_agent` في Codex/GPT وpolling لـ Claude Task وكل native adapter آخر التحكم خلال 60 ثانية، ويحدّث heartbeat قبل `heartbeatDueAt`، ويحفظ كل نتيجة مكتملة فوراً، ثم يعيد tick. لا تعيد حركة Git HEAD وحدها task review عندما تبقى target snapshot دون تغيير، بينما تظل final review مرتبطة بدقة بالـ snapshot وHEAD. عند غياب native capacity يقتصر implementation batch على مهمتين من دون تقليل توازي review الآمن. يجب تقسيم أي task جديدة تتجاوز ستة targets أو إضافة `scope_reason`.
 
 ## البدء السريع مع الإضافات
 
@@ -196,7 +210,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.2
+npm install -g @clawplays/ospec-cli@1.8.5
 ospec update [path]
 ```
 

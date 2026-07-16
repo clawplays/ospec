@@ -2,7 +2,7 @@ import { FileService } from './FileService';
 import { VerificationService } from './VerificationService';
 import { HarnessCapability, NativeLoopCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { LayoutConfigInput } from './TriageService';
-import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
+import { RuntimeExecutionModelSelectionInput, RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService, RuntimeNativeHarnessExecutionMetadata } from './RuntimeExecutionAdapterService';
 import { TaskGraphExecutionService, TaskVerificationLoopBinding, TaskWorkerToolTarget } from './TaskGraphExecutionService';
 export type LoopSafetyLevel = 'L1' | 'L2' | 'L3';
 export type LoopStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'done';
@@ -19,6 +19,44 @@ export interface LoopStopConditions {
 export interface LoopAllowlist {
     paths: string[];
     commands: Array<string | LoopCommandPolicy>;
+    metadata?: LoopAllowlistMetadata;
+}
+export interface LoopAllowlistMetadata {
+    source: 'manual' | 'task-graph' | 'clear';
+    pathSource?: 'manual' | 'task-graph' | 'clear';
+    commandSource?: 'manual' | 'task-graph' | 'clear';
+    currentHash: string;
+    candidateHash: string | null;
+    taskGraphHash: string | null;
+    updatedAt: string;
+}
+export interface LoopAllowlistDiff {
+    addedPaths: string[];
+    removedPaths: string[];
+    addedCommands: Array<string | LoopCommandPolicy>;
+    removedCommands: Array<string | LoopCommandPolicy>;
+}
+export interface LoopAllowlistDerivation {
+    source: 'task-graph';
+    current: LoopAllowlist;
+    candidate: LoopAllowlist;
+    currentHash: string;
+    candidateHash: string;
+    taskGraphHash: string;
+    diff: LoopAllowlistDiff;
+    hasExpansion: boolean;
+    matchesCurrent: boolean;
+    issues: string[];
+    canApply: boolean;
+}
+export interface LoopAllowlistApplyOptions {
+    expectedCurrentHash: string;
+    expectedCandidateHash: string;
+    expectedTaskGraphHash?: string;
+    approveExpansion?: boolean;
+}
+export interface LoopAllowlistClearOptions {
+    expectedCurrentHash?: string;
 }
 export interface LoopCommandPolicy {
     command: string;
@@ -31,7 +69,10 @@ export interface LoopSchedule {
 }
 export interface LoopEfficiency {
     maxParallel: number;
+    maxParallelReason?: string | null;
     noProgressLimit: number;
+    maxTaskRepairRounds: number;
+    maxFinalRepairRounds: number;
     comprehensionReviewEvery: number;
     freshContext: boolean;
     promptMaxChars: number;
@@ -50,6 +91,7 @@ export interface LoopActionItem {
     usageKey?: string;
     tokenAllowance?: number | null;
     heartbeatCommand?: string;
+    heartbeatDueAt?: string;
     resultCommand?: string;
     verificationCommand?: string | null;
     verificationBinding?: TaskVerificationLoopBinding;
@@ -57,6 +99,7 @@ export interface LoopActionItem {
     controllerProvenanceRequired?: boolean;
     nativeSessionTarget?: string;
     nativeSessionReportedAt?: string;
+    modelSelection?: RuntimeExecutionModelSelectionInput;
 }
 export interface PendingControllerAction {
     actionId: string;
@@ -82,6 +125,7 @@ export interface PendingControllerActionItemState {
     status: PendingControllerActionItemStatus;
     issuedAt: string;
     heartbeatAt: string | null;
+    heartbeatDueAt?: string;
     leaseExpiresAt: string;
     executorId: string | null;
     completedAt: string | null;
@@ -103,8 +147,23 @@ export interface LoopConfig {
     stopConditions: LoopStopConditions;
     allowlist: LoopAllowlist;
     efficiency: LoopEfficiency;
+    documentReviewGovernance?: LoopDocumentReviewGovernance;
     capability: HarnessCapability | null;
+    nativeHarnessMetadata?: RuntimeNativeHarnessExecutionMetadata | null;
     createdAt: string;
+}
+export interface LoopDocumentReviewGovernanceStage {
+    maxCompletedRounds: number;
+    maxMinutes: number;
+    budgetTokens: number | null;
+}
+export interface LoopDocumentReviewGovernance {
+    stages: {
+        design: LoopDocumentReviewGovernanceStage;
+        plan: LoopDocumentReviewGovernanceStage;
+    };
+    noProgressLimit: number;
+    tokenReservation: number;
 }
 export interface LoopState {
     version: string;
@@ -124,6 +183,7 @@ export interface LoopState {
     noProgressCount: number;
     progressFingerprint: string | null;
     lastFeedback: string | null;
+    lastBatchDiagnostics?: LoopBatchDiagnostics | null;
 }
 export interface LoopRunLogEntry {
     event?: 'state' | 'tick_metrics' | 'document_review';
@@ -150,6 +210,17 @@ export interface LoopMetrics {
     noProgressCount: number;
     comprehensionDebtCounter: number;
 }
+export interface LoopBatchDiagnostics {
+    configuredMaxParallel: number;
+    configuredMaxParallelReason: string | null;
+    graphSafeCandidates: number;
+    tokenFundedLimit: number;
+    adapterSupportsParallel: boolean;
+    adapterCapacity: number | null;
+    adapterCapacityKnown: boolean;
+    effectiveEmitted: number;
+    deferredReasons: string[];
+}
 export interface LoopTickResult {
     changePath: string;
     iteration: number;
@@ -163,6 +234,7 @@ export interface LoopTickResult {
     nextInstruction: string;
     feedback: string | null;
     metrics: LoopMetrics;
+    batchDiagnostics: LoopBatchDiagnostics | null;
 }
 export interface LoopExecutionResult {
     actionItemId: string;
@@ -193,10 +265,14 @@ export interface LoopConfigureOptions {
     allowCommands?: string[];
     allowCommandPolicies?: LoopCommandPolicy[];
     maxParallel?: number;
+    maxParallelReason?: string | null;
     noProgressLimit?: number;
+    maxTaskRepairRounds?: number;
+    maxFinalRepairRounds?: number;
     comprehensionReviewEvery?: number;
     freshContext?: boolean;
     promptMaxChars?: number;
+    nativeHarnessMetadata?: RuntimeNativeHarnessExecutionMetadata | null;
 }
 export interface LoopServiceDependencies {
     taskGraphExecutionService?: TaskGraphExecutionService;
@@ -240,6 +316,11 @@ export declare class LoopService {
     private setLevelUnlocked;
     configure(changePath: string, options: LoopConfigureOptions): Promise<LoopConfig>;
     private configureUnlocked;
+    deriveAllowlist(changePath: string): Promise<LoopAllowlistDerivation>;
+    checkAllowlist(changePath: string): Promise<LoopAllowlistDerivation>;
+    applyAllowlist(changePath: string, options: LoopAllowlistApplyOptions): Promise<LoopAllowlistDerivation>;
+    clearAllowlist(changePath: string, options?: LoopAllowlistClearOptions): Promise<LoopAllowlist>;
+    private deriveAllowlistUnlocked;
     pause(changePath: string): Promise<LoopState>;
     resume(changePath: string): Promise<LoopState>;
     heartbeatExecution(changePath: string, heartbeat: LoopExecutionHeartbeat): Promise<LoopState>;
@@ -255,6 +336,7 @@ export declare class LoopService {
     private recoverExpiredActionsUnlocked;
     private ensurePendingItemStates;
     private requireExecutorId;
+    private recommendedHeartbeatDueAt;
     private extendControllerCapabilitySession;
     private isTerminalItemStatus;
     private executionResultMatches;
@@ -290,14 +372,18 @@ export declare class LoopService {
     }>;
     private gateResult;
     private runtimeAdapterGateResult;
+    private preparedBatchGateResult;
     private result;
     private normalizeConfig;
     private normalizeState;
     private defaultEfficiency;
+    private defaultDocumentReviewGovernance;
+    private normalizeDocumentReviewGovernance;
     private isControllerCapabilityCurrent;
     private assertActionNativeSession;
     private resolveRuntimeAdapter;
-    private getBudgetedBatchLimit;
+    private getTokenFundedLimit;
+    private prepareLoopBatch;
     private allocateTokenAllowances;
     private recomputeTokenUsage;
     private reportSummary;
@@ -310,6 +396,7 @@ export declare class LoopService {
     private logEntry;
     private isPathAllowed;
     private isCommandAllowed;
+    private isCommandCwdWithinProject;
     private normalizeCommandAllowlist;
     private normalizeCommandPolicies;
     private tokenizeSafeCommand;
@@ -320,6 +407,19 @@ export declare class LoopService {
     private isSameCurrentCapabilityAssertion;
     private boundPrompt;
     private uniqueNonEmpty;
+    private collectDerivedCommand;
+    private uniqueDerivedCommands;
+    private normalizeAllowlistMetadata;
+    diffAllowlists(current: LoopAllowlist, candidate: LoopAllowlist): LoopAllowlistDiff;
+    private hasAllowlistExpansion;
+    private allowlistCommandKey;
+    private allowlistPathKey;
+    private allowlistHashInput;
+    private canonicalCommand;
+    private hashAllowlist;
+    private sha256;
+    private stableStringify;
+    private requireHash;
     private positiveInteger;
     private nonNegativeInteger;
     private assignDefined;

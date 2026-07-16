@@ -57,7 +57,7 @@ tags: [ai, guide, ospec]
 - `IDE-CONTROLLER-AUTO-DISPATCH`：L1 只报告；L2/L3 由 IDE 主 AI 负责 tick -> 通过每个 action 的 `runtimeAdapter.selected.nativeSubagent` 执行全部 `actions[]` -> 写 heartbeat/result evidence -> 立即再 tick。`actions[]` 为空但存在 `pending` 时只观察，绝不能重派
 - agent CLI 执行已移除；`loop watch`、`execute orchestrate`、`launch --run --command` 和 `review --run --command` 都会在启动进程或创建 run artifact 前失败
 - required decision 会阻断所有安全级。L1 不产生可执行 action；L3 还要求 path 和 command allowlist 都非空，并阻断越界目标文件或验证命令
-- 省 token（不改变任何门禁）：`ospec execute …` 命令带 `--brief`，用 `ospec execute status --brief` 驱动每一步，并消费 loop action 引用的 packet path；不要每轮重读或内嵌完整 `task-graph.json`、`worker-status.md`、`launch-plan.md` 或全部 goal 文档——完整产物仍写盘，只在需要细节时打开
+- 省 token（不改变任何门禁）：`ospec execute …` 和 `ospec loop status` 使用 `--brief`，从简要状态和 action 的 packet path 驱动每一步；复审先读上轮 findings sidecar/解决摘要，再按需打开完整历史，不要每轮重读或内嵌完整任务图、worker status、launch plan 或全部 goal 文档
 - 修复 blocked、needs-context 或 failed native work 后，用 `ospec execute retry` 重新派发；已完成任务默认不得 retry，除非显式 `--force`
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 记录根因和修复证据；该命令只记录 evidence，不会运行 shell 命令
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 记录 TDD cycle evidence；该命令只记录 evidence，不会运行 shell 命令
@@ -145,7 +145,7 @@ X-Goog-Api-Key = "your-stitch-api-key"
 ## 执行效率策略
 
 - `.skillrc.workflow.document_review_policy` 默认 `always`；`adaptive` 只有在目标文档显式声明 `risk_level: low`（或 `none`），且没有 API、安全、迁移、数据、架构、外部集成或范围风险信号时才使用确定性 inline preflight。风险上下文缺失或无法解析时必须派独立 reviewer。
-- worker/reviewer 使用逻辑 model profile；实际模型从 `.skillrc.workflow.model_profiles` 按 target 解析，未配置时明确回退 harness 默认。
+- worker/reviewer 使用逻辑 model profile，并按实际 dispatch target（包括 launch override）解析。requested/configured model 与 provider observed model 必须分开；没有 provider/usage 证据时 observed model 是未知，不能宣称已选择。
 - 命令执行器会收到 `OSPEC_USAGE_FILE` 并自动归集该 sidecar；`ospec execute complete ... --usage-file usage.json` 继续作为手工入口。指标必须记录来源、实际观测字段和 complete/partial/missing 覆盖率，未上报的计数不能显示成已测得的零。
 - reviewer 同时写人类可读 Markdown 和相邻的 `*.findings.json`，其中包含稳定 ID、严重度、类别、问题说明、文件/行证据、需求引用和修复范围。旧 Markdown 在 repair 前会生成兼容 sidecar。
 - 对每个声明的 `documentation_updates` 路径，dispatch 与 complete 记录规范化内容 hash。新流程中文件存在但没有有效内容变化时，文档门禁失败；没有历史基线的旧流程标记为无法验证。归档索引会从已完成功能直接链接本次更新的长期项目文档。

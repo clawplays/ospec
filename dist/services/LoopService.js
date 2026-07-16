@@ -54,6 +54,7 @@ const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
 const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
 const MAX_ACTION_LEASE_MS = 30 * 60 * 1000;
+const UNKNOWN_IMPLEMENTATION_CAPACITY = 2;
 const MIN_ACTION_TOKEN_RESERVATION = 1000;
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
 const RETRY_REVIEW_DECISIONS = new Set(['NEEDS_CHANGES', 'BLOCKED']);
@@ -131,7 +132,9 @@ class LoopService {
             stopConditions: { testCommands: [], maxIterations: null, expiresAt: null, budgetTokens: null, budgetMinutes: null },
             allowlist: { paths: [], commands: [] },
             efficiency: this.defaultEfficiency(),
+            documentReviewGovernance: this.defaultDocumentReviewGovernance(),
             capability,
+            nativeHarnessMetadata: null,
             createdAt: now,
         };
         await this.fileService.writeJSON(configPath, config);
@@ -153,6 +156,7 @@ class LoopService {
             noProgressCount: 0,
             progressFingerprint: null,
             lastFeedback: null,
+            lastBatchDiagnostics: null,
         }));
         if (!(await this.fileService.exists(this.runLogPath(changePath)))) {
             await this.fileService.writeFile(this.runLogPath(changePath), '');
@@ -203,12 +207,14 @@ class LoopService {
             || options.interactive !== undefined
             || options.nativeLoopCapability !== undefined
             || options.nativeSubagentCapability !== undefined;
+        let capabilitySessionChanged = false;
         if (capabilityChanged) {
             const now = this.now();
             if (this.isSameCurrentCapabilityAssertion(config, options, now, targetChanged)) {
                 config.capability.expiresAt = new Date(now.getTime() + CapabilityProbeService_1.DEFAULT_CAPABILITY_SESSION_TTL_MS).toISOString();
             }
             else {
+                capabilitySessionChanged = true;
                 config.capability = (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({
                     target: config.target,
                     primitive: config.primitive,
@@ -217,6 +223,21 @@ class LoopService {
                     nativeSubagentCapability: options.nativeSubagentCapability,
                     now,
                 });
+            }
+            if (capabilitySessionChanged && options.nativeHarnessMetadata === undefined)
+                config.nativeHarnessMetadata = null;
+        }
+        if (options.nativeHarnessMetadata !== undefined) {
+            if (options.nativeHarnessMetadata === null) {
+                config.nativeHarnessMetadata = null;
+            }
+            else {
+                const metadata = options.nativeHarnessMetadata;
+                if (metadata.target !== config.target
+                    || metadata.controllerSessionReportedAt !== config.capability?.reportedAt) {
+                    throw new Error('Native harness execution metadata must match the current Loop target and controller capability session.');
+                }
+                config.nativeHarnessMetadata = JSON.parse(JSON.stringify(metadata));
             }
         }
         if (options.executionModel)
@@ -234,6 +255,10 @@ class LoopService {
         if (config.stopConditions.expiresAt && !Number.isFinite(Date.parse(config.stopConditions.expiresAt))) {
             throw new Error('expiresAt must be a valid ISO date/time or null.');
         }
+        const replacesPaths = options.allowPaths !== undefined;
+        const replacesCommands = options.allowCommands !== undefined
+            || options.allowCommandPolicies !== undefined;
+        const replacesAllowlist = replacesPaths || replacesCommands;
         if (options.allowPaths)
             config.allowlist.paths = this.uniqueNonEmpty(options.allowPaths).map(item => item.replace(/\\/g, '/'));
         if (options.allowCommands || options.allowCommandPolicies) {
@@ -242,10 +267,42 @@ class LoopService {
                 ...this.normalizeCommandPolicies(options.allowCommandPolicies || []),
             ];
         }
+        if (replacesAllowlist) {
+            const previousMetadata = config.allowlist.metadata;
+            const previousSource = previousMetadata?.source || 'manual';
+            config.allowlist.metadata = {
+                source: 'manual',
+                pathSource: replacesPaths
+                    ? 'manual'
+                    : previousMetadata?.pathSource || previousSource,
+                commandSource: replacesCommands
+                    ? 'manual'
+                    : previousMetadata?.commandSource || previousSource,
+                currentHash: this.hashAllowlist(config.allowlist),
+                candidateHash: null,
+                taskGraphHash: null,
+                updatedAt: this.now().toISOString(),
+            };
+        }
         if (options.maxParallel !== undefined)
             config.efficiency.maxParallel = this.positiveInteger(options.maxParallel, 'maxParallel');
+        if (options.maxParallel !== undefined
+            && options.maxParallelReason === undefined
+            && config.efficiency.maxParallel >= this.defaultEfficiency().maxParallel) {
+            config.efficiency.maxParallelReason = null;
+        }
+        if (options.maxParallelReason !== undefined) {
+            const reason = options.maxParallelReason === null ? '' : String(options.maxParallelReason).trim();
+            if (reason.length > 500)
+                throw new Error('maxParallelReason must be 500 characters or fewer.');
+            config.efficiency.maxParallelReason = reason || null;
+        }
         if (options.noProgressLimit !== undefined)
             config.efficiency.noProgressLimit = this.positiveInteger(options.noProgressLimit, 'noProgressLimit');
+        if (options.maxTaskRepairRounds !== undefined)
+            config.efficiency.maxTaskRepairRounds = this.positiveInteger(options.maxTaskRepairRounds, 'maxTaskRepairRounds');
+        if (options.maxFinalRepairRounds !== undefined)
+            config.efficiency.maxFinalRepairRounds = this.positiveInteger(options.maxFinalRepairRounds, 'maxFinalRepairRounds');
         if (options.comprehensionReviewEvery !== undefined)
             config.efficiency.comprehensionReviewEvery = this.nonNegativeInteger(options.comprehensionReviewEvery, 'comprehensionReviewEvery');
         if (options.freshContext !== undefined)
@@ -255,6 +312,189 @@ class LoopService {
         config.version = '2.0';
         await this.fileService.writeJSON(this.configPath(changePath), config);
         return config;
+    }
+    async deriveAllowlist(changePath) {
+        await this.assertExists(changePath);
+        return this.deriveAllowlistUnlocked(path.resolve(changePath));
+    }
+    async checkAllowlist(changePath) {
+        return this.deriveAllowlist(changePath);
+    }
+    async applyAllowlist(changePath, options) {
+        await this.assertExists(changePath);
+        return this.withControllerLease(changePath, async () => {
+            const derivation = await this.deriveAllowlistUnlocked(path.resolve(changePath));
+            const expectedCurrentHash = this.requireHash(options.expectedCurrentHash, 'expectedCurrentHash');
+            const expectedCandidateHash = this.requireHash(options.expectedCandidateHash, 'expectedCandidateHash');
+            if (derivation.currentHash !== expectedCurrentHash) {
+                throw new Error(`Allowlist changed since derivation (expected current hash ${expectedCurrentHash}, found ${derivation.currentHash}). Re-run allowlist derive.`);
+            }
+            if (derivation.candidateHash !== expectedCandidateHash) {
+                throw new Error(`Task-graph allowlist candidate changed since derivation (expected candidate hash ${expectedCandidateHash}, found ${derivation.candidateHash}). Re-run allowlist derive.`);
+            }
+            if (options.expectedTaskGraphHash !== undefined
+                && derivation.taskGraphHash !== this.requireHash(options.expectedTaskGraphHash, 'expectedTaskGraphHash')) {
+                throw new Error(`Task graph changed since derivation (expected hash ${options.expectedTaskGraphHash}, found ${derivation.taskGraphHash}). Re-run allowlist derive.`);
+            }
+            if (!derivation.canApply) {
+                throw new Error(`Task-graph allowlist cannot be applied: ${derivation.issues.join('; ')}`);
+            }
+            if (derivation.hasExpansion && options.approveExpansion !== true) {
+                throw new Error('Task-graph allowlist expands permissions. Re-run with explicit expansion approval after reviewing the added paths and commands.');
+            }
+            const config = await this.readConfig(changePath);
+            config.allowlist = {
+                paths: [...derivation.candidate.paths],
+                commands: [...derivation.candidate.commands],
+                metadata: {
+                    source: 'task-graph',
+                    pathSource: 'task-graph',
+                    commandSource: 'task-graph',
+                    currentHash: this.hashAllowlist(derivation.candidate),
+                    candidateHash: derivation.candidateHash,
+                    taskGraphHash: derivation.taskGraphHash,
+                    updatedAt: this.now().toISOString(),
+                },
+            };
+            await this.fileService.writeJSON(this.configPath(changePath), config);
+            return {
+                ...derivation,
+                current: config.allowlist,
+                currentHash: this.hashAllowlist(config.allowlist),
+                matchesCurrent: true,
+            };
+        });
+    }
+    async clearAllowlist(changePath, options = {}) {
+        await this.assertExists(changePath);
+        return this.withControllerLease(changePath, async () => {
+            const config = await this.readConfig(changePath);
+            const currentHash = this.hashAllowlist(config.allowlist);
+            if (options.expectedCurrentHash !== undefined
+                && currentHash !== this.requireHash(options.expectedCurrentHash, 'expectedCurrentHash')) {
+                throw new Error(`Allowlist changed before clear (expected current hash ${options.expectedCurrentHash}, found ${currentHash}).`);
+            }
+            const cleared = { paths: [], commands: [] };
+            cleared.metadata = {
+                source: 'clear',
+                pathSource: 'clear',
+                commandSource: 'clear',
+                currentHash: this.hashAllowlist(cleared),
+                candidateHash: null,
+                taskGraphHash: null,
+                updatedAt: this.now().toISOString(),
+            };
+            config.allowlist = cleared;
+            await this.fileService.writeJSON(this.configPath(changePath), config);
+            return cleared;
+        });
+    }
+    async deriveAllowlistUnlocked(changePath) {
+        const config = await this.readConfig(changePath);
+        const graphPath = path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
+        if (!(await this.fileService.exists(graphPath))) {
+            throw new Error(`Task graph not found at ${graphPath}`);
+        }
+        const graphContent = await this.fileService.readFile(graphPath);
+        let graph;
+        try {
+            graph = JSON.parse(graphContent.replace(/^\uFEFF/, ''));
+        }
+        catch (error) {
+            throw new Error(`Task graph is not valid JSON: ${error?.message || error}`);
+        }
+        const taskGraphHash = this.sha256(graphContent);
+        const issues = [];
+        const paths = [];
+        const commands = [];
+        const tasks = Array.isArray(graph?.tasks) ? graph.tasks : [];
+        if (tasks.length === 0)
+            issues.push('task graph tasks must contain at least one task');
+        const projectRoot = await this.findProjectRootForSafety(changePath);
+        for (const [index, task] of tasks.entries()) {
+            const taskId = String(task?.id || `tasks[${index}]`).trim();
+            const targetFiles = Array.isArray(task?.target_files) ? task.target_files : [];
+            if (!Array.isArray(task?.target_files))
+                issues.push(`${taskId}: target_files must be an array`);
+            const normalizedTargets = new Set();
+            for (const rawTarget of targetFiles) {
+                if (typeof rawTarget !== 'string') {
+                    issues.push(`${taskId}: target_files contains a non-string value`);
+                    continue;
+                }
+                const normalized = this.normalizeAllowlistedPath(rawTarget);
+                if (!normalized || !(await this.resolveRealPathBoundary(projectRoot, normalized))) {
+                    issues.push(`${taskId}: unsafe target file path (${rawTarget})`);
+                    continue;
+                }
+                normalizedTargets.add(normalized);
+                paths.push(normalized);
+            }
+            const documentationUpdates = Array.isArray(task?.documentation_updates) ? task.documentation_updates : [];
+            if (!Array.isArray(task?.documentation_updates))
+                issues.push(`${taskId}: documentation_updates must be an array`);
+            for (const rawDocumentationPath of documentationUpdates) {
+                const normalized = typeof rawDocumentationPath === 'string'
+                    ? this.normalizeAllowlistedPath(rawDocumentationPath)
+                    : null;
+                if (!normalized) {
+                    issues.push(`${taskId}: invalid documentation_updates path (${String(rawDocumentationPath)})`);
+                }
+                else if (!normalizedTargets.has(normalized)) {
+                    issues.push(`${taskId}: documentation update is missing from target_files (${normalized})`);
+                }
+            }
+            const verificationCommands = Array.isArray(task?.verification_commands) ? task.verification_commands : [];
+            if (!Array.isArray(task?.verification_commands))
+                issues.push(`${taskId}: verification_commands must be an array`);
+            for (const rawCommand of verificationCommands) {
+                await this.collectDerivedCommand(projectRoot, rawCommand, `${taskId}: verification command`, commands, issues);
+            }
+        }
+        for (const command of config.stopConditions.testCommands) {
+            await this.collectDerivedCommand(projectRoot, command, 'loop test command', commands, issues);
+        }
+        const candidateCore = {
+            paths: this.uniqueNonEmpty(paths),
+            commands: this.uniqueDerivedCommands(commands),
+        };
+        const current = {
+            paths: [...config.allowlist.paths],
+            commands: [...config.allowlist.commands],
+            ...(config.allowlist.metadata ? { metadata: { ...config.allowlist.metadata } } : {}),
+        };
+        const currentHash = this.hashAllowlist(current);
+        const candidateHash = this.sha256(this.stableStringify({
+            allowlist: this.allowlistHashInput(candidateCore),
+            taskGraphHash,
+        }));
+        const candidate = {
+            ...candidateCore,
+            metadata: {
+                source: 'task-graph',
+                pathSource: 'task-graph',
+                commandSource: 'task-graph',
+                currentHash: this.hashAllowlist(candidateCore),
+                candidateHash,
+                taskGraphHash,
+                updatedAt: this.now().toISOString(),
+            },
+        };
+        const diff = this.diffAllowlists(current, candidate);
+        const hasExpansion = this.hasAllowlistExpansion(current, candidate);
+        return {
+            source: 'task-graph',
+            current,
+            candidate,
+            currentHash,
+            candidateHash,
+            taskGraphHash,
+            diff,
+            hasExpansion,
+            matchesCurrent: !hasExpansion && diff.removedPaths.length === 0 && diff.removedCommands.length === 0,
+            issues: this.uniqueNonEmpty(issues),
+            canApply: issues.length === 0,
+        };
     }
     async pause(changePath) {
         await this.assertExists(changePath);
@@ -313,6 +553,7 @@ class LoopService {
             itemState.status = 'running';
             itemState.heartbeatAt = now.toISOString();
             itemState.leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
+            itemState.heartbeatDueAt = new Date(now.getTime() + Math.floor(leaseMs / 2)).toISOString();
             itemState.executorId = executorId;
             if (actionItem?.usageKey
                 && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
@@ -548,6 +789,8 @@ class LoopService {
             if (current) {
                 current.tokenAllowance = current.tokenAllowance ?? item.tokenAllowance ?? null;
                 current.tokenReservation = Math.max(0, Number(current.tokenReservation ?? current.tokenAllowance) || 0);
+                current.heartbeatDueAt = current.heartbeatDueAt
+                    || this.recommendedHeartbeatDueAt(current.heartbeatAt || current.issuedAt, current.leaseExpiresAt);
                 return current;
             }
             return {
@@ -555,6 +798,7 @@ class LoopService {
                 status: 'issued',
                 issuedAt: pending.issuedAt,
                 heartbeatAt: null,
+                heartbeatDueAt: new Date(leaseBaseMs + Math.floor(DEFAULT_ACTION_LEASE_MS / 2)).toISOString(),
                 leaseExpiresAt: new Date(leaseBaseMs + DEFAULT_ACTION_LEASE_MS).toISOString(),
                 executorId: null,
                 completedAt: null,
@@ -572,6 +816,14 @@ class LoopService {
         if (!executorId)
             throw new Error('Executor ID must be a non-empty string.');
         return executorId;
+    }
+    recommendedHeartbeatDueAt(anchorIso, leaseExpiresAt) {
+        const anchor = Date.parse(anchorIso);
+        const expiry = Date.parse(leaseExpiresAt);
+        if (!Number.isFinite(anchor) || !Number.isFinite(expiry) || expiry <= anchor) {
+            return leaseExpiresAt;
+        }
+        return new Date(anchor + Math.floor((expiry - anchor) / 2)).toISOString();
     }
     async extendControllerCapabilitySession(changePath, now) {
         const config = await this.readConfig(changePath);
@@ -914,91 +1166,127 @@ class LoopService {
         if (workspaceReadinessError)
             return this.gateResult(resolved, state, trigger, workspaceReadinessError);
         if (verificationRepairRequired) {
-            const adapter = await this.resolveRuntimeAdapter(resolved, config, true, now);
-            if (adapter.blocked)
-                return this.runtimeAdapterGateResult(resolved, state, trigger, 'final-review', adapter);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, 1, true, now, 'final-review');
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'final-review', prepared);
+            }
             await this.resetFinalReviewForVerificationFailure(resolved, feedback);
             const review = await this.taskGraph.review(resolved);
-            return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], `${feedback || 'Verification failed.'} Independent final review is required before grouped repair.`, false);
+            return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], `${feedback || 'Verification failed.'} Independent final review is required before grouped repair.`, false, prepared);
         }
         const reviewTasks = report.completedTasks.filter(task => !task.review || !APPROVED_REVIEW_DECISIONS.has(task.review.decision));
         const blockedRetryTasks = report.blockedTasks
             .map(item => item.task)
             .filter(task => task.status === 'BLOCKED' || task.status === 'NEEDS_CONTEXT');
         if (blockedRetryTasks.length > 0) {
-            const selected = blockedRetryTasks.slice(0, this.getBudgetedBatchLimit(config, state, blockedRetryTasks.length));
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(blockedRetryTasks);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < blockedRetryTasks.length ? ['graph_conflict_or_serial_task'] : []);
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+            }
+            const selected = graphSafe.slice(0, prepared.limit);
             const safetyError = await this.validateTaskSafety(resolved, config, selected);
             if (safetyError)
                 return this.gateResult(resolved, state, trigger, safetyError);
             state.currentStep = 'repair';
-            const dispatches = [];
-            for (const task of selected) {
-                const retry = await this.taskGraph.retryWorkerRun(resolved, {
+            const retry = await this.taskGraph.retryWorkerRuns(resolved, {
+                tasks: selected.map(task => ({
                     taskId: task.id,
                     force: true,
+                    trigger: 'worker_status',
                     summary: `Loop retry after worker status ${task.status}. ${feedback || ''}`.trim(),
-                });
-                dispatches.push(...retry.dispatch.dispatches);
-            }
-            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed);
+                })),
+            });
+            return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
         const needsRepair = reviewTasks.filter(task => RETRY_REVIEW_DECISIONS.has(task.review?.decision || ''));
         if (needsRepair.length > 0) {
-            const selected = needsRepair.slice(0, this.getBudgetedBatchLimit(config, state, needsRepair.length));
+            const repairRounds = new Map(await Promise.all(needsRepair.map(async (task) => [
+                task.id,
+                await this.taskGraph.countTaskReviewRepairRounds(resolved, task.id),
+            ])));
+            const eligibleRepairs = needsRepair.filter(task => (repairRounds.get(task.id) || 0) < config.efficiency.maxTaskRepairRounds);
+            const exhaustedRepairs = needsRepair.filter(task => !eligibleRepairs.includes(task));
+            if (eligibleRepairs.length === 0) {
+                return this.gateResult(resolved, state, trigger, `Loop blocked: task-review repair limit reached (${exhaustedRepairs.map(task => `${task.id}=${repairRounds.get(task.id)}/${config.efficiency.maxTaskRepairRounds}`).join(', ')}). Inspect unresolved findings and require explicit user authorization before raising --max-task-repair-rounds.`);
+            }
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(eligibleRepairs);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', [
+                ...(graphSafe.length < eligibleRepairs.length ? ['graph_conflict_or_serial_task'] : []),
+                ...(exhaustedRepairs.length > 0 ? ['task_review_repair_limit'] : []),
+            ]);
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+            }
+            const selected = graphSafe.slice(0, prepared.limit);
             const safetyError = await this.validateTaskSafety(resolved, config, selected);
             if (safetyError)
                 return this.gateResult(resolved, state, trigger, safetyError);
             state.currentStep = 'repair';
-            const dispatches = [];
-            for (const task of selected) {
-                const retry = await this.taskGraph.retryWorkerRun(resolved, {
+            const retry = await this.taskGraph.retryWorkerRuns(resolved, {
+                tasks: selected.map(task => ({
                     taskId: task.id,
                     force: true,
+                    trigger: 'task_review',
                     summary: `Loop retry after task review ${task.review?.decision || 'requested changes'}.`,
-                });
-                dispatches.push(...retry.dispatch.dispatches);
-            }
-            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed);
+                })),
+            });
+            return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
         if (reviewTasks.length > 0) {
-            const adapter = await this.resolveRuntimeAdapter(resolved, config, true, now);
-            if (adapter.blocked)
-                return this.runtimeAdapterGateResult(resolved, state, trigger, 'task-review', adapter);
-            const reviews = [];
-            const reviewLimit = this.getBudgetedBatchLimit(config, state, reviewTasks.length);
-            for (const task of reviewTasks.slice(0, reviewLimit)) {
-                const review = await this.taskGraph.review(resolved, { taskId: task.id });
-                reviews.push(review.dispatch);
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(reviewTasks, { respectParallelizable: false });
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < reviewTasks.length ? ['graph_conflict'] : []);
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'task-review', prepared);
             }
-            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed);
+            const reviews = await this.taskGraph.reviewTasks(resolved, {
+                taskIds: graphSafe.slice(0, prepared.limit).map(task => task.id),
+            });
+            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
         if (report.dispatchableTasks.length > 0) {
-            const selected = report.dispatchableTasks.slice(0, this.getBudgetedBatchLimit(config, state, report.dispatchableTasks.length));
+            const prepared = await this.prepareLoopBatch(resolved, config, state, report.dispatchableTasks.length, false, now, 'implementation');
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+            }
+            const selected = report.dispatchableTasks.slice(0, prepared.limit);
             const safetyError = await this.validateTaskSafety(resolved, config, selected);
             if (safetyError)
                 return this.gateResult(resolved, state, trigger, safetyError);
             const dispatch = await this.taskGraph.dispatch(resolved, { limit: selected.length });
-            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed);
+            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
         if (report.runningTasks.length > 0) {
             return this.gateResult(resolved, state, trigger, `Task(s) still marked in progress without a live loop action: ${report.runningTasks.map(task => task.id).join(', ')}. Collect their durable result or explicitly mark/retry them; automatic duplicate dispatch is disabled.`);
         }
         if (report.taskCount > 0 && report.completedTasks.length === report.taskCount && report.graphStatus.toLowerCase() === 'completed') {
             const finalDecision = await this.readFinalReviewDecision(resolved);
-            if (RETRY_REVIEW_DECISIONS.has(finalDecision)) {
+            if (finalDecision === 'BLOCKED') {
+                return this.gateResult(resolved, state, trigger, 'Loop blocked: final review is BLOCKED. Resolve the reviewer blocker or record the required user decision before continuing; grouped repair is only valid for NEEDS_CHANGES.');
+            }
+            if (finalDecision === 'NEEDS_CHANGES') {
+                const repairRounds = await this.taskGraph.countFinalReviewRepairWaves(resolved);
+                if (repairRounds >= config.efficiency.maxFinalRepairRounds) {
+                    return this.gateResult(resolved, state, trigger, `Loop blocked: final-review repair limit reached (final=${repairRounds}/${config.efficiency.maxFinalRepairRounds}). Inspect unresolved findings and require explicit user authorization before raising --max-final-repair-rounds.`);
+                }
                 const safetyError = await this.validateTaskSafety(resolved, config, this.allReportTasks(report));
                 if (safetyError)
                     return this.gateResult(resolved, state, trigger, safetyError);
+                const prepared = await this.prepareLoopBatch(resolved, config, state, 1, false, now, 'implementation');
+                if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                    return this.runtimeAdapterGateResult(resolved, state, trigger, 'implementation', prepared.runtimeAdapter);
+                }
                 state.currentStep = 'repair';
                 const repair = await this.taskGraph.createRepairWave(resolved);
-                return this.issueAction(resolved, config, state, trigger, 'implementation', repair.dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), `Final review ${finalDecision}; grouped repair dispatched.`, verifyPassed);
+                return this.issueAction(resolved, config, state, trigger, 'implementation', repair.dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), `Final review ${finalDecision}; grouped repair dispatched.`, verifyPassed, prepared);
             }
             if (!APPROVED_REVIEW_DECISIONS.has(finalDecision)) {
-                const adapter = await this.resolveRuntimeAdapter(resolved, config, true, now);
-                if (adapter.blocked)
-                    return this.runtimeAdapterGateResult(resolved, state, trigger, 'final-review', adapter);
+                const prepared = await this.prepareLoopBatch(resolved, config, state, 1, true, now, 'final-review');
+                if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                    return this.runtimeAdapterGateResult(resolved, state, trigger, 'final-review', prepared.runtimeAdapter);
+                }
                 const review = await this.taskGraph.review(resolved);
-                return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], feedback, verifyPassed);
+                return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], feedback, verifyPassed, prepared);
             }
             const outcome = await this.verification.verify(resolved).catch((error) => ({
                 passed: false,
@@ -1019,12 +1307,22 @@ class LoopService {
                 return this.result(resolved, state, null, true, 'goal verified', 'Loop complete: task graph, reviews, evidence, and protocol verification passed.', true, outcome.summary);
             }
             if (config.level === 'L3') {
-                const invalidCommand = config.stopConditions.testCommands.find(command => !this.isCommandAllowed(command, config.allowlist.commands));
+                let invalidCommand;
+                for (const command of config.stopConditions.testCommands) {
+                    if (!(await this.isCommandAllowed(resolved, command, config.allowlist.commands))) {
+                        invalidCommand = command;
+                        break;
+                    }
+                }
                 if (invalidCommand)
                     return this.gateResult(resolved, state, trigger, `L3 blocked final verification command outside the allowlist (${invalidCommand}).`);
             }
             const verificationAction = this.verificationAction(resolved, config, outcome, state.iteration + 1);
-            return this.issueAction(resolved, config, state, trigger, 'verification', [verificationAction], outcome.summary, false);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, 1, false, now, 'verification');
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.runtimeAdapterGateResult(resolved, state, trigger, 'verification', prepared.runtimeAdapter);
+            }
+            return this.issueAction(resolved, config, state, trigger, 'verification', [verificationAction], outcome.summary, false, prepared);
         }
         return this.gateResult(resolved, state, trigger, report.nextInstruction || 'No safe loop action is currently available.');
     }
@@ -1117,25 +1415,52 @@ class LoopService {
             return null;
         }
     }
-    async issueAction(changePath, config, state, trigger, kind, items, feedback, verifyPassed = null) {
+    async issueAction(changePath, config, state, trigger, kind, items, feedback, verifyPassed = null, prepared) {
         const issuedAt = this.now();
         const now = issuedAt.toISOString();
-        const runtimeAdapter = await this.resolveRuntimeAdapter(changePath, config, kind === 'task-review' || kind === 'final-review', issuedAt);
+        const preparedBatch = prepared || await this.prepareLoopBatch(changePath, config, state, items.length, kind === 'task-review' || kind === 'final-review', issuedAt, kind);
+        const runtimeAdapter = preparedBatch.runtimeAdapter;
         if (runtimeAdapter.blocked || !runtimeAdapter.selected) {
             return this.gateResult(changePath, state, trigger, `Loop blocked: no safe runtime adapter can execute ${kind}. ${runtimeAdapter.warnings.join(' ')}`);
         }
+        if (items.length > preparedBatch.limit) {
+            return this.gateResult(changePath, state, trigger, `Loop blocked: prepared ${kind} batch contains ${items.length} item(s), exceeding the safe effective limit ${preparedBatch.limit}.`);
+        }
+        preparedBatch.diagnostics.effectiveEmitted = items.length;
+        state.lastBatchDiagnostics = { ...preparedBatch.diagnostics };
         const actionId = `loop-action-${state.iteration + 1}-${Date.parse(now)}`;
+        const initialHeartbeatDueAt = new Date(Date.parse(now) + Math.floor(DEFAULT_ACTION_LEASE_MS / 2)).toISOString();
+        const initialLeaseExpiresAt = new Date(Date.parse(now) + DEFAULT_ACTION_LEASE_MS).toISOString();
         const controllerProvenanceRequired = runtimeAdapter.selected.kind === 'native'
             && this.isControllerCapabilityCurrent(config, issuedAt)
             && (kind === 'task-review' || kind === 'final-review');
         const allowances = this.allocateTokenAllowances(config, state, items.length);
+        const projectRoot = await this.findProjectRootForSafety(changePath);
         for (const item of items) {
-            item.runtimeAdapter = runtimeAdapter;
+            const actionRuntimeAdapter = item.modelSelection
+                ? this.runtimeAdapter.resolve({
+                    projectRoot,
+                    target: config.target,
+                    capability: config.capability,
+                    preference: 'native',
+                    strict: true,
+                    requiresIndependentWorker: item.kind === 'task-review' || item.kind === 'final-review',
+                    now: issuedAt,
+                    modelSelection: item.modelSelection,
+                    nativeHarness: config.nativeHarnessMetadata,
+                })
+                : runtimeAdapter;
+            if (actionRuntimeAdapter.blocked
+                || actionRuntimeAdapter.selectedAdapterId !== runtimeAdapter.selectedAdapterId) {
+                throw new Error(`Action ${item.id} model metadata resolution changed the preflight runtime adapter; no task-graph mutation may be issued.`);
+            }
+            item.runtimeAdapter = actionRuntimeAdapter;
             item.controllerProvenanceRequired = controllerProvenanceRequired;
             item.nativeSessionTarget = config.target;
             item.nativeSessionReportedAt = config.capability.reportedAt;
             item.tokenAllowance = allowances.shift() ?? null;
             item.heartbeatCommand = `ospec loop heartbeat ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id>`;
+            item.heartbeatDueAt = initialHeartbeatDueAt;
             item.resultCommand = `ospec loop result ${this.quote(changePath)} --action-item ${this.quote(item.id)} --executor <child-id> --exit-code <code> --summary "..."`;
             if (item.kind === 'verification') {
                 item.verificationBinding = await this.taskGraph.bindVerificationLoopAction(changePath, {
@@ -1149,7 +1474,8 @@ class LoopService {
                 item.prompt = item.prompt.replace(unboundCompletion, item.completionCommand);
             }
             const promptAdditions = [
-                `Runtime adapter: ${runtimeAdapter.selectedAdapterId}. ${runtimeAdapter.selected.supportsParallel ? 'This safe batch may run in parallel.' : 'Run this batch serially in item order.'}`,
+                `Runtime adapter: ${actionRuntimeAdapter.selectedAdapterId}. ${actionRuntimeAdapter.selected?.supportsParallel ? 'This safe batch may run in parallel.' : 'Run this batch serially in item order.'}`,
+                `Use bounded native waits only: poll for at most ${actionRuntimeAdapter.selected?.nativeSubagent?.maxWaitMs || 60000}ms, refresh this action heartbeat before ${item.heartbeatDueAt}, persist each finished result immediately, and tick OSpec again after every poll.`,
             ];
             if (item.tokenAllowance !== null) {
                 promptAdditions.push(`Token allowance for this action: ${item.tokenAllowance}. Keep the run within this reserved share and report actual usage.`);
@@ -1174,7 +1500,7 @@ class LoopService {
                 controllerSessionReportedAt: controllerProvenanceRequired
                     ? config.capability?.reportedAt || config.createdAt
                     : null,
-                runtimeAdapter,
+                runtimeAdapter: item.runtimeAdapter || runtimeAdapter,
             });
         }
         state.iteration += 1;
@@ -1200,7 +1526,8 @@ class LoopService {
                 status: 'issued',
                 issuedAt: now,
                 heartbeatAt: null,
-                leaseExpiresAt: new Date(Date.parse(now) + DEFAULT_ACTION_LEASE_MS).toISOString(),
+                heartbeatDueAt: initialHeartbeatDueAt,
+                leaseExpiresAt: initialLeaseExpiresAt,
                 executorId: null,
                 completedAt: null,
                 exitCode: null,
@@ -1218,10 +1545,11 @@ class LoopService {
             actionId,
             actionCount: items.length,
         });
-        const mode = runtimeAdapter.selected.supportsParallel
+        preparedBatch.diagnostics.effectiveEmitted = items.length;
+        const mode = runtimeAdapter.selected.supportsParallel && items.length > 1
             ? `Execute with runtime adapter ${runtimeAdapter.selectedAdapterId} in parallel for`
             : `Execute serially with runtime adapter ${runtimeAdapter.selectedAdapterId} for`;
-        return this.result(changePath, state, state.pendingControllerAction, false, null, `${mode} ${items.length} fresh-context ${kind} action(s); consume only the referenced packets, record durable completion/review evidence, then tick again.`, verifyPassed, feedback, items);
+        return this.result(changePath, state, state.pendingControllerAction, false, null, `${mode} ${items.length} fresh-context ${kind} action(s); consume only the referenced packets, record durable completion/review evidence, then tick again.`, verifyPassed, feedback, items, preparedBatch.diagnostics);
     }
     workerAction(changePath, config, dispatch, iteration) {
         const packetPath = path.resolve(changePath, dispatch.packetPath);
@@ -1244,6 +1572,12 @@ class LoopService {
             completionCommand,
             expectedEvidencePath: path.resolve(changePath, dispatch.recordPath),
             usageKey: dispatch.id,
+            modelSelection: {
+                requestedModel: dispatch.workerProfile?.requestedModel ?? dispatch.workerProfile?.model ?? null,
+                configuredModel: dispatch.workerProfile?.configuredModel ?? dispatch.workerProfile?.model ?? null,
+                configurationSource: dispatch.workerProfile?.modelConfigurationSource
+                    || (dispatch.workerProfile?.model ? 'target' : 'harness-default'),
+            },
         };
     }
     reviewAction(changePath, config, dispatch, iteration) {
@@ -1267,6 +1601,12 @@ class LoopService {
             completionCommand,
             expectedEvidencePath: path.resolve(changePath, dispatch.reviewArtifactPath),
             usageKey: dispatch.id,
+            modelSelection: {
+                requestedModel: dispatch.workerProfile?.requestedModel ?? dispatch.workerProfile?.model ?? null,
+                configuredModel: dispatch.workerProfile?.configuredModel ?? dispatch.workerProfile?.model ?? null,
+                configurationSource: dispatch.workerProfile?.modelConfigurationSource
+                    || (dispatch.workerProfile?.model ? 'target' : 'harness-default'),
+            },
         };
     }
     verificationAction(changePath, config, outcome, iteration) {
@@ -1302,17 +1642,25 @@ class LoopService {
         if (config.allowlist.paths.length === 0 || config.allowlist.commands.length === 0) {
             return 'L3 requires non-empty path and command allowlists before unattended task dispatch.';
         }
+        const exactTaskGraphPaths = (config.allowlist.metadata?.pathSource
+            || config.allowlist.metadata?.source) === 'task-graph';
         for (const task of tasks) {
             let invalidPath;
             for (const file of task.targetFiles) {
-                if (!(await this.isPathAllowed(changePath, file, config.allowlist.paths))) {
+                if (!(await this.isPathAllowed(changePath, file, config.allowlist.paths, exactTaskGraphPaths))) {
                     invalidPath = file;
                     break;
                 }
             }
             if (invalidPath)
                 return `L3 blocked task ${task.id}: target path is outside the allowlist (${invalidPath}).`;
-            const invalidCommand = task.verificationCommands.find(command => !this.isCommandAllowed(command, config.allowlist.commands));
+            let invalidCommand;
+            for (const command of task.verificationCommands) {
+                if (!(await this.isCommandAllowed(changePath, command, config.allowlist.commands))) {
+                    invalidCommand = command;
+                    break;
+                }
+            }
             if (invalidCommand)
                 return `L3 blocked task ${task.id}: verification command is outside the allowlist (${invalidCommand}).`;
         }
@@ -1378,11 +1726,12 @@ class LoopService {
                 `No runtime adapter is available: ${runtimeAdapter.warnings.join(' ')}`,
             ]
             : [
-                `Run "ospec loop run ${this.quote(changePath)} --once --json". For every non-empty actions[] batch, immediately launch one fresh ${selected.nativeSubagent?.primitive || 'model-native'} subagent per item and wait for the whole safe batch.`,
+                `Run "ospec loop run ${this.quote(changePath)} --once --json". For every non-empty actions[] batch, immediately launch one fresh ${selected.nativeSubagent?.primitive || 'model-native'} subagent per item.`,
                 selected.nativeSubagent?.dispatch || 'Use the current model harness native subagent dispatch primitive.',
-                selected.nativeSubagent?.wait || 'Wait for the native child batch in the current model session.',
-                'Give each subagent only its referenced packet. After dispatch, record heartbeatCommand with the real child id; persist each completionCommand/evidence and resultCommand as that child finishes, then tick again immediately without another user prompt.',
-                'Refresh heartbeats while children run. Use loop recover --force only when the prior session or child is known to be gone; never relaunch completed siblings.',
+                selected.nativeSubagent?.wait || 'Poll the native child batch with a bounded wait in the current model session.',
+                `Never block indefinitely: each native wait or poll must return within ${selected.nativeSubagent?.maxWaitMs || 60000}ms, with a recommended poll interval of ${selected.nativeSubagent?.pollIntervalMs || 30000}ms.`,
+                'Give each subagent only its referenced packet. After dispatch, record heartbeatCommand with the real child id; before every item heartbeatDueAt, refresh its heartbeat. Persist each completionCommand/evidence and resultCommand as that child finishes, then tick again after every poll without another user prompt.',
+                'Use loop recover --force only when the prior session or child is known to be gone; never relaunch completed siblings.',
                 'If actions[] is empty and pending is present, observe/wait only and never relaunch pending items. Stop only for a real decision/safety gate, configured guard/STOP, paused/stopped/done, or explicit user pause.',
                 'OSpec owns durable workflow state; the current model harness owns native subagent execution. Agent CLI processes are not a supported fallback.',
             ];
@@ -1409,11 +1758,20 @@ class LoopService {
             .join('; ');
         return this.gateResult(changePath, state, trigger, `Loop blocked before ${kind} dispatch: no safe independent runtime adapter is available. ${adapter.warnings.join(' ')}${reasons ? ` ${reasons}` : ''}`.trim());
     }
-    result(changePath, state, pending, stopped, stopReason, nextInstruction, verifyPassed, feedback, actions = []) {
+    preparedBatchGateResult(changePath, state, trigger, kind, prepared) {
+        if (prepared.runtimeAdapter.blocked || !prepared.runtimeAdapter.selected) {
+            return this.runtimeAdapterGateResult(changePath, state, trigger, kind, prepared.runtimeAdapter);
+        }
+        const reasons = prepared.diagnostics.deferredReasons.length > 0
+            ? prepared.diagnostics.deferredReasons.join(', ')
+            : 'no funded conflict-safe action remains';
+        return this.gateResult(changePath, state, trigger, `Loop blocked before ${kind} dispatch: ${reasons}.`);
+    }
+    result(changePath, state, pending, stopped, stopReason, nextInstruction, verifyPassed, feedback, actions = [], batchDiagnostics = null) {
         return {
             changePath, iteration: state.iteration, status: state.status, currentStep: state.currentStep,
             verifyPassed, pending, actions, stopped, stopReason, nextInstruction,
-            feedback, metrics: this.metrics(state),
+            feedback, metrics: this.metrics(state), batchDiagnostics,
         };
     }
     normalizeConfig(raw) {
@@ -1427,6 +1785,18 @@ class LoopService {
             || raw.capability?.target !== target
             || !raw.capability?.reportedAt
             || !raw.capability?.expiresAt;
+        const allowlist = {
+            paths: raw.allowlist?.paths || [],
+            commands: this.normalizeCommandAllowlist(raw.allowlist?.commands || []),
+        };
+        if (raw.allowlist?.metadata) {
+            allowlist.metadata = this.normalizeAllowlistMetadata(raw.allowlist.metadata);
+            if (!allowlist.metadata.currentHash)
+                allowlist.metadata.currentHash = this.hashAllowlist(allowlist);
+        }
+        const capability = !raw.capability || staleCapability
+            ? (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({ target, primitive, env: {}, now: this.now() })
+            : raw.capability;
         return {
             version: raw.version || '1.0',
             pattern: raw.pattern || 'goal-loop',
@@ -1442,14 +1812,15 @@ class LoopService {
                 budgetTokens: raw.stopConditions?.budgetTokens ?? null,
                 budgetMinutes: raw.stopConditions?.budgetMinutes ?? null,
             },
-            allowlist: {
-                paths: raw.allowlist?.paths || [],
-                commands: this.normalizeCommandAllowlist(raw.allowlist?.commands || []),
-            },
+            allowlist,
             efficiency: { ...this.defaultEfficiency(), ...(raw.efficiency || {}) },
-            capability: !raw.capability || staleCapability
-                ? (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({ target, primitive, env: {}, now: this.now() })
-                : raw.capability,
+            documentReviewGovernance: this.normalizeDocumentReviewGovernance(raw.documentReviewGovernance),
+            capability,
+            nativeHarnessMetadata: raw.nativeHarnessMetadata
+                && raw.nativeHarnessMetadata.target === target
+                && raw.nativeHarnessMetadata.controllerSessionReportedAt === capability.reportedAt
+                ? raw.nativeHarnessMetadata
+                : null,
             createdAt: raw.createdAt || this.now().toISOString(),
         };
     }
@@ -1483,10 +1854,40 @@ class LoopService {
             artifactUsageByKey,
             noProgressCount: Math.max(0, raw.noProgressCount || 0),
             progressFingerprint: raw.progressFingerprint || null, lastFeedback: raw.lastFeedback || null,
+            lastBatchDiagnostics: raw.lastBatchDiagnostics || null,
         };
     }
     defaultEfficiency() {
-        return { maxParallel: 3, noProgressLimit: 3, comprehensionReviewEvery: 8, freshContext: true, promptMaxChars: 2400 };
+        return { maxParallel: 3, maxParallelReason: null, noProgressLimit: 3, maxTaskRepairRounds: 2, maxFinalRepairRounds: 2, comprehensionReviewEvery: 8, freshContext: true, promptMaxChars: 2400 };
+    }
+    defaultDocumentReviewGovernance() {
+        return {
+            stages: {
+                design: { maxCompletedRounds: 2, maxMinutes: 30, budgetTokens: null },
+                plan: { maxCompletedRounds: 2, maxMinutes: 30, budgetTokens: null },
+            },
+            noProgressLimit: 2,
+            tokenReservation: 4000,
+        };
+    }
+    normalizeDocumentReviewGovernance(raw) {
+        const defaults = this.defaultDocumentReviewGovernance();
+        const normalizeStage = (stage) => {
+            const source = raw?.stages?.[stage];
+            const budget = source?.budgetTokens;
+            return {
+                maxCompletedRounds: Math.min(2, this.positiveInteger(source?.maxCompletedRounds ?? 2, `${stage}.maxCompletedRounds`)),
+                maxMinutes: Math.min(30, this.positiveInteger(source?.maxMinutes ?? 30, `${stage}.maxMinutes`)),
+                budgetTokens: budget === null || budget === undefined
+                    ? null
+                    : this.positiveInteger(budget, `${stage}.budgetTokens`),
+            };
+        };
+        return {
+            stages: { design: normalizeStage('design'), plan: normalizeStage('plan') },
+            noProgressLimit: Math.min(2, this.positiveInteger(raw?.noProgressLimit ?? defaults.noProgressLimit, 'documentReviewGovernance.noProgressLimit')),
+            tokenReservation: this.positiveInteger(raw?.tokenReservation ?? defaults.tokenReservation, 'documentReviewGovernance.tokenReservation'),
+        };
     }
     isControllerCapabilityCurrent(config, now) {
         const capability = config.capability;
@@ -1533,6 +1934,7 @@ class LoopService {
             strict: true,
             requiresIndependentWorker,
             now,
+            nativeHarness: config.nativeHarnessMetadata,
             cacheFilePath: path.join(changePath, 'artifacts', 'agents', 'runtime-adapter-cache.json'),
         });
         if (resolution.selected && resolution.selected.kind !== 'native') {
@@ -1549,15 +1951,63 @@ class LoopService {
         }
         return resolution;
     }
-    getBudgetedBatchLimit(config, state, candidateCount) {
-        const concurrencyLimit = Math.min(config.efficiency.maxParallel, Math.max(0, candidateCount));
-        if (config.stopConditions.budgetTokens === null || concurrencyLimit === 0)
-            return concurrencyLimit;
+    getTokenFundedLimit(config, state, candidateCount) {
+        const candidates = Math.max(0, candidateCount);
+        if (config.stopConditions.budgetTokens === null || candidates === 0)
+            return candidates;
         const remaining = Math.max(0, Math.floor(config.stopConditions.budgetTokens - state.tokensUsed));
-        if (remaining === 0)
+        if (remaining < MIN_ACTION_TOKEN_RESERVATION)
             return 0;
-        const fundedActions = Math.max(1, Math.floor(remaining / MIN_ACTION_TOKEN_RESERVATION));
-        return Math.min(concurrencyLimit, fundedActions);
+        return Math.min(candidates, Math.floor(remaining / MIN_ACTION_TOKEN_RESERVATION));
+    }
+    async prepareLoopBatch(changePath, config, state, graphSafeCandidates, requiresIndependentWorker, now, kind, deferredReasons = []) {
+        const runtimeAdapter = await this.resolveRuntimeAdapter(changePath, config, requiresIndependentWorker, now);
+        const selected = runtimeAdapter.selected;
+        const parallelism = selected?.parallelism;
+        const adapterSupportsParallel = selected?.supportsParallel === true;
+        const adapterCapacityKnown = parallelism?.capacityKnown === true || selected?.supportsParallel === false;
+        const adapterCapacity = selected?.supportsParallel === false
+            ? 1
+            : parallelism?.capacityKnown === true && Number.isInteger(parallelism.capacity) && Number(parallelism.capacity) > 0
+                ? Number(parallelism.capacity)
+                : null;
+        const tokenFundedLimit = this.getTokenFundedLimit(config, state, graphSafeCandidates);
+        const unknownImplementationCapacityLimit = kind === 'implementation' && adapterSupportsParallel && !adapterCapacityKnown
+            ? Math.min(UNKNOWN_IMPLEMENTATION_CAPACITY, graphSafeCandidates)
+            : graphSafeCandidates;
+        const adapterLimit = adapterSupportsParallel
+            ? adapterCapacity ?? unknownImplementationCapacityLimit
+            : Math.min(1, graphSafeCandidates);
+        const limit = runtimeAdapter.blocked || !selected
+            ? 0
+            : Math.min(config.efficiency.maxParallel, graphSafeCandidates, tokenFundedLimit, adapterLimit);
+        const reasons = [...deferredReasons];
+        if (config.efficiency.maxParallel < graphSafeCandidates)
+            reasons.push('configured_max_parallel');
+        if (tokenFundedLimit < graphSafeCandidates)
+            reasons.push('token_budget');
+        if (adapterLimit < graphSafeCandidates) {
+            reasons.push(adapterSupportsParallel && !adapterCapacityKnown && kind === 'implementation'
+                ? 'unknown_implementation_capacity_cap'
+                : adapterSupportsParallel ? 'adapter_capacity' : 'adapter_serial');
+        }
+        if (runtimeAdapter.blocked || !selected)
+            reasons.push('runtime_adapter_unavailable');
+        return {
+            runtimeAdapter,
+            limit,
+            diagnostics: {
+                configuredMaxParallel: config.efficiency.maxParallel,
+                configuredMaxParallelReason: config.efficiency.maxParallelReason ?? null,
+                graphSafeCandidates,
+                tokenFundedLimit,
+                adapterSupportsParallel,
+                adapterCapacity,
+                adapterCapacityKnown,
+                effectiveEmitted: 0,
+                deferredReasons: this.uniqueNonEmpty(reasons),
+            },
+        };
     }
     allocateTokenAllowances(config, state, itemCount) {
         if (itemCount <= 0)
@@ -1635,7 +2085,7 @@ class LoopService {
     logEntry(state, trigger, verifyPassed, summary) {
         return { event: 'state', ts: this.now().toISOString(), iteration: state.iteration, trigger, tokensEst: null, exitCode: null, verifyPassed, summary, costToDate: null, actionId: state.pendingControllerAction?.actionId || null, actionCount: state.pendingControllerAction?.items?.length || 0, noProgressCount: state.noProgressCount };
     }
-    async isPathAllowed(changePath, file, allowlist) {
+    async isPathAllowed(changePath, file, allowlist, exact = false) {
         const normalized = this.normalizeAllowlistedPath(file);
         if (!normalized)
             return false;
@@ -1645,7 +2095,7 @@ class LoopService {
             return false;
         for (const entry of allowlist) {
             const allowed = this.normalizeAllowlistedPath(entry);
-            if (!allowed || (normalized !== allowed && !normalized.startsWith(`${allowed}/`)))
+            if (!allowed || (exact ? normalized !== allowed : normalized !== allowed && !normalized.startsWith(`${allowed}/`)))
                 continue;
             const allowedBoundary = await this.resolveRealPathBoundary(projectRoot, allowed);
             if (!allowedBoundary)
@@ -1656,32 +2106,42 @@ class LoopService {
         }
         return false;
     }
-    isCommandAllowed(command, allowlist) {
+    async isCommandAllowed(changePath, command, allowlist) {
         const candidate = this.parseSafeAllowlistedCommand(command);
         if (!candidate)
             return false;
-        return allowlist.some(entry => {
+        const projectRoot = await this.findProjectRootForSafety(changePath);
+        if (!(await this.isCommandCwdWithinProject(projectRoot, candidate.cwd)))
+            return false;
+        for (const entry of allowlist) {
             if (typeof entry !== 'string') {
                 const policies = this.normalizeCommandPolicies([entry]);
                 if (policies.length !== 1)
-                    return false;
+                    continue;
                 const policy = policies[0];
+                if (!(await this.isCommandCwdWithinProject(projectRoot, policy.cwd || null)))
+                    continue;
                 if ((policy.cwd || null) !== candidate.cwd)
-                    return false;
+                    continue;
                 const tokens = this.tokenizeSafeCommand(candidate.command);
                 if (!tokens || tokens[0] !== policy.command)
-                    return false;
+                    continue;
                 const prefix = policy.argsPrefix || [];
-                return tokens.length === prefix.length + 1
-                    && prefix.every((argument, index) => tokens[index + 1] === argument);
+                if (tokens.length === prefix.length + 1
+                    && prefix.every((argument, index) => tokens[index + 1] === argument))
+                    return true;
+                continue;
             }
             const allowed = this.parseSafeAllowlistedCommand(entry);
-            if (!allowed)
-                return false;
-            if (allowed.cwd && allowed.cwd !== candidate.cwd)
-                return false;
-            return candidate.command === allowed.command;
-        });
+            if (!allowed || !(await this.isCommandCwdWithinProject(projectRoot, allowed.cwd)))
+                continue;
+            if (allowed.cwd === candidate.cwd && candidate.command === allowed.command)
+                return true;
+        }
+        return false;
+    }
+    async isCommandCwdWithinProject(projectRoot, cwd) {
+        return cwd === null || Boolean(await this.resolveRealPathBoundary(projectRoot, cwd));
     }
     normalizeCommandAllowlist(values) {
         const strings = this.uniqueNonEmpty(values.filter((value) => typeof value === 'string'));
@@ -1842,6 +2302,126 @@ class LoopService {
     }
     uniqueNonEmpty(values) {
         return [...new Set(values.map(value => String(value).trim()).filter(Boolean))];
+    }
+    async collectDerivedCommand(projectRoot, value, label, commands, issues) {
+        if (typeof value !== 'string' || !value.trim()) {
+            issues.push(`${label} must be a non-empty string`);
+            return;
+        }
+        const parsed = this.parseSafeAllowlistedCommand(value);
+        if (!parsed || !(await this.isCommandCwdWithinProject(projectRoot, parsed.cwd))) {
+            issues.push(`${label} is unsafe (${value})`);
+            return;
+        }
+        commands.push(value.trim());
+    }
+    uniqueDerivedCommands(values) {
+        const commands = new Map();
+        for (const value of this.uniqueNonEmpty(values)) {
+            const key = this.allowlistCommandKey(value);
+            if (!commands.has(key))
+                commands.set(key, value);
+        }
+        return [...commands.values()];
+    }
+    normalizeAllowlistMetadata(value) {
+        const normalizeSource = (candidate) => (candidate === 'task-graph' || candidate === 'clear' || candidate === 'manual'
+            ? candidate
+            : null);
+        const source = normalizeSource(value?.source) || 'manual';
+        const hashOrNull = (candidate) => {
+            const normalized = String(candidate || '').trim().toLowerCase();
+            return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+        };
+        return {
+            source,
+            pathSource: normalizeSource(value?.pathSource) || source,
+            commandSource: normalizeSource(value?.commandSource) || source,
+            currentHash: hashOrNull(value?.currentHash) || '',
+            candidateHash: hashOrNull(value?.candidateHash),
+            taskGraphHash: hashOrNull(value?.taskGraphHash),
+            updatedAt: Number.isFinite(Date.parse(value?.updatedAt)) ? value.updatedAt : this.now().toISOString(),
+        };
+    }
+    diffAllowlists(current, candidate) {
+        const currentPaths = new Map(current.paths.map(value => [this.allowlistPathKey(value), value]));
+        const candidatePaths = new Map(candidate.paths.map(value => [this.allowlistPathKey(value), value]));
+        const currentCommands = new Map(current.commands.map(value => [this.allowlistCommandKey(value), value]));
+        const candidateCommands = new Map(candidate.commands.map(value => [this.allowlistCommandKey(value), value]));
+        return {
+            addedPaths: [...candidatePaths].filter(([key]) => !currentPaths.has(key)).map(([, value]) => value),
+            removedPaths: [...currentPaths].filter(([key]) => !candidatePaths.has(key)).map(([, value]) => value),
+            addedCommands: [...candidateCommands].filter(([key]) => !currentCommands.has(key)).map(([, value]) => value),
+            removedCommands: [...currentCommands].filter(([key]) => !candidateCommands.has(key)).map(([, value]) => value),
+        };
+    }
+    hasAllowlistExpansion(current, candidate) {
+        const currentPaths = current.paths.map(value => this.normalizeAllowlistedPath(value)).filter(Boolean);
+        const addsPathPermission = candidate.paths.some(value => {
+            const candidatePath = this.normalizeAllowlistedPath(value);
+            return !candidatePath || !currentPaths.some(currentPath => candidatePath === currentPath || candidatePath.startsWith(`${currentPath}/`));
+        });
+        if (addsPathPermission)
+            return true;
+        const currentCommands = new Set(current.commands.map(value => this.allowlistCommandKey(value)));
+        return candidate.commands.some(value => !currentCommands.has(this.allowlistCommandKey(value)));
+    }
+    allowlistCommandKey(value) {
+        return this.stableStringify(this.canonicalCommand(value));
+    }
+    allowlistPathKey(value) {
+        return this.normalizeAllowlistedPath(value) || `invalid:${String(value).trim().replace(/\\/g, '/')}`;
+    }
+    allowlistHashInput(allowlist) {
+        const paths = this.uniqueNonEmpty(allowlist.paths.map(value => this.allowlistPathKey(value))).sort();
+        const commands = allowlist.commands
+            .map(value => this.canonicalCommand(value))
+            .sort((left, right) => this.stableStringify(left).localeCompare(this.stableStringify(right)));
+        return { paths, commands };
+    }
+    canonicalCommand(value) {
+        if (typeof value === 'string') {
+            const parsed = this.parseSafeAllowlistedCommand(value);
+            const tokens = parsed ? this.tokenizeSafeCommand(parsed.command) : null;
+            return parsed && tokens
+                ? { cwd: parsed.cwd, tokens, valid: true }
+                : { cwd: null, tokens: [String(value).trim()], valid: false };
+        }
+        const policies = this.normalizeCommandPolicies([value]);
+        if (policies.length !== 1) {
+            return { cwd: null, tokens: [this.stableStringify(value)], valid: false };
+        }
+        const policy = policies[0];
+        return {
+            cwd: policy.cwd || null,
+            tokens: [policy.command, ...(policy.argsPrefix || [])],
+            valid: true,
+        };
+    }
+    hashAllowlist(allowlist) {
+        return this.sha256(this.stableStringify(this.allowlistHashInput(allowlist)));
+    }
+    sha256(value) {
+        return (0, crypto_1.createHash)('sha256').update(value, 'utf8').digest('hex');
+    }
+    stableStringify(value) {
+        const canonicalize = (input) => {
+            if (Array.isArray(input))
+                return input.map(canonicalize);
+            if (!input || typeof input !== 'object')
+                return input;
+            return Object.keys(input).sort().reduce((result, key) => {
+                result[key] = canonicalize(input[key]);
+                return result;
+            }, {});
+        };
+        return JSON.stringify(canonicalize(value));
+    }
+    requireHash(value, name) {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (!/^[a-f0-9]{64}$/.test(normalized))
+            throw new Error(`${name} must be a SHA-256 hash.`);
+        return normalized;
     }
     positiveInteger(value, name) {
         if (!Number.isInteger(value) || value <= 0)

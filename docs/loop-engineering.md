@@ -19,7 +19,7 @@ Every `ospec execute launch` artifact includes one model-native candidate. It is
 3. the capability target exactly matches the requested target;
 4. `reportedAt` is not in the future and `expiresAt` is still current.
 
-Codex/GPT use `spawn_agent` plus `wait_agent`, Claude uses Task, Gemini uses `@generalist`, and OpenCode uses `@mention`. Cursor and Copilot use their registered native agent/task contexts. `shell` and `generic` are not executable agent targets. OSpec does not probe Orca, PATH binaries, or agent CLIs, does not write an adapter probe cache, and does not fall back into the current controller context.
+Codex/GPT use `spawn_agent` plus bounded `wait_agent`, Claude uses background Task polling when available, Gemini uses `@generalist`, and OpenCode uses `@mention`. Cursor and Copilot use their registered native agent/task contexts. Every adapter returns from one wait within 60 seconds, refreshes heartbeats before `heartbeatDueAt`, persists finished siblings immediately, and re-ticks. `shell` and `generic` are not executable agent targets. OSpec does not probe Orca, PATH binaries, or agent CLIs, does not write an adapter probe cache, and does not fall back into the current controller context.
 
 ## Integrated task-graph cycle
 
@@ -29,8 +29,8 @@ Each tick follows the persisted task graph and evidence instead of asking an age
 2. **Gate:** stop before dispatch when the task graph is invalid, a required user decision is pending, document reviews are not approved, or workspace safety is not ready. When an L3 task graph exists, path/command safety is checked before expensive document reviewers are dispatched.
 3. **Repair:** retry blocked worker work with the latest feedback; route task-review changes back to an implementation retry. Unknown live `IN_PROGRESS` work is never duplicated automatically.
 4. **Review:** create one combined task review for completed work before dependent tasks proceed.
-5. **Dispatch:** select a parallel-safe batch of ready tasks, bounded by `maxParallel`.
-6. **Final review and repair:** after all task reviews pass, run one final review. A `NEEDS_CHANGES` or `BLOCKED` decision becomes one grouped repair wave rather than one worker per finding.
+5. **Dispatch:** select a parallel-safe batch of ready tasks, bounded by `maxParallel`; unknown native capacity caps implementation at two while preserving review parallelism.
+6. **Final review and repair:** after all task reviews pass, run one final review. `NEEDS_CHANGES` becomes one grouped repair wave rather than one worker per finding; `BLOCKED` stops for blocker resolution.
 7. **Verify:** after task and review gates pass, require current verification evidence and protocol verification. Verification failures produce a bounded verifier action instead of being treated as completion.
 
 The loop stores the current batch and per-item `issued/running/completed/failed/expired` state in `artifacts/loop/state.json`. Only the issuing tick returns items in `actions`; observation ticks return the durable `pending` record with an empty action list, preventing duplicate launches. Heartbeat leases let a later session distinguish a live child from an orphan. Expired or explicitly released orphans are marked failed and requeued with fresh context; completed siblings are not duplicated.
@@ -98,7 +98,7 @@ ospec loop configure [path] --execution-model controller --target codex --harnes
 ospec loop configure [path] --max-parallel 3 --interval 10m --fresh-context true
 ospec loop configure [path] --max-iterations 20 --expires-at 2026-12-31T00:00:00Z
 ospec loop configure [path] --budget-tokens 200000 --budget-minutes 120
-ospec loop configure [path] --no-progress-limit 3 --review-every 8 --prompt-max-chars 2400
+ospec loop configure [path] --no-progress-limit 3 --max-task-repair-rounds 2 --max-final-repair-rounds 2 --review-every 8 --prompt-max-chars 2400
 ospec loop configure [path] --allow-path src --allow-command "npm test"
 ospec loop configure [path] --allow-command-policy '{"command":"go","argsPrefix":["test"],"cwd":"src/backend"}'
 ospec loop configure [path] --test-command "npm test" --test-command "npm run build"

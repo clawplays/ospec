@@ -12,6 +12,8 @@ export declare class LoopCommand extends BaseCommand {
     private resume;
     private level;
     private configure;
+    private allowlist;
+    private printAllowlistDiff;
     private heartbeat;
     private recordResult;
     private recover;

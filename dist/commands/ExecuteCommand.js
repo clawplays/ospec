@@ -168,7 +168,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 ? await services_1.services.taskGraphExecutionService.claimDocumentReviewExecutor(changePath, parsed.stage, parsed.claimExecutor)
                 : parsed.heartbeatExecutor
                     ? await services_1.services.taskGraphExecutionService.heartbeatDocumentReviewExecutor(changePath, parsed.stage, parsed.heartbeatExecutor)
-                    : await services_1.services.taskGraphExecutionService.completeDocumentReviewExecutor(changePath, parsed.stage, parsed.completeExecutor);
+                    : await services_1.services.taskGraphExecutionService.completeDocumentReviewExecutor(changePath, parsed.stage, parsed.completeExecutor, { usageFile: parsed.usageFile });
             const action = parsed.claimExecutor ? 'claimed' : parsed.heartbeatExecutor ? 'heartbeat renewed' : 'completed';
             this.success(`Document review ${record.id} ${action} by ${parsed.claimExecutor || parsed.heartbeatExecutor || parsed.completeExecutor}.`);
             return;
@@ -346,6 +346,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             skip: parsed.skip,
             summary: parsed.summary,
             answeredBy: parsed.answeredBy,
+            documentReviewOverride: parsed.documentReviewOverride,
         });
         this.printDecision(result);
     }
@@ -418,9 +419,15 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         return (0, ProjectLayout_1.resolveManagedPath)(resolvedCandidatePath, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}/${activeNames[0]}`, projectConfig);
     }
     printStatus(report) {
+        const scheduling = report.scheduling || {
+            graphSafeCount: report.dispatchableTasks.length,
+            serialWithoutReason: [],
+            deferred: [],
+        };
         if (this.brief) {
             const d = report.dispatchableTasks.map(task => task.id).join(', ') || 'none';
             console.log(`graph=${report.graphStatus} tasks=${report.taskCount} ready=${report.readyTasks.length} dispatchable=${report.dispatchableTasks.length} running=${report.runningTasks.length} blocked=${report.blockedTasks.length} completed=${report.completedTasks.length}`);
+            console.log(`graphSafe=${scheduling.graphSafeCount} serialReasonMissing=${scheduling.serialWithoutReason.join(',') || 'none'} deferred=${scheduling.deferred.length}`);
             if (report.decisions) {
                 console.log(`pendingRequiredDecisions=${report.decisions.pendingRequired}`);
             }
@@ -442,6 +449,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Invalid: ${report.invalidTasks.length}`);
         console.log(`Completed: ${report.completedTasks.length}`);
         console.log(`Concerns: ${report.concernTasks.length}`);
+        console.log(`Graph-safe batch: ${scheduling.graphSafeCount}`);
+        console.log(`Serial reason missing: ${scheduling.serialWithoutReason.join(', ') || 'none'}`);
         if (report.decisions) {
             console.log(`Pending required decisions: ${report.decisions.pendingRequired}`);
             console.log(`Pending optional decisions: ${report.decisions.pendingOptional}`);
@@ -588,6 +597,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 console.log(`  Recommended target: ${task.workerProfile.recommendedTarget}`);
             }
             console.log(`  Parallelizable: ${task.parallelizable ? 'yes' : 'no'}`);
+            if (!task.parallelizable)
+                console.log(`  Serial reason: ${task.serialReason || 'missing (planning warning)'}`);
             console.log(`  Target files: ${task.targetFiles.length > 0 ? task.targetFiles.join(', ') : 'none'}`);
             console.log(`  Verification: ${task.verificationCommands.length > 0 ? task.verificationCommands.join(' && ') : 'none'}`);
             console.log(`  Expected result: ${task.expectedResult || 'none'}`);
@@ -1777,6 +1788,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let claimExecutor;
         let heartbeatExecutor;
         let completeExecutor;
+        let usageFile;
         let force = false;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
@@ -1818,6 +1830,18 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 heartbeatExecutor = arg.slice('--heartbeat-executor='.length).trim();
                 continue;
             }
+            if (arg === '--usage-file') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--'))
+                    throw new Error('Execute doc-review requires a value after --usage-file.');
+                usageFile = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--usage-file=')) {
+                usageFile = arg.slice('--usage-file='.length).trim();
+                continue;
+            }
             if (arg === '--force') {
                 force = true;
                 continue;
@@ -1840,9 +1864,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (force && (claimExecutor || heartbeatExecutor || completeExecutor)) {
             throw new Error('Execute doc-review --force cannot be combined with an executor lifecycle action.');
         }
+        if (usageFile && !completeExecutor) {
+            throw new Error('Execute doc-review --usage-file requires --complete-executor.');
+        }
         if (claimExecutor === '' || heartbeatExecutor === '' || completeExecutor === '')
             throw new Error('Document review executor ID must be non-empty.');
-        return { inputPath, stage, claimExecutor, heartbeatExecutor, completeExecutor, force };
+        if (usageFile === '')
+            throw new Error('Document review usage file must be non-empty.');
+        return { inputPath, stage, claimExecutor, heartbeatExecutor, completeExecutor, usageFile, force };
     }
     parseFinishArgs(args) {
         let inputPath;
@@ -2285,6 +2314,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let skip = false;
         let summary;
         let answeredBy;
+        let documentReviewStage;
+        let reviewContextHash;
+        let reviewRound;
+        let reviewApprovalOptionId;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--id') {
@@ -2376,6 +2409,58 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 index += 1;
                 continue;
             }
+            if (arg === '--document-review-stage') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --document-review-stage.');
+                }
+                documentReviewStage = this.normalizeDocumentReviewStage(value);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--document-review-stage=')) {
+                documentReviewStage = this.normalizeDocumentReviewStage(arg.slice('--document-review-stage='.length));
+                continue;
+            }
+            if (arg === '--review-context-hash') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --review-context-hash.');
+                }
+                reviewContextHash = value.trim().toLowerCase();
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--review-context-hash=')) {
+                reviewContextHash = arg.slice('--review-context-hash='.length).trim().toLowerCase();
+                continue;
+            }
+            if (arg === '--review-round') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --review-round.');
+                }
+                reviewRound = Number(value);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--review-round=')) {
+                reviewRound = Number(arg.slice('--review-round='.length));
+                continue;
+            }
+            if (arg === '--review-approval-option') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute decision requires a value after --review-approval-option.');
+                }
+                reviewApprovalOptionId = value.trim();
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--review-approval-option=')) {
+                reviewApprovalOptionId = arg.slice('--review-approval-option='.length).trim();
+                continue;
+            }
             if (arg.startsWith('--summary=')) {
                 summary = arg.slice('--summary='.length);
                 continue;
@@ -2410,6 +2495,33 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (skip && selectOptionId) {
             throw new Error('Execute decision cannot combine --skip with --select.');
         }
+        const overrideParts = [
+            documentReviewStage !== undefined,
+            reviewContextHash !== undefined,
+            reviewRound !== undefined,
+            reviewApprovalOptionId !== undefined,
+        ];
+        if (overrideParts.some(Boolean) && !overrideParts.every(Boolean)) {
+            throw new Error('Document review override decisions require --document-review-stage, --review-context-hash, --review-round, and --review-approval-option together.');
+        }
+        if (reviewContextHash !== undefined && !/^[a-f0-9]{64}$/.test(reviewContextHash)) {
+            throw new Error('Execute decision --review-context-hash must be a 64-character SHA-256 hash.');
+        }
+        if (reviewRound !== undefined && (!Number.isInteger(reviewRound) || reviewRound <= 0)) {
+            throw new Error('Execute decision --review-round must be a positive integer.');
+        }
+        if (reviewApprovalOptionId !== undefined && !reviewApprovalOptionId) {
+            throw new Error('Execute decision --review-approval-option must be non-empty.');
+        }
+        const documentReviewOverride = documentReviewStage && reviewContextHash && reviewRound && reviewApprovalOptionId
+            ? {
+                stage: documentReviewStage,
+                reviewContextHash,
+                round: reviewRound,
+                extraRounds: 1,
+                approvalOptionId: reviewApprovalOptionId,
+            }
+            : undefined;
         return {
             inputPath,
             id,
@@ -2421,6 +2533,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             skip,
             summary,
             answeredBy,
+            documentReviewOverride,
         };
     }
     parseDecisionOption(value) {
