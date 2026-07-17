@@ -62,7 +62,7 @@ const DEFAULT_EVIDENCE_RESULT_GRACE_MS = 5 * 60 * 1000;
 const UNKNOWN_IMPLEMENTATION_CAPACITY = 2;
 const MIN_ACTION_TOKEN_RESERVATION = 1000;
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
-const RETRY_REVIEW_DECISIONS = new Set(['NEEDS_CHANGES', 'BLOCKED']);
+const RETRY_REVIEW_DECISIONS = new Set(['NEEDS_CHANGES']);
 /**
  * Durable plan-act-observe controller for goal task graphs. OSpec emits bounded action packets;
  * the active model harness executes them through its native subagent primitive.
@@ -308,6 +308,8 @@ class LoopService {
             config.efficiency.maxTaskRepairRounds = this.positiveInteger(options.maxTaskRepairRounds, 'maxTaskRepairRounds');
         if (options.maxFinalRepairRounds !== undefined)
             config.efficiency.maxFinalRepairRounds = this.positiveInteger(options.maxFinalRepairRounds, 'maxFinalRepairRounds');
+        if (options.continueWhileProgressing !== undefined)
+            config.efficiency.continueWhileProgressing = options.continueWhileProgressing;
         if (options.comprehensionReviewEvery !== undefined)
             config.efficiency.comprehensionReviewEvery = this.nonNegativeInteger(options.comprehensionReviewEvery, 'comprehensionReviewEvery');
         if (options.freshContext !== undefined)
@@ -811,6 +813,7 @@ class LoopService {
                 status: 'BLOCKED',
                 summary,
                 dispatchId: item.usageKey,
+                retryable: true,
             });
         }
     }
@@ -1296,13 +1299,31 @@ class LoopService {
             const review = await this.taskGraph.review(resolved);
             return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], `${feedback || 'Verification failed.'} Independent final review is required before grouped repair.`, false, prepared);
         }
+        if (report.dispatchableTasks.length > 0) {
+            const prepared = await this.prepareLoopBatch(resolved, config, state, report.dispatchableTasks.length, false, now, 'implementation');
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+            }
+            const selected = report.dispatchableTasks.slice(0, prepared.limit);
+            const safetyError = await this.validateTaskSafety(resolved, config, selected);
+            if (safetyError)
+                return this.gateResult(resolved, state, trigger, safetyError);
+            const dispatch = await this.taskGraph.dispatch(resolved, { limit: selected.length });
+            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
+        }
         const reviewTasks = report.completedTasks.filter(task => !task.review || !APPROVED_REVIEW_DECISIONS.has(task.review.decision));
-        const blockedRetryTasks = report.blockedTasks
+        const blockedTasks = report.blockedTasks
             .map(item => item.task)
             .filter(task => task.status === 'BLOCKED' || task.status === 'NEEDS_CONTEXT');
-        if (blockedRetryTasks.length > 0) {
-            const graphSafe = this.taskGraph.selectConflictSafeTasks(blockedRetryTasks);
-            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < blockedRetryTasks.length ? ['graph_conflict_or_serial_task'] : []);
+        const blockerRecords = new Map(await Promise.all(blockedTasks.map(async (task) => [
+            task.id,
+            await this.taskGraph.readLatestBlockerEscalation(resolved, task.id),
+        ])));
+        const retryableBlockedTasks = blockedTasks.filter(task => blockerRecords.get(task.id)?.retryable === true);
+        const durableBlockedTasks = blockedTasks.filter(task => !retryableBlockedTasks.includes(task));
+        if (retryableBlockedTasks.length > 0) {
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(retryableBlockedTasks);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < retryableBlockedTasks.length ? ['graph_conflict_or_serial_task'] : []);
             if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
             }
@@ -1322,42 +1343,50 @@ class LoopService {
             return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
         const needsRepair = reviewTasks.filter(task => RETRY_REVIEW_DECISIONS.has(task.review?.decision || ''));
+        const blockedReviewTasks = reviewTasks.filter(task => task.review?.decision === 'BLOCKED');
+        const pendingReviewTasks = reviewTasks.filter(task => !needsRepair.includes(task) && !blockedReviewTasks.includes(task));
+        const repairAssessments = new Map(await Promise.all(needsRepair.map(async (task) => [
+            task.id,
+            await this.taskGraph.assessTaskReviewRepairConvergence(resolved, task.id, config.efficiency.maxTaskRepairRounds),
+        ])));
+        const eligibleRepairs = needsRepair.filter(task => {
+            const assessment = repairAssessments.get(task.id);
+            return Boolean(assessment && (assessment.roundsUsed < config.efficiency.maxTaskRepairRounds
+                || (config.efficiency.continueWhileProgressing && assessment.progressing)));
+        });
+        const stalledRepairs = needsRepair.filter(task => !eligibleRepairs.includes(task));
         if (needsRepair.length > 0) {
-            const repairRounds = new Map(await Promise.all(needsRepair.map(async (task) => [
-                task.id,
-                await this.taskGraph.countTaskReviewRepairRounds(resolved, task.id),
-            ])));
-            const eligibleRepairs = needsRepair.filter(task => (repairRounds.get(task.id) || 0) < config.efficiency.maxTaskRepairRounds);
-            const exhaustedRepairs = needsRepair.filter(task => !eligibleRepairs.includes(task));
-            if (eligibleRepairs.length === 0) {
-                return this.gateResult(resolved, state, trigger, `Loop blocked: task-review repair limit reached (${exhaustedRepairs.map(task => `${task.id}=${repairRounds.get(task.id)}/${config.efficiency.maxTaskRepairRounds}`).join(', ')}). Inspect unresolved findings and require explicit user authorization before raising --max-task-repair-rounds.`);
+            if (eligibleRepairs.length > 0) {
+                const graphSafe = this.taskGraph.selectConflictSafeTasks(eligibleRepairs);
+                const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', [
+                    ...(graphSafe.length < eligibleRepairs.length ? ['graph_conflict_or_serial_task'] : []),
+                    ...(stalledRepairs.length > 0 ? ['task_review_no_progress'] : []),
+                ]);
+                if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                    return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+                }
+                const selected = graphSafe.slice(0, prepared.limit);
+                const safetyError = await this.validateTaskSafety(resolved, config, selected);
+                if (safetyError)
+                    return this.gateResult(resolved, state, trigger, safetyError);
+                state.currentStep = 'repair';
+                const retry = await this.taskGraph.retryWorkerRuns(resolved, {
+                    tasks: selected.map(task => {
+                        const assessment = repairAssessments.get(task.id);
+                        return {
+                            taskId: task.id,
+                            force: true,
+                            trigger: 'task_review',
+                            summary: `Loop retry after task review ${task.review?.decision || 'requested changes'}; findings=${assessment?.currentFindingIds.join(',') || 'unknown'}; convergence=${assessment?.reason || 'unknown'}; prior-rounds=${assessment?.roundsUsed ?? 0}.`,
+                        };
+                    }),
+                });
+                return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
             }
-            const graphSafe = this.taskGraph.selectConflictSafeTasks(eligibleRepairs);
-            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', [
-                ...(graphSafe.length < eligibleRepairs.length ? ['graph_conflict_or_serial_task'] : []),
-                ...(exhaustedRepairs.length > 0 ? ['task_review_repair_limit'] : []),
-            ]);
-            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
-                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
-            }
-            const selected = graphSafe.slice(0, prepared.limit);
-            const safetyError = await this.validateTaskSafety(resolved, config, selected);
-            if (safetyError)
-                return this.gateResult(resolved, state, trigger, safetyError);
-            state.currentStep = 'repair';
-            const retry = await this.taskGraph.retryWorkerRuns(resolved, {
-                tasks: selected.map(task => ({
-                    taskId: task.id,
-                    force: true,
-                    trigger: 'task_review',
-                    summary: `Loop retry after task review ${task.review?.decision || 'requested changes'}.`,
-                })),
-            });
-            return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
-        if (reviewTasks.length > 0) {
-            const graphSafe = this.taskGraph.selectConflictSafeTasks(reviewTasks, { respectParallelizable: false });
-            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < reviewTasks.length ? ['graph_conflict'] : []);
+        if (pendingReviewTasks.length > 0) {
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(pendingReviewTasks, { respectParallelizable: false });
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < pendingReviewTasks.length ? ['graph_conflict'] : []);
             if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'task-review', prepared);
             }
@@ -1366,20 +1395,51 @@ class LoopService {
             });
             return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
-        if (report.dispatchableTasks.length > 0) {
-            const prepared = await this.prepareLoopBatch(resolved, config, state, report.dispatchableTasks.length, false, now, 'implementation');
-            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
-                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
-            }
-            const selected = report.dispatchableTasks.slice(0, prepared.limit);
-            const safetyError = await this.validateTaskSafety(resolved, config, selected);
-            if (safetyError)
-                return this.gateResult(resolved, state, trigger, safetyError);
-            const dispatch = await this.taskGraph.dispatch(resolved, { limit: selected.length });
-            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
-        }
         if (report.runningTasks.length > 0) {
-            return this.gateResult(resolved, state, trigger, `Task(s) still marked in progress without a live loop action: ${report.runningTasks.map(task => task.id).join(', ')}. Collect their durable result or explicitly mark/retry them; automatic duplicate dispatch is disabled.`);
+            const recovery = await this.taskGraph.assessRunningTaskRecovery(resolved, report.runningTasks.map(task => task.id), config.efficiency.implementationMaxRuntimeMinutes, now);
+            if (recovery.length > 0 && recovery.every(item => item.recoverable)) {
+                const graphSafe = this.taskGraph.selectConflictSafeTasks(report.runningTasks);
+                const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < report.runningTasks.length ? ['orphaned_running_graph_conflict'] : []);
+                if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                    return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+                }
+                const selected = graphSafe.slice(0, prepared.limit);
+                const safetyError = await this.validateTaskSafety(resolved, config, selected);
+                if (safetyError)
+                    return this.gateResult(resolved, state, trigger, safetyError);
+                state.currentStep = 'repair';
+                const retry = await this.taskGraph.retryWorkerRuns(resolved, {
+                    tasks: selected.map(task => {
+                        const assessment = recovery.find(item => item.taskId === task.id);
+                        return {
+                            taskId: task.id,
+                            force: true,
+                            trigger: 'worker_status',
+                            summary: `Loop recovered orphaned IN_PROGRESS task after ${assessment?.reason || 'lost controller action'}; prior dispatch=${assessment?.dispatchId || 'missing'}; assigned=${assessment?.assignedAt || 'unknown'}; deadline=${assessment?.recoveryDeadline || 'unknown'}.`,
+                        };
+                    }),
+                });
+                return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), 'Recovered orphaned in-progress task(s) after their configured absolute runtime deadline.', verifyPassed, prepared);
+            }
+            return this.gateResult(resolved, state, trigger, `Task(s) are still marked in progress without a live Loop action but remain inside their configured absolute runtime window: ${recovery.map(item => `${item.taskId} (dispatch=${item.dispatchId || 'missing'}, recovery-deadline=${item.recoveryDeadline || 'unknown'})`).join(', ')}. Do not duplicate potentially live work; the Loop will recover it automatically after the deadline.`);
+        }
+        if (stalledRepairs.length > 0) {
+            if (!config.efficiency.continueWhileProgressing) {
+                return this.gateResult(resolved, state, trigger, `Loop blocked: task-review repair limit reached (${stalledRepairs.map(task => `${task.id}=${repairAssessments.get(task.id)?.roundsUsed ?? 0}/${config.efficiency.maxTaskRepairRounds}`).join(', ')}). Inspect unresolved findings before raising --max-task-repair-rounds or enabling --continue-while-progressing.`);
+            }
+            return this.gateResult(resolved, state, trigger, `Loop blocked: task-review findings made no progress after the configured automatic threshold (${stalledRepairs.map(task => {
+                const assessment = repairAssessments.get(task.id);
+                return `${task.id}: rounds=${assessment?.roundsUsed ?? 0}, findings=${assessment?.currentFindingIds.join(',') || 'unknown'}, reason=${assessment?.reason || 'unknown'}`;
+            }).join('; ')}). Change repair strategy or review evidence before continuing.`);
+        }
+        if (blockedReviewTasks.length > 0) {
+            return this.gateResult(resolved, state, trigger, `Loop blocked: task review requires external context (${blockedReviewTasks.map(task => task.id).join(', ')}). Resolve the reviewer blocker before re-review; automatic implementation repair is disabled for BLOCKED decisions.`);
+        }
+        if (durableBlockedTasks.length > 0) {
+            return this.gateResult(resolved, state, trigger, `Loop blocked by durable worker evidence (${durableBlockedTasks.map(task => {
+                const blocker = blockerRecords.get(task.id);
+                return `${task.id}: ${blocker?.summary || task.status}`;
+            }).join('; ')}). Independent ready tasks were exhausted; change the external state or provide the missing context before an explicit retry.`);
         }
         if (report.taskCount > 0 && report.completedTasks.length === report.taskCount && report.graphStatus.toLowerCase() === 'completed') {
             const finalDecision = await this.readFinalReviewDecision(resolved);
@@ -1387,9 +1447,14 @@ class LoopService {
                 return this.gateResult(resolved, state, trigger, 'Loop blocked: final review is BLOCKED. Resolve the reviewer blocker or record the required user decision before continuing; grouped repair is only valid for NEEDS_CHANGES.');
             }
             if (finalDecision === 'NEEDS_CHANGES') {
-                const repairRounds = await this.taskGraph.countFinalReviewRepairWaves(resolved);
-                if (repairRounds >= config.efficiency.maxFinalRepairRounds) {
-                    return this.gateResult(resolved, state, trigger, `Loop blocked: final-review repair limit reached (final=${repairRounds}/${config.efficiency.maxFinalRepairRounds}). Inspect unresolved findings and require explicit user authorization before raising --max-final-repair-rounds.`);
+                const convergence = await this.taskGraph.assessFinalReviewRepairConvergence(resolved, config.efficiency.maxFinalRepairRounds);
+                if (convergence.roundsUsed >= config.efficiency.maxFinalRepairRounds
+                    && !config.efficiency.continueWhileProgressing) {
+                    return this.gateResult(resolved, state, trigger, `Loop blocked: final-review repair limit reached (final=${convergence.roundsUsed}/${config.efficiency.maxFinalRepairRounds}). Inspect unresolved findings before raising --max-final-repair-rounds or enabling --continue-while-progressing.`);
+                }
+                if (convergence.roundsUsed >= config.efficiency.maxFinalRepairRounds
+                    && !convergence.progressing) {
+                    return this.gateResult(resolved, state, trigger, `Loop blocked: final-review findings made no progress after ${convergence.roundsUsed} repair wave(s) (findings=${convergence.currentFindingIds.join(',')}, reason=${convergence.reason}). Change repair strategy or review evidence before continuing.`);
                 }
                 const safetyError = await this.validateTaskSafety(resolved, config, this.allReportTasks(report));
                 if (safetyError)
@@ -1853,8 +1918,13 @@ class LoopService {
             return { status: 'stopped', reason: 'time budget reached', instruction: 'Time budget exhausted; inspect progress before increasing it.' };
         if (state.noProgressCount >= config.efficiency.noProgressLimit)
             return { status: 'stopped', reason: 'no-progress circuit breaker', instruction: 'Repeated attempts made no progress; inspect feedback and change strategy before resuming.' };
-        if (config.efficiency.comprehensionReviewEvery > 0 && state.comprehensionDebtCounter >= config.efficiency.comprehensionReviewEvery)
-            return { status: 'paused', reason: 'comprehension review checkpoint', instruction: 'Review the run log, current diff, decisions, and remaining task graph; resume after comprehension is restored.' };
+        if (config.efficiency.comprehensionReviewEvery > 0
+            && state.comprehensionDebtCounter >= config.efficiency.comprehensionReviewEvery) {
+            if (!config.efficiency.continueWhileProgressing) {
+                return { status: 'paused', reason: 'comprehension review checkpoint', instruction: 'Review the run log, current diff, decisions, and remaining task graph; resume after comprehension is restored.' };
+            }
+            state.comprehensionDebtCounter = 0;
+        }
         return null;
     }
     async runLegacyTick(changePath, config, state, input) {
@@ -2034,6 +2104,7 @@ class LoopService {
             noProgressLimit: 3,
             maxTaskRepairRounds: 2,
             maxFinalRepairRounds: 2,
+            continueWhileProgressing: true,
             comprehensionReviewEvery: 8,
             freshContext: true,
             promptMaxChars: 2400,

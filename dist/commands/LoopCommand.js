@@ -234,7 +234,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             const batch = state.lastBatchDiagnostics;
             const review = ['design', 'plan'].map(stage => {
                 const summary = reviewGovernance.stages[stage];
-                return `${stage}=${summary.completedRounds}/${summary.guardLimits.maxCompletedRounds}${summary.activeRound ? `+active:${summary.activeRound}` : ''}`;
+                return `${stage}=${summary.completedRounds}/${summary.continueWhileProgressing ? 'progress' : summary.guardLimits.maxCompletedRounds}${summary.activeRound ? `+active:${summary.activeRound}` : ''}`;
             }).join(' ');
             console.log(`Loop ${state.status}: level=${config.level} step=${state.currentStep} iteration=${state.iteration} parallel=${config.efficiency.maxParallel} reason=${config.efficiency.maxParallelReason || 'not-recorded'} emitted=${batch?.effectiveEmitted ?? 0}/${batch?.graphSafeCandidates ?? 0} deferred=${batch?.deferredReasons?.join(',') || 'none'} reviews=${review} pending=${pending?.items?.length || 0} heartbeat-due=${nextHeartbeat || 'none'}`);
             return;
@@ -248,7 +248,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log(`Execution model: ${config.executionModel}`);
         console.log(`Schedule: ${config.schedule.interval} (${config.schedule.lifecycle})`);
         console.log(`Concurrency: ${config.efficiency.maxParallel} reason=${config.efficiency.maxParallelReason || 'not recorded'} fresh-context=${config.efficiency.freshContext ? 'yes' : 'no'}`);
-        console.log(`Guards: no-progress=${config.efficiency.noProgressLimit} review-every=${config.efficiency.comprehensionReviewEvery}`);
+        console.log(`Guards: no-progress=${config.efficiency.noProgressLimit} review-every=${config.efficiency.comprehensionReviewEvery} continue-while-progressing=${config.efficiency.continueWhileProgressing ? 'yes' : 'no'}`);
         console.log(`Budgets: iterations=${config.stopConditions.maxIterations ?? 'unbounded'} tokens=${config.stopConditions.budgetTokens ?? 'unbounded'} minutes=${config.stopConditions.budgetMinutes ?? 'unbounded'} expires=${config.stopConditions.expiresAt || 'never'}`);
         console.log(`Status: ${state.status}`);
         console.log(`Iteration: ${state.iteration}`);
@@ -266,7 +266,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         for (const stage of ['design', 'plan']) {
             const review = reviewGovernance.stages[stage];
-            console.log(`Review ${stage}: rounds=${review.completedRounds}/${review.guardLimits.maxCompletedRounds} active=${review.activeRound ?? 'none'} minutes-left=${review.guardRemaining.minutes} tokens-left=${review.guardRemaining.tokens ?? 'unbounded'} cache-hits=${review.cacheHits} no-progress=${review.noProgressCount}/${review.guardLimits.noProgressLimit} heartbeat-due=${review.currentDispatch?.heartbeatDueAt || 'none'} override-round=${review.overrideDispatchWindow?.round ?? 'none'} override-deadline=${review.overrideDispatchWindow?.deadline || 'none'} override-expired=${review.overrideDispatchWindow?.expired ?? 'none'}`);
+            console.log(`Review ${stage}: rounds=${review.completedRounds}/${review.continueWhileProgressing ? 'continue-while-progressing' : review.guardLimits.maxCompletedRounds} active=${review.activeRound ?? 'none'} minutes-left=${review.guardRemaining.minutes ?? 'unbounded'} tokens-left=${review.guardRemaining.tokens ?? 'unbounded'} cache-hits=${review.cacheHits} no-progress=${review.noProgressCount}/${review.guardLimits.noProgressLimit} heartbeat-due=${review.currentDispatch?.heartbeatDueAt || 'none'} override-round=${review.overrideDispatchWindow?.round ?? 'none'} override-deadline=${review.overrideDispatchWindow?.deadline || 'none'} override-expired=${review.overrideDispatchWindow?.expired ?? 'none'}`);
         }
         if (state.lastFeedback)
             console.log(`Last feedback: ${state.lastFeedback}`);
@@ -435,6 +435,13 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         options.noProgressLimit = nullableNumber('--no-progress-limit') ?? undefined;
         options.maxTaskRepairRounds = nullableNumber('--max-task-repair-rounds') ?? undefined;
         options.maxFinalRepairRounds = nullableNumber('--max-final-repair-rounds') ?? undefined;
+        const continueWhileProgressing = scalar('--continue-while-progressing');
+        if (continueWhileProgressing !== undefined) {
+            if (continueWhileProgressing !== 'true' && continueWhileProgressing !== 'false') {
+                throw new Error('--continue-while-progressing must be true or false.');
+            }
+            options.continueWhileProgressing = continueWhileProgressing === 'true';
+        }
         const reviewEvery = scalar('--review-every');
         if (reviewEvery !== undefined) {
             const parsed = Number(reviewEvery);
@@ -464,7 +471,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             ? await services_1.services.loopService.readConfig(changePath).catch(() => null)
             : null;
         const config = await services_1.services.loopService.configure(changePath, options);
-        this.success(`Loop configured: target=${config.target}, model=${config.executionModel}, parallel=${config.efficiency.maxParallel}, taskRepairRounds=${config.efficiency.maxTaskRepairRounds}, finalRepairRounds=${config.efficiency.maxFinalRepairRounds}, interval=${config.schedule.interval}.`);
+        this.success(`Loop configured: target=${config.target}, model=${config.executionModel}, parallel=${config.efficiency.maxParallel}, taskRepairRounds=${config.efficiency.maxTaskRepairRounds}, finalRepairRounds=${config.efficiency.maxFinalRepairRounds}, continueWhileProgressing=${config.efficiency.continueWhileProgressing}, interval=${config.schedule.interval}.`);
         if (replacesPaths || replacesCommands) {
             this.warn(`Allowlist replacement applied: paths=${replacesPaths ? 'replaced' : 'unchanged'}, commands=${replacesCommands ? 'replaced' : 'unchanged'}. Repeated configure flags replace the complete selected list; they do not append.`);
             if (before?.allowlist && config.allowlist) {

@@ -73,6 +73,7 @@ export interface LoopEfficiency {
     noProgressLimit: number;
     maxTaskRepairRounds: number;
     maxFinalRepairRounds: number;
+    continueWhileProgressing: boolean;
     comprehensionReviewEvery: number;
     freshContext: boolean;
     promptMaxChars: number;
@@ -277,6 +278,7 @@ export interface LoopConfigureOptions {
     noProgressLimit?: number;
     maxTaskRepairRounds?: number;
     maxFinalRepairRounds?: number;
+    continueWhileProgressing?: boolean;
     comprehensionReviewEvery?: number;
     freshContext?: boolean;
     promptMaxChars?: number;

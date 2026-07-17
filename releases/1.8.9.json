@@ -1,0 +1,27 @@
+{
+  "title_suffix": "continuous Goal convergence and durable blocker recovery",
+  "summary": "OSpec 1.8.9 keeps Goals moving while evidence is converging without turning retries into an infinite loop. Task, final, and document review continue past their former fixed thresholds only for a new structured finding-ID set; repeated or cycling findings stop. Repair workers receive immutable review context, durable external blockers are not redispatched, independent ready work runs first, and orphaned IN_PROGRESS tasks recover automatically after their absolute runtime deadline.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.8...1.8.9",
+  "new": [
+    "Added continueWhileProgressing, enabled by default and configurable with --continue-while-progressing true|false.",
+    "Added immutable task-review repair context with review and findings paths, hashes, stable IDs, evidence, requirements, and bounded repair scope.",
+    "Added durable retryable classification for blocker records and deadline-based recovery assessments for orphaned IN_PROGRESS tasks."
+  ],
+  "improved": [
+    "Dispatches conflict-safe independent ready tasks before waiting review, repair, or technical retry work.",
+    "Treats the existing two-round repair settings as convergence thresholds in continuous mode while retaining strict compatibility mode.",
+    "Lets document review continue without the fixed round and stage-time gates while structured findings converge, preserving all explicit Loop and no-progress guards.",
+    "Resets periodic comprehension debt in continuous mode instead of pausing an otherwise progressing Goal."
+  ],
+  "fixed": [
+    "Fixed Web repair dispatches omitting the prior task-review findings and artifact provenance.",
+    "Fixed durable Mobile Dev device blockers being redispatched without any external state change.",
+    "Fixed AIHub stopping at the repair lifetime ceiling even when a new remaining finding proved convergence.",
+    "Fixed old document review round and cumulative stage-time limits stopping progressing Goals.",
+    "Fixed tasks remaining permanently IN_PROGRESS after their Loop pending action was lost.",
+    "Fixed same or cycling finding-ID sets, including reworded descriptions, being misclassified as progress."
+  ],
+  "docs": [
+    "Documented continuous convergence, strict compatibility mode, blocker classification, orphan recovery, faster ready-work scheduling, and the confirmed Web, Mobile Dev, and AIHub incidents."
+  ]
+}

@@ -11,6 +11,40 @@ export interface TaskReviewState {
     decision: TaskReviewRunDecision;
     reviewArtifactPath: string | null;
 }
+export interface TaskReviewRepairContext {
+    taskId: string;
+    decision: 'NEEDS_CHANGES' | 'BLOCKED';
+    reviewArtifactPath: string;
+    findingsPath: string;
+    reviewArtifactHash: string;
+    findingsHash: string;
+    contextHash: string;
+    capturedAt: string;
+    source: 'structured' | 'markdown_fallback';
+    findingIds: string[];
+    findings: TaskReviewFinding[];
+    repairScope: string[];
+}
+export interface TaskRepairConvergenceAssessment {
+    scope: 'task' | 'final';
+    taskId: string | null;
+    roundsUsed: number;
+    currentFindingIds: string[];
+    previousFindingIds: string[];
+    currentFingerprint: string;
+    previousFingerprint: string | null;
+    comparable: boolean;
+    progressing: boolean;
+    reason: 'below_limit' | 'findings_changed' | 'findings_unchanged' | 'findings_repeated' | 'legacy_context_unavailable';
+}
+export interface TaskRunningRecoveryAssessment {
+    taskId: string;
+    dispatchId: string | null;
+    assignedAt: string | null;
+    recoveryDeadline: string | null;
+    recoverable: boolean;
+    reason: 'runtime_expired' | 'missing_dispatch' | 'invalid_assigned_at' | 'within_runtime';
+}
 export interface TaskWorkerTargetToolMapping {
     target: TaskWorkerToolTarget;
     readContext: string;
@@ -117,6 +151,7 @@ export interface TaskDispatchRecord {
     workspaceDirtyAtDispatch?: boolean | null;
     documentationBaseline?: TaskDocumentationSnapshot[];
     documentationEvidence?: TaskDocumentationEvidence[];
+    repairContext?: TaskReviewRepairContext;
 }
 export interface TaskDocumentationSnapshot {
     path: string;
@@ -168,8 +203,9 @@ export interface TaskBlockerEscalationRecord {
     taskId: string;
     taskTitle: string;
     status: 'NEEDS_CONTEXT' | 'BLOCKED';
-    judgmentRequired: true;
-    escalationReason: 'missing_context' | 'external_blocker';
+    judgmentRequired: boolean;
+    escalationReason: 'missing_context' | 'external_blocker' | 'executor_failure';
+    retryable: boolean;
     createdAt: string;
     workerRole: string;
     workerProfile?: TaskWorkerProfile;
@@ -389,6 +425,7 @@ export interface TaskDocumentReviewGovernanceStageSummary {
     tokenReservation: number;
     tokenUsage: number | null;
     cacheHits: number;
+    continueWhileProgressing: boolean;
     guardLimits: {
         maxCompletedRounds: number;
         maxMinutes: number;
@@ -396,8 +433,8 @@ export interface TaskDocumentReviewGovernanceStageSummary {
         noProgressLimit: number;
     };
     guardRemaining: {
-        rounds: number;
-        minutes: number;
+        rounds: number | null;
+        minutes: number | null;
         tokens: number | null;
     };
     overrideDispatchWindow: {
@@ -1398,6 +1435,7 @@ export interface TaskWorkerRetryRecord {
     summary: string | null;
     recordPath: string;
     reportPath: string;
+    repairContext?: TaskReviewRepairContext;
 }
 export interface TaskWorkerRetryResult {
     changePath: string;
@@ -1481,8 +1519,16 @@ export declare class TaskGraphExecutionService {
         }>;
     }): Promise<TaskWorkerRetryBatchResult>;
     private retryWorkerRunUnlocked;
+    private captureTaskReviewRepairContext;
+    private readTaskReviewRepairHistory;
     countTaskReviewRepairRounds(changePath: string, taskId: string): Promise<number>;
+    assessRunningTaskRecovery(changePath: string, taskIds: string[], maxRuntimeMinutes: number, now?: Date): Promise<TaskRunningRecoveryAssessment[]>;
+    assessTaskReviewRepairConvergence(changePath: string, taskId: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;
+    private readFinalReviewRepairHistory;
     countFinalReviewRepairWaves(changePath: string): Promise<number>;
+    assessFinalReviewRepairConvergence(changePath: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;
+    private repairFindingsFingerprint;
+    private extractFindingIds;
     orchestrate(changePath: string, options?: {
         command?: string;
         target?: TaskWorkerToolTarget;
@@ -1507,6 +1553,7 @@ export declare class TaskGraphExecutionService {
         summary?: string;
         usageFile?: string;
         dispatchId?: string;
+        retryable?: boolean;
     }): Promise<TaskCompletionResult>;
     private completeUnlocked;
     syncWorkerStatus(changePath: string): Promise<TaskWorkerStatusSyncResult>;
@@ -1607,6 +1654,7 @@ export declare class TaskGraphExecutionService {
     private recoverDocumentReviewDispatchProjectionUnlocked;
     private computeDocumentReviewContextHash;
     private assertDocumentReviewDispatchGovernanceUnlocked;
+    private assessDocumentReviewProgressUnlocked;
     private findDocumentReviewRoundOverrideDecisionUnlocked;
     private positiveIntegerOrDefault;
     private readDocumentReviewConvergenceContextUnlocked;
@@ -1827,7 +1875,8 @@ export declare class TaskGraphExecutionService {
     private isSessionStatus;
     private isDispatchRecord;
     private writeBlockerEscalation;
-    private readLatestBlockerEscalation;
+    private readLatestWorkerRetryRecord;
+    readLatestBlockerEscalation(changePath: string, taskId?: string): Promise<TaskBlockerEscalationRecord | null>;
     private isBlockerEscalationRecord;
     private writeLocalizedReportFile;
     private localizeReportMarkdown;
@@ -1952,6 +2001,7 @@ export declare class TaskGraphExecutionService {
     private toFileSafeId;
     private toChangeRelativePath;
     private buildProjectSessionBriefLines;
+    private buildTaskReviewRepairContextLines;
     private buildDispatchPacket;
     private buildBlockerEscalationReport;
     private buildReviewDispatchPacket;

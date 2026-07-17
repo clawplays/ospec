@@ -786,6 +786,9 @@ class TaskGraphExecutionService {
         if (options.taskId && options.limit !== undefined) {
             throw new Error('Dispatch --task cannot be combined with --limit.');
         }
+        if (options.repairContext && options.taskId !== options.repairContext.taskId) {
+            throw new Error(`Repair context for ${options.repairContext.taskId} requires an exact matching task dispatch.`);
+        }
         const dispatchableTasks = options.taskId
             ? report.readyTasks.filter(task => task.id === options.taskId
                 && (report.runningTasks.length === 0 || task.parallelizable)
@@ -861,6 +864,7 @@ class TaskGraphExecutionService {
                 gitHeadAtCompletion: null,
                 workspaceDirtyAtDispatch,
                 documentationBaseline: await this.captureDocumentationSnapshots(projectRoot, task.documentationUpdates),
+                ...(options.repairContext?.taskId === task.id ? { repairContext: options.repairContext } : {}),
             };
             await this.fileService.writeJSON(recordPath, record);
             await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDispatchPacket(report, task, record));
@@ -1424,6 +1428,7 @@ class TaskGraphExecutionService {
             throw new Error(`Task ${taskId} is not retryable from status ${task.status}; retry requires BLOCKED/NEEDS_CONTEXT task state, a failed run, or --force.`);
         }
         const now = new Date().toISOString();
+        const repairContext = await this.captureTaskReviewRepairContext(resolvedChangePath, task, options.trigger, now);
         const retryId = `retry-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskId)}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
         const sessionPath = this.getSessionPath(resolvedChangePath);
         const session = await this.readSession(sessionPath, report.feature);
@@ -1457,10 +1462,11 @@ class TaskGraphExecutionService {
             summary: options.summary?.trim() || null,
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
+            ...(repairContext ? { repairContext } : {}),
         };
         await this.fileService.writeJSON(recordPath, retryRecord);
         await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildWorkerRetryReport(retryRecord));
-        const dispatch = await this.dispatchUnlocked(resolvedChangePath, { taskId });
+        const dispatch = await this.dispatchUnlocked(resolvedChangePath, { taskId, repairContext });
         return {
             changePath: resolvedChangePath,
             retryRecord,
@@ -1468,56 +1474,304 @@ class TaskGraphExecutionService {
             nextInstruction: `Retry dispatch created for ${taskId}. Run ospec execute launch ${this.quoteShellArg(this.toProjectRelativeChangePath(await this.findProjectRootForOptionalSession(resolvedChangePath), resolvedChangePath))} --task ${this.quoteShellArg(taskId)}, then execute runtimeAdapter.selected.nativeSubagent. Refresh the native capability instead of launching a CLI fallback.`,
         };
     }
-    async countTaskReviewRepairRounds(changePath, taskId) {
+    async captureTaskReviewRepairContext(changePath, task, trigger, capturedAt) {
+        const graphDecision = task.review?.decision;
+        const reviewRepairPending = graphDecision === 'NEEDS_CHANGES' || graphDecision === 'BLOCKED';
+        if (trigger !== 'task_review' && !reviewRepairPending)
+            return undefined;
+        const reviewArtifactRelativePath = task.review?.reviewArtifactPath;
+        if (!reviewArtifactRelativePath) {
+            throw new Error(`Task review repair for ${task.id} requires a review artifact path.`);
+        }
+        const resolvedChangePath = path.resolve(changePath);
+        const reviewArtifactPath = path.resolve(resolvedChangePath, reviewArtifactRelativePath);
+        const relativeReviewPath = path.relative(resolvedChangePath, reviewArtifactPath);
+        if (relativeReviewPath.startsWith('..') || path.isAbsolute(relativeReviewPath)) {
+            throw new Error(`Task review repair for ${task.id} references an artifact outside the change root.`);
+        }
+        if (!(await this.fileService.exists(reviewArtifactPath))) {
+            throw new Error(`Task review repair for ${task.id} requires review artifact ${reviewArtifactRelativePath}.`);
+        }
+        const reviewContent = await this.fileService.readFile(reviewArtifactPath);
+        const review = (0, helpers_1.parseFrontmatterDocument)(reviewContent);
+        const decision = this.normalizeReviewRunDecision(review.data?.decision);
+        if (decision !== 'NEEDS_CHANGES' && decision !== 'BLOCKED') {
+            throw new Error(`Task review repair for ${task.id} requires NEEDS_CHANGES or BLOCKED review evidence (current: ${decision}).`);
+        }
+        const findingResult = await this.readReviewFindings(reviewArtifactPath, review.content);
+        if (findingResult.structured.length === 0) {
+            throw new Error(`Task review repair for ${task.id} requires at least one concrete finding in ${this.toChangeRelativePath(changePath, findingResult.path)}.`);
+        }
+        const findingsContent = await this.fileService.readFile(findingResult.path);
+        const reviewArtifactHash = (0, crypto_1.createHash)('sha256').update(reviewContent, 'utf8').digest('hex');
+        const findingsHash = (0, crypto_1.createHash)('sha256').update(findingsContent, 'utf8').digest('hex');
+        const contextHash = (0, crypto_1.createHash)('sha256')
+            .update(`${task.id}\n${decision}\n${reviewArtifactHash}\n${findingsHash}`, 'utf8')
+            .digest('hex');
+        const repairScope = [...new Set(findingResult.structured.flatMap(finding => finding.repairScope).map(item => item.trim()).filter(Boolean))];
+        const normalizedTargets = task.targetFiles.map(normalizeTaskPath).filter(Boolean);
+        const outsideTaskScope = repairScope.filter(scope => {
+            const normalizedScope = normalizeTaskPath(scope);
+            return !normalizedScope || !normalizedTargets.some(target => taskPathsOverlap(normalizedScope, target));
+        });
+        if (outsideTaskScope.length > 0) {
+            throw new Error(`Task review repair for ${task.id} contains repair scope outside declared task target files: ${outsideTaskScope.join(', ')}.`);
+        }
+        return {
+            taskId: task.id,
+            decision,
+            reviewArtifactPath: this.toChangeRelativePath(changePath, reviewArtifactPath),
+            findingsPath: this.toChangeRelativePath(changePath, findingResult.path),
+            reviewArtifactHash,
+            findingsHash,
+            contextHash,
+            capturedAt,
+            source: findingResult.source,
+            findingIds: findingResult.structured.map(finding => finding.id),
+            findings: findingResult.structured,
+            repairScope: repairScope.length > 0 ? repairScope : task.targetFiles,
+        };
+    }
+    async readTaskReviewRepairHistory(changePath, taskId) {
         const resolvedChangePath = path.resolve(changePath);
         const normalizedTaskId = String(taskId || '').trim();
         if (!normalizedTaskId)
             throw new Error('Task review repair count requires a task ID.');
         const retriesPath = path.join(resolvedChangePath, 'artifacts', 'agents', RETRIES_DIR);
         if (!(await this.fileService.exists(retriesPath)))
-            return 0;
-        const entries = await fs_1.promises.readdir(retriesPath, { withFileTypes: true });
-        let count = 0;
+            return [];
+        const entries = (await fs_1.promises.readdir(retriesPath, { withFileTypes: true }))
+            .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+            .sort((left, right) => left.name.localeCompare(right.name));
+        const history = [];
         for (const entry of entries) {
-            if (!entry.isFile() || !entry.name.endsWith('.json'))
-                continue;
             try {
                 const record = await this.fileService.readJSON(path.join(retriesPath, entry.name));
                 if (record.taskId !== normalizedTaskId)
                     continue;
                 if (record.trigger === 'task_review'
                     || (!record.trigger && String(record.summary || '').startsWith('Loop retry after task review '))) {
-                    count += 1;
+                    history.push(record);
                 }
             }
             catch (error) {
                 throw new Error(`Task review repair history is unreadable at ${entry.name} (${error?.message || error}).`);
             }
         }
-        return count;
+        return history;
     }
-    async countFinalReviewRepairWaves(changePath) {
+    async countTaskReviewRepairRounds(changePath, taskId) {
+        return (await this.readTaskReviewRepairHistory(changePath, taskId)).length;
+    }
+    async assessRunningTaskRecovery(changePath, taskIds, maxRuntimeMinutes, now = new Date()) {
+        const resolvedChangePath = path.resolve(changePath);
+        const normalizedTaskIds = [...new Set(taskIds.map(taskId => String(taskId || '').trim()).filter(Boolean))];
+        const runtimeMs = Math.max(1, Number(maxRuntimeMinutes) || 1) * 60000;
+        const session = await this.readSession(this.getSessionPath(resolvedChangePath), await this.readFeatureName(resolvedChangePath));
+        return normalizedTaskIds.map(taskId => {
+            const dispatch = [...session.dispatches]
+                .reverse()
+                .find(candidate => candidate.taskId === taskId && !candidate.completedAt);
+            if (!dispatch) {
+                return {
+                    taskId,
+                    dispatchId: null,
+                    assignedAt: null,
+                    recoveryDeadline: null,
+                    recoverable: true,
+                    reason: 'missing_dispatch',
+                };
+            }
+            const assignedAtMs = Date.parse(dispatch.assignedAt);
+            if (!Number.isFinite(assignedAtMs)) {
+                return {
+                    taskId,
+                    dispatchId: dispatch.id,
+                    assignedAt: dispatch.assignedAt,
+                    recoveryDeadline: null,
+                    recoverable: true,
+                    reason: 'invalid_assigned_at',
+                };
+            }
+            const recoveryDeadlineMs = assignedAtMs + runtimeMs;
+            return {
+                taskId,
+                dispatchId: dispatch.id,
+                assignedAt: new Date(assignedAtMs).toISOString(),
+                recoveryDeadline: new Date(recoveryDeadlineMs).toISOString(),
+                recoverable: now.getTime() >= recoveryDeadlineMs,
+                reason: now.getTime() >= recoveryDeadlineMs ? 'runtime_expired' : 'within_runtime',
+            };
+        });
+    }
+    async assessTaskReviewRepairConvergence(changePath, taskId, configuredLimit) {
+        const resolvedChangePath = path.resolve(changePath);
+        const report = await this.getReport(resolvedChangePath);
+        const task = this.flattenReportTasks(report).find(candidate => candidate.id === taskId);
+        if (!task?.review?.reviewArtifactPath) {
+            throw new Error(`Task review convergence for ${taskId} requires a review artifact path.`);
+        }
+        const reviewArtifactPath = path.resolve(resolvedChangePath, task.review.reviewArtifactPath);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        const decision = this.normalizeReviewRunDecision(review.data?.decision);
+        if (decision !== 'NEEDS_CHANGES') {
+            throw new Error(`Task review convergence for ${taskId} requires NEEDS_CHANGES evidence (current: ${decision}).`);
+        }
+        const current = await this.readReviewFindings(reviewArtifactPath, review.content);
+        if (current.structured.length === 0) {
+            throw new Error(`Task review convergence for ${taskId} requires at least one concrete finding.`);
+        }
+        const history = await this.readTaskReviewRepairHistory(resolvedChangePath, taskId);
+        const currentFindingIds = current.structured.map(finding => finding.id).sort();
+        const currentFingerprint = this.repairFindingsFingerprint(current.structured);
+        if (history.length < configuredLimit) {
+            return {
+                scope: 'task',
+                taskId,
+                roundsUsed: history.length,
+                currentFindingIds,
+                previousFindingIds: [],
+                currentFingerprint,
+                previousFingerprint: null,
+                comparable: false,
+                progressing: true,
+                reason: 'below_limit',
+            };
+        }
+        const latest = history.at(-1);
+        const previousStructured = Array.isArray(latest?.repairContext?.findings)
+            ? latest.repairContext.findings
+            : [];
+        let previousFindingIds = previousStructured.map(finding => finding.id).filter(Boolean).sort();
+        let previousFingerprint = previousStructured.length > 0
+            ? this.repairFindingsFingerprint(previousStructured)
+            : null;
+        if (previousFindingIds.length === 0) {
+            const session = await this.readSession(this.getSessionPath(resolvedChangePath), report.feature);
+            const latestCompletedDispatch = [...session.dispatches]
+                .reverse()
+                .find(dispatch => dispatch.taskId === taskId && dispatch.completedAt && dispatch.summary);
+            previousFindingIds = this.extractFindingIds(latestCompletedDispatch?.summary || '');
+        }
+        const comparable = previousFingerprint !== null || previousFindingIds.length > 0;
+        const currentFindingSignature = currentFindingIds.join('|');
+        const unchanged = comparable && previousFindingIds.join('|') === currentFindingSignature;
+        const repeated = history.some(record => {
+            const findings = Array.isArray(record.repairContext?.findings)
+                ? record.repairContext.findings
+                : [];
+            return findings.length > 0
+                && findings.map(finding => finding.id).filter(Boolean).sort().join('|') === currentFindingSignature;
+        });
+        return {
+            scope: 'task',
+            taskId,
+            roundsUsed: history.length,
+            currentFindingIds,
+            previousFindingIds,
+            currentFingerprint,
+            previousFingerprint,
+            comparable,
+            progressing: !repeated && !unchanged,
+            reason: unchanged ? 'findings_unchanged'
+                : repeated ? 'findings_repeated'
+                    : !comparable ? 'legacy_context_unavailable' : 'findings_changed',
+        };
+    }
+    async readFinalReviewRepairHistory(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const repairWavesPath = path.join(resolvedChangePath, 'artifacts', 'agents', REPAIR_WAVES_DIR);
         if (!(await this.fileService.exists(repairWavesPath)))
-            return 0;
-        const entries = await fs_1.promises.readdir(repairWavesPath, { withFileTypes: true });
-        let count = 0;
+            return [];
+        const entries = (await fs_1.promises.readdir(repairWavesPath, { withFileTypes: true }))
+            .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+            .sort((left, right) => left.name.localeCompare(right.name));
+        const history = [];
         for (const entry of entries) {
-            if (!entry.isFile() || !entry.name.endsWith('.json'))
-                continue;
             try {
                 const record = await this.fileService.readJSON(path.join(repairWavesPath, entry.name));
                 if (!String(record.taskId || '').startsWith('repair-final-')) {
                     throw new Error('record does not identify a final-review repair task');
                 }
-                count += 1;
+                history.push(record);
             }
             catch (error) {
                 throw new Error(`Final-review repair history is unreadable at ${entry.name} (${error?.message || error}).`);
             }
         }
-        return count;
+        return history;
+    }
+    async countFinalReviewRepairWaves(changePath) {
+        return (await this.readFinalReviewRepairHistory(changePath)).length;
+    }
+    async assessFinalReviewRepairConvergence(changePath, configuredLimit) {
+        const resolvedChangePath = path.resolve(changePath);
+        const reviewArtifactPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        const decision = this.normalizeReviewRunDecision(review.data?.decision);
+        if (decision !== 'NEEDS_CHANGES') {
+            throw new Error(`Final review convergence requires NEEDS_CHANGES evidence (current: ${decision}).`);
+        }
+        const current = await this.readReviewFindings(reviewArtifactPath, review.content);
+        if (current.structured.length === 0) {
+            throw new Error('Final review convergence requires at least one concrete finding.');
+        }
+        const history = await this.readFinalReviewRepairHistory(resolvedChangePath);
+        const currentFindingIds = current.structured.map(finding => finding.id).sort();
+        const currentFingerprint = this.repairFindingsFingerprint(current.structured);
+        if (history.length < configuredLimit) {
+            return {
+                scope: 'final', taskId: null, roundsUsed: history.length,
+                currentFindingIds, previousFindingIds: [], currentFingerprint,
+                previousFingerprint: null, comparable: false, progressing: true, reason: 'below_limit',
+            };
+        }
+        const previousStructured = Array.isArray(history.at(-1)?.structuredFindings)
+            ? history.at(-1)?.structuredFindings || []
+            : [];
+        const previousFindingIds = previousStructured.map(finding => finding.id).filter(Boolean).sort();
+        const previousFingerprint = previousStructured.length > 0
+            ? this.repairFindingsFingerprint(previousStructured)
+            : null;
+        const comparable = previousFindingIds.length > 0;
+        const currentFindingSignature = currentFindingIds.join('|');
+        const unchanged = comparable && previousFindingIds.join('|') === currentFindingSignature;
+        const repeated = history.some(record => {
+            const findings = Array.isArray(record.structuredFindings) ? record.structuredFindings : [];
+            return findings.length > 0
+                && findings.map(finding => finding.id).filter(Boolean).sort().join('|') === currentFindingSignature;
+        });
+        return {
+            scope: 'final',
+            taskId: null,
+            roundsUsed: history.length,
+            currentFindingIds,
+            previousFindingIds,
+            currentFingerprint,
+            previousFingerprint,
+            comparable,
+            progressing: !repeated && !unchanged,
+            reason: unchanged ? 'findings_unchanged'
+                : repeated ? 'findings_repeated'
+                    : !comparable ? 'legacy_context_unavailable' : 'findings_changed',
+        };
+    }
+    repairFindingsFingerprint(findings) {
+        const normalized = findings.map(finding => ({
+            id: finding.id,
+            severity: finding.severity,
+            category: finding.category,
+            message: finding.message.trim(),
+            file: finding.file,
+            requirementRefs: [...finding.requirementRefs].sort(),
+            repairScope: [...finding.repairScope].sort(),
+        })).sort((left, right) => left.id.localeCompare(right.id));
+        return (0, crypto_1.createHash)('sha256').update(JSON.stringify(normalized), 'utf8').digest('hex');
+    }
+    extractFindingIds(value) {
+        return [...new Set(String(value || '').match(/\bF-\d+\b/gi) || [])]
+            .map(id => id.toUpperCase())
+            .sort();
     }
     async orchestrate(changePath, options = {}) {
         throw new Error('CLI orchestration was removed. Use ospec loop run --once and dispatch the emitted batch through the current model harness native subagent API.');
@@ -1944,6 +2198,7 @@ class TaskGraphExecutionService {
                 dispatch: dispatch ?? null,
                 createdAt: now,
                 sessionPath,
+                retryable: options.retryable === true,
             })
             : null;
         const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
@@ -2910,6 +3165,7 @@ class TaskGraphExecutionService {
             || config?.documentReview
             || config?.reviewGovernance
             || {};
+        const continueWhileProgressing = config?.efficiency?.continueWhileProgressing !== false;
         const usageById = {};
         const metricsPath = path.join(resolvedChangePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
         if (await this.fileService.exists(metricsPath)) {
@@ -3026,10 +3282,11 @@ class TaskGraphExecutionService {
                 tokenReservation,
                 tokenUsage: hasUsage ? tokenUsage : null,
                 cacheHits: events.filter(event => event.type === 'cache_reused').length,
+                continueWhileProgressing,
                 guardLimits: { maxCompletedRounds, maxMinutes, budgetTokens, noProgressLimit },
                 guardRemaining: {
-                    rounds: Math.max(0, maxCompletedRounds - completedById.size),
-                    minutes: Math.max(0, maxMinutes - elapsedMs / 60000),
+                    rounds: continueWhileProgressing ? null : Math.max(0, maxCompletedRounds - completedById.size),
+                    minutes: continueWhileProgressing ? null : Math.max(0, maxMinutes - elapsedMs / 60000),
                     tokens: budgetTokens === null ? null : Math.max(0, budgetTokens - tokenUsage - tokenReservation),
                 },
                 overrideDispatchWindow,
@@ -4249,12 +4506,19 @@ class TaskGraphExecutionService {
         const stageGovernance = governance?.stages?.[stage] || governance?.[stage] || {};
         const configuredMaxRounds = this.positiveIntegerOrDefault(stageGovernance.maxCompletedRounds ?? stageGovernance.maxRounds, DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS);
         const maxRounds = Math.min(DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS, configuredMaxRounds);
+        const continueWhileProgressing = config?.efficiency?.continueWhileProgressing !== false;
         const tokenReservation = this.positiveIntegerOrDefault(stageGovernance.tokenReservation
             ?? governance.tokenReservation
             ?? governance.reservationTokens, DEFAULT_DOCUMENT_REVIEW_TOKEN_RESERVATION);
         let roundOverrideDecisionId = null;
         let roundOverrideSelectedAt = null;
-        if (completed.length >= maxRounds) {
+        if (completed.length >= maxRounds && continueWhileProgressing) {
+            const convergence = await this.assessDocumentReviewProgressUnlocked(changePath, completed);
+            if (!convergence.progressing) {
+                throw new Error(`Document review ${stage} made no finding progress after ${completed.length} completed round(s) (current=${convergence.currentFindingIds.join(',') || 'none'}, previous=${convergence.previousFindingIds.join(',') || 'none'}, reason=${convergence.reason}); revise the document or review strategy before another specialist review.`);
+            }
+        }
+        if (completed.length >= maxRounds && !continueWhileProgressing) {
             const roundOverride = await this.findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger);
             if (!roundOverride) {
                 throw new Error(`Document review ${stage} reached its completed-round limit of ${maxRounds}; one existing required user decision bound to stage=${stage}, reviewContextHash=${reviewContextHash}, round=${round}, and exactly one extra round is required.`);
@@ -4288,7 +4552,8 @@ class TaskGraphExecutionService {
             .sort((left, right) => left - right)[0];
         if (Number.isFinite(firstStageActivity)
             && now - firstStageActivity >= stageMaxMinutes * 60000
-            && !roundOverrideDecisionId) {
+            && !roundOverrideDecisionId
+            && !continueWhileProgressing) {
             throw new Error(`Document review ${stage} dispatch blocked because its ${stageMaxMinutes}-minute stage budget was reached.`);
         }
         if (stopConditions.maxIterations !== null && stopConditions.maxIterations !== undefined
@@ -4359,6 +4624,84 @@ class TaskGraphExecutionService {
             roundOverrideDispatchDeadline: Number.isFinite(roundOverrideDispatchDeadlineMs)
                 ? new Date(roundOverrideDispatchDeadlineMs).toISOString()
                 : null,
+        };
+    }
+    async assessDocumentReviewProgressUnlocked(changePath, completed) {
+        const latestCompletion = completed.at(-1);
+        if (!latestCompletion) {
+            return {
+                progressing: true,
+                currentFindingIds: [],
+                previousFindingIds: [],
+                reason: 'legacy_context_unavailable',
+            };
+        }
+        const record = documentReviewLedgerRecord(latestCompletion);
+        const decision = this.normalizeReviewRunDecision(String(latestCompletion.payload.decision || ''));
+        if (APPROVED_REVIEW_DECISIONS.has(decision)) {
+            return { progressing: true, currentFindingIds: [], previousFindingIds: [], reason: 'approved' };
+        }
+        if (decision === 'BLOCKED') {
+            return { progressing: false, currentFindingIds: [], previousFindingIds: [], reason: 'blocked' };
+        }
+        const snapshotRelative = String(latestCompletion.payload.resultSnapshotPath || record.resultSnapshotPath || '').trim();
+        const expectedManifestHash = String(latestCompletion.payload.resultManifestHash || record.resultManifestHash || '').trim().toLowerCase();
+        if (!snapshotRelative || !/^[a-f0-9]{64}$/.test(expectedManifestHash)) {
+            return {
+                progressing: true,
+                currentFindingIds: [],
+                previousFindingIds: [],
+                reason: 'legacy_context_unavailable',
+            };
+        }
+        await this.validateDocumentReviewResultSnapshot(changePath, snapshotRelative, expectedManifestHash);
+        const findings = await this.fileService.readJSON(path.join(path.resolve(changePath, snapshotRelative), 'findings.json'));
+        if (!Array.isArray(findings?.findings)) {
+            throw new Error(`Document review ${latestCompletion.dispatchId} convergence history structured findings are invalid.`);
+        }
+        const currentFindingIds = this.validateStructuredFindingIds(findings.findings, `Document review ${latestCompletion.dispatchId} convergence history`).sort();
+        const previousFindingIds = [...new Set((Array.isArray(record.priorFindingIds) ? record.priorFindingIds : [])
+                .map(id => String(id || '').trim())
+                .filter(Boolean))].sort();
+        const comparable = Boolean(record.priorDispatchId) || previousFindingIds.length > 0;
+        if (!comparable) {
+            return {
+                progressing: true,
+                currentFindingIds,
+                previousFindingIds,
+                reason: 'legacy_context_unavailable',
+            };
+        }
+        const unchanged = currentFindingIds.join('|') === previousFindingIds.join('|');
+        if (!unchanged) {
+            const currentFindingSignature = currentFindingIds.join('|');
+            for (const priorCompletion of completed.slice(0, -1)) {
+                const priorRecord = documentReviewLedgerRecord(priorCompletion);
+                const priorSnapshotRelative = String(priorCompletion.payload.resultSnapshotPath || priorRecord.resultSnapshotPath || '').trim();
+                const priorManifestHash = String(priorCompletion.payload.resultManifestHash || priorRecord.resultManifestHash || '').trim().toLowerCase();
+                if (!priorSnapshotRelative || !/^[a-f0-9]{64}$/.test(priorManifestHash))
+                    continue;
+                await this.validateDocumentReviewResultSnapshot(changePath, priorSnapshotRelative, priorManifestHash);
+                const priorFindings = await this.fileService.readJSON(path.join(path.resolve(changePath, priorSnapshotRelative), 'findings.json'));
+                if (!Array.isArray(priorFindings?.findings)) {
+                    throw new Error(`Document review ${priorCompletion.dispatchId} convergence history structured findings are invalid.`);
+                }
+                const priorFindingIds = this.validateStructuredFindingIds(priorFindings.findings, `Document review ${priorCompletion.dispatchId} convergence history`).sort();
+                if (priorFindingIds.join('|') === currentFindingSignature) {
+                    return {
+                        progressing: false,
+                        currentFindingIds,
+                        previousFindingIds,
+                        reason: 'findings_repeated',
+                    };
+                }
+            }
+        }
+        return {
+            progressing: !unchanged,
+            currentFindingIds,
+            previousFindingIds,
+            reason: unchanged ? 'findings_unchanged' : 'findings_changed',
         };
     }
     async findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger) {
@@ -8732,6 +9075,13 @@ class TaskGraphExecutionService {
             && typeof value?.assignedAt === 'string';
     }
     async writeBlockerEscalation(input) {
+        const previousBlocker = await this.readLatestBlockerEscalation(input.changePath, input.task.id);
+        const latestRetry = await this.readLatestWorkerRetryRecord(input.changePath, input.task.id);
+        const preservesDurableBlocker = input.retryable
+            && latestRetry?.trigger === 'worker_status'
+            && previousBlocker
+            && previousBlocker.retryable !== true;
+        const retryable = input.retryable && !preservesDurableBlocker;
         const escalationId = `blocker-${this.toFileSafeTimestamp(input.createdAt)}-${this.toFileSafeId(input.task.id)}`;
         const recordPath = path.join(input.changePath, 'artifacts', 'agents', BLOCKERS_DIR, `${escalationId}.json`);
         const reportPath = path.join(input.changePath, 'artifacts', 'agents', BLOCKERS_DIR, `${escalationId}.md`);
@@ -8740,8 +9090,11 @@ class TaskGraphExecutionService {
             taskId: input.task.id,
             taskTitle: input.task.title,
             status: input.status,
-            judgmentRequired: true,
-            escalationReason: input.status === 'NEEDS_CONTEXT' ? 'missing_context' : 'external_blocker',
+            judgmentRequired: !retryable,
+            escalationReason: retryable
+                ? 'executor_failure'
+                : input.status === 'NEEDS_CONTEXT' ? 'missing_context' : 'external_blocker',
+            retryable,
             createdAt: input.createdAt,
             workerRole: input.task.workerRole,
             workerProfile: input.task.workerProfile,
@@ -8752,23 +9105,48 @@ class TaskGraphExecutionService {
             sessionPath: this.toChangeRelativePath(input.changePath, input.sessionPath),
             recordPath: this.toChangeRelativePath(input.changePath, recordPath),
             reportPath: this.toChangeRelativePath(input.changePath, reportPath),
-            nextActions: input.status === 'NEEDS_CONTEXT'
+            nextActions: retryable
                 ? [
-                    'Identify the missing decision, requirement, dependency, credential, fixture, or environment detail.',
-                    'Ask the smallest concrete question needed to unblock the task.',
-                    'After context is provided, update task graph status and dispatch or complete the task again.',
+                    'Retry this task with a fresh executor context; the prior attempt did not produce durable task evidence.',
+                    'Do not reuse the expired or failed executor identity.',
+                    'If the fresh attempt returns a durable blocker, preserve it and stop automatic redispatch.',
                 ]
-                : [
-                    'Identify whether the blocker is environmental, dependency-related, conflicting work, failing verification, or a scope mismatch.',
-                    'Do not guess or mark the task done until the blocking condition is resolved.',
-                    'After the blocker is resolved, update task graph status and dispatch or complete the task again.',
-                ],
+                : input.status === 'NEEDS_CONTEXT'
+                    ? [
+                        'Identify the missing decision, requirement, dependency, credential, fixture, or environment detail.',
+                        'Ask the smallest concrete question needed to unblock the task.',
+                        'After context is provided, update task graph status and dispatch or complete the task again.',
+                    ]
+                    : [
+                        'Identify whether the blocker is environmental, dependency-related, conflicting work, failing verification, or a scope mismatch.',
+                        'Do not guess or mark the task done until the blocking condition is resolved.',
+                        'After the blocker is resolved, update task graph status and dispatch or complete the task again.',
+                    ],
         };
         await this.fileService.writeJSON(recordPath, record);
         await this.writeLocalizedReportFile(input.report.changePath, reportPath, this.buildBlockerEscalationReport(input.report, record));
         return record;
     }
-    async readLatestBlockerEscalation(changePath) {
+    async readLatestWorkerRetryRecord(changePath, taskId) {
+        const retriesPath = path.join(changePath, 'artifacts', 'agents', RETRIES_DIR);
+        if (!(await this.fileService.exists(retriesPath)))
+            return null;
+        const entries = (await this.fileService.readDir(retriesPath))
+            .filter(entry => entry.endsWith('.json'))
+            .sort((left, right) => right.localeCompare(left));
+        for (const entry of entries) {
+            try {
+                const record = await this.fileService.readJSON(path.join(retriesPath, entry));
+                if (record.taskId === taskId)
+                    return record;
+            }
+            catch (error) {
+                throw new Error(`Worker retry history is unreadable at ${entry} (${error?.message || error}).`);
+            }
+        }
+        return null;
+    }
+    async readLatestBlockerEscalation(changePath, taskId) {
         const blockersPath = path.join(changePath, 'artifacts', 'agents', BLOCKERS_DIR);
         if (!(await this.fileService.exists(blockersPath))) {
             return null;
@@ -8778,8 +9156,12 @@ class TaskGraphExecutionService {
             .sort((left, right) => left.localeCompare(right));
         for (const entry of entries.reverse()) {
             const record = await this.fileService.readJSON(path.join(blockersPath, entry));
-            if (this.isBlockerEscalationRecord(record)) {
-                return record;
+            if (this.isBlockerEscalationRecord(record)
+                && (!taskId || record.taskId === taskId)) {
+                return {
+                    ...record,
+                    retryable: record.retryable === true,
+                };
             }
         }
         return null;
@@ -8874,9 +9256,7 @@ class TaskGraphExecutionService {
                     return detected;
                 }
             }
-            catch {
-                continue;
-            }
+            catch { }
         }
         return null;
     }
@@ -8965,6 +9345,9 @@ class TaskGraphExecutionService {
             [/^## Lifecycle$/u, '## 生命周期'],
             [/^## Recommendations$/u, '## 建议'],
             [/^## Required Context$/u, '## 必需上下文'],
+            [/^## Task Review Repair Context$/u, '## 任务评审修复上下文'],
+            [/^### Required Repairs$/u, '### 必需修复项'],
+            [/^### Repair Constraints$/u, '### 修复约束'],
             [/^## Review Output$/u, '## 评审输出'],
             [/^## Completion$/u, '## 完成方式'],
             [/^## Selected Dispatch$/u, '## 选中的派发'],
@@ -9083,6 +9466,20 @@ class TaskGraphExecutionService {
             Document: '文档',
             'Document readiness': '文档就绪状态',
             'Review artifact': '评审 artifact',
+            'Review decision': '评审决策',
+            'Findings sidecar': 'Findings sidecar',
+            'Finding IDs': 'Finding IDs',
+            'Repair write scope': '修复写入范围',
+            'Context captured at': '上下文捕获时间',
+            'Review artifact SHA-256': '评审 artifact SHA-256',
+            'Findings SHA-256': 'Findings SHA-256',
+            'Repair context SHA-256': '修复上下文 SHA-256',
+            Severity: '严重程度',
+            Category: '类别',
+            Location: '位置',
+            Evidence: '证据',
+            'Requirement refs': '需求引用',
+            'Repair scope': '修复范围',
             Record: '记录',
             'Record path': '记录路径',
             'Packet path': '包路径',
@@ -9153,6 +9550,10 @@ class TaskGraphExecutionService {
             '- It does not edit project source files, dispatch workers, run tests, or approve review artifacts.': '- 它不会编辑项目源码、派发 worker、运行测试或批准评审 artifacts。',
             '- Required pending decisions block worker dispatch and finish readiness until selected or skipped.': '- 待处理的必选决策会阻止 worker 派发和 finish 就绪，直到被选择或跳过。',
             '- This index summarizes user decision artifacts only.': '- 此索引只汇总用户决策 artifacts。',
+            '- This is a bounded repair of the listed findings, not a fresh implementation of the original task.': '- 这是针对所列 findings 的有边界修复，不是重新实现原始任务。',
+            '- Resolve every finding ID above and cite the changed files and verification evidence in the worker report.': '- 解决上方每个 finding ID，并在 worker 报告中引用变更文件和验证证据。',
+            '- Keep source edits within the repair write scope. If the scope is insufficient, stop with NEEDS_CONTEXT instead of silently broadening it.': '- 将源码编辑限制在修复写入范围内；如果范围不足，以 NEEDS_CONTEXT 停止，不要静默扩大范围。',
+            '- Do not edit the review artifact or findings sidecar. A fresh independent reviewer will replace the decision after repair completion.': '- 不要编辑评审 artifact 或 findings sidecar；修复完成后由新的独立 reviewer 更新决策。',
         };
         return sentences[line] || line;
     }
@@ -11449,6 +11850,19 @@ class TaskGraphExecutionService {
         ].join('\n');
     }
     buildWorkerRetryReport(record) {
+        const repairContext = record.repairContext
+            ? [
+                '## Task Review Repair Context',
+                '',
+                `- Review decision: ${record.repairContext.decision}`,
+                `- Review artifact: ${record.repairContext.reviewArtifactPath}`,
+                `- Findings sidecar: ${record.repairContext.findingsPath}`,
+                `- Finding IDs: ${record.repairContext.findingIds.join(', ')}`,
+                `- Repair write scope: ${record.repairContext.repairScope.join(', ')}`,
+                `- Repair context SHA-256: ${record.repairContext.contextHash}`,
+                '',
+            ]
+            : [];
         return [
             `# Worker Retry: ${record.id}`,
             '',
@@ -11459,6 +11873,7 @@ class TaskGraphExecutionService {
             `- Trigger: ${record.trigger || 'legacy/unknown'}`,
             `- Created at: ${record.createdAt}`,
             '',
+            ...repairContext,
             '## Summary',
             '',
             record.summary || 'Retry requested after blocker or failed worker run was resolved.',
@@ -11966,6 +12381,43 @@ class TaskGraphExecutionService {
             projectSessionWarnings,
         ];
     }
+    buildTaskReviewRepairContextLines(context) {
+        const findings = context.findings.flatMap(finding => [
+            `### ${finding.id}: ${finding.message}`,
+            '',
+            `- Severity: ${finding.severity}`,
+            `- Category: ${finding.category}`,
+            `- Location: ${finding.file ? `${finding.file}${finding.line ? `:${finding.line}` : ''}` : 'not recorded'}`,
+            `- Evidence: ${finding.evidence}`,
+            `- Requirement refs: ${finding.requirementRefs.join(', ') || 'none'}`,
+            `- Repair scope: ${finding.repairScope.join(', ') || context.repairScope.join(', ') || 'not recorded'}`,
+            '',
+        ]);
+        return [
+            '## Task Review Repair Context',
+            '',
+            `- Review decision: ${context.decision}`,
+            `- Review artifact: ${context.reviewArtifactPath}`,
+            `- Findings sidecar: ${context.findingsPath}`,
+            `- Finding IDs: ${context.findingIds.join(', ')}`,
+            `- Repair write scope: ${context.repairScope.join(', ')}`,
+            `- Context captured at: ${context.capturedAt}`,
+            `- Review artifact SHA-256: ${context.reviewArtifactHash}`,
+            `- Findings SHA-256: ${context.findingsHash}`,
+            `- Repair context SHA-256: ${context.contextHash}`,
+            '',
+            '### Required Repairs',
+            '',
+            ...findings,
+            '### Repair Constraints',
+            '',
+            '- This is a bounded repair of the listed findings, not a fresh implementation of the original task.',
+            '- Resolve every finding ID above and cite the changed files and verification evidence in the worker report.',
+            '- Keep source edits within the repair write scope. If the scope is insufficient, stop with NEEDS_CONTEXT instead of silently broadening it.',
+            '- Do not edit the review artifact or findings sidecar. A fresh independent reviewer will replace the decision after repair completion.',
+            '',
+        ];
+    }
     buildDispatchPacket(report, task, record) {
         const profile = record.workerProfile ?? task.workerProfile;
         const targetToolMapping = profile.targetToolMapping ?? buildWorkerTargetToolMapping(profile.recommendedTarget);
@@ -11978,6 +12430,12 @@ class TaskGraphExecutionService {
             ? task.interfaces.map(item => `- ${item}`).join('\n')
             : '- None recorded.';
         const workerReportPath = ['artifacts', 'agents', WORKER_REPORTS_DIR, `${this.toFileSafeId(task.id) || 'task'}.md`].join('/');
+        const targetFiles = record.repairContext?.repairScope.length
+            ? record.repairContext.repairScope
+            : task.targetFiles;
+        const repairContextLines = record.repairContext
+            ? this.buildTaskReviewRepairContextLines(record.repairContext)
+            : [];
         return [
             `# Agent Dispatch: ${task.id}`,
             '',
@@ -11995,7 +12453,7 @@ class TaskGraphExecutionService {
             `- Status: ${record.status}`,
             `- Parallelizable: ${task.parallelizable ? 'yes' : 'no'}`,
             `- Serial reason: ${task.parallelizable ? 'not applicable' : task.serialReason || 'missing (planning warning)'}`,
-            `- Target files: ${task.targetFiles.join(', ') || 'none'}`,
+            `- Target files: ${targetFiles.join(', ') || 'none'}`,
             `- Verification commands: ${task.verificationCommands.join(' && ') || 'none'}`,
             `- Expected result: ${task.expectedResult || 'none'}`,
             `- Usage sidecar: artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json (optional; automatically ingested when present)`,
@@ -12028,6 +12486,7 @@ class TaskGraphExecutionService {
             '',
             task.context || 'No additional task context recorded.',
             '',
+            ...repairContextLines,
             '## Global Constraints',
             '',
             globalConstraints,

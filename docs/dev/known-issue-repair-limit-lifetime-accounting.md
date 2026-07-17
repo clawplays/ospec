@@ -2,15 +2,15 @@
 
 ## Status
 
-- State: open
+- State: fixed in 1.8.9
 - First confirmed: 2026-07-16
-- Affected release: Goals created before the 1.8.4 repair limit and resumed on 1.8.4 through 1.8.6
+- Affected release: Goals created before the 1.8.4 repair limit and resumed on 1.8.4 through 1.8.8
 - Severity: medium workflow delay and authorization confusion; the fail-closed gate is working
 - Component: task-review repair accounting, migration, status text, and user authorization
 
 ## Summary
 
-`maxTaskRepairRounds` is a lifetime ceiling for every task-review-triggered retry recorded in the Goal. It is not a count of repairs to run after the user grants permission. This distinction is not visible when an older Goal already contains more repair records than the configured ceiling introduced in 1.8.4.
+Before 1.8.9, `maxTaskRepairRounds` was an unconditional lifetime ceiling for every task-review-triggered retry recorded in the Goal. It was not a count of repairs to run after the user granted permission. This distinction was not visible when an older Goal already contained more repair records than the configured ceiling introduced in 1.8.4.
 
 An upgraded Goal can therefore stop with a message such as:
 
@@ -20,7 +20,21 @@ task-01-evidence-tooling=7/2
 
 If the user wants to authorize two additional repair rounds, the controller must raise the lifetime ceiling from 2 to 9. The number 9 looks like permission to run nine more rounds, even though only `9 - 7 = 2` rounds are newly available. The gate is fail-closed and preserves history correctly, but the command and diagnostics force the user or model controller to perform implicit lifetime arithmetic.
 
-The same problem can occur after configuration changes, migration from an unbounded release, import of durable retry history, or a lower ceiling being restored from project policy.
+The same problem occurred after configuration changes, migration from an unbounded release, import of durable retry history, or a lower ceiling being restored from project policy.
+
+## 1.8.9 resolution
+
+OSpec still preserves and counts every valid historical repair record. In default continuous mode, however, the configured value is a convergence threshold rather than an unconditional stop. At or above the threshold, OSpec compares the current stable structured finding IDs with the findings captured by the prior repair:
+
+- changed IDs mean the review is converging and one more repair may run;
+- the same IDs mean no progress and stop before another repair;
+- changing only finding wording does not count as progress;
+- an old record without repair context uses the latest completed worker summary when it contains finding IDs;
+- if legacy evidence cannot be compared, one compatibility repair captures authoritative context for the next decision.
+
+This resolves the confirmed `7/2` incident without deleting history, resetting counters, or asking the user to calculate an absolute ceiling of 9. `--continue-while-progressing false` preserves the original lifetime-ceiling behavior for strict compatibility. The same convergence rule applies independently to grouped final-review repair.
+
+The broader task-scoped incremental authorization design below remains useful as historical design work, but it is no longer required to unblock a Goal whose findings are demonstrably changing.
 
 ## Confirmed Incident
 
@@ -51,7 +65,7 @@ The task then passed independent review with `APPROVED`. Raising the ceiling to 
 
 This outcome confirms that lifetime accounting and the fail-closed gate behave as implemented. The defect is the migration and authorization interface around that accounting, not evidence that the repair counter should be reset.
 
-## Current Implementation
+## 1.8.8 and earlier implementation
 
 `TaskGraphExecutionService.countTaskReviewRepairRounds()` scans every durable JSON record in `artifacts/agents/retries/` for the task. It counts records with `trigger=task_review` and legacy records whose summary starts with `Loop retry after task review `.
 
@@ -76,7 +90,7 @@ The compatibility inference is important: dropping the seven legacy records woul
 
 The current behavior does not intrinsically make the Goal slower. A ceiling is a maximum, not a target. The slowdown risk comes from granting a broad ceiling that permits unrelated or repeated low-value repairs without a scoped authorization record.
 
-## Current Workaround
+## Historical workaround before 1.8.9
 
 Before raising the ceiling:
 
@@ -91,7 +105,7 @@ For the confirmed incident, `7 + 2 = 9` was the correct bounded workaround.
 
 Do not delete, rename, or edit retry records to reduce the count. Do not reset the count merely because OSpec was upgraded. Both approaches would weaken the safety gate and break the audit trail.
 
-## Required Fix
+## Original proposed fix (superseded by convergence thresholds)
 
 ### 1. Report explicit accounting fields
 

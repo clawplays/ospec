@@ -19,7 +19,7 @@ ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-mod
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec loop status [changes/active/<change>] [--brief|--json]
-ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N
+ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N --continue-while-progressing true|false
 ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
@@ -71,9 +71,9 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 `loop configure --allow-path`、`--allow-command` 和 `--allow-command-policy` 会替换所选的完整白名单分组并打印差异，不会静默追加。L3 优先使用基于任务图的 `derive -> check -> apply` 流程；apply 使用 CAS 哈希，权限扩大必须显式传入 `--approve-expansion`。
 
-1.8.3 对设计和计划的 specialist review 增加了边界：默认每阶段最多完成两轮、30 分钟，并启用无进展熔断。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；额外一轮必须有已记录的 required user decision，并绑定阶段、当前 review-context hash、轮次和显式 `--review-approval-option`，只有选择该批准项才能授权一次 dispatch。
+1.8.3 为设计和计划的 specialist review 引入了边界默认值。1.8.9 连续模式把每阶段两轮和 30 分钟作为收敛阈值：新的结构化 finding-ID 集合可以继续，重复或循环集合会停止。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；严格模式保留精确用户授权的额外轮次窗口。
 
-1.8.4 进一步把每个 task 的自动 review-repair 和 grouped final-review repair 都限制为默认两轮。只有当全部文件变化都能归因到已完成的传递下游任务时，上游已批准 review 才会继续有效；下游 reviewer 包会继承这些上游合同作为回归义务。final review 为 `BLOCKED` 时会停下解决 blocker，不会错误进入 grouped repair。检查未解决 findings 后，只有获得用户明确授权才能通过 `--max-task-repair-rounds N` 或 `--max-final-repair-rounds N` 提高上限。
+1.8.4 引入了 task review-repair 和 grouped final-review repair 的两轮门禁。1.8.9 默认把这个数值作为收敛阈值：结构化 finding ID 发生变化时自动继续，同一组 ID 重复出现时在下一次无效 repair 前停止。使用 `--continue-while-progressing false` 可保留旧版严格生命周期上限。只有当全部文件变化都能归因到已完成的传递下游任务时，上游已批准 review 才会继续有效；下游 reviewer 包会继承这些上游合同作为回归义务。final review 为 `BLOCKED` 时会停下解决 blocker，不会错误进入 grouped repair。
 
 1.8.5 防止原生 child 的等待让 Goal controller 长时间卡死。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它所有 native adapter 的单次等待都必须在 60 秒内返回，在 `heartbeatDueAt` 前续租，完成一个结果就立即持久化一个，并重新 tick。只有 Git HEAD 变化但 task 目标快照未变时，不再重复 task review；final review 仍严格绑定快照和 HEAD。未知 native capacity 时 implementation 批次最多两个，但不会降低互不冲突的 review 并行度。新 task 超过六个目标时必须拆分，或填写 `scope_reason`。
 
@@ -213,7 +213,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.8
+npm install -g @clawplays/ospec-cli@1.8.9
 ospec update [path]
 ```
 

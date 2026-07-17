@@ -19,7 +19,7 @@ ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec loop status [changes/active/<change>] [--brief|--json]
-ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N
+ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N --continue-while-progressing true|false
 ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
@@ -70,9 +70,9 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 تستبدل الخيارات `loop configure --allow-path` و`--allow-command` و`--allow-command-policy` مجموعة allowlist المحددة بالكامل وتعرض الفرق، ولا تضيف صلاحيات ضمنيا. في L3 استخدم مسار task graph: `derive -> check -> apply`. يستخدم apply قيم CAS، ويتطلب توسيع الصلاحيات الخيار الصريح `--approve-expansion`.
 
-يضع الإصدار 1.8.3 حدودا لمراجعات design وplan المتخصصة: افتراضيا جولتان مكتملتان و30 دقيقة لكل stage مع قاطع no-progress. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز؛ وتتطلب الجولة الإضافية required user decision مسجلا ومرتبطا بالـ stage وreview-context hash الحالي ورقم الجولة وخيار `--review-approval-option` الصريح، ولا يسمح إلا اختيار هذا الخيار بعملية dispatch واحدة.
+قدم الإصدار 1.8.3 قيما افتراضية محدودة لمراجعات design وplan المتخصصة. في continuous mode للإصدار 1.8.9 تصبح الجولتان المكتملتان و30 دقيقة لكل stage عتبات تقارب: يمكن لمجموعة structured finding-ID جديدة أن تستمر، بينما تتوقف المجموعات المتكررة أو الدورية. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز، ويحتفظ strict mode بنافذة extra round التي يصرح بها المستخدم بدقة.
 
-يحدد الإصدار 1.8.4 كل من task-review repair التلقائية وgrouped final-review repair بجولتين افتراضيا. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair. لا ترفع `--max-task-repair-rounds N` أو `--max-final-repair-rounds N` إلا بعد فحص findings غير المحلولة والحصول على تفويض صريح من المستخدم.
+قدم الإصدار 1.8.4 حارسا من جولتين لكل من task-review repair وgrouped final-review repair. في 1.8.9 تصبح هذه القيم عتبات تقارب افتراضيا: يستمر التنفيذ عندما تتغير معرفات findings المنظمة، ويتوقف قبل repair غير مفيد عندما تتكرر المعرفات نفسها. يحافظ `--continue-while-progressing false` على حدود العمر الصارمة السابقة. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair.
 
 يمنع الإصدار 1.8.5 انتظار native child من تجميد Goal controller. يجب أن يعيد `wait_agent` في Codex/GPT وpolling لـ Claude Task وكل native adapter آخر التحكم خلال 60 ثانية، ويحدّث heartbeat قبل `heartbeatDueAt`، ويحفظ كل نتيجة مكتملة فوراً، ثم يعيد tick. لا تعيد حركة Git HEAD وحدها task review عندما تبقى target snapshot دون تغيير، بينما تظل final review مرتبطة بدقة بالـ snapshot وHEAD. عند غياب native capacity يقتصر implementation batch على مهمتين من دون تقليل توازي review الآمن. يجب تقسيم أي task جديدة تتجاوز ستة targets أو إضافة `scope_reason`.
 
@@ -212,7 +212,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.8
+npm install -g @clawplays/ospec-cli@1.8.9
 ospec update [path]
 ```
 
