@@ -215,6 +215,9 @@ export interface TaskBlockerEscalationRecord {
     judgmentRequired: boolean;
     escalationReason: 'missing_context' | 'external_blocker' | 'executor_failure';
     retryable: boolean;
+    deferredToFinalReview?: boolean;
+    deferredAt?: string | null;
+    deferredReason?: string | null;
     createdAt: string;
     workerRole: string;
     workerProfile?: TaskWorkerProfile;
@@ -1572,6 +1575,9 @@ export declare class TaskGraphExecutionService {
         dispatchId?: string;
         retryable?: boolean;
     }): Promise<TaskCompletionResult>;
+    deferExternalBlocker(changePath: string, taskId: string, options: {
+        reason: string;
+    }): Promise<TaskBlockerEscalationRecord>;
     private completeUnlocked;
     syncWorkerStatus(changePath: string): Promise<TaskWorkerStatusSyncResult>;
     private syncWorkerStatusUnlocked;

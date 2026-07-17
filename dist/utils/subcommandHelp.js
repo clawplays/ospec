@@ -144,6 +144,7 @@ Execute Commands:
   ospec execute collect [change-path|project-path] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - collect a worker run into task completion state
   ospec execute retry [change-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
   ospec execute complete <task-id> [change-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] [--usage-file usage.json] - record a worker result and ingest the dispatch usage sidecar automatically when present; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
+  ospec execute defer-blocker <task-id> [change-path|project-path] --reason "..." - explicitly defer a durable external acceptance blocker to final review so dependency-safe implementation can continue; the task stays BLOCKED and finalization/archive remain gated
   ospec execute sync [change-path|project-path]   - sync worker status, bootstrap/state.json, and the project session brief
   ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] - create a non-controller task-level or final review packet; controller Goals use ospec loop tick
   ospec execute feedback [change-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files

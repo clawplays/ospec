@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexBuilder = exports.IndexBuilder = void 0;
 const fs_1 = require("fs");
+const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
@@ -37,7 +38,7 @@ class IndexBuilder {
     }
     async build(rootDir) {
         const config = await this.readProjectConfig(rootDir);
-        const archivedChanges = await this.scanArchivedChanges(rootDir, config);
+        const archivedChanges = await this.scanArchivedChangesWithHistory(rootDir, config);
         return this.buildSnapshot(rootDir, config, archivedChanges);
     }
     async buildSnapshot(rootDir, config, archivedChanges) {
@@ -123,10 +124,13 @@ class IndexBuilder {
         };
     }
     async write(rootDir) {
+        return (await this.writeWithSummary(rootDir)).index;
+    }
+    async writeWithSummary(rootDir) {
         const config = await this.readProjectConfig(rootDir);
-        const archivedChanges = await this.scanArchivedChanges(rootDir, config);
-        await this.writeArchivedChangeKnowledgeDocuments(rootDir, config, archivedChanges);
-        await this.writeFeatureIndex(rootDir, config, archivedChanges);
+        const archivedChanges = await this.scanArchivedChangesWithHistory(rootDir, config);
+        const knowledgeWrite = await this.writeArchivedChangeKnowledgeDocuments(rootDir, config, archivedChanges);
+        const featureIndexPath = await this.writeFeatureIndex(rootDir, config, archivedChanges);
         const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
         const previous = (await pathExists(indexPath))
             ? (await readJson(indexPath))
@@ -134,15 +138,28 @@ class IndexBuilder {
         const index = await this.buildSnapshot(rootDir, config, archivedChanges);
         const previousComparable = previous ? this.stripVolatileFields(previous) : null;
         const nextComparable = this.stripVolatileFields(index);
+        let writtenIndex = index;
         if (previous && JSON.stringify(previousComparable) === JSON.stringify(nextComparable)) {
-            return previous;
+            writtenIndex = previous;
         }
-        const output = {
-            ...index,
-            generated: new Date().toISOString(),
+        else {
+            writtenIndex = {
+                ...index,
+                generated: new Date().toISOString(),
+            };
+            await fs_1.promises.writeFile(indexPath, JSON.stringify(writtenIndex, null, 2), 'utf-8');
+        }
+        const managedPaths = Array.from(new Set([
+            ...knowledgeWrite.managedPaths,
+            ...knowledgeWrite.removedPaths,
+            ...(featureIndexPath ? [featureIndexPath] : []),
+            path_1.default.relative(rootDir, indexPath).replace(/\\/g, '/'),
+        ])).sort((left, right) => left.localeCompare(right));
+        return {
+            index: writtenIndex,
+            managedPaths,
+            removedPaths: knowledgeWrite.removedPaths,
         };
-        await fs_1.promises.writeFile(indexPath, JSON.stringify(output, null, 2), 'utf-8');
-        return output;
     }
     async createEmpty(rootDir) {
         const config = await this.readProjectConfig(rootDir);
@@ -284,6 +301,67 @@ class IndexBuilder {
         await visit(archivedRoot);
         return entries.sort((left, right) => right.archive.localeCompare(left.archive));
     }
+    async scanArchivedChangesWithHistory(rootDir, config) {
+        const current = await this.scanArchivedChanges(rootDir, config);
+        const historical = await this.readArchivedChangeHistory(rootDir, config);
+        const historicalByArchive = new Map();
+        for (const entry of historical) {
+            const archive = String(entry?.archive || '').replace(/\\/g, '/');
+            if (!archive)
+                continue;
+            const entries = historicalByArchive.get(archive) || [];
+            entries.push(entry);
+            historicalByArchive.set(archive, entries);
+        }
+        return current.map(entry => {
+            const history = historicalByArchive.get(entry.archive.replace(/\\/g, '/')) || [];
+            return {
+                ...entry,
+                target_files: this.mergeHistoricalStringLists(history, entry.target_files, 'target_files'),
+                verification_commands: this.mergeHistoricalStringLists(history, entry.verification_commands, 'verification_commands'),
+                project_documents: this.mergeHistoricalStringLists(history, entry.project_documents, 'project_documents'),
+                documents: this.mergeHistoricalOrderedLists(history, entry.documents, 'documents'),
+            };
+        });
+    }
+    mergeHistoricalStringLists(historical, current, key) {
+        return Array.from(new Set([
+            ...historical.flatMap(entry => Array.isArray(entry?.[key]) ? entry[key] || [] : []),
+            ...(current || []),
+        ].map(value => String(value || '').trim()).filter(Boolean))).sort();
+    }
+    mergeHistoricalOrderedLists(historical, current, key) {
+        return Array.from(new Set([
+            ...historical.flatMap(entry => Array.isArray(entry?.[key]) ? entry[key] || [] : []),
+            ...(current || []),
+        ].map(value => String(value || '').trim()).filter(Boolean)));
+    }
+    async readArchivedChangeHistory(rootDir, config) {
+        const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
+        const candidates = [];
+        if (await pathExists(indexPath)) {
+            candidates.push(await fs_1.promises.readFile(indexPath, 'utf8'));
+        }
+        const relativeIndexPath = path_1.default.relative(rootDir, indexPath).replace(/\\/g, '/');
+        try {
+            candidates.push((0, child_process_1.execFileSync)('git', ['-C', rootDir, 'show', `HEAD:${relativeIndexPath}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
+        }
+        catch {
+            // Non-git projects still retain history from their current generated index.
+        }
+        const entries = [];
+        for (const candidate of candidates) {
+            try {
+                const parsed = JSON.parse(candidate.replace(/^\uFEFF/, ''));
+                if (Array.isArray(parsed?.archived_changes))
+                    entries.push(...parsed.archived_changes);
+            }
+            catch {
+                // A damaged historical index must not prevent a fresh index build.
+            }
+        }
+        return entries;
+    }
     async readArchivedChange(rootDir, archiveDir) {
         try {
             const state = await readJson(path_1.default.join(archiveDir, constants_1.FILE_NAMES.STATE));
@@ -378,6 +456,7 @@ class IndexBuilder {
         const archivedRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'changes/archived', config);
         const knowledgeRoot = path_1.default.join(docsProjectRoot, 'changes');
         const expectedPaths = new Set();
+        const managedPaths = [];
         const copy = this.getArchivedKnowledgeCopy(config?.documentLanguage);
         for (const change of archivedChanges) {
             const archiveAbsolute = path_1.default.join(rootDir, ...change.archive.split('/'));
@@ -394,6 +473,7 @@ class IndexBuilder {
             expectedPaths.add(resolvedTarget.toLowerCase());
             await fs_1.promises.mkdir(path_1.default.dirname(resolvedTarget), { recursive: true });
             const knowledgeDocument = path_1.default.relative(rootDir, resolvedTarget).replace(/\\/g, '/');
+            managedPaths.push(knowledgeDocument);
             change.knowledge_document = knowledgeDocument;
             await this.assertGeneratedKnowledgeDocumentReplaceable(resolvedTarget, change.archive);
             const archiveLink = path_1.default.relative(path_1.default.dirname(resolvedTarget), archiveAbsolute).replace(/\\/g, '/');
@@ -455,7 +535,11 @@ class IndexBuilder {
             if (previous !== content)
                 await fs_1.promises.writeFile(resolvedTarget, content, 'utf8');
         }
-        await this.removeStaleArchivedKnowledgeDocuments(knowledgeRoot, expectedPaths);
+        const removedPaths = await this.removeStaleArchivedKnowledgeDocuments(rootDir, knowledgeRoot, expectedPaths);
+        return {
+            managedPaths: managedPaths.sort((left, right) => left.localeCompare(right)),
+            removedPaths,
+        };
     }
     getKnowledgeDocumentRelativePath(archive) {
         const normalized = archive.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -494,9 +578,10 @@ class IndexBuilder {
             ? items.map(item => `- \`${item.replace(/`/g, '\\`')}\``)
             : [empty];
     }
-    async removeStaleArchivedKnowledgeDocuments(knowledgeRoot, expectedPaths) {
+    async removeStaleArchivedKnowledgeDocuments(rootDir, knowledgeRoot, expectedPaths) {
         if (!(await pathExists(knowledgeRoot)))
-            return;
+            return [];
+        const removedPaths = [];
         const visit = async (currentDir) => {
             const entries = await fs_1.promises.readdir(currentDir, { withFileTypes: true });
             for (const entry of entries) {
@@ -511,6 +596,7 @@ class IndexBuilder {
                     const document = (0, helpers_1.parseFrontmatterDocument)(await fs_1.promises.readFile(fullPath, 'utf8'));
                     if (document.data?.generated === true && document.data?.generator === 'ospec-archive-knowledge') {
                         await fs_1.promises.unlink(fullPath);
+                        removedPaths.push(path_1.default.relative(rootDir, fullPath).replace(/\\/g, '/'));
                     }
                 }
                 catch {
@@ -519,6 +605,7 @@ class IndexBuilder {
             }
         };
         await visit(knowledgeRoot);
+        return removedPaths.sort((left, right) => left.localeCompare(right));
     }
     getArchivedKnowledgeCopy(documentLanguage) {
         if (documentLanguage === 'zh-CN')
@@ -576,7 +663,7 @@ class IndexBuilder {
     async writeFeatureIndex(rootDir, config, archivedChanges) {
         const docsProjectRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'docs/project', config);
         if (!(await pathExists(docsProjectRoot)) && archivedChanges.length === 0)
-            return;
+            return null;
         await fs_1.promises.mkdir(docsProjectRoot, { recursive: true });
         const targetPath = path_1.default.join(docsProjectRoot, 'feature-index.md');
         const copy = this.getFeatureIndexCopy(config?.documentLanguage);
@@ -622,6 +709,7 @@ class IndexBuilder {
         const previous = await pathExists(targetPath) ? await fs_1.promises.readFile(targetPath, 'utf8') : null;
         if (previous !== content)
             await fs_1.promises.writeFile(targetPath, content, 'utf8');
+        return path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/');
     }
     getFeatureIndexCopy(documentLanguage) {
         if (documentLanguage === 'zh-CN') {

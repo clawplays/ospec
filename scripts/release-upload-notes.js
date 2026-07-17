@@ -114,8 +114,8 @@ function parseGitHubRepository(repositoryUrl) {
   };
 }
 
-function getReleaseMetadataPath(tag) {
-  return path.join(RELEASE_OVERRIDE_DIR, `${tag}.json`);
+function getReleaseMetadataPath(tag, releaseDir = RELEASE_OVERRIDE_DIR) {
+  return path.join(releaseDir, `${tag}.json`);
 }
 
 function hasStructuredReleaseMetadata(input) {
@@ -133,8 +133,8 @@ function hasStructuredReleaseMetadata(input) {
   );
 }
 
-async function readReleaseMetadata(tag) {
-  const metadataPath = getReleaseMetadataPath(tag);
+async function readReleaseMetadata(tag, releaseDir = RELEASE_OVERRIDE_DIR) {
+  const metadataPath = getReleaseMetadataPath(tag, releaseDir);
   if (!fs.existsSync(metadataPath)) {
     throw new Error(`Local release metadata not found: ${metadataPath}`);
   }
@@ -161,6 +161,7 @@ async function readReleaseMetadata(tag) {
     previousTag,
     commits,
     repositoryUrl,
+    releaseOverrideDir: releaseDir,
   });
 
   if (!rendered.name || !rendered.body) {

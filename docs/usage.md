@@ -42,6 +42,7 @@ ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--summary "..."] [--force]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
+ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
@@ -74,6 +75,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 Specialist design and plan reviews gained bounded defaults in 1.8.3. In 1.8.9 continuous mode, two completed rounds and 30 minutes are convergence thresholds: a new structured finding-ID set can continue, while repeated or cycling sets stop. Cache hits, pending reuse, heartbeats, and recovery of the same dispatch do not consume rounds. `--force` cannot bypass a guard. Strict mode retains the exact user-authorized extra-round window.
 
 1.8.4 introduced two-round task-review and grouped final-review repair guards. In continuous mode, those values are convergence thresholds. Changed structured finding IDs continue automatically. From 1.8.11, a stable ID also continues when both its structured finding fingerprint and the code snapshot inside the prior authorized repair scope changed. Wording-only changes, code-only churn, exact repeats, and cycles still stop before another ineffective repair. `--continue-while-progressing false` preserves the earlier strict lifetime ceilings. Approved upstream reviews remain valid across shared-file edits only when every changed path is attributable to a completed transitive downstream task; that downstream review packet inherits the upstream contracts as regression obligations. A blocked final review stops for blocker resolution instead of entering grouped repair.
+
+1.8.12 adds explicit external-acceptance deferral for a durable `BLOCKED` task. `ospec execute defer-blocker` requires a recorded external blocker, completed dispatch evidence, and a non-empty user authorization reason. It lets dependency-safe implementation continue without changing the blocked task or checklist; final review, verification, finalization, and archive remain blocked. New plans should split external/manual acceptance from unrelated implementation critical paths.
 
 1.8.5 prevents native child waits from freezing a Goal controller. Codex/GPT `wait_agent`, Claude Task polling, and every other native adapter must return within 60 seconds, refresh live heartbeats before `heartbeatDueAt`, persist each finished result immediately, and re-tick. Unrelated Git HEAD movement no longer invalidates an unchanged task review, while final review remains bound to both snapshot and HEAD. Unknown native capacity caps implementation batches at two without reducing conflict-safe review parallelism. New broad tasks with more than six targets must be split or include `scope_reason`.
 
@@ -169,6 +172,7 @@ A goal runs as a **session-bound task-graph loop**. For IDE-native execution, re
 - Multi-worker execution follows `runtimeAdapter.selected.nativeSubagent`: create a parallel-safe batch with `ospec execute dispatch`, inspect `launch-plan.md`, then start one model-native subagent per safe packet when the selected adapter supports parallel execution. Missing, expired, or target-mismatched capability blocks execution; there is no agent CLI or current-controller fallback. Record each result with `ospec execute complete`.
 - `ospec execute orchestrate`, `ospec execute launch ... --run --command "..."`, and `ospec execute review ... --run --command "..."` are removed agent-execution paths. They return migration errors before launching a process or creating run artifacts.
 - Use `ospec execute retry [changes/active/<change>] --task task-id` after a blocked, needs-context, or failed worker run has been fixed. It writes `artifacts/agents/retries/`, reopens the task, and creates a fresh dispatch packet. Completed tasks are not retried by default; pass `--force` only for an intentional override.
+- Use `ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."` only after the user explicitly authorizes moving an already-recorded external acceptance obligation to the final gate. The command never marks the task complete or supplies missing evidence; it only permits tasks waiting solely on that blocker to become dispatchable.
 - In a controller-owned Goal, use `ospec loop tick [changes/active/<change>]` after completed worker tasks and after graph completion; it issues task and final reviews with real executor provenance. Use `ospec execute review` directly only in a non-controller workflow.
 - Use `ospec execute feedback [changes/active/<change>] [--summary "..."]` after a review artifact has a non-`PENDING` decision to write `artifacts/agents/review-feedback-plan.json` and `artifacts/agents/review-feedback-plan.md`. It records whether to accept, revise, clarify, or unblock review feedback before more work is dispatched, and creates a required user decision gate when feedback affects scope, direction, API, UI, risk, or accepted tradeoffs.
 - Use `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` when debugging was part of the change to record staged `artifacts/agents/debug-evidence.json` and a per-debug evidence report. `CONFIRMED` records confirmed phase evidence; `FIXED` records a verified fix; `BLOCKED` fails verification.
@@ -212,7 +216,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.11
+npm install -g @clawplays/ospec-cli@1.8.12
 ospec update [path]
 ```
 

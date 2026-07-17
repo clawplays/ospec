@@ -582,6 +582,9 @@ class TaskGraphExecutionService {
             ? graph.tasks.map((task, index) => normalizeTask(task, index, executionPolicy.modelProfiles))
             : [];
         const taskById = new Map(tasks.map(task => [task.id, task]));
+        const blockerByTaskId = new Map(await Promise.all(tasks
+            .filter(task => BLOCKING_TASK_STATUSES.has(task.status))
+            .map(async (task) => [task.id, await this.readLatestBlockerEscalation(resolvedChangePath, task.id)])));
         const taskIdCounts = tasks.reduce((counts, task) => {
             counts.set(task.id, (counts.get(task.id) || 0) + 1);
             return counts;
@@ -653,11 +656,14 @@ class TaskGraphExecutionService {
                     reasons.push(`unknown_dependency:${dependencyId}`);
                     continue;
                 }
-                if (!TERMINAL_TASK_STATUSES.has(dependency.status)) {
+                const deferredExternalBlocker = dependency.status === 'BLOCKED'
+                    && blockerByTaskId.get(dependency.id)?.escalationReason === 'external_blocker'
+                    && blockerByTaskId.get(dependency.id)?.deferredToFinalReview === true;
+                if (!TERMINAL_TASK_STATUSES.has(dependency.status) && !deferredExternalBlocker) {
                     reasons.push(`waiting_for:${dependencyId}`);
                     continue;
                 }
-                if (this.isTaskReviewRequired(dependency)) {
+                if (!deferredExternalBlocker && this.isTaskReviewRequired(dependency)) {
                     reasons.push(`waiting_for_task_review:${dependencyId}`);
                 }
             }
@@ -1964,7 +1970,7 @@ class TaskGraphExecutionService {
         return candidates[0]?.record || null;
     }
     repairScopeSnapshotHash(record, repairScope) {
-        const normalizedScope = this.normalizeTargetFiles(repairScope.length > 0 ? repairScope : record.targetFiles);
+        const normalizedScope = Array.from(new Set(this.normalizeTargetFiles(repairScope.length > 0 ? repairScope : record.targetFiles).map(normalizeTaskPath).filter(Boolean)));
         if (normalizedScope.length === 0)
             return null;
         const selected = record.targetSnapshots.filter(snapshot => normalizedScope.some(scope => taskPathsOverlap(scope, normalizeTaskPath(snapshot.path))));
@@ -2274,6 +2280,51 @@ class TaskGraphExecutionService {
     }
     async complete(changePath, taskId, options = {}) {
         return this.withTaskGraphMutationLease(changePath, () => this.completeUnlocked(changePath, taskId, options));
+    }
+    async deferExternalBlocker(changePath, taskId, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const normalizedTaskId = String(taskId || '').trim();
+            const reason = String(options?.reason || '').trim();
+            if (!normalizedTaskId)
+                throw new Error('External blocker deferral requires a task id.');
+            if (!reason)
+                throw new Error('External blocker deferral requires a non-empty reason.');
+            const report = await this.getReport(resolvedChangePath);
+            const task = report.blockedTasks.map(item => item.task).find(item => item.id === normalizedTaskId);
+            if (!task || task.status !== 'BLOCKED') {
+                throw new Error(`Task ${normalizedTaskId} must have status BLOCKED before its external acceptance can be deferred.`);
+            }
+            const blocker = await this.readLatestBlockerEscalation(resolvedChangePath, normalizedTaskId);
+            if (!blocker || blocker.escalationReason !== 'external_blocker' || blocker.retryable) {
+                throw new Error(`Task ${normalizedTaskId} has no durable external blocker eligible for final-review deferral.`);
+            }
+            if (!blocker.dispatchId || !blocker.summary?.trim()) {
+                throw new Error(`Task ${normalizedTaskId} external blocker lacks completed dispatch evidence and cannot be deferred.`);
+            }
+            const deferredAt = new Date().toISOString();
+            const id = `blocker-${this.toFileSafeTimestamp(deferredAt)}-${this.toFileSafeId(normalizedTaskId)}-deferred`;
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', BLOCKERS_DIR, `${id}.json`);
+            const reportPath = path.join(resolvedChangePath, 'artifacts', 'agents', BLOCKERS_DIR, `${id}.md`);
+            const record = {
+                ...blocker,
+                id,
+                judgmentRequired: false,
+                deferredToFinalReview: true,
+                deferredAt,
+                deferredReason: reason,
+                recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
+                reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
+                nextActions: [
+                    'Continue dependency-safe implementation work that was waiting only on this external acceptance gate.',
+                    'Keep this task BLOCKED and unchecked; do not claim its external evidence has passed.',
+                    'Resolve the real external evidence before final review, finalization, or archive.',
+                ],
+            };
+            await this.fileService.writeJSON(recordPath, record);
+            await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildBlockerEscalationReport(report, record));
+            return record;
+        });
     }
     async completeUnlocked(changePath, taskId, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
@@ -12793,6 +12844,8 @@ class TaskGraphExecutionService {
             `- Status: ${record.status}`,
             `- Judgment required: ${record.judgmentRequired ? 'yes' : 'no'}`,
             `- Escalation reason: ${record.escalationReason}`,
+            `- Deferred to final review: ${record.deferredToFinalReview === true ? 'yes' : 'no'}`,
+            ...(record.deferredAt ? [`- Deferred at: ${record.deferredAt}`] : []),
             `- Created at: ${record.createdAt}`,
             `- Worker role: ${record.workerRole}`,
             `- Capability tier: ${record.workerProfile?.capabilityTier || 'not recorded'}`,
@@ -12804,6 +12857,7 @@ class TaskGraphExecutionService {
             '## Summary',
             '',
             record.summary || 'No summary recorded. Add the smallest missing context or blocker description before continuing.',
+            ...(record.deferredReason ? ['', '## Deferral Authorization', '', record.deferredReason] : []),
             '',
             '## Next Actions',
             '',
@@ -12812,6 +12866,7 @@ class TaskGraphExecutionService {
             '## Controller Contract',
             '',
             '- Do not mark this task `DONE` until the missing context or blocker is resolved.',
+            '- A final-review deferral may unblock dependent implementation, but it never satisfies final verification, finalization, or archive.',
             '- If the task scope is wrong, update `implementation-plan.md` and `artifacts/agents/task-graph.json` before redispatch.',
             '- If the worker needs a user decision, ask one concise question and keep this report as the decision trail.',
             '',

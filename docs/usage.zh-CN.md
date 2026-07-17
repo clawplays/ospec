@@ -42,6 +42,7 @@ ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--summary "..."] [--force]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
+ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required|--optional]
@@ -74,6 +75,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 1.8.3 为设计和计划的 specialist review 引入了边界默认值。1.8.9 连续模式把每阶段两轮和 30 分钟作为收敛阈值：新的结构化 finding-ID 集合可以继续，重复或循环集合会停止。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；严格模式保留精确用户授权的额外轮次窗口。
 
 1.8.4 引入了 task review-repair 和 grouped final-review repair 的两轮门禁；连续模式把它们作为收敛阈值。结构化 finding ID 变化时自动继续。从 1.8.11 起，同一 ID 只有在结构化 finding 指纹和上一轮授权 repair scope 内的代码快照同时变化时也可继续；只改措辞、只改代码、精确重复或循环仍会在下一次无效 repair 前停止。使用 `--continue-while-progressing false` 可保留旧版严格生命周期上限。只有当全部文件变化都能归因到已完成的传递下游任务时，上游已批准 review 才会继续有效；下游 reviewer 包会继承这些上游合同作为回归义务。final review 为 `BLOCKED` 时会停下解决 blocker，不会错误进入 grouped repair。
+
+1.8.12 为已有 durable `BLOCKED` task 增加显式外部验收延期。`ospec execute defer-blocker` 要求存在已记录的 external blocker、已完成 dispatch 证据和非空用户授权原因。它只允许依赖安全的实现继续，不改变 blocked task 或 checklist；final review、verify、finalize 和 archive 仍然阻断。新计划应把外部/人工验收与无关实现的关键路径拆开。
 
 1.8.5 防止原生 child 的等待让 Goal controller 长时间卡死。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它所有 native adapter 的单次等待都必须在 60 秒内返回，在 `heartbeatDueAt` 前续租，完成一个结果就立即持久化一个，并重新 tick。只有 Git HEAD 变化但 task 目标快照未变时，不再重复 task review；final review 仍严格绑定快照和 HEAD。未知 native capacity 时 implementation 批次最多两个，但不会降低互不冲突的 review 并行度。新 task 超过六个目标时必须拆分，或填写 `scope_reason`。
 
@@ -169,6 +172,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 - 多 worker 执行服从 `runtimeAdapter.selected.nativeSubagent`：先生成并行安全 batch；所选 adapter 支持并行时，每个安全 packet 启动一个 worker。capability 缺失、过期或 target 不匹配时必须阻断，不得降级到 agent CLI 或当前 controller。所有 native wait 单次最多 60 秒，每个完成结果都立即持久化并重新 tick。
 - `ospec execute orchestrate`、`ospec execute launch ... --run --command "..."` 和 `ospec execute review ... --run --command "..."` 已移除 agent 执行能力；它们会在启动进程或创建 run artifact 之前返回迁移错误。
 - blocked、needs-context 或 failed worker run 的问题修复后，用 `ospec execute retry [changes/active/<change>] --task task-id` 写入 `artifacts/agents/retries/`，把 task 重新打开，并生成新的 dispatch packet。已完成任务不会被默认重试；确需覆盖时必须显式传 `--force`。
+- 只有用户明确授权把已记录的外部验收义务延期到最终门时，才使用 `ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."`。该命令不会把 task 标记完成，也不会补造缺失证据；它只让那些仅等待该 blocker 的任务恢复为可派发。
 - controller-owned Goal 在 worker task 完成后以及 task graph 完成后，都用 `ospec loop tick [changes/active/<change>]` 派发 task/final review 并绑定真实 executor provenance；只有非 controller 流程才直接运行 `ospec execute review`。
 - review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--summary "..."]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`。它会记录是接受、修订、澄清还是解除阻塞；当反馈影响范围、方向、API、UI、风险或已接受取舍时，会创建 required user decision gate，避免盲目套用 reviewer 建议。
 - 调试是变更的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 记录分阶段的 `artifacts/agents/debug-evidence.json` 和单次 debug evidence report。`CONFIRMED` 表示该阶段证据已确认，`FIXED` 表示修复已验证，`BLOCKED` 会让 verify 失败。
@@ -212,7 +216,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.11
+npm install -g @clawplays/ospec-cli@1.8.12
 ospec update [path]
 ```
 

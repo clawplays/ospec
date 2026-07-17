@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.11';
+const CLI_VERSION = '1.8.12';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -563,6 +563,7 @@ Examples:
   ospec execute launch ./changes/active/onboarding-flow --target codex
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --summary "Implemented and verified"
   ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --usage-file ./usage.json
+  ospec execute defer-blocker task-1 ./changes/active/onboarding-flow --reason "Device acceptance will be completed before final review"
   ospec execute repair ./changes/active/onboarding-flow
   ospec loop heartbeat ./changes/active/onboarding-flow --action-item worker-1 --executor child-1
   ospec loop result ./changes/active/onboarding-flow --action-item worker-1 --executor child-1 --exit-code 0 --summary "completed"

@@ -104,6 +104,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 case 'complete':
                     await this.complete(args);
                     return;
+                case 'defer-blocker':
+                    await this.deferBlocker(args);
+                    return;
                 case 'sync':
                     await this.sync(args[0]);
                     return;
@@ -404,6 +407,16 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             summary: parsed.summary,
         });
         this.printDebugEvidence(result);
+    }
+    async deferBlocker(args) {
+        const parsed = this.parseDeferBlockerArgs(args);
+        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const result = await services_1.services.taskGraphExecutionService.deferExternalBlocker(changePath, parsed.taskId, {
+            reason: parsed.reason,
+        });
+        this.success(`Deferred external acceptance for ${result.taskId} to final review.`);
+        this.info(`  blocker: ${result.recordPath}`);
+        this.info('  task remains BLOCKED and final verification/archive remain gated');
     }
     async resolveChangePath(inputPath) {
         const cwd = process.cwd();
@@ -2021,6 +2034,44 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             throw new Error('Execute complete requires a task id.');
         }
         return { taskId, inputPath, status, summary, usageFile, dispatchId };
+    }
+    parseDeferBlockerArgs(args) {
+        let taskId;
+        let inputPath;
+        let reason;
+        for (let index = 0; index < args.length; index += 1) {
+            const arg = args[index];
+            if (arg === '--reason') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute defer-blocker requires a value after --reason.');
+                }
+                reason = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--reason=')) {
+                reason = arg.slice('--reason='.length);
+                continue;
+            }
+            if (arg.startsWith('--')) {
+                throw new Error(`Unknown execute defer-blocker flag: ${arg}`);
+            }
+            if (!taskId) {
+                taskId = arg;
+                continue;
+            }
+            if (!inputPath) {
+                inputPath = arg;
+                continue;
+            }
+            throw new Error(`Unexpected execute defer-blocker argument: ${arg}`);
+        }
+        if (!taskId)
+            throw new Error('Execute defer-blocker requires a task id.');
+        if (!reason?.trim())
+            throw new Error('Execute defer-blocker requires --reason.');
+        return { taskId, inputPath, reason: reason.trim() };
     }
     parseCollectArgs(args) {
         let inputPath;

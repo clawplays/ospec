@@ -41,6 +41,7 @@ ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]
 ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
+ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
@@ -73,6 +74,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 1.8.3 では design/plan specialist review に bounded default を導入しました。1.8.9 の continuous mode では、stage ごとの 2 completed rounds と 30 分は収束しきい値です。新しい structured finding-ID set は続行でき、反復または循環する set は停止します。cache hit、pending reuse、heartbeat、同じ dispatch の recovery は round を消費しません。`--force` は guard を迂回できず、strict mode は exact user-authorized extra-round window を維持します。
 
 1.8.4 では task review-repair と grouped final-review repair に 2 round の guard を導入し、continuous mode では収束しきい値として扱います。structured finding ID が変化すれば自動続行します。1.8.11 以降は、同じ ID でも structured finding fingerprint と直前に許可された repair scope 内の code snapshot が両方変化した場合は続行します。文言だけの変更、code だけの churn、完全な反復、cycle は次の無効な repair の前に停止します。`--continue-while-progressing false` で従来の厳格な lifetime ceiling を維持できます。変更された全 path が完了済みの推移的 downstream task に帰属できる場合にだけ upstream の承認済み review を維持し、downstream reviewer packet に upstream contract を regression obligation として追加します。final review が `BLOCKED` の場合は blocker の解決まで停止します。
+
+1.8.12 では durable な `BLOCKED` task の外部 acceptance を明示的に延期できます。`ospec execute defer-blocker` は記録済み external blocker、完了済み dispatch evidence、空でないユーザー承認理由を要求します。blocked task と checklist は変更せず dependency-safe な実装だけを続行し、final review、verify、finalize、archive は引き続きブロックします。
 
 1.8.5 では native child の待機による Goal controller の長時間停止を防ぎます。Codex/GPT の `wait_agent`、Claude Task polling、その他すべての native adapter は 60 秒以内に制御を返し、`heartbeatDueAt` 前に heartbeat を更新し、完了した結果を直ちに保存して再 tick します。task の target snapshot が不変なら Git HEAD の移動だけで再 review せず、final review は snapshot と HEAD の両方に厳密に拘束されます。native capacity が不明な implementation batch は 2 件までですが、安全な review 並列性は維持します。6 個を超える target を持つ新しい task は分割するか `scope_reason` が必要です。
 
@@ -168,6 +171,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - multi-worker execution は `runtimeAdapter.selected.nativeSubagent` に従います。選択された model-native adapter が parallel execution をサポートする場合だけ safe batch を並列起動します。capability がない、期限切れ、または target 不一致の場合は block し、agent CLI や current controller に fallback しません。
 - agent CLI execution は削除されました。`execute orchestrate`、`launch --run --command`、`review --run --command`、`loop watch` は process 起動や run artifact 作成の前に migration error を返します。
 - blocked、needs-context、failed の worker run を修正した後は、`ospec execute retry [changes/active/<change>] --task task-id` を使います。`artifacts/agents/retries/` を書き、task を reopen し、新しい dispatch packet を作成します。完了済み task は explicit `--force` が必要です。
+- ユーザーが記録済みの外部 acceptance を final gate へ延期することを明示的に承認した場合だけ、`ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."` を使います。この command は task を完了にせず、欠けた evidence も作りません。その blocker だけを待つ task を dispatchable にします。
 - controller-owned Goal では worker task 完了後と task graph 完了後に `ospec loop tick [changes/active/<change>]` を使い、task/final review を実 executor provenance に関連付けて発行します。`ospec execute review` を直接使うのは non-controller workflow のみです。
 - review artifact が non-`PENDING` decision を持つ場合は `ospec execute feedback [changes/active/<change>] [--summary "..."]` で `artifacts/agents/review-feedback-plan.json` と `artifacts/agents/review-feedback-plan.md` を書きます。追加作業を dispatch する前に、feedback を accept、revise、clarify、unblock のどれで扱うか記録し、feedback が scope、direction、API、UI、risk、accepted tradeoff に影響する場合は required user decision gate を作成します。
 - debugging が change の一部だった場合、`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` で `artifacts/agents/debug-evidence.json` と debug evidence report を記録します。`CONFIRMED` は root cause の隔離、`FIXED` は verified fix、`BLOCKED` は verify failure を意味します。
@@ -211,7 +215,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.11
+npm install -g @clawplays/ospec-cli@1.8.12
 ospec update [path]
 ```
 

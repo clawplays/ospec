@@ -28,6 +28,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private requireVerification;
     private tdd;
     private debug;
+    private deferBlocker;
     private resolveChangePath;
     private printStatus;
     private printCheckpointEvidenceSummary;
@@ -97,6 +98,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private parseFinishArgs;
     private parsePositiveInteger;
     private parseCompleteArgs;
+    private parseDeferBlockerArgs;
     private parseCollectArgs;
     private parseRetryArgs;
     private parseReviewArgs;

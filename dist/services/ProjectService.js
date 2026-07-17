@@ -298,8 +298,8 @@ class ProjectService {
             skippedFiles.push(rootSkillRelativePath);
         }
         try {
-            await this.indexBuilder.write(rootDir);
-            verifiedFiles.push(this.toProjectRelativePath(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config));
+            const indexWrite = await this.indexBuilder.writeWithSummary(rootDir);
+            verifiedFiles.push(...indexWrite.managedPaths);
         }
         catch {
         }

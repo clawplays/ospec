@@ -475,12 +475,21 @@ function buildReleasePayload(tag, previousTag, commits, repositoryUrl, draft) {
   };
 }
 
-function getReleaseOverridePath(tag) {
-  return path.join(RELEASE_OVERRIDE_DIR, `${tag}.json`);
+function getReleaseOverridePath(
+  tag,
+  releaseOverrideDir = RELEASE_OVERRIDE_DIR,
+) {
+  return path.join(releaseOverrideDir, `${tag}.json`);
 }
 
-function loadReleaseOverride(tag, previousTag, repositoryUrl, fallbackDraft) {
-  const overridePath = getReleaseOverridePath(tag);
+function loadReleaseOverride(
+  tag,
+  previousTag,
+  repositoryUrl,
+  fallbackDraft,
+  releaseOverrideDir = RELEASE_OVERRIDE_DIR,
+) {
+  const overridePath = getReleaseOverridePath(tag, releaseOverrideDir);
   if (!fs.existsSync(overridePath)) {
     return null;
   }
@@ -525,6 +534,7 @@ async function createReleaseMetadata(options = {}) {
     previousTag,
     repositoryUrl,
     fallbackDraft,
+    options.releaseOverrideDir,
   );
   if (override) {
     return override;

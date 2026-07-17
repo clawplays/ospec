@@ -1,0 +1,22 @@
+{
+  "title_suffix": "reliable real-Goal resumption",
+  "summary": "OSpec 1.8.12 fixes three real Goal continuation failures: mixed-case review repair scopes now bind to their snapshots, ospec update records every generated knowledge file without erasing compact-archive history, and explicitly deferred external acceptance no longer blocks unrelated implementation while final evidence gates remain strict.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.11...1.8.12",
+  "new": [
+    "Added ospec execute defer-blocker for explicit, evidence-backed deferral of external acceptance to the final gate.",
+    "Added complete IndexBuilder managed-path summaries for update provenance."
+  ],
+  "improved": [
+    "Lets dependency-safe implementation continue after an explicitly deferred device or manual acceptance blocker while the original task remains blocked and unchecked.",
+    "Makes archive knowledge rebuilds idempotent across legacy compact archives by retaining durable target, verification, project-document, and archive-document history."
+  ],
+  "fixed": [
+    "Fixed mixed-case repair scopes failing to bind to reviewed file and directory snapshots.",
+    "Fixed generated archive-knowledge documents and feature-index.md being omitted from ospec update provenance.",
+    "Fixed repeated update replacing historical implementation files and verification commands with empty sections.",
+    "Fixed external acceptance tasks forcing a premature global stop when later implementation could safely continue after explicit authorization."
+  ],
+  "docs": [
+    "Documented all three confirmed project incidents, recovery behavior, external-acceptance safety contract, and task-graph planning guidance."
+  ]
+}

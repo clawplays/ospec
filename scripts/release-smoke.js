@@ -529,6 +529,30 @@ async function main() {
       'init next command output',
     );
 
+    output = run('node', [cliPath, 'update', projectDir]);
+    assertContains(output, 'Updated OSpec assets for', 'first update output');
+    assertContains(output, 'update provenance:', 'first update provenance');
+
+    output = run('node', [cliPath, 'update', projectDir]);
+    assertContains(
+      output,
+      'Updated OSpec assets for',
+      'repeated update output',
+    );
+    const updateProvenance = await fs.readJson(
+      path.join(projectDir, '.ospec', 'update-provenance.json'),
+    );
+    if (
+      updateProvenance.source !== 'ospec update' ||
+      updateProvenance.ospecCliVersion !== packageJson.version ||
+      !Array.isArray(updateProvenance.files) ||
+      updateProvenance.files.length === 0
+    ) {
+      throw new Error(
+        'Repeated update must retain current, non-empty provenance',
+      );
+    }
+
     output = run('node', [cliPath, 'queue', 'add', 'queued-smoke', projectDir]);
 
     assertContains(

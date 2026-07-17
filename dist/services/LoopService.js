@@ -1454,10 +1454,19 @@ class LoopService {
             return this.gateResult(resolved, state, trigger, `Loop blocked: task review requires external context (${blockedReviewTasks.map(task => task.id).join(', ')}). Resolve the reviewer blocker before re-review; automatic implementation repair is disabled for BLOCKED decisions.`);
         }
         if (durableBlockedTasks.length > 0) {
-            return this.gateResult(resolved, state, trigger, `Loop blocked by durable worker evidence (${durableBlockedTasks.map(task => {
+            const deferredExternalTasks = durableBlockedTasks.filter(task => blockerRecords.get(task.id)?.deferredToFinalReview === true);
+            const undeferredExternalTasks = durableBlockedTasks.filter(task => blockerRecords.get(task.id)?.escalationReason === 'external_blocker'
+                && blockerRecords.get(task.id)?.deferredToFinalReview !== true);
+            return this.gateResult(resolved, state, trigger, `${deferredExternalTasks.length === durableBlockedTasks.length
+                ? 'Loop exhausted automatable work; deferred external acceptance remains'
+                : 'Loop blocked by durable worker evidence'} (${durableBlockedTasks.map(task => {
                 const blocker = blockerRecords.get(task.id);
                 return `${task.id}: ${blocker?.summary || task.status}`;
-            }).join('; ')}). Independent ready tasks were exhausted; change the external state or provide the missing context before an explicit retry.`);
+            }).join('; ')}). Independent ready tasks were exhausted; ${deferredExternalTasks.length === durableBlockedTasks.length
+                ? 'resolve the real external evidence before final review, finalization, or archive.'
+                : `change the external state or provide the missing context before an explicit retry.${undeferredExternalTasks.length > 0
+                    ? ` If durable implementation exists and the user explicitly authorizes moving only external acceptance to the final gate, run ospec execute defer-blocker <task-id> [change-path] --reason "..." for: ${undeferredExternalTasks.map(task => task.id).join(', ')}.`
+                    : ''}`}`);
         }
         if (report.taskCount > 0 && report.completedTasks.length === report.taskCount && report.graphStatus.toLowerCase() === 'completed') {
             const finalDecision = await this.readFinalReviewDecision(resolved);
