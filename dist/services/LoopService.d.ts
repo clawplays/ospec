@@ -131,6 +131,8 @@ export interface PendingControllerActionItemState {
     status: PendingControllerActionItemStatus;
     issuedAt: string;
     heartbeatAt: string | null;
+    /** Last bounded controller poll that observed this claimed executor still pending. */
+    controllerObservedAt?: string | null;
     heartbeatDueAt?: string;
     leaseExpiresAt: string;
     absoluteExpiresAt?: string;
@@ -350,6 +352,7 @@ export declare class LoopService {
     private markImplementationAttemptsBlocked;
     private recoverExpiredActionsUnlocked;
     private ensurePendingItemStates;
+    private refreshClaimedLeasesFromControllerPoll;
     private requireExecutorId;
     private recommendedHeartbeatDueAt;
     private actionMaxRuntimeMs;

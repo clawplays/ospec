@@ -1,0 +1,23 @@
+{
+  "title_suffix": "continuous multi-owner Goal recovery",
+  "summary": "OSpec 1.8.13 fixes the secondary continuation failures exposed by three resumed real Goals: prerequisite reviews now run before retryable dependent work, declared cross-task repair scopes carry frozen owner provenance and fresh owner reviews, and bounded controller polling keeps claimed long-running children leased without weakening absolute deadlines. Worker packets also flag unscoped full Docker rebuilds before they pull unrelated optional runtimes.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.12...1.8.13",
+  "new": [
+    "Added complete cross-task repair scope snapshots and declared owner IDs to task retry provenance.",
+    "Added controllerObservedAt lease evidence for bounded supervision polls.",
+    "Added worker packet warnings for unscoped full Docker Compose rebuilds."
+  ],
+  "improved": [
+    "Schedules missing prerequisite task reviews before retryable dependent worker attempts.",
+    "Lets a valid finding repair both its current task and paths owned by completed tasks, then independently re-reviews changed owners.",
+    "Keeps a claimed long-running child alive while the controller continues bounded polling, without extending the fixed absolute action deadline."
+  ],
+  "fixed": [
+    "Fixed retryable blocked work throwing before the scheduler reached its prerequisite-review branch.",
+    "Fixed valid cross-task findings having no safe route through a validator or shared artifact owned by an earlier completed task.",
+    "Fixed supervised long verification attempts expiring only because separate heartbeat calls were missed during repeated controller polls."
+  ],
+  "docs": [
+    "Documented the Web prerequisite-review incident, Mobile multi-owner repair contract, AIHub Docker scope failure, lease renewal behavior, and unchanged safety gates."
+  ]
+}

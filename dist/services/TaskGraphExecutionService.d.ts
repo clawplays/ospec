@@ -30,6 +30,10 @@ export interface TaskReviewRepairContext {
     reviewTargetSnapshotHash?: string;
     /** Snapshot of only the files this repair was authorized to change. */
     repairScopeSnapshotHash?: string;
+    /** Added in 1.8.13 for repair scopes spanning declared task owners. */
+    repairScopeSnapshots?: TaskDocumentationSnapshot[];
+    /** Completed task owners whose declared paths authorize cross-task repair files. */
+    crossTaskScopeOwnerIds?: string[];
 }
 export interface TaskRepairConvergenceAssessment {
     scope: 'task' | 'final';
@@ -2026,6 +2030,7 @@ export declare class TaskGraphExecutionService {
     private buildProjectSessionBriefLines;
     private buildTaskReviewRepairContextLines;
     private buildDispatchPacket;
+    private getVerificationScopeWarnings;
     private buildBlockerEscalationReport;
     private buildReviewDispatchPacket;
     private extractReviewFindings;

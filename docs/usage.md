@@ -78,6 +78,8 @@ Specialist design and plan reviews gained bounded defaults in 1.8.3. In 1.8.9 co
 
 1.8.12 adds explicit external-acceptance deferral for a durable `BLOCKED` task. `ospec execute defer-blocker` requires a recorded external blocker, completed dispatch evidence, and a non-empty user authorization reason. It lets dependency-safe implementation continue without changing the blocked task or checklist; final review, verification, finalization, and archive remain blocked. New plans should split external/manual acceptance from unrelated implementation critical paths.
 
+1.8.13 resolves the next continuation layer found in resumed real Goals. Missing prerequisite reviews are dispatched before retryable dependent workers. A finding may include paths from another task only when each path belongs to a declared completed owner; OSpec freezes the full repair scope and stale owner approvals are re-reviewed. Successful bounded controller polls renew claimed child leases without moving the absolute deadline. Dispatch packets warn before unscoped full Docker Compose rebuilds so scoped verification can name only the required services.
+
 1.8.5 prevents native child waits from freezing a Goal controller. Codex/GPT `wait_agent`, Claude Task polling, and every other native adapter must return within 60 seconds, refresh live heartbeats before `heartbeatDueAt`, persist each finished result immediately, and re-tick. Unrelated Git HEAD movement no longer invalidates an unchanged task review, while final review remains bound to both snapshot and HEAD. Unknown native capacity caps implementation batches at two without reducing conflict-safe review parallelism. New broad tasks with more than six targets must be split or include `scope_reason`.
 
 1.8.6 clarifies that 60 seconds limits one controller poll, not the child runtime. Implementation defaults to a 120-minute absolute deadline; review and verification default to 60 minutes, with renewable heartbeat leases and a five-minute evidence-to-result grace period. `ospec loop finalize` validates durable evidence before committing success. Recursive directory snapshots, context-bound approval reuse, and improved conflict-safe selection avoid stale or repeated review without weakening provenance. New 1.8.6 serial tasks require `serial_reason`; older graphs remain readable.
@@ -216,7 +218,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.12
+npm install -g @clawplays/ospec-cli@1.8.13
 ospec update [path]
 ```
 

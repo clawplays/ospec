@@ -1434,7 +1434,7 @@ class TaskGraphExecutionService {
             throw new Error(`Task ${taskId} is not retryable from status ${task.status}; retry requires BLOCKED/NEEDS_CONTEXT task state, a failed run, or --force.`);
         }
         const now = new Date().toISOString();
-        const repairContext = await this.captureTaskReviewRepairContext(resolvedChangePath, task, options.trigger, now);
+        const repairContext = await this.captureTaskReviewRepairContext(resolvedChangePath, task, allTasks, options.trigger, now);
         const retryId = `retry-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskId)}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
         const sessionPath = this.getSessionPath(resolvedChangePath);
         const session = await this.readSession(sessionPath, report.feature);
@@ -1480,7 +1480,7 @@ class TaskGraphExecutionService {
             nextInstruction: `Retry dispatch created for ${taskId}. Run ospec execute launch ${this.quoteShellArg(this.toProjectRelativeChangePath(await this.findProjectRootForOptionalSession(resolvedChangePath), resolvedChangePath))} --task ${this.quoteShellArg(taskId)}, then execute runtimeAdapter.selected.nativeSubagent. Refresh the native capability instead of launching a CLI fallback.`,
         };
     }
-    async captureTaskReviewRepairContext(changePath, task, trigger, capturedAt) {
+    async captureTaskReviewRepairContext(changePath, task, allTasks, trigger, capturedAt) {
         const graphDecision = task.review?.decision;
         const reviewRepairPending = graphDecision === 'NEEDS_CHANGES' || graphDecision === 'BLOCKED';
         if (trigger !== 'task_review' && !reviewRepairPending)
@@ -1517,22 +1517,51 @@ class TaskGraphExecutionService {
             const normalizedScope = normalizeTaskPath(scope);
             return !normalizedScope || !normalizedTargets.some(target => taskPathsOverlap(normalizedScope, target));
         });
-        if (outsideTaskScope.length > 0) {
-            throw new Error(`Task review repair for ${task.id} contains repair scope outside declared task target files: ${outsideTaskScope.join(', ')}.`);
+        const crossTaskScopeOwnerIds = new Set();
+        for (const scope of outsideTaskScope) {
+            const normalizedScope = normalizeTaskPath(scope);
+            const owners = normalizedScope
+                ? allTasks.filter(candidate => candidate.id !== task.id
+                    && TERMINAL_TASK_STATUSES.has(candidate.status)
+                    && candidate.targetFiles.some(target => taskPathsOverlap(normalizedScope, normalizeTaskPath(target))))
+                : [];
+            if (owners.length === 0) {
+                throw new Error(`Task review repair for ${task.id} contains repair scope outside declared completed task targets: ${scope}.`);
+            }
+            for (const owner of owners)
+                crossTaskScopeOwnerIds.add(owner.id);
         }
         const effectiveRepairScope = repairScope.length > 0 ? repairScope : task.targetFiles;
         const reviewDispatchId = String(review.data?.review_dispatch_id || '').trim();
         const reviewTargetSnapshotHash = String(review.data?.target_snapshot_hash || '').trim();
         let repairScopeSnapshotHash = null;
+        let repairScopeSnapshots = null;
         if (reviewDispatchId) {
             const reviewDispatch = await this.readRepairConvergenceReviewDispatch(resolvedChangePath, task.id, reviewDispatchId);
             if (!reviewDispatch || reviewDispatch.targetSnapshotHash !== reviewTargetSnapshotHash) {
                 throw new Error(`Task review repair for ${task.id} has invalid review target snapshot provenance.`);
             }
-            repairScopeSnapshotHash = this.repairScopeSnapshotHash(reviewDispatch, effectiveRepairScope);
+            if (crossTaskScopeOwnerIds.size > 0) {
+                const reviewedScope = effectiveRepairScope.filter(scope => {
+                    const normalizedScope = normalizeTaskPath(scope);
+                    return normalizedScope && normalizedTargets.some(target => taskPathsOverlap(normalizedScope, target));
+                });
+                if (reviewedScope.length > 0 && !this.repairScopeSnapshotHash(reviewDispatch, reviewedScope)) {
+                    throw new Error(`Task review repair for ${task.id} cannot bind its task-owned repair scope to the reviewed target snapshot.`);
+                }
+                const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+                repairScopeSnapshots = await this.captureTargetSnapshots(projectRoot, effectiveRepairScope);
+                repairScopeSnapshotHash = this.hashTargetSnapshots(repairScopeSnapshots);
+            }
+            else {
+                repairScopeSnapshotHash = this.repairScopeSnapshotHash(reviewDispatch, effectiveRepairScope);
+            }
             if (!repairScopeSnapshotHash) {
                 throw new Error(`Task review repair for ${task.id} cannot bind its repair scope to the reviewed target snapshot.`);
             }
+        }
+        else if (crossTaskScopeOwnerIds.size > 0) {
+            throw new Error(`Task review repair for ${task.id} requires a fresh review dispatch before routing cross-task repair scope.`);
         }
         const contextHash = (0, crypto_1.createHash)('sha256')
             .update([
@@ -1543,6 +1572,7 @@ class TaskGraphExecutionService {
             reviewDispatchId,
             reviewTargetSnapshotHash,
             repairScopeSnapshotHash || '',
+            [...crossTaskScopeOwnerIds].sort().join(','),
         ].join('\n'), 'utf8')
             .digest('hex');
         return {
@@ -1562,6 +1592,10 @@ class TaskGraphExecutionService {
                 reviewDispatchId,
                 reviewTargetSnapshotHash,
                 repairScopeSnapshotHash,
+            } : {}),
+            ...(repairScopeSnapshots ? { repairScopeSnapshots } : {}),
+            ...(crossTaskScopeOwnerIds.size > 0 ? {
+                crossTaskScopeOwnerIds: [...crossTaskScopeOwnerIds].sort(),
             } : {}),
         };
     }
@@ -1706,18 +1740,25 @@ class TaskGraphExecutionService {
                 || previousReviewDispatch.targetSnapshotHash === latest.repairContext.reviewTargetSnapshotHash)
             ? previousReviewDispatch
             : null;
-        const computedPreviousScopeSnapshotHash = validPreviousReviewDispatch
-            ? this.repairScopeSnapshotHash(validPreviousReviewDispatch, previousRepairScope)
-            : null;
+        const recordedCrossTaskSnapshots = Array.isArray(latest?.repairContext?.repairScopeSnapshots)
+            ? latest.repairContext.repairScopeSnapshots
+            : [];
+        const computedPreviousScopeSnapshotHash = recordedCrossTaskSnapshots.length > 0
+            ? this.hashTargetSnapshots(recordedCrossTaskSnapshots)
+            : validPreviousReviewDispatch
+                ? this.repairScopeSnapshotHash(validPreviousReviewDispatch, previousRepairScope)
+                : null;
         const recordedPreviousScopeSnapshotHash = latest?.repairContext?.repairScopeSnapshotHash || null;
         const previousRepairScopeSnapshotHash = recordedPreviousScopeSnapshotHash
             ? computedPreviousScopeSnapshotHash === recordedPreviousScopeSnapshotHash
                 ? recordedPreviousScopeSnapshotHash
                 : null
             : computedPreviousScopeSnapshotHash;
-        const currentRepairScopeSnapshotHash = validCurrentReviewDispatch
-            ? this.repairScopeSnapshotHash(validCurrentReviewDispatch, previousRepairScope)
-            : null;
+        const currentRepairScopeSnapshotHash = recordedCrossTaskSnapshots.length > 0
+            ? this.hashTargetSnapshots(await this.captureTargetSnapshots(await this.findProjectRootForOptionalSession(resolvedChangePath), previousRepairScope))
+            : validCurrentReviewDispatch
+                ? this.repairScopeSnapshotHash(validCurrentReviewDispatch, previousRepairScope)
+                : null;
         const convergence = this.assessRepairFindingProgress({
             currentFindingIds,
             previousFindingIds,
@@ -12720,6 +12761,7 @@ class TaskGraphExecutionService {
             `- Review dispatch: ${context.reviewDispatchId || 'legacy/unavailable'}`,
             `- Reviewed target snapshot SHA-256: ${context.reviewTargetSnapshotHash || 'legacy/unavailable'}`,
             `- Repair scope snapshot SHA-256: ${context.repairScopeSnapshotHash || 'legacy/unavailable'}`,
+            `- Cross-task scope owners: ${context.crossTaskScopeOwnerIds?.join(', ') || 'none'}`,
             '',
             '### Required Repairs',
             '',
@@ -12751,6 +12793,7 @@ class TaskGraphExecutionService {
         const repairContextLines = record.repairContext
             ? this.buildTaskReviewRepairContextLines(record.repairContext)
             : [];
+        const verificationScopeWarnings = this.getVerificationScopeWarnings(task.verificationCommands);
         return [
             `# Agent Dispatch: ${task.id}`,
             '',
@@ -12773,6 +12816,12 @@ class TaskGraphExecutionService {
             `- Expected result: ${task.expectedResult || 'none'}`,
             `- Usage sidecar: artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json (optional; automatically ingested when present)`,
             '',
+            ...(verificationScopeWarnings.length > 0 ? [
+                '## Verification Scope Warnings',
+                '',
+                ...verificationScopeWarnings.map(warning => `- ${warning}`),
+                '',
+            ] : []),
             '## Worker Profile',
             '',
             profile.summary,
@@ -12832,6 +12881,13 @@ class TaskGraphExecutionService {
             'Use `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` when the result is not cleanly complete.',
             '',
         ].join('\n');
+    }
+    getVerificationScopeWarnings(commands) {
+        return commands
+            .map(command => command.trim())
+            .filter(command => /^(?:docker\s+compose|docker-compose)\s+(?:--[^\s]+\s+)*up(?:\s+(?:-d|--detach|--build))*\s*$/i.test(command)
+            && /(?:^|\s)--build(?:\s|$)/i.test(command))
+            .map(command => `Broad Docker Compose rebuild detected (${command}). Before executing it, inspect repository release guidance and confirm the task truly requires every service. Prefer explicit service names for scoped application verification; do not build unrelated optional runtimes or large accelerator dependencies.`);
     }
     buildBlockerEscalationReport(report, record) {
         const nextActions = record.nextActions.map(action => `- ${action}`).join('\n');

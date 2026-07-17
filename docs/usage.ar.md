@@ -77,6 +77,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 يضيف الإصدار 1.8.12 تأجيلا صريحا للقبول الخارجي لمهمة durable بحالة `BLOCKED`. يتطلب `ospec execute defer-blocker` external blocker مسجلا ودليل dispatch مكتمل وسبب تفويض غير فارغ من المستخدم. تبقى المهمة محظورة ولا تتغير checklist، ويستمر فقط التنفيذ الآمن من ناحية التبعيات؛ وتظل final review وverify وfinalize وarchive محظورة.
 
+يصلح الإصدار 1.8.13 طبقة التوقف التالية في Goals المستأنفة. تنفذ prerequisite review المفقودة قبل retryable dependent worker. لا يسمح finding بمسارات cross-task إلا عندما يملكها owner مكتمل ومعلن في task graph؛ يجمد OSpec repair scope الكامل ويعيد review لموافقات owner القديمة. تجدد controller poll الناجحة والمحدودة lease القصيرة لـ child المطالب به من دون تحريك absolute deadline. وتصدر dispatch packet تحذيرا قبل full Docker Compose rebuild من دون أسماء خدمات.
+
 يمنع الإصدار 1.8.5 انتظار native child من تجميد Goal controller. يجب أن يعيد `wait_agent` في Codex/GPT وpolling لـ Claude Task وكل native adapter آخر التحكم خلال 60 ثانية، ويحدّث heartbeat قبل `heartbeatDueAt`، ويحفظ كل نتيجة مكتملة فوراً، ثم يعيد tick. لا تعيد حركة Git HEAD وحدها task review عندما تبقى target snapshot دون تغيير، بينما تظل final review مرتبطة بدقة بالـ snapshot وHEAD. عند غياب native capacity يقتصر implementation batch على مهمتين من دون تقليل توازي review الآمن. يجب تقسيم أي task جديدة تتجاوز ستة targets أو إضافة `scope_reason`.
 
 يوضح الإصدار 1.8.6 أن 60 ثانية هي حد دورة polling واحدة للـ controller وليست حد تشغيل child. الحد المطلق الافتراضي هو 120 دقيقة للـ implementation و60 دقيقة للـ review والـ verification، مع heartbeat lease قابلة للتجديد ومدة grace افتراضية قدرها خمس دقائق بين اكتمال evidence ووصول result. يتحقق `ospec loop finalize` من durable evidence قبل تسجيل النجاح. تمنع directory snapshots المتكررة وapproval cache المرتبطة بالسياق وتحسين conflict-safe selection المراجعات القديمة أو المكررة من دون إضعاف provenance. تتطلب serial tasks الجديدة في 1.8.6 قيمة `serial_reason`، وتظل الرسوم القديمة قابلة للقراءة.
@@ -215,7 +217,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.12
+npm install -g @clawplays/ospec-cli@1.8.13
 ospec update [path]
 ```
 

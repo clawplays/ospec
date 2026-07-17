@@ -887,6 +887,7 @@ class LoopService {
                 current.tokenReservation = Math.max(0, Number(current.tokenReservation ?? current.tokenAllowance) || 0);
                 current.heartbeatDueAt = current.heartbeatDueAt
                     || this.recommendedHeartbeatDueAt(current.heartbeatAt || current.issuedAt, current.leaseExpiresAt);
+                current.controllerObservedAt = current.controllerObservedAt || null;
                 current.absoluteExpiresAt = current.absoluteExpiresAt
                     || new Date(leaseBaseMs + this.actionMaxRuntimeMs(item.kind)).toISOString();
                 current.evidenceReadyAt = current.evidenceReadyAt || null;
@@ -898,6 +899,7 @@ class LoopService {
                 status: 'issued',
                 issuedAt: pending.issuedAt,
                 heartbeatAt: null,
+                controllerObservedAt: null,
                 heartbeatDueAt: new Date(leaseBaseMs + DEFAULT_ACTION_LEASE_MS - INITIAL_ACTION_HEARTBEAT_BUFFER_MS).toISOString(),
                 leaseExpiresAt: new Date(leaseBaseMs + DEFAULT_ACTION_LEASE_MS).toISOString(),
                 absoluteExpiresAt: new Date(leaseBaseMs + this.actionMaxRuntimeMs(item.kind)).toISOString(),
@@ -913,6 +915,28 @@ class LoopService {
                 summary: null,
             };
         });
+    }
+    refreshClaimedLeasesFromControllerPoll(pending, now) {
+        if (!pending || pending.status !== 'awaiting-evidence')
+            return;
+        this.ensurePendingItemStates(pending);
+        for (const item of pending.itemStates || []) {
+            if (!item.executorId || item.status !== 'running')
+                continue;
+            const leaseExpiresAt = Date.parse(item.leaseExpiresAt);
+            const absoluteExpiresAt = Date.parse(item.absoluteExpiresAt || '');
+            if (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt <= now.getTime())
+                continue;
+            if (Number.isFinite(absoluteExpiresAt) && absoluteExpiresAt <= now.getTime())
+                continue;
+            const requestedLeaseExpiry = now.getTime() + DEFAULT_ACTION_LEASE_MS;
+            const boundedLeaseExpiry = Number.isFinite(absoluteExpiresAt)
+                ? Math.min(requestedLeaseExpiry, absoluteExpiresAt)
+                : requestedLeaseExpiry;
+            item.controllerObservedAt = now.toISOString();
+            item.leaseExpiresAt = new Date(boundedLeaseExpiry).toISOString();
+            item.heartbeatDueAt = new Date(now.getTime() + Math.floor((boundedLeaseExpiry - now.getTime()) / 2)).toISOString();
+        }
     }
     requireExecutorId(value) {
         const executorId = String(value ?? '').trim();
@@ -1126,6 +1150,7 @@ class LoopService {
             return this.result(resolved, state, state.pendingControllerAction, immediateStop.status !== 'paused', immediateStop.reason, immediateStop.instruction, null, null);
         }
         await this.refreshPendingEvidenceReadiness(resolved, state, nowIso, config.efficiency);
+        this.refreshClaimedLeasesFromControllerPoll(state.pendingControllerAction, now);
         const recoveredExpired = await this.recoverExpiredActionsUnlocked(resolved, state, false);
         state.status = 'running';
         state.currentStep = 'observe';
@@ -1321,6 +1346,26 @@ class LoopService {
         ])));
         const retryableBlockedTasks = blockedTasks.filter(task => blockerRecords.get(task.id)?.retryable === true);
         const durableBlockedTasks = blockedTasks.filter(task => !retryableBlockedTasks.includes(task));
+        const needsRepair = reviewTasks.filter(task => RETRY_REVIEW_DECISIONS.has(task.review?.decision || ''));
+        const blockedReviewTasks = reviewTasks.filter(task => task.review?.decision === 'BLOCKED');
+        const pendingReviewTasks = reviewTasks.filter(task => !needsRepair.includes(task) && !blockedReviewTasks.includes(task));
+        const blockingReasonsByTask = new Map(report.blockedTasks.map(item => [item.task.id, item.reasons]));
+        const pendingReviewIds = new Set(pendingReviewTasks.map(task => task.id));
+        const prerequisiteReviewIds = new Set([...needsRepair, ...retryableBlockedTasks].flatMap(task => (blockingReasonsByTask.get(task.id) || [])
+            .map(reason => reason.match(/^waiting_for_task_review:(.+)$/)?.[1] || null)
+            .filter((taskId) => Boolean(taskId && taskId !== task.id && pendingReviewIds.has(taskId)))));
+        const prerequisiteReviewTasks = pendingReviewTasks.filter(task => prerequisiteReviewIds.has(task.id));
+        if (prerequisiteReviewTasks.length > 0) {
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(prerequisiteReviewTasks, { respectParallelizable: false });
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < prerequisiteReviewTasks.length ? ['graph_conflict'] : []);
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'task-review', prepared);
+            }
+            const reviews = await this.taskGraph.reviewTasks(resolved, {
+                taskIds: graphSafe.slice(0, prepared.limit).map(task => task.id),
+            });
+            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), `Prerequisite review required before dependent repair: ${graphSafe.map(task => task.id).join(', ')}.`, verifyPassed, prepared);
+        }
         if (retryableBlockedTasks.length > 0) {
             const graphSafe = this.taskGraph.selectConflictSafeTasks(retryableBlockedTasks);
             const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < retryableBlockedTasks.length ? ['graph_conflict_or_serial_task'] : []);
@@ -1341,26 +1386,6 @@ class LoopService {
                 })),
             });
             return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
-        }
-        const needsRepair = reviewTasks.filter(task => RETRY_REVIEW_DECISIONS.has(task.review?.decision || ''));
-        const blockedReviewTasks = reviewTasks.filter(task => task.review?.decision === 'BLOCKED');
-        const pendingReviewTasks = reviewTasks.filter(task => !needsRepair.includes(task) && !blockedReviewTasks.includes(task));
-        const blockingReasonsByTask = new Map(report.blockedTasks.map(item => [item.task.id, item.reasons]));
-        const pendingReviewIds = new Set(pendingReviewTasks.map(task => task.id));
-        const prerequisiteReviewIds = new Set(needsRepair.flatMap(task => (blockingReasonsByTask.get(task.id) || [])
-            .map(reason => reason.match(/^waiting_for_task_review:(.+)$/)?.[1] || null)
-            .filter((taskId) => Boolean(taskId && taskId !== task.id && pendingReviewIds.has(taskId)))));
-        const prerequisiteReviewTasks = pendingReviewTasks.filter(task => prerequisiteReviewIds.has(task.id));
-        if (prerequisiteReviewTasks.length > 0) {
-            const graphSafe = this.taskGraph.selectConflictSafeTasks(prerequisiteReviewTasks, { respectParallelizable: false });
-            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < prerequisiteReviewTasks.length ? ['graph_conflict'] : []);
-            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
-                return this.preparedBatchGateResult(resolved, state, trigger, 'task-review', prepared);
-            }
-            const reviews = await this.taskGraph.reviewTasks(resolved, {
-                taskIds: graphSafe.slice(0, prepared.limit).map(task => task.id),
-            });
-            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), `Prerequisite review required before dependent repair: ${graphSafe.map(task => task.id).join(', ')}.`, verifyPassed, prepared);
         }
         const graphReadyRepairs = needsRepair.filter(task => (blockingReasonsByTask.get(task.id) || []).every(reason => reason === `waiting_for_task_review:${task.id}`));
         const repairAssessments = new Map(await Promise.all(graphReadyRepairs.map(async (task) => [
