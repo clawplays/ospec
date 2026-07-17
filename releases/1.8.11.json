@@ -1,0 +1,32 @@
+{
+  "title_suffix": "stable Goal recovery and evidence-bound repair convergence",
+  "summary": "OSpec 1.8.11 is the cumulative release of the previously unreleased 1.8.10 and 1.8.11 work since 1.8.9. Repeated updates retain exact managed-file ownership, dependent repairs wait for prerequisite reviews, and incomplete controller-owned approvals are safely replaced by Loop-owned review work. Task and grouped final repair can also continue past the convergence threshold when a stable finding ID materially narrows and the code snapshot inside the authorized repair scope changes, while wording-only changes, code-only churn, repeats, cycles, and unprovable history still stop.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.9...1.8.11",
+  "new": [
+    "Added verified managed-path reporting for protocol, tooling, generated index, managed root skill, and enabled plugin assets.",
+    "Added explicit sync diagnostics for review decisions that exist but are not authoritative because executor provenance is incomplete.",
+    "Added review dispatch, full target snapshot, and authorized repair-scope snapshot provenance to new task repair contexts and grouped final repair waves.",
+    "Added findings_refined and reviewed_target_unchanged convergence diagnostics."
+  ],
+  "improved": [
+    "Makes repeated same-version update provenance stable while revalidating path containment, file or missing kind, and SHA-256 before retaining a record.",
+    "Filters repair candidates through current task-graph blockers and schedules pending prerequisite reviews before dependent repairs.",
+    "Safely supersedes unbound 1.8.9 task-review approvals with fresh Loop-owned review dispatches without consuming a repair round.",
+    "Lets reviewers keep a stable finding ID while a real repair narrows the same root defect, without requiring manual repair-limit increases.",
+    "Recovers missing 1.8.9 and 1.8.10 repair snapshot fields from the latest valid completed review dispatch before the repair was created."
+  ],
+  "fixed": [
+    "Fixed workflow-conventions.md and other unchanged managed assets disappearing from update provenance after a repeated update.",
+    "Fixed existing plugin assets being overwritten by update without being reported as refreshed or update-managed.",
+    "Fixed a NEEDS_CHANGES repair repeatedly selecting a task whose prerequisite review was still pending.",
+    "Fixed controller-owned manual task reviews requiring executor provenance even though no Loop action existed to claim or complete the reviewer.",
+    "Fixed sync reporting generic success when an otherwise completed task review still lacked authoritative executor provenance.",
+    "Fixed task repair stopping as findings_unchanged when both implementation code and the remaining structured finding had materially converged under the same ID.",
+    "Fixed grouped final repair using the same ID-only convergence comparison.",
+    "Preserved no-progress protection for wording-only changes, code-only churn, exact repeats, finding cycles, and invalid or missing provenance."
+  ],
+  "docs": [
+    "Documented stable update ownership, dependency-aware repair order, controller review routing, 1.8.9 unbound-review recovery, and the remaining real Android device gate in the Mobile Dev Goal.",
+    "Documented the confirmed AIHub task-2 incident, dual-evidence convergence contract, legacy artifact recovery, controller behavior, and unchanged safety gates."
+  ]
+}

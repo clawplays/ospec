@@ -1,5 +1,7 @@
 # Goal workflow interface changes in 1.8.9
 
+> 1.8.11 refines the ID-only convergence rule for task and grouped final repair. A stable ID can continue when both its structured fingerprint and its authorized repair-scope code snapshot changed. See [goal-1.8.11-interface.md](goal-1.8.11-interface.md). The document-review rule described here is unchanged.
+
 OSpec 1.8.9 keeps older Goal artifacts readable while making continuous execution the default. A Goal continues while durable evidence shows progress and stops only for an explicit budget or STOP, a required user decision, a safety gate, a durable external blocker, potentially live work, or repeated findings that no longer converge.
 
 ## Progress-aware review repair

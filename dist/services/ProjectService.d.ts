@@ -151,6 +151,7 @@ export interface ProjectProtocolSyncResult {
     createdFiles: string[];
     refreshedFiles: string[];
     skippedFiles: string[];
+    verifiedFiles: string[];
 }
 export declare class ProjectService {
     private fileService;

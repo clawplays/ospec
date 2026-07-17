@@ -36,6 +36,10 @@ This resolves the confirmed `7/2` incident without deleting history, resetting c
 
 The broader task-scoped incremental authorization design below remains useful as historical design work, but it is no longer required to unblock a Goal whose findings are demonstrably changing.
 
+### 1.8.11 refinement
+
+The 1.8.9 ID-only rule was too strict when a reviewer correctly kept one stable ID while a repair removed the broad failure and left a narrower edge case. OSpec 1.8.11 preserves stable IDs and requires two independent progress signals: the structured finding fingerprint changed, and the code snapshot inside the prior authorized repair scope changed. Either signal alone still stops. See [Known Issue: Stable Finding IDs Hide Real Partial Repair Progress](known-issue-same-id-repair-progress-misclassification.md).
+
 ## Confirmed Incident
 
 The issue was observed while resuming this 1.8.6 Goal:

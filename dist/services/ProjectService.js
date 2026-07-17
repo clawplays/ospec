@@ -265,8 +265,14 @@ class ProjectService {
         const createdFiles = [...directCopyResult.created];
         const refreshedFiles = [...directCopyResult.refreshed];
         const skippedFiles = [...directCopyResult.skipped];
+        const verifiedFiles = [
+            ...directCopyResult.created,
+            ...directCopyResult.refreshed,
+            ...directCopyResult.skipped,
+        ];
         if (configLanguageUpdated) {
             refreshedFiles.push(constants_1.FILE_NAMES.SKILLRC);
+            verifiedFiles.push(constants_1.FILE_NAMES.SKILLRC);
         }
         const rootSkillPath = this.resolveManagedPath(rootDir, constants_1.FILE_NAMES.SKILL_MD, config);
         const renderedRootSkill = this.renderProtocolShellRootSkill(normalized.projectName, normalized.documentLanguage, config.mode);
@@ -274,15 +280,18 @@ class ProjectService {
         if (!(await this.fileService.exists(rootSkillPath))) {
             await this.fileService.writeFile(rootSkillPath, renderedRootSkill);
             createdFiles.push(rootSkillRelativePath);
+            verifiedFiles.push(rootSkillRelativePath);
         }
         else if (await this.isProtocolShellRootSkill(rootSkillPath)) {
             const existingRootSkill = await this.fileService.readFile(rootSkillPath);
             if (existingRootSkill === renderedRootSkill) {
                 skippedFiles.push(rootSkillRelativePath);
+                verifiedFiles.push(rootSkillRelativePath);
             }
             else {
                 await this.fileService.writeFile(rootSkillPath, renderedRootSkill);
                 refreshedFiles.push(rootSkillRelativePath);
+                verifiedFiles.push(rootSkillRelativePath);
             }
         }
         else {
@@ -290,6 +299,7 @@ class ProjectService {
         }
         try {
             await this.indexBuilder.write(rootDir);
+            verifiedFiles.push(this.toProjectRelativePath(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config));
         }
         catch {
         }
@@ -311,6 +321,7 @@ class ProjectService {
             createdFiles,
             refreshedFiles,
             skippedFiles,
+            verifiedFiles: Array.from(new Set(verifiedFiles)),
         };
     }
     async initializeProtocolShellProject(rootDir, mode, input) {

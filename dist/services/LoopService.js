@@ -1345,16 +1345,34 @@ class LoopService {
         const needsRepair = reviewTasks.filter(task => RETRY_REVIEW_DECISIONS.has(task.review?.decision || ''));
         const blockedReviewTasks = reviewTasks.filter(task => task.review?.decision === 'BLOCKED');
         const pendingReviewTasks = reviewTasks.filter(task => !needsRepair.includes(task) && !blockedReviewTasks.includes(task));
-        const repairAssessments = new Map(await Promise.all(needsRepair.map(async (task) => [
+        const blockingReasonsByTask = new Map(report.blockedTasks.map(item => [item.task.id, item.reasons]));
+        const pendingReviewIds = new Set(pendingReviewTasks.map(task => task.id));
+        const prerequisiteReviewIds = new Set(needsRepair.flatMap(task => (blockingReasonsByTask.get(task.id) || [])
+            .map(reason => reason.match(/^waiting_for_task_review:(.+)$/)?.[1] || null)
+            .filter((taskId) => Boolean(taskId && taskId !== task.id && pendingReviewIds.has(taskId)))));
+        const prerequisiteReviewTasks = pendingReviewTasks.filter(task => prerequisiteReviewIds.has(task.id));
+        if (prerequisiteReviewTasks.length > 0) {
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(prerequisiteReviewTasks, { respectParallelizable: false });
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < prerequisiteReviewTasks.length ? ['graph_conflict'] : []);
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'task-review', prepared);
+            }
+            const reviews = await this.taskGraph.reviewTasks(resolved, {
+                taskIds: graphSafe.slice(0, prepared.limit).map(task => task.id),
+            });
+            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), `Prerequisite review required before dependent repair: ${graphSafe.map(task => task.id).join(', ')}.`, verifyPassed, prepared);
+        }
+        const graphReadyRepairs = needsRepair.filter(task => (blockingReasonsByTask.get(task.id) || []).every(reason => reason === `waiting_for_task_review:${task.id}`));
+        const repairAssessments = new Map(await Promise.all(graphReadyRepairs.map(async (task) => [
             task.id,
             await this.taskGraph.assessTaskReviewRepairConvergence(resolved, task.id, config.efficiency.maxTaskRepairRounds),
         ])));
-        const eligibleRepairs = needsRepair.filter(task => {
+        const eligibleRepairs = graphReadyRepairs.filter(task => {
             const assessment = repairAssessments.get(task.id);
             return Boolean(assessment && (assessment.roundsUsed < config.efficiency.maxTaskRepairRounds
                 || (config.efficiency.continueWhileProgressing && assessment.progressing)));
         });
-        const stalledRepairs = needsRepair.filter(task => !eligibleRepairs.includes(task));
+        const stalledRepairs = graphReadyRepairs.filter(task => !eligibleRepairs.includes(task));
         if (needsRepair.length > 0) {
             if (eligibleRepairs.length > 0) {
                 const graphSafe = this.taskGraph.selectConflictSafeTasks(eligibleRepairs);

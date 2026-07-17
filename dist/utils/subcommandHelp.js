@@ -145,7 +145,7 @@ Execute Commands:
   ospec execute retry [change-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
   ospec execute complete <task-id> [change-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] [--usage-file usage.json] - record a worker result and ingest the dispatch usage sidecar automatically when present; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
   ospec execute sync [change-path|project-path]   - sync worker status, bootstrap/state.json, and the project session brief
-  ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] - create the next safe task-level or final review dispatch packet with project session context
+  ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] - create a non-controller task-level or final review packet; controller Goals use ospec loop tick
   ospec execute feedback [change-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files
   ospec execute repair [change-path|project-path] - convert all NEEDS_CHANGES final-review findings into one grouped repair task and dispatch
   ospec execute decision [change-path|project-path] --id id --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional] - record a durable user choice gate that can block dispatch until selected

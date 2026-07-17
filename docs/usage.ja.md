@@ -72,7 +72,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.3 では design/plan specialist review に bounded default を導入しました。1.8.9 の continuous mode では、stage ごとの 2 completed rounds と 30 分は収束しきい値です。新しい structured finding-ID set は続行でき、反復または循環する set は停止します。cache hit、pending reuse、heartbeat、同じ dispatch の recovery は round を消費しません。`--force` は guard を迂回できず、strict mode は exact user-authorized extra-round window を維持します。
 
-1.8.4 では task review-repair と grouped final-review repair に 2 round の guard を導入しました。1.8.9 の既定動作では、この値は収束しきい値です。構造化 finding ID が変化している間は続行し、同じ ID が繰り返された場合は次の無効な repair の前に停止します。`--continue-while-progressing false` で従来の厳格な lifetime ceiling を維持できます。変更された全 path が完了済みの推移的 downstream task に帰属できる場合にだけ upstream の承認済み review を維持し、downstream reviewer packet に upstream contract を regression obligation として追加します。final review が `BLOCKED` の場合は blocker の解決まで停止します。
+1.8.4 では task review-repair と grouped final-review repair に 2 round の guard を導入し、continuous mode では収束しきい値として扱います。structured finding ID が変化すれば自動続行します。1.8.11 以降は、同じ ID でも structured finding fingerprint と直前に許可された repair scope 内の code snapshot が両方変化した場合は続行します。文言だけの変更、code だけの churn、完全な反復、cycle は次の無効な repair の前に停止します。`--continue-while-progressing false` で従来の厳格な lifetime ceiling を維持できます。変更された全 path が完了済みの推移的 downstream task に帰属できる場合にだけ upstream の承認済み review を維持し、downstream reviewer packet に upstream contract を regression obligation として追加します。final review が `BLOCKED` の場合は blocker の解決まで停止します。
 
 1.8.5 では native child の待機による Goal controller の長時間停止を防ぎます。Codex/GPT の `wait_agent`、Claude Task polling、その他すべての native adapter は 60 秒以内に制御を返し、`heartbeatDueAt` 前に heartbeat を更新し、完了した結果を直ちに保存して再 tick します。task の target snapshot が不変なら Git HEAD の移動だけで再 review せず、final review は snapshot と HEAD の両方に厳密に拘束されます。native capacity が不明な implementation batch は 2 件までですが、安全な review 並列性は維持します。6 個を超える target を持つ新しい task は分割するか `scope_reason` が必要です。
 
@@ -168,8 +168,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - multi-worker execution は `runtimeAdapter.selected.nativeSubagent` に従います。選択された model-native adapter が parallel execution をサポートする場合だけ safe batch を並列起動します。capability がない、期限切れ、または target 不一致の場合は block し、agent CLI や current controller に fallback しません。
 - agent CLI execution は削除されました。`execute orchestrate`、`launch --run --command`、`review --run --command`、`loop watch` は process 起動や run artifact 作成の前に migration error を返します。
 - blocked、needs-context、failed の worker run を修正した後は、`ospec execute retry [changes/active/<change>] --task task-id` を使います。`artifacts/agents/retries/` を書き、task を reopen し、新しい dispatch packet を作成します。完了済み task は explicit `--force` が必要です。
-- 各 worker task 完了後、`ospec execute review [changes/active/<change>] --task <task-id>` で 1 回の統合 code review（spec compliance と code quality を一度に確認）を行います。task-level decision は `artifacts/reviews/tasks/<task-id>/review.md` に保存され、その 1 回の統合 review が承認されるまで dependent task は dispatch されません。
-- task graph が完了した後、`--task` なしの `ospec execute review [changes/active/<change>]` で 1 つの統合 final whole-change `artifacts/agents/review-dispatches/*` reviewer handoff packet を作成します。これは単一 `artifacts/reviews/final-review.md` の decision を書きます。
+- controller-owned Goal では worker task 完了後と task graph 完了後に `ospec loop tick [changes/active/<change>]` を使い、task/final review を実 executor provenance に関連付けて発行します。`ospec execute review` を直接使うのは non-controller workflow のみです。
 - review artifact が non-`PENDING` decision を持つ場合は `ospec execute feedback [changes/active/<change>] [--summary "..."]` で `artifacts/agents/review-feedback-plan.json` と `artifacts/agents/review-feedback-plan.md` を書きます。追加作業を dispatch する前に、feedback を accept、revise、clarify、unblock のどれで扱うか記録し、feedback が scope、direction、API、UI、risk、accepted tradeoff に影響する場合は required user decision gate を作成します。
 - debugging が change の一部だった場合、`ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` で `artifacts/agents/debug-evidence.json` と debug evidence report を記録します。`CONFIRMED` は root cause の隔離、`FIXED` は verified fix、`BLOCKED` は verify failure を意味します。
 - focused test 実行後、`ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` で `artifacts/agents/tdd-evidence.json` と cycle ごとの evidence report を記録します。red は implementation 前の non-passing focused test を記録し、green は prior red `FAILED` record を要求し、refactor は prior passing green/refactor evidence を要求します。`SKIPPED` には具体的な summary が必要です。
@@ -212,7 +211,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.9
+npm install -g @clawplays/ospec-cli@1.8.11
 ospec update [path]
 ```
 

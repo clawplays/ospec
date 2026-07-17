@@ -49,6 +49,9 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
                 '.ospec/asset-sources.json',
                 ...createdFiles,
                 ...refreshedFiles,
+                ...protocolResult.verifiedFiles,
+                ...toolingResult.verifiedFiles,
+                ...pluginResult.verifiedFiles,
                 ...legacyRepair.createdPaths,
                 ...legacyRepair.refreshedPaths,
                 ...legacyKnowledgeMigration.migratedPaths,
@@ -141,22 +144,64 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         const provenancePath = (0, path_1.join)(rootDir, '.ospec', 'update-provenance.json');
         const normalizedRoot = (0, path_1.resolve)(rootDir);
         const candidatePaths = new Set();
+        const normalizeCandidate = (rawPath) => {
+            const trimmed = rawPath.trim();
+            if (!trimmed)
+                return null;
+            const absolutePath = (0, path_1.resolve)(normalizedRoot, trimmed);
+            const relativePath = (0, path_1.relative)(normalizedRoot, absolutePath).replace(/\\/g, '/');
+            if (!relativePath
+                || relativePath === provenanceRelativePath
+                || relativePath === '.git'
+                || relativePath.startsWith('.git/')
+                || relativePath === '..'
+                || relativePath.startsWith('../')) {
+                return null;
+            }
+            return relativePath;
+        };
         for (const rawPath of input.paths) {
             for (const pathPart of String(rawPath || '').split(/\s+->\s+/)) {
-                const trimmed = pathPart.trim();
-                if (!trimmed)
+                const relativePath = normalizeCandidate(pathPart);
+                if (!relativePath)
                     continue;
-                const absolutePath = (0, path_1.resolve)(normalizedRoot, trimmed);
-                const relativePath = (0, path_1.relative)(normalizedRoot, absolutePath).replace(/\\/g, '/');
-                if (!relativePath
-                    || relativePath === provenanceRelativePath
-                    || relativePath === '.git'
-                    || relativePath.startsWith('.git/')
-                    || relativePath === '..'
-                    || relativePath.startsWith('../')) {
-                    continue;
-                }
                 candidatePaths.add(relativePath);
+            }
+        }
+        // A repeated update must not discard ownership proof for a file that
+        // this same CLI version already wrote and whose exact state is intact.
+        if (input.cliVersion && await services_1.services.fileService.exists(provenancePath)) {
+            try {
+                const previous = await services_1.services.fileService.readJSON(provenancePath);
+                const previousFiles = Array.isArray(previous.files) ? previous.files : [];
+                if (previous.version === '1.0'
+                    && previous.source === 'ospec update'
+                    && previous.ospecCliVersion === input.cliVersion) {
+                    for (const rawRecord of previousFiles) {
+                        const record = rawRecord && typeof rawRecord === 'object'
+                            ? rawRecord
+                            : null;
+                        const relativePath = normalizeCandidate(String(record?.path || ''));
+                        if (!relativePath || (record?.kind !== 'file' && record?.kind !== 'missing'))
+                            continue;
+                        const absolutePath = (0, path_1.join)(normalizedRoot, ...relativePath.split('/'));
+                        const stat = await fs_1.promises.stat(absolutePath).catch(() => null);
+                        if (record.kind === 'missing') {
+                            if (!stat && record.contentHash === null)
+                                candidatePaths.add(relativePath);
+                            continue;
+                        }
+                        if (!stat?.isFile() || !/^[a-f0-9]{64}$/.test(String(record.contentHash || '')))
+                            continue;
+                        const currentHash = (0, crypto_1.createHash)('sha256').update(await fs_1.promises.readFile(absolutePath)).digest('hex');
+                        if (currentHash === record.contentHash)
+                            candidatePaths.add(relativePath);
+                    }
+                }
+            }
+            catch {
+                // Invalid prior provenance is ignored and replaced by the
+                // paths independently verified during this update.
             }
         }
         const files = [];
@@ -278,6 +323,11 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             createdFiles: [...directCopyResult.created],
             refreshedFiles: [...directCopyResult.refreshed],
             skippedFiles: [...directCopyResult.skipped],
+            verifiedFiles: [
+                ...directCopyResult.created,
+                ...directCopyResult.refreshed,
+                ...directCopyResult.skipped,
+            ],
             hookInstalledFiles: [...hookInstallResult.installed],
             migratedFiles: migrationResult.migratedFiles,
             removedLegacyFiles: migrationResult.removedLegacyFiles,
@@ -568,6 +618,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         const createdFiles = [];
         const refreshedFiles = [];
         const skippedFiles = [];
+        const verifiedFiles = [];
         const enabledPlugins = [];
         const packageUpdates = [];
         let configChanged = false;
@@ -587,8 +638,11 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             if (installedStitch) {
                 const stitchDefaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedStitch.record.package_name, installedStitch.record.version, installedStitch.manifest);
                 configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins.stitch, installedStitch, stitchDefaultConfig) || configChanged;
-                const stitchAssets = await this.getPluginRegistryService().syncProjectPluginAssets('stitch', rootDir, stitchWorkspaceRoot);
-                createdFiles.push(...stitchAssets);
+                const stitchAssets = await this.getPluginRegistryService().syncProjectPluginAssetsDetailed('stitch', rootDir, stitchWorkspaceRoot);
+                createdFiles.push(...stitchAssets.created);
+                refreshedFiles.push(...stitchAssets.refreshed);
+                skippedFiles.push(...stitchAssets.skipped);
+                verifiedFiles.push(...stitchAssets.verified);
             }
             else {
                 skippedFiles.push('.ospec/plugins/stitch');
@@ -609,8 +663,11 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             if (installedCheckpoint) {
                 const checkpointDefaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedCheckpoint.record.package_name, installedCheckpoint.record.version, installedCheckpoint.manifest);
                 configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins.checkpoint, installedCheckpoint, checkpointDefaultConfig) || configChanged;
-                const checkpointAssets = await this.getPluginRegistryService().syncProjectPluginAssets('checkpoint', rootDir, checkpointWorkspaceRoot);
-                createdFiles.push(...checkpointAssets);
+                const checkpointAssets = await this.getPluginRegistryService().syncProjectPluginAssetsDetailed('checkpoint', rootDir, checkpointWorkspaceRoot);
+                createdFiles.push(...checkpointAssets.created);
+                refreshedFiles.push(...checkpointAssets.refreshed);
+                skippedFiles.push(...checkpointAssets.skipped);
+                verifiedFiles.push(...checkpointAssets.verified);
             }
             else {
                 skippedFiles.push('.ospec/plugins/checkpoint');
@@ -639,8 +696,11 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             const workspaceRoot = typeof nextConfig.plugins[pluginName]?.workspace_root === 'string' && nextConfig.plugins[pluginName].workspace_root.trim().length > 0
                 ? nextConfig.plugins[pluginName].workspace_root.trim()
                 : `.ospec/plugins/${pluginName}`;
-            const externalCreatedFiles = await this.getPluginRegistryService().syncProjectPluginAssets(pluginName, rootDir, workspaceRoot);
-            createdFiles.push(...externalCreatedFiles);
+            const externalAssets = await this.getPluginRegistryService().syncProjectPluginAssetsDetailed(pluginName, rootDir, workspaceRoot);
+            createdFiles.push(...externalAssets.created);
+            refreshedFiles.push(...externalAssets.refreshed);
+            skippedFiles.push(...externalAssets.skipped);
+            verifiedFiles.push(...externalAssets.verified);
         }
         if (enabledPlugins.length > 0 && (hasLegacyPluginKeys || configChanged)) {
             await services_1.services.configManager.saveConfig(rootDir, nextConfig);
@@ -650,6 +710,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             createdFiles,
             refreshedFiles,
             skippedFiles,
+            verifiedFiles: Array.from(new Set(verifiedFiles)),
             enabledPlugins,
             configSaved: refreshedFiles.includes('.skillrc'),
             packageUpdates,

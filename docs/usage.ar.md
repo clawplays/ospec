@@ -72,7 +72,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 قدم الإصدار 1.8.3 قيما افتراضية محدودة لمراجعات design وplan المتخصصة. في continuous mode للإصدار 1.8.9 تصبح الجولتان المكتملتان و30 دقيقة لكل stage عتبات تقارب: يمكن لمجموعة structured finding-ID جديدة أن تستمر، بينما تتوقف المجموعات المتكررة أو الدورية. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز، ويحتفظ strict mode بنافذة extra round التي يصرح بها المستخدم بدقة.
 
-قدم الإصدار 1.8.4 حارسا من جولتين لكل من task-review repair وgrouped final-review repair. في 1.8.9 تصبح هذه القيم عتبات تقارب افتراضيا: يستمر التنفيذ عندما تتغير معرفات findings المنظمة، ويتوقف قبل repair غير مفيد عندما تتكرر المعرفات نفسها. يحافظ `--continue-while-progressing false` على حدود العمر الصارمة السابقة. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair.
+قدم الإصدار 1.8.4 حارسا من جولتين لكل من task-review repair وgrouped final-review repair، ويعامله continuous mode كعتبة تقارب. يستمر التنفيذ تلقائيا عندما تتغير معرفات findings المنظمة. بدءا من 1.8.11 يمكن أن يستمر المعرف نفسه أيضا عندما يتغير كل من structured finding fingerprint وcode snapshot داخل repair scope المصرح به سابقا. أما تغيير الصياغة فقط أو الكود فقط أو التكرار الدقيق أو الدورة فيتوقف قبل repair غير مفيد. يحافظ `--continue-while-progressing false` على حدود العمر الصارمة السابقة. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair.
 
 يمنع الإصدار 1.8.5 انتظار native child من تجميد Goal controller. يجب أن يعيد `wait_agent` في Codex/GPT وpolling لـ Claude Task وكل native adapter آخر التحكم خلال 60 ثانية، ويحدّث heartbeat قبل `heartbeatDueAt`، ويحفظ كل نتيجة مكتملة فوراً، ثم يعيد tick. لا تعيد حركة Git HEAD وحدها task review عندما تبقى target snapshot دون تغيير، بينما تظل final review مرتبطة بدقة بالـ snapshot وHEAD. عند غياب native capacity يقتصر implementation batch على مهمتين من دون تقليل توازي review الآمن. يجب تقسيم أي task جديدة تتجاوز ستة targets أو إضافة `scope_reason`.
 
@@ -168,8 +168,7 @@ ospec finalize [changes/active/<change>]
 - نفّذ `runtimeAdapter.selected.nativeSubagent` وشغّل safe batch فقط بالتوازي. عند غياب capability أو انتهاء صلاحيتها يجب block من دون agent CLI أو current-controller fallback.
 - أزيل agent CLI execution. تعيد `execute orchestrate` و`launch --run --command` و`review --run --command` و`loop watch` migration error قبل تشغيل process أو إنشاء run artifact.
 - استخدم `ospec execute retry [changes/active/<change>] --task task-id` بعد إصلاح worker run كان blocked أو needs-context أو failed. يكتب `artifacts/agents/retries/`، ويعيد فتح task، وينشئ dispatch packet جديدا. تحتاج المهام المكتملة إلى `--force` صراحة.
-- بعد اكتمال كل worker task، استخدم `ospec execute review [changes/active/<change>] --task <task-id>` لإجراء مراجعة code review موحدة واحدة (spec compliance وcode quality في تمريرة واحدة). يحفظ القرار في `artifacts/reviews/tasks/<task-id>/review.md` وتبقى المهام التابعة محجوبة حتى اعتماد تلك المراجعة الموحدة الواحدة.
-- بعد اكتمال task graph، استخدم `ospec execute review [changes/active/<change>]` من دون `--task` لإنشاء حزمة code review نهائية موحدة واحدة داخل `artifacts/agents/review-dispatches/*`. تكتب قرار `artifacts/reviews/final-review.md` واحدا.
+- في Goal مملوكة لـ controller، استخدم `ospec loop tick [changes/active/<change>]` بعد مهام worker وبعد اكتمال task graph لإصدار task/final reviews مرتبطة بـ executor provenance الحقيقي. استخدم `ospec execute review` مباشرةً فقط خارج controller Loop.
 - بعد أن يحتوي review artifact على قرار غير `PENDING`، استخدم `ospec execute feedback [changes/active/<change>] [--summary "..."]` لكتابة `artifacts/agents/review-feedback-plan.json` و`artifacts/agents/review-feedback-plan.md`. يسجل هل سيتم قبول feedback أو تعديله أو توضيحه أو إزالة blocker قبل dispatch عمل إضافي، وينشئ required user decision gate عندما يؤثر feedback في scope أو direction أو API أو UI أو risk أو accepted tradeoffs.
 - عندما يكون debugging جزءا من change، استخدم `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` لتسجيل `artifacts/agents/debug-evidence.json` وdebug evidence report. تعني `CONFIRMED` عزل root cause، وتعني `FIXED` إصلاحا متحققا، وتؤدي `BLOCKED` إلى فشل verify.
 - بعد تشغيل focused tests، استخدم `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` لتسجيل `artifacts/agents/tdd-evidence.json` وevidence report لكل دورة. يجب أن يسجل red اختبارا focused غير ناجح قبل implementation، ويتطلب green سجلا سابقا red `FAILED`، ويتطلب refactor دليلا سابقا green/refactor ناجحا، ويتطلب `SKIPPED` ملخصا محددا.
@@ -212,7 +211,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.9
+npm install -g @clawplays/ospec-cli@1.8.11
 ospec update [path]
 ```
 

@@ -1,0 +1,24 @@
+{
+  "title_suffix": "stable update ownership and dependency-aware review recovery",
+  "summary": "OSpec 1.8.10 keeps resumed Goals moving through two framework deadlocks found in real 1.8.9 workspaces. Repeated updates retain exact managed-file ownership without trusting later user edits, plugin refreshes receive provenance, dependent repairs wait for required prerequisite reviews, and controller-owned task reviews can no longer be created without a reachable Loop executor lifecycle. Existing unbound 1.8.9 approvals are safely superseded by fresh Loop-owned review work.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.9...1.8.10",
+  "new": [
+    "Added verified managed-path reporting for protocol, tooling, generated index, managed root skill, and enabled plugin assets.",
+    "Added explicit sync diagnostics for review decisions that exist but are not authoritative because executor provenance is incomplete."
+  ],
+  "improved": [
+    "Makes repeated same-version update provenance stable while revalidating path containment, file or missing kind, and SHA-256 before retaining a record.",
+    "Filters repair candidates through current task-graph blockers and schedules pending prerequisite reviews before dependent repairs.",
+    "Safely supersedes unbound 1.8.9 task-review approvals with fresh Loop-owned review dispatches without consuming a repair round."
+  ],
+  "fixed": [
+    "Fixed workflow-conventions.md and other unchanged managed assets disappearing from update provenance after a repeated update.",
+    "Fixed existing plugin assets being overwritten by update without being reported as refreshed or update-managed.",
+    "Fixed a NEEDS_CHANGES repair repeatedly selecting a task whose prerequisite review was still pending.",
+    "Fixed controller-owned manual task reviews requiring executor provenance even though no Loop action existed to claim or complete the reviewer.",
+    "Fixed sync reporting generic success when an otherwise completed task review still lacked authoritative executor provenance."
+  ],
+  "docs": [
+    "Documented stable update ownership, dependency-aware repair order, controller review routing, 1.8.9 unbound-review recovery, and the remaining real Android device gate in the Mobile Dev Goal."
+  ]
+}

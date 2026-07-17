@@ -149,6 +149,12 @@ export declare class PluginRegistryService {
     } | null>;
     private findGlobalInstalledPluginRecord;
     syncProjectPluginAssets(pluginId: string, projectPath: string, workspaceRoot: string): Promise<string[]>;
+    syncProjectPluginAssetsDetailed(pluginId: string, projectPath: string, workspaceRoot: string): Promise<{
+        created: string[];
+        refreshed: string[];
+        skipped: string[];
+        verified: string[];
+    }>;
     createExternalPluginProjectConfig(packageName: string, version: string, manifest: NormalizedPluginManifest): Record<string, unknown>;
     private getOfficialRegistryEntries;
     private getInstalledRegistryEntries;

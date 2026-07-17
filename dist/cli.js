@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.9';
+const CLI_VERSION = '1.8.11';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }

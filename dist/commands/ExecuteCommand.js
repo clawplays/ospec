@@ -311,6 +311,12 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             throw new Error('Execute review --run was removed. Dispatch the review packet through a fresh model-native subagent.');
         }
         const changePath = await this.resolveChangePath(parsed.inputPath);
+        if (await services_1.services.loopService.exists(changePath)) {
+            const loopConfig = await services_1.services.loopService.readConfig(changePath);
+            if (loopConfig.executionModel === 'controller') {
+                throw new Error('Controller-mode task and final reviews must be issued by "ospec loop tick [change-path]" so the review dispatch is atomically bound to a real executor lifecycle. Manual "ospec execute review" would create unverifiable evidence.');
+            }
+        }
         const result = await services_1.services.taskGraphExecutionService.review(changePath, {
             stage: parsed.stage,
             taskId: parsed.taskId,
@@ -1362,7 +1368,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 actions.push({
                     taskId,
                     stage,
-                    command: `ospec execute review ${changeArg} --task ${this.quoteCommandArg(taskId)} --stage ${stage}`,
+                    command: `ospec loop tick ${changeArg}`,
                     label: `${taskId} ${stage}`,
                 });
             }

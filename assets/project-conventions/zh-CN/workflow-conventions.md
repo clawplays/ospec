@@ -65,8 +65,8 @@ tags: [conventions, workflow, change, ospec]
 - 多 worker 执行服从 `runtimeAdapter.selected.nativeSubagent`：只在所选 native adapter 支持并行时启动安全 batch。capability 缺失、过期或 target 不匹配时必须阻断，不能回退到 Orca、agent CLI 或 current controller
 - `execute orchestrate`、`launch --run --command`、`review --run --command` 与 `loop watch` 已移除，并在任何进程或 run artifact 创建前失败。修复 blocked、needs-context 或 failed work 后，用 `ospec execute retry` 重新派发；已完成任务必须显式 `--force` 才能 retry
 - `ospec execute dispatch` 与 `complete` 也会同步 `artifacts/agents/worker-status.md`；人工修改 task graph、execution session、review artifacts、debug evidence 或 verification checklist 后，用 `ospec execute sync` 重建 worker 状态
-- 每个 worker task 完成后，用 `ospec execute review [changes/active/<change>] --task <task-id>` 生成一个合并的 code reviewer 交接包（一次同时审 spec 符合性与代码质量）。task 级 review 决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等这一次合并 review 通过后才可派发
-- 所有 task 级 review 通过且 task graph 完成后，用不带 `--task` 的 `ospec execute review [changes/active/<change>]` 在 `artifacts/agents/review-dispatches/` 下生成一个合并的最终整体 code review 交接包；它产出单一 `artifacts/reviews/final-review.md`、一道决策
+- 每个 worker task 完成后，如果 Goal 由 controller Loop 管理，用 `ospec loop tick [changes/active/<change>]` 生成合并 code reviewer action，并原子绑定真实 executor provenance；只有非 controller 流程才直接运行 `ospec execute review ... --task <task-id>`。task 级 review 决策写入 `artifacts/reviews/tasks/<task-id>/review.md`，依赖任务会等这一次合并 review 通过后才可派发
+- 所有 task 级 review 通过且 task graph 完成后，controller Loop 用下一次 `ospec loop tick` 生成最终整体 review；只有非 controller 流程才直接运行不带 `--task` 的 `ospec execute review`
 - review packet 必须交给新的 model-native reviewer subagent；OSpec 不运行本地 reviewer CLI。reviewer 完成后写回对应 decision 与 evidence
 - review artifact 有非 `PENDING` 决策后，用 `ospec execute feedback [changes/active/<change>] [--stage spec|quality]` 写入 `artifacts/agents/review-feedback-plan.json` 和 `artifacts/agents/review-feedback-plan.md`；继续派发工作前要明确接受、修订、澄清或阻塞处理；当反馈改变范围、方向、API、UI、风险或已接受取舍时创建 required user decision
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 在 `artifacts/agents/debug-evidence.json` 下记录根因和修复证据

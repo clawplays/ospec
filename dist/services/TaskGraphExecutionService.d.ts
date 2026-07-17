@@ -24,6 +24,12 @@ export interface TaskReviewRepairContext {
     findingIds: string[];
     findings: TaskReviewFinding[];
     repairScope: string[];
+    /** Added in 1.8.11. Older repair contexts are resolved from review history. */
+    reviewDispatchId?: string;
+    /** Full reviewed task target snapshot before this repair. */
+    reviewTargetSnapshotHash?: string;
+    /** Snapshot of only the files this repair was authorized to change. */
+    repairScopeSnapshotHash?: string;
 }
 export interface TaskRepairConvergenceAssessment {
     scope: 'task' | 'final';
@@ -33,9 +39,12 @@ export interface TaskRepairConvergenceAssessment {
     previousFindingIds: string[];
     currentFingerprint: string;
     previousFingerprint: string | null;
+    currentRepairScopeSnapshotHash: string | null;
+    previousRepairScopeSnapshotHash: string | null;
+    targetSnapshotChanged: boolean | null;
     comparable: boolean;
     progressing: boolean;
-    reason: 'below_limit' | 'findings_changed' | 'findings_unchanged' | 'findings_repeated' | 'legacy_context_unavailable';
+    reason: 'below_limit' | 'findings_changed' | 'findings_refined' | 'findings_unchanged' | 'findings_repeated' | 'reviewed_target_unchanged' | 'legacy_context_unavailable';
 }
 export interface TaskRunningRecoveryAssessment {
     taskId: string;
@@ -493,6 +502,10 @@ export interface TaskRepairWaveRecord {
     recordPath: string;
     packetPath: string;
     dispatchIds: string[];
+    /** Added in 1.8.11. Older repair waves are resolved from review history. */
+    sourceReviewDispatchId?: string;
+    sourceReviewTargetSnapshotHash?: string;
+    sourceRepairScopeSnapshotHash?: string;
 }
 export interface TaskRepairWaveResult {
     changePath: string;
@@ -1527,6 +1540,10 @@ export declare class TaskGraphExecutionService {
     private readFinalReviewRepairHistory;
     countFinalReviewRepairWaves(changePath: string): Promise<number>;
     assessFinalReviewRepairConvergence(changePath: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;
+    private assessRepairFindingProgress;
+    private readRepairConvergenceReviewDispatch;
+    private findHistoricalRepairReviewDispatch;
+    private repairScopeSnapshotHash;
     private repairFindingsFingerprint;
     private extractFindingIds;
     orchestrate(changePath: string, options?: {

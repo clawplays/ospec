@@ -1505,9 +1505,6 @@ class TaskGraphExecutionService {
         const findingsContent = await this.fileService.readFile(findingResult.path);
         const reviewArtifactHash = (0, crypto_1.createHash)('sha256').update(reviewContent, 'utf8').digest('hex');
         const findingsHash = (0, crypto_1.createHash)('sha256').update(findingsContent, 'utf8').digest('hex');
-        const contextHash = (0, crypto_1.createHash)('sha256')
-            .update(`${task.id}\n${decision}\n${reviewArtifactHash}\n${findingsHash}`, 'utf8')
-            .digest('hex');
         const repairScope = [...new Set(findingResult.structured.flatMap(finding => finding.repairScope).map(item => item.trim()).filter(Boolean))];
         const normalizedTargets = task.targetFiles.map(normalizeTaskPath).filter(Boolean);
         const outsideTaskScope = repairScope.filter(scope => {
@@ -1517,6 +1514,31 @@ class TaskGraphExecutionService {
         if (outsideTaskScope.length > 0) {
             throw new Error(`Task review repair for ${task.id} contains repair scope outside declared task target files: ${outsideTaskScope.join(', ')}.`);
         }
+        const effectiveRepairScope = repairScope.length > 0 ? repairScope : task.targetFiles;
+        const reviewDispatchId = String(review.data?.review_dispatch_id || '').trim();
+        const reviewTargetSnapshotHash = String(review.data?.target_snapshot_hash || '').trim();
+        let repairScopeSnapshotHash = null;
+        if (reviewDispatchId) {
+            const reviewDispatch = await this.readRepairConvergenceReviewDispatch(resolvedChangePath, task.id, reviewDispatchId);
+            if (!reviewDispatch || reviewDispatch.targetSnapshotHash !== reviewTargetSnapshotHash) {
+                throw new Error(`Task review repair for ${task.id} has invalid review target snapshot provenance.`);
+            }
+            repairScopeSnapshotHash = this.repairScopeSnapshotHash(reviewDispatch, effectiveRepairScope);
+            if (!repairScopeSnapshotHash) {
+                throw new Error(`Task review repair for ${task.id} cannot bind its repair scope to the reviewed target snapshot.`);
+            }
+        }
+        const contextHash = (0, crypto_1.createHash)('sha256')
+            .update([
+            task.id,
+            decision,
+            reviewArtifactHash,
+            findingsHash,
+            reviewDispatchId,
+            reviewTargetSnapshotHash,
+            repairScopeSnapshotHash || '',
+        ].join('\n'), 'utf8')
+            .digest('hex');
         return {
             taskId: task.id,
             decision,
@@ -1529,7 +1551,12 @@ class TaskGraphExecutionService {
             source: findingResult.source,
             findingIds: findingResult.structured.map(finding => finding.id),
             findings: findingResult.structured,
-            repairScope: repairScope.length > 0 ? repairScope : task.targetFiles,
+            repairScope: effectiveRepairScope,
+            ...(reviewDispatchId && repairScopeSnapshotHash ? {
+                reviewDispatchId,
+                reviewTargetSnapshotHash,
+                repairScopeSnapshotHash,
+            } : {}),
         };
     }
     async readTaskReviewRepairHistory(changePath, taskId) {
@@ -1633,6 +1660,9 @@ class TaskGraphExecutionService {
                 previousFindingIds: [],
                 currentFingerprint,
                 previousFingerprint: null,
+                currentRepairScopeSnapshotHash: null,
+                previousRepairScopeSnapshotHash: null,
+                targetSnapshotChanged: null,
                 comparable: false,
                 progressing: true,
                 reason: 'below_limit',
@@ -1653,15 +1683,45 @@ class TaskGraphExecutionService {
                 .find(dispatch => dispatch.taskId === taskId && dispatch.completedAt && dispatch.summary);
             previousFindingIds = this.extractFindingIds(latestCompletedDispatch?.summary || '');
         }
-        const comparable = previousFingerprint !== null || previousFindingIds.length > 0;
-        const currentFindingSignature = currentFindingIds.join('|');
-        const unchanged = comparable && previousFindingIds.join('|') === currentFindingSignature;
-        const repeated = history.some(record => {
-            const findings = Array.isArray(record.repairContext?.findings)
+        const previousRepairScope = latest?.repairContext?.repairScope?.length
+            ? latest.repairContext.repairScope
+            : task.targetFiles;
+        const currentReviewDispatch = await this.readRepairConvergenceReviewDispatch(resolvedChangePath, taskId, String(review.data?.review_dispatch_id || ''));
+        const currentReviewTargetHash = String(review.data?.target_snapshot_hash || '').trim();
+        const validCurrentReviewDispatch = currentReviewDispatch
+            && currentReviewDispatch.targetSnapshotHash === currentReviewTargetHash
+            ? currentReviewDispatch
+            : null;
+        const previousReviewDispatch = latest?.repairContext?.reviewDispatchId
+            ? await this.readRepairConvergenceReviewDispatch(resolvedChangePath, taskId, latest.repairContext.reviewDispatchId)
+            : await this.findHistoricalRepairReviewDispatch(resolvedChangePath, taskId, latest?.repairContext?.capturedAt || latest?.createdAt || null);
+        const validPreviousReviewDispatch = previousReviewDispatch
+            && (!latest?.repairContext?.reviewTargetSnapshotHash
+                || previousReviewDispatch.targetSnapshotHash === latest.repairContext.reviewTargetSnapshotHash)
+            ? previousReviewDispatch
+            : null;
+        const computedPreviousScopeSnapshotHash = validPreviousReviewDispatch
+            ? this.repairScopeSnapshotHash(validPreviousReviewDispatch, previousRepairScope)
+            : null;
+        const recordedPreviousScopeSnapshotHash = latest?.repairContext?.repairScopeSnapshotHash || null;
+        const previousRepairScopeSnapshotHash = recordedPreviousScopeSnapshotHash
+            ? computedPreviousScopeSnapshotHash === recordedPreviousScopeSnapshotHash
+                ? recordedPreviousScopeSnapshotHash
+                : null
+            : computedPreviousScopeSnapshotHash;
+        const currentRepairScopeSnapshotHash = validCurrentReviewDispatch
+            ? this.repairScopeSnapshotHash(validCurrentReviewDispatch, previousRepairScope)
+            : null;
+        const convergence = this.assessRepairFindingProgress({
+            currentFindingIds,
+            previousFindingIds,
+            currentFingerprint,
+            previousFingerprint,
+            priorFindings: history.map(record => Array.isArray(record.repairContext?.findings)
                 ? record.repairContext.findings
-                : [];
-            return findings.length > 0
-                && findings.map(finding => finding.id).filter(Boolean).sort().join('|') === currentFindingSignature;
+                : []),
+            currentRepairScopeSnapshotHash,
+            previousRepairScopeSnapshotHash,
         });
         return {
             scope: 'task',
@@ -1671,11 +1731,9 @@ class TaskGraphExecutionService {
             previousFindingIds,
             currentFingerprint,
             previousFingerprint,
-            comparable,
-            progressing: !repeated && !unchanged,
-            reason: unchanged ? 'findings_unchanged'
-                : repeated ? 'findings_repeated'
-                    : !comparable ? 'legacy_context_unavailable' : 'findings_changed',
+            currentRepairScopeSnapshotHash,
+            previousRepairScopeSnapshotHash,
+            ...convergence,
         };
     }
     async readFinalReviewRepairHistory(changePath) {
@@ -1723,23 +1781,64 @@ class TaskGraphExecutionService {
             return {
                 scope: 'final', taskId: null, roundsUsed: history.length,
                 currentFindingIds, previousFindingIds: [], currentFingerprint,
-                previousFingerprint: null, comparable: false, progressing: true, reason: 'below_limit',
+                previousFingerprint: null,
+                currentRepairScopeSnapshotHash: null,
+                previousRepairScopeSnapshotHash: null,
+                targetSnapshotChanged: null,
+                comparable: false, progressing: true, reason: 'below_limit',
             };
         }
-        const previousStructured = Array.isArray(history.at(-1)?.structuredFindings)
-            ? history.at(-1)?.structuredFindings || []
+        const latest = history.at(-1);
+        const previousStructured = Array.isArray(latest?.structuredFindings)
+            ? latest?.structuredFindings || []
             : [];
         const previousFindingIds = previousStructured.map(finding => finding.id).filter(Boolean).sort();
         const previousFingerprint = previousStructured.length > 0
             ? this.repairFindingsFingerprint(previousStructured)
             : null;
-        const comparable = previousFindingIds.length > 0;
-        const currentFindingSignature = currentFindingIds.join('|');
-        const unchanged = comparable && previousFindingIds.join('|') === currentFindingSignature;
-        const repeated = history.some(record => {
-            const findings = Array.isArray(record.structuredFindings) ? record.structuredFindings : [];
-            return findings.length > 0
-                && findings.map(finding => finding.id).filter(Boolean).sort().join('|') === currentFindingSignature;
+        const previousRepairScope = [...new Set(previousStructured
+                .flatMap(finding => finding.repairScope)
+                .map(item => item.trim())
+                .filter(Boolean))];
+        const effectivePreviousRepairScope = previousRepairScope.length > 0
+            ? previousRepairScope
+            : latest?.targetFiles || [];
+        const currentReviewDispatch = await this.readRepairConvergenceReviewDispatch(resolvedChangePath, null, String(review.data?.review_dispatch_id || ''));
+        const currentReviewTargetHash = String(review.data?.target_snapshot_hash || '').trim();
+        const validCurrentReviewDispatch = currentReviewDispatch
+            && currentReviewDispatch.targetSnapshotHash === currentReviewTargetHash
+            ? currentReviewDispatch
+            : null;
+        const previousReviewDispatch = latest?.sourceReviewDispatchId
+            ? await this.readRepairConvergenceReviewDispatch(resolvedChangePath, null, latest.sourceReviewDispatchId)
+            : await this.findHistoricalRepairReviewDispatch(resolvedChangePath, null, latest?.createdAt || null);
+        const validPreviousReviewDispatch = previousReviewDispatch
+            && (!latest?.sourceReviewTargetSnapshotHash
+                || previousReviewDispatch.targetSnapshotHash === latest.sourceReviewTargetSnapshotHash)
+            ? previousReviewDispatch
+            : null;
+        const computedPreviousScopeSnapshotHash = validPreviousReviewDispatch
+            ? this.repairScopeSnapshotHash(validPreviousReviewDispatch, effectivePreviousRepairScope)
+            : null;
+        const recordedPreviousScopeSnapshotHash = latest?.sourceRepairScopeSnapshotHash || null;
+        const previousRepairScopeSnapshotHash = recordedPreviousScopeSnapshotHash
+            ? computedPreviousScopeSnapshotHash === recordedPreviousScopeSnapshotHash
+                ? recordedPreviousScopeSnapshotHash
+                : null
+            : computedPreviousScopeSnapshotHash;
+        const currentRepairScopeSnapshotHash = validCurrentReviewDispatch
+            ? this.repairScopeSnapshotHash(validCurrentReviewDispatch, effectivePreviousRepairScope)
+            : null;
+        const convergence = this.assessRepairFindingProgress({
+            currentFindingIds,
+            previousFindingIds,
+            currentFingerprint,
+            previousFingerprint,
+            priorFindings: history.map(record => Array.isArray(record.structuredFindings)
+                ? record.structuredFindings
+                : []),
+            currentRepairScopeSnapshotHash,
+            previousRepairScopeSnapshotHash,
         });
         return {
             scope: 'final',
@@ -1749,12 +1848,128 @@ class TaskGraphExecutionService {
             previousFindingIds,
             currentFingerprint,
             previousFingerprint,
-            comparable,
-            progressing: !repeated && !unchanged,
-            reason: unchanged ? 'findings_unchanged'
-                : repeated ? 'findings_repeated'
-                    : !comparable ? 'legacy_context_unavailable' : 'findings_changed',
+            currentRepairScopeSnapshotHash,
+            previousRepairScopeSnapshotHash,
+            ...convergence,
         };
+    }
+    assessRepairFindingProgress(input) {
+        const comparable = input.previousFingerprint !== null || input.previousFindingIds.length > 0;
+        if (!comparable) {
+            return {
+                comparable: false,
+                progressing: true,
+                reason: 'legacy_context_unavailable',
+                targetSnapshotChanged: null,
+            };
+        }
+        const currentFindingSignature = input.currentFindingIds.join('|');
+        const previousFindingSignature = input.previousFindingIds.join('|');
+        if (currentFindingSignature !== previousFindingSignature) {
+            const repeated = input.priorFindings.slice(0, -1).some(findings => findings.map(finding => finding.id).filter(Boolean).sort().join('|') === currentFindingSignature);
+            return {
+                comparable: true,
+                progressing: !repeated,
+                reason: repeated ? 'findings_repeated' : 'findings_changed',
+                targetSnapshotChanged: input.currentRepairScopeSnapshotHash && input.previousRepairScopeSnapshotHash
+                    ? input.currentRepairScopeSnapshotHash !== input.previousRepairScopeSnapshotHash
+                    : null,
+            };
+        }
+        if (!input.previousFingerprint || input.currentFingerprint === input.previousFingerprint) {
+            return {
+                comparable: true,
+                progressing: false,
+                reason: 'findings_unchanged',
+                targetSnapshotChanged: input.currentRepairScopeSnapshotHash && input.previousRepairScopeSnapshotHash
+                    ? input.currentRepairScopeSnapshotHash !== input.previousRepairScopeSnapshotHash
+                    : null,
+            };
+        }
+        const fingerprintRepeated = input.priorFindings.slice(0, -1).some(findings => findings.length > 0 && this.repairFindingsFingerprint(findings) === input.currentFingerprint);
+        if (fingerprintRepeated) {
+            return {
+                comparable: true,
+                progressing: false,
+                reason: 'findings_repeated',
+                targetSnapshotChanged: input.currentRepairScopeSnapshotHash && input.previousRepairScopeSnapshotHash
+                    ? input.currentRepairScopeSnapshotHash !== input.previousRepairScopeSnapshotHash
+                    : null,
+            };
+        }
+        if (!input.currentRepairScopeSnapshotHash || !input.previousRepairScopeSnapshotHash) {
+            return {
+                comparable: true,
+                progressing: false,
+                reason: 'legacy_context_unavailable',
+                targetSnapshotChanged: null,
+            };
+        }
+        if (input.currentRepairScopeSnapshotHash === input.previousRepairScopeSnapshotHash) {
+            return {
+                comparable: true,
+                progressing: false,
+                reason: 'reviewed_target_unchanged',
+                targetSnapshotChanged: false,
+            };
+        }
+        return {
+            comparable: true,
+            progressing: true,
+            reason: 'findings_refined',
+            targetSnapshotChanged: true,
+        };
+    }
+    async readRepairConvergenceReviewDispatch(changePath, taskId, dispatchId) {
+        const normalizedDispatchId = String(dispatchId || '').trim();
+        if (!normalizedDispatchId || this.toFileSafeId(normalizedDispatchId) !== normalizedDispatchId)
+            return null;
+        const recordPath = path.join(changePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${normalizedDispatchId}.json`);
+        if (!(await this.fileService.exists(recordPath)))
+            return null;
+        try {
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.id !== normalizedDispatchId
+                || (record.taskId || null) !== taskId
+                || !Array.isArray(record.targetFiles)
+                || !Array.isArray(record.targetSnapshots)
+                || !record.targetSnapshotHash
+                || this.hashTargetSnapshots(record.targetSnapshots) !== record.targetSnapshotHash)
+                return null;
+            return record;
+        }
+        catch {
+            return null;
+        }
+    }
+    async findHistoricalRepairReviewDispatch(changePath, taskId, completedBefore) {
+        const boundary = Date.parse(String(completedBefore || ''));
+        if (!Number.isFinite(boundary))
+            return null;
+        const dispatchDirectory = path.join(changePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR);
+        if (!(await this.fileService.exists(dispatchDirectory)))
+            return null;
+        const candidates = [];
+        for (const entry of (await fs_1.promises.readdir(dispatchDirectory, { withFileTypes: true }))) {
+            if (!entry.isFile() || !entry.name.endsWith('.json'))
+                continue;
+            const dispatchId = entry.name.replace(/\.json$/i, '');
+            const record = await this.readRepairConvergenceReviewDispatch(changePath, taskId, dispatchId);
+            const completedAt = Date.parse(String(record?.reviewerCompletedAt || ''));
+            if (!record || record.reviewerSucceeded !== true || !Number.isFinite(completedAt) || completedAt > boundary)
+                continue;
+            candidates.push({ record, completedAt });
+        }
+        candidates.sort((left, right) => right.completedAt - left.completedAt || right.record.id.localeCompare(left.record.id));
+        return candidates[0]?.record || null;
+    }
+    repairScopeSnapshotHash(record, repairScope) {
+        const normalizedScope = this.normalizeTargetFiles(repairScope.length > 0 ? repairScope : record.targetFiles);
+        if (normalizedScope.length === 0)
+            return null;
+        const selected = record.targetSnapshots.filter(snapshot => normalizedScope.some(scope => taskPathsOverlap(scope, normalizeTaskPath(snapshot.path))));
+        const fullyCovered = normalizedScope.every(scope => selected.some(snapshot => taskPathsOverlap(scope, normalizeTaskPath(snapshot.path))));
+        return selected.length > 0 && fullyCovered ? this.hashTargetSnapshots(selected) : null;
     }
     repairFindingsFingerprint(findings) {
         const normalized = findings.map(finding => ({
@@ -1763,6 +1978,8 @@ class TaskGraphExecutionService {
             category: finding.category,
             message: finding.message.trim(),
             file: finding.file,
+            line: finding.line,
+            evidence: finding.evidence.trim(),
             requirementRefs: [...finding.requirementRefs].sort(),
             repairScope: [...finding.repairScope].sort(),
         })).sort((left, right) => left.id.localeCompare(right.id));
@@ -2215,7 +2432,7 @@ class TaskGraphExecutionService {
             nextInstruction: blockerEscalation
                 ? `Resolve blocker escalation at ${blockerEscalation.reportPath}, then rerun ospec execute status.`
                 : TERMINAL_TASK_STATUSES.has(completionStatus)
-                    ? `Task ${normalizedTaskId} implementation is recorded. Run ospec execute review [change-path] --task ${normalizedTaskId} before dispatching dependent work.`
+                    ? `Task ${normalizedTaskId} implementation is recorded. Run ospec loop tick [change-path] when a controller Loop owns the Goal; otherwise run ospec execute review [change-path] --task ${normalizedTaskId}.`
                     : graphStatus === 'completed'
                         ? 'Task graph is complete. Continue with review, verification, and archive gates.'
                         : 'Run ospec execute status to inspect remaining work.',
@@ -2245,6 +2462,25 @@ class TaskGraphExecutionService {
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), report.feature);
         const debugEvidence = await this.readDebugEvidence(this.getDebugEvidencePath(resolvedChangePath), report.feature);
         const latestBlockerEscalation = await this.readLatestBlockerEscalation(resolvedChangePath);
+        const incompleteReviewProvenance = [];
+        for (const task of report.completedTasks) {
+            if (!task.review || task.review.decision !== 'PENDING')
+                continue;
+            const reviewPath = path.join(resolvedChangePath, task.review.reviewArtifactPath || this.getTaskCombinedReviewArtifactRelativePath(task.id));
+            if (!(await this.fileService.exists(reviewPath)))
+                continue;
+            const artifact = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+            const artifactDecision = this.normalizeReviewRunDecision(artifact.data?.decision);
+            if (artifactDecision === 'PENDING')
+                continue;
+            const validation = await this.validateTaskReviewEvidence(resolvedChangePath, task.id);
+            if (!validation.ready) {
+                incompleteReviewProvenance.push({
+                    taskId: task.id,
+                    reason: validation.reason || 'review executor provenance is incomplete',
+                });
+            }
+        }
         const controllerStatus = this.deriveControllerWorkerStatus({
             implementerStatus,
             specReviewerStatus,
@@ -2308,11 +2544,13 @@ class TaskGraphExecutionService {
             progressProjection,
             nextInstruction: progressProjection.status === 'blocked'
                 ? `Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`
-                : controllerStatus === 'DONE'
-                    && verificationChecklistComplete
-                    && progressProjection.uncheckedTaskIds.length === 0
-                    ? 'Worker status is synchronized and archive-ready for the worker gate.'
-                    : 'Worker status is synchronized. Complete remaining review or verification evidence before archive.',
+                : incompleteReviewProvenance.length > 0
+                    ? `Task review evidence is not yet authoritative (${incompleteReviewProvenance.map(item => `${item.taskId}: ${item.reason}`).join('; ')}). Run ospec loop tick [change-path] to issue a fresh Loop-owned review; do not hand-fill executor provenance.`
+                    : controllerStatus === 'DONE'
+                        && verificationChecklistComplete
+                        && progressProjection.uncheckedTaskIds.length === 0
+                        ? 'Worker status is synchronized and archive-ready for the worker gate.'
+                        : 'Worker status is synchronized. Complete remaining review or verification evidence before archive.',
         };
     }
     async review(changePath, options = {}) {
@@ -2986,6 +3224,24 @@ class TaskGraphExecutionService {
         if (targetFiles.length === 0 || verificationCommands.length === 0) {
             throw new Error('Grouped repair requires existing target files and verification commands in the task graph.');
         }
+        const findingRepairScope = [...new Set(findingResult.structured
+                .flatMap(finding => finding.repairScope)
+                .map(item => item.trim())
+                .filter(Boolean))];
+        const effectiveRepairScope = findingRepairScope.length > 0 ? findingRepairScope : targetFiles;
+        const sourceReviewDispatchId = String(reviewDocument.data?.review_dispatch_id || '').trim();
+        const sourceReviewTargetSnapshotHash = String(reviewDocument.data?.target_snapshot_hash || '').trim();
+        let sourceRepairScopeSnapshotHash = null;
+        if (sourceReviewDispatchId) {
+            const sourceReviewDispatch = await this.readRepairConvergenceReviewDispatch(resolvedChangePath, null, sourceReviewDispatchId);
+            if (!sourceReviewDispatch || sourceReviewDispatch.targetSnapshotHash !== sourceReviewTargetSnapshotHash) {
+                throw new Error('Grouped repair has invalid final-review target snapshot provenance.');
+            }
+            sourceRepairScopeSnapshotHash = this.repairScopeSnapshotHash(sourceReviewDispatch, effectiveRepairScope);
+            if (!sourceRepairScopeSnapshotHash) {
+                throw new Error('Grouped repair cannot bind its repair scope to the reviewed target snapshot.');
+            }
+        }
         const waveNumber = rawTasks.filter((task) => String(task?.id || '').startsWith('repair-final-')).length + 1;
         const taskId = `repair-final-${waveNumber}`;
         const now = new Date().toISOString();
@@ -3029,6 +3285,11 @@ class TaskGraphExecutionService {
             recordPath,
             packetPath,
             dispatchIds: [],
+            ...(sourceReviewDispatchId && sourceRepairScopeSnapshotHash ? {
+                sourceReviewDispatchId,
+                sourceReviewTargetSnapshotHash,
+                sourceRepairScopeSnapshotHash,
+            } : {}),
         };
         await this.fileService.writeJSON(path.join(resolvedChangePath, recordPath), record);
         await this.writeLocalizedReportFile(resolvedChangePath, path.join(resolvedChangePath, packetPath), this.buildRepairWavePacket(record));
@@ -6952,7 +7213,7 @@ class TaskGraphExecutionService {
             for (const reason of blocked.reasons) {
                 const match = reason.match(/^waiting_for_task_review:(.+)$/);
                 if (match) {
-                    return `Run ospec execute review [change-path] --task ${match[1]} before dispatching dependent work.`;
+                    return `Run ospec loop tick [change-path] when a controller Loop owns the Goal so it can review task ${match[1]} with executor provenance; otherwise run ospec execute review [change-path] --task ${match[1]}.`;
                 }
             }
         }
@@ -10152,7 +10413,7 @@ class TaskGraphExecutionService {
                 status: 'needs_review',
                 blockers,
                 warnings,
-                nextInstruction: `Run ospec execute review ${this.quoteShellArg(relativeChangePath)} and complete the single artifacts/reviews/final-review.md decision.`,
+                nextInstruction: `Run ospec loop tick ${this.quoteShellArg(relativeChangePath)} for a controller Goal, or ospec execute review outside a controller Loop, then complete artifacts/reviews/final-review.md.`,
             };
         }
         if (input.execution.reviews.spec === 'APPROVED_WITH_CONCERNS') {
@@ -12405,6 +12666,9 @@ class TaskGraphExecutionService {
             `- Review artifact SHA-256: ${context.reviewArtifactHash}`,
             `- Findings SHA-256: ${context.findingsHash}`,
             `- Repair context SHA-256: ${context.contextHash}`,
+            `- Review dispatch: ${context.reviewDispatchId || 'legacy/unavailable'}`,
+            `- Reviewed target snapshot SHA-256: ${context.reviewTargetSnapshotHash || 'legacy/unavailable'}`,
+            `- Repair scope snapshot SHA-256: ${context.repairScopeSnapshotHash || 'legacy/unavailable'}`,
             '',
             '### Required Repairs',
             '',
@@ -12917,7 +13181,7 @@ class TaskGraphExecutionService {
                 return `Task ${taskId} combined code review is recorded. Run ospec execute status to dispatch newly unblocked work.`;
             }
             if (stage === 'spec') {
-                return `Task ${taskId} spec review is recorded. Run ospec execute review [change-path] --task ${taskId} --stage quality next.`;
+                return `Task ${taskId} spec review is recorded. Run ospec loop tick [change-path] for a controller Goal, or ospec execute review outside a controller Loop, to continue review.`;
             }
             return `Task ${taskId} quality review is recorded. Run ospec execute status to dispatch newly unblocked work.`;
         }
@@ -12993,6 +13257,9 @@ class TaskGraphExecutionService {
             `- Change: ${record.feature}`,
             `- Source review: ${record.sourceReviewPath}`,
             `- Source decision: ${record.sourceDecision}`,
+            `- Source review dispatch: ${record.sourceReviewDispatchId || 'legacy/unavailable'}`,
+            `- Source reviewed target snapshot SHA-256: ${record.sourceReviewTargetSnapshotHash || 'legacy/unavailable'}`,
+            `- Source repair scope snapshot SHA-256: ${record.sourceRepairScopeSnapshotHash || 'legacy/unavailable'}`,
             `- Repair task: ${record.taskId}`,
             `- Target files: ${record.targetFiles.join(', ')}`,
             `- Documentation updates: ${record.documentationUpdates.join(', ') || 'none'}`,

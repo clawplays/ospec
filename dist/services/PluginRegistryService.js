@@ -486,11 +486,40 @@ class PluginRegistryService {
         };
     }
     async syncProjectPluginAssets(pluginId, projectPath, workspaceRoot) {
+        const result = await this.syncProjectPluginAssetsDetailed(pluginId, projectPath, workspaceRoot);
+        return [...result.created, ...result.refreshed].sort((left, right) => left.localeCompare(right));
+    }
+    async syncProjectPluginAssetsDetailed(pluginId, projectPath, workspaceRoot) {
         const installed = await this.getInstalledPluginManifest(pluginId);
         if (!installed) {
-            return [];
+            return { created: [], refreshed: [], skipped: [], verified: [] };
         }
         const createdPaths = [];
+        const refreshedPaths = [];
+        const skippedPaths = [];
+        const verifiedPaths = [];
+        const syncAsset = async (sourcePath, targetPath) => {
+            const relativePath = path.relative(projectPath, targetPath).replace(/\\/g, '/');
+            const targetExists = await this.fileService.exists(targetPath);
+            if (!targetExists) {
+                await this.fileService.copy(sourcePath, targetPath);
+                createdPaths.push(relativePath);
+                verifiedPaths.push(relativePath);
+                return;
+            }
+            const [sourceContent, targetContent] = await Promise.all([
+                fs.promises.readFile(sourcePath),
+                fs.promises.readFile(targetPath),
+            ]);
+            if (sourceContent.equals(targetContent)) {
+                skippedPaths.push(relativePath);
+                verifiedPaths.push(relativePath);
+                return;
+            }
+            await this.fileService.copy(sourcePath, targetPath);
+            refreshedPaths.push(relativePath);
+            verifiedPaths.push(relativePath);
+        };
         await this.fileService.ensureDir(path.join(projectPath, workspaceRoot));
         await this.fileService.ensureDir(path.join(projectPath, workspaceRoot, 'docs'));
         for (const [locale, relativeSourcePath] of Object.entries(installed.manifest.docs.locales || {})) {
@@ -504,11 +533,7 @@ class PluginRegistryService {
             }
             const extension = path.extname(sourcePath) || '.md';
             const targetPath = path.join(projectPath, workspaceRoot, 'docs', `plugin.${locale}${extension}`);
-            const created = !(await this.fileService.exists(targetPath));
-            await this.fileService.copy(sourcePath, targetPath);
-            if (created) {
-                createdPaths.push(path.relative(projectPath, targetPath).replace(/\\/g, '/'));
-            }
+            await syncAsset(sourcePath, targetPath);
         }
         for (const entry of installed.manifest.scaffold.projectFiles || []) {
             const normalizedEntry = typeof entry === 'string'
@@ -527,13 +552,15 @@ class PluginRegistryService {
                 continue;
             }
             const targetPath = path.join(projectPath, ...normalizedEntry.to.split('/'));
-            const created = !(await this.fileService.exists(targetPath));
-            await this.fileService.copy(sourcePath, targetPath);
-            if (created) {
-                createdPaths.push(path.relative(projectPath, targetPath).replace(/\\/g, '/'));
-            }
+            await syncAsset(sourcePath, targetPath);
         }
-        return createdPaths.sort((left, right) => left.localeCompare(right));
+        const sortUnique = (values) => [...new Set(values)].sort((left, right) => left.localeCompare(right));
+        return {
+            created: sortUnique(createdPaths),
+            refreshed: sortUnique(refreshedPaths),
+            skipped: sortUnique(skippedPaths),
+            verified: sortUnique(verifiedPaths),
+        };
     }
     createExternalPluginProjectConfig(packageName, version, manifest) {
         const defaults = isPlainObject(manifest.projectConfigDefaults)
