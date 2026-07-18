@@ -79,6 +79,34 @@ class VerificationService {
         const featureState = await services.fileService.readJSON(statePath);
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(targetPath, featureState);
         const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
+        if (!isGoalWorkflow) {
+            const changeStatus = await services.projectService.getActiveChangeStatusItem(targetPath);
+            const checks = [...changeStatus.checks];
+            if (!changeStatus.archiveReady && !checks.some(check => check.status === 'fail')) {
+                checks.push({
+                    name: 'archive.readiness',
+                    status: 'fail',
+                    message: 'Classic change closeout is not ready to archive',
+                });
+            }
+            const failCount = checks.filter(check => check.status === 'fail').length;
+            const warnCount = checks.filter(check => check.status === 'warn').length;
+            const passed = failCount === 0 && changeStatus.archiveReady;
+            const summary = failCount > 0
+                ? `${failCount} verification(s) failed`
+                : warnCount > 0
+                    ? `${warnCount} warning(s) found`
+                    : 'All verifications passed';
+            return {
+                passed,
+                checks,
+                summary,
+                failCount,
+                warnCount,
+                workflowProfile,
+                changeStatus,
+            };
+        }
         const progressProjection = isGoalWorkflow && taskGraphExists
             ? await services.taskGraphExecutionService.reconcileGoalProgress(targetPath)
             : null;

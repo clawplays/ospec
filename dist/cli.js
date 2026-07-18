@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.15';
+const CLI_VERSION = '1.8.17';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -155,7 +155,7 @@ function parseInitCommandArgs(commandArgs) {
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
         ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
-        : 'Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]';
+        : `Usage: ospec ${commandName} <change-name> [root-dir] [--flags flag1,flag2]`;
 }
 function parseNewCommandArgs(commandArgs, commandName = 'new') {
     const featureName = commandArgs[0];
@@ -316,15 +316,19 @@ async function main() {
                 await initCmd.execute(rootDir, options);
                 break;
             }
+            case 'change':
             case 'new': {
                 if (commandArgs.length === 0) {
                     console.error('Error: change name is required');
-                    console.log('Usage: ospec new <change-name> [root-dir] [--flags flag1,flag2]');
+                    console.log(getNewLikeUsage(command));
                     process.exit(1);
                 }
-                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs, 'new');
+                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs, command);
                 const newCmd = new NewCommand_1.NewCommand();
-                await newCmd.execute(featureName, rootDir, { flags });
+                await newCmd.execute(featureName, rootDir, {
+                    flags,
+                    workflowProfile: 'change',
+                });
                 break;
             }
             case 'goal': {
@@ -497,7 +501,8 @@ Usage: ospec <command> [options]
 
 Commands:
   init [root-dir]           Initialize OSpec to a change-ready state
-  new <change-name> [root]  Create a new change (supports --flags)
+  change <name> [root]      Create a classic fast-flow change (supports --flags)
+  new <change-name> [root]  Backward-compatible alias for ospec change
   goal <goal-name> [root]   Create a full OSpec goal (supports --flags)
   brainstorm [path]         Write an optional pre-change brainstorm artifact
   plan [path]               Write an optional implementation plan draft
@@ -528,8 +533,8 @@ Commands:
 Examples:
   ospec init
   ospec init . --summary "Internal admin portal" --tech-stack node,react,postgres
-  ospec new onboarding-flow
-  ospec new landing-refresh . --flags ui_change,page_design
+  ospec change onboarding-flow
+  ospec change landing-refresh . --flags ui_change,page_design
   ospec goal billing-refactor . --flags complex_feature,multi_file_change
   ospec goal billing-refactor . --level L2 --target codex --execution-model controller --harness-interactive true --native-subagents supported
   ospec brainstorm . --topic "Improve onboarding conversion" --change onboarding-flow

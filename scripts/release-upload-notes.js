@@ -133,6 +133,24 @@ function hasStructuredReleaseMetadata(input) {
   );
 }
 
+function hasCompleteStructuredReleaseMetadata(input) {
+  if (!input || typeof input !== 'object') {
+    return false;
+  }
+
+  return (
+    typeof input.title_suffix === 'string' &&
+    input.title_suffix.trim().length > 0 &&
+    typeof input.summary === 'string' &&
+    input.summary.trim().length > 0 &&
+    ['new', 'improved', 'fixed', 'docs'].some(
+      (key) =>
+        Array.isArray(input[key]) &&
+        input[key].some((item) => String(item || '').trim().length > 0),
+    )
+  );
+}
+
 async function readReleaseMetadata(tag, releaseDir = RELEASE_OVERRIDE_DIR) {
   const metadataPath = getReleaseMetadataPath(tag, releaseDir);
   if (!fs.existsSync(metadataPath)) {
@@ -154,7 +172,9 @@ async function readReleaseMetadata(tag, releaseDir = RELEASE_OVERRIDE_DIR) {
     resolveRepositoryUrl: resolveReleaseNotesRepositoryUrl,
   } = require('./release-notes');
   const previousTag = resolvePreviousTag(tag);
-  const commits = getCommitEntries(previousTag);
+  const commits = hasCompleteStructuredReleaseMetadata(parsed)
+    ? []
+    : getCommitEntries(previousTag);
   const repositoryUrl = resolveReleaseNotesRepositoryUrl();
   const rendered = await createReleaseMetadata({
     tag,
@@ -369,6 +389,7 @@ if (require.main === module) {
 
 module.exports = {
   getReleaseMetadataPath,
+  hasCompleteStructuredReleaseMetadata,
   hasStructuredReleaseMetadata,
   ensureRemoteTagExists,
   parseGitHubRepository,

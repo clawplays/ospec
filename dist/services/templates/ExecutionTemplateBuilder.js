@@ -157,6 +157,14 @@ ${this.formatChecklist(context.acceptanceCriteria, 'قيد التحديد')}`;
                 created,
                 affects: context.affects,
                 flags: context.flags,
+                ...(context.workflowProfile === 'change'
+                    ? {
+                        change_type: 'pending',
+                        documentation_impact: 'pending',
+                        documentation_updates: [],
+                        documentation_reason: '',
+                    }
+                    : {}),
             }, this.copy(context.documentLanguage, zh, en, ja, ar));
         }
         finally {
@@ -431,11 +439,41 @@ ${this.formatReferenceList(moduleSkills, 'قيد التحديد')}
 - [ ] أعد بناء \`SKILL.index.json\`
 - [ ] نفّذ التحقق وحدّث \`verification.md\`
 ${optionalStepTasksAr}`.trim();
+            const changeZh = `## 快速任务清单
+
+- [ ] 完成本次 change 的实现
+- [ ] 运行与改动相关的测试或检查，并记录结果
+- [ ] 按 proposal 中的 \`documentation_impact\` 同步真实文档，或确认无需更新的原因
+- [ ] 更新 \`verification.md\`
+- [ ] 完成当前 AI 的轻量 \`review.md\``;
+            const changeEn = `## Fast Task Checklist
+
+- [ ] Implement this change
+- [ ] Run checks or tests relevant to the change and record the results
+- [ ] Follow the proposal \`documentation_impact\` contract by updating real documentation or confirming why none is needed
+- [ ] Update \`verification.md\`
+- [ ] Complete the current AI's lightweight \`review.md\``;
+            const changeJa = `## 高速タスクチェックリスト
+
+- [ ] この change を実装する
+- [ ] change に関連するテストまたはチェックを実行して結果を記録する
+- [ ] proposal の \`documentation_impact\` に従って実文書を更新するか、更新不要の理由を確認する
+- [ ] \`verification.md\` を更新する
+- [ ] 現在の AI による軽量な \`review.md\` を完了する`;
+            const changeAr = `## قائمة المهام السريعة
+
+- [ ] نفّذ هذا change
+- [ ] شغّل الاختبارات أو الفحوص ذات الصلة وسجّل النتائج
+- [ ] اتبع عقد \`documentation_impact\` في proposal بتحديث وثائق حقيقية أو تأكيد سبب عدم الحاجة
+- [ ] حدّث \`verification.md\`
+- [ ] أكمل \`review.md\` الخفيفة بواسطة AI الحالي`;
             return this.withFrontmatter({
                 feature: context.feature,
                 created,
                 optional_steps: context.optionalSteps,
-            }, this.copy(context.documentLanguage, zh, en, ja, ar));
+            }, context.workflowProfile === 'change'
+                ? this.copy(context.documentLanguage, changeZh, changeEn, changeJa, changeAr)
+                : this.copy(context.documentLanguage, zh, en, ja, ar));
         }
         finally {
             this.clearReferenceDocumentContext();
@@ -738,13 +776,59 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
 ## القرار
 
 - [ ] جاهز للأرشفة`;
+            const changeZh = `## 相关验证
+
+- [ ] 已记录实际运行的测试或检查命令及其结果
+- [ ] 验收标准已逐项确认
+- [ ] proposal 声明的真实文档更新已完成，或已确认 \`documentation_impact: none\`
+- [ ] 没有未解决的阻塞问题
+- [ ] 可以归档
+
+## 命令与结果
+
+- 待补充`;
+            const changeEn = `## Relevant Verification
+
+- [ ] Actual test or check commands and their results are recorded
+- [ ] Acceptance criteria are confirmed
+- [ ] Real documentation updates declared by the proposal are complete, or \`documentation_impact: none\` is confirmed
+- [ ] No blocking issue remains
+- [ ] Ready to archive
+
+## Commands And Results
+
+- TBD`;
+            const changeJa = `## 関連する検証
+
+- [ ] 実行したテストまたはチェックコマンドと結果を記録した
+- [ ] 受け入れ条件を確認した
+- [ ] proposal で宣言した実文書の更新を完了した、または \`documentation_impact: none\` を確認した
+- [ ] 未解決の blocker がない
+- [ ] archive 可能
+
+## コマンドと結果
+
+- 未定`;
+            const changeAr = `## التحقق ذو الصلة
+
+- [ ] سُجلت أوامر الاختبار أو الفحص الفعلية ونتائجها
+- [ ] تم تأكيد معايير القبول
+- [ ] اكتملت تحديثات الوثائق الحقيقية المعلنة في proposal أو تم تأكيد \`documentation_impact: none\`
+- [ ] لا توجد مشكلة حاجبة غير محلولة
+- [ ] جاهز للأرشفة
+
+## الأوامر والنتائج
+
+- قيد التحديد`;
             return this.withFrontmatter({
                 feature: context.feature,
                 created,
                 status: context.placement === 'queued' ? 'queued' : 'verifying',
                 optional_steps: context.optionalSteps,
                 passed_optional_steps: [],
-            }, this.copy(context.documentLanguage, zh, en, ja, ar));
+            }, context.workflowProfile === 'change'
+                ? this.copy(context.documentLanguage, changeZh, changeEn, changeJa, changeAr)
+                : this.copy(context.documentLanguage, zh, en, ja, ar));
         }
         finally {
             this.clearReferenceDocumentContext();
@@ -1392,11 +1476,63 @@ ${this.formatReferenceList(linkedKnowledgeDocs, 'قيد التحديد')}
 - [ ] يمكن متابعة التنفيذ
 - [ ] يلزم إجراء تعديلات إضافية
 - [ ] جاهز للانتقال إلى التحقق / الأرشفة`;
+            const changeZh = `## 轻量 Review
+
+- [ ] 实现符合 proposal 的目标、范围和验收标准
+- [ ] 已检查相关测试结果和主要回归风险
+- [ ] 已核对 \`documentation_impact\` 与实际文档更新
+- [ ] 已记录 concern、未决问题或确认没有发现
+- [ ] 已把最终判定写入 frontmatter 的 \`decision\`
+
+## Findings
+
+- 未发现；如有问题在此记录`;
+            const changeEn = `## Lightweight Review
+
+- [ ] Implementation matches the proposal goals, scope, and acceptance criteria
+- [ ] Relevant test results and primary regression risks are checked
+- [ ] \`documentation_impact\` matches the actual documentation updates
+- [ ] Concerns or open issues are recorded, or their absence is confirmed
+- [ ] The final decision is written to the frontmatter \`decision\`
+
+## Findings
+
+- None found; record any issue here`;
+            const changeJa = `## 軽量 Review
+
+- [ ] 実装が proposal の目標、範囲、受け入れ条件に一致する
+- [ ] 関連するテスト結果と主要な回帰リスクを確認した
+- [ ] \`documentation_impact\` が実際の文書更新と一致する
+- [ ] concern や未解決事項を記録した、または存在しないことを確認した
+- [ ] 最終判定を frontmatter の \`decision\` に記録した
+
+## Findings
+
+- なし。問題があればここに記録する`;
+            const changeAr = `## مراجعة خفيفة
+
+- [ ] يطابق التنفيذ أهداف proposal ونطاقها ومعايير القبول
+- [ ] تمت مراجعة نتائج الاختبارات ذات الصلة ومخاطر التراجع الرئيسية
+- [ ] يطابق \`documentation_impact\` تحديثات الوثائق الفعلية
+- [ ] سُجلت concerns أو المسائل المفتوحة أو تم تأكيد عدم وجودها
+- [ ] كُتب القرار النهائي في frontmatter الحقل \`decision\`
+
+## Findings
+
+- لا توجد؛ سجّل أي مشكلة هنا`;
             return this.withFrontmatter({
                 feature: context.feature,
                 created,
                 status: 'pending_review',
-            }, this.copy(context.documentLanguage, zh, en, ja, ar));
+                ...(context.workflowProfile === 'change'
+                    ? {
+                        reviewer_mode: 'current_ai',
+                        decision: 'PENDING',
+                    }
+                    : {}),
+            }, context.workflowProfile === 'change'
+                ? this.copy(context.documentLanguage, changeZh, changeEn, changeJa, changeAr)
+                : this.copy(context.documentLanguage, zh, en, ja, ar));
         }
         finally {
             this.clearReferenceDocumentContext();

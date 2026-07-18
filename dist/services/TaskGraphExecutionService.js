@@ -12635,7 +12635,8 @@ class TaskGraphExecutionService {
         const bodyWithChecklist = /^\s*-\s+\[(?: |x|X)\]\s+.+$/m.test(body)
             ? body
             : `${body.trim()}\n\n## Checklist\n\n- [ ] Implementer returned \`DONE\` or \`DONE_WITH_CONCERNS\`\n- [ ] Combined code review completed (spec compliance + code quality)\n- [ ] Controller resolved concerns, context requests, or blockers\n- [ ] Final verification commands are recorded in \`verification.md\`\n`;
-        const checklistUpdated = bodyWithChecklist
+        const summaryStatusUpdated = this.updateWorkerStatusSummaryStatusLines(bodyWithChecklist, input);
+        const checklistUpdated = summaryStatusUpdated
             .split(/\r?\n/)
             .map(line => this.updateWorkerStatusChecklistLine(line, input))
             .join('\n');
@@ -12643,6 +12644,34 @@ class TaskGraphExecutionService {
         const managedBlockPattern = new RegExp(`${this.escapeRegex(MANAGED_WORKER_STATUS_START)}[\\s\\S]*?${this.escapeRegex(MANAGED_WORKER_STATUS_END)}\\n?`, 'm');
         const baseBody = checklistUpdated.replace(managedBlockPattern, '').trimEnd();
         return `${baseBody}\n\n${summary}\n`;
+    }
+    updateWorkerStatusSummaryStatusLines(body, input) {
+        let section = null;
+        return body
+            .split(/\r?\n/)
+            .map(line => {
+            const heading = line.match(/^\s*##\s+(.+)$/);
+            if (heading) {
+                const label = heading[1];
+                section = /implementer/i.test(label)
+                    ? 'implementer'
+                    : /combined review|مراجعة موحدة/i.test(label)
+                        ? 'review'
+                        : /controller/i.test(label)
+                            ? 'controller'
+                            : null;
+                return line;
+            }
+            if (!section || !/^\s*-\s+(?:status|状态|状態|الحالة)\s*:/i.test(line))
+                return line;
+            const status = section === 'implementer'
+                ? input.implementerStatus
+                : section === 'review'
+                    ? input.specReviewerStatus
+                    : input.controllerStatus;
+            return line.replace(/^(\s*-\s+(?:status|状态|状態|الحالة)\s*:\s*)(?:`[^`]*`|.*)$/i, `$1\`${status}\``);
+        })
+            .join('\n');
     }
     updateWorkerStatusChecklistLine(line, input) {
         if (!/^\s*-\s+\[(?: |x|X)\]\s+/.test(line)) {
@@ -12653,7 +12682,7 @@ class TaskGraphExecutionService {
         if (/implementer/i.test(line)) {
             return TERMINAL_TASK_STATUSES.has(input.implementerStatus) ? checked : unchecked;
         }
-        if (/combined code review/i.test(line)) {
+        if (/combined(?: code)? review|المراجعة الموحدة/i.test(line)) {
             return TERMINAL_TASK_STATUSES.has(input.specReviewerStatus) ? checked : unchecked;
         }
         if (/spec compliance review/i.test(line)) {

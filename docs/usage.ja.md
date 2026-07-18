@@ -14,7 +14,7 @@ ospec docs generate [path]
 ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
@@ -83,6 +83,10 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.15 は documentation repair または deletion 後の Goal finalize を修正します。既存 baseline が missing になった状態を reviewed deletion の有意な変更として記録し、最後の repair attempt だけでなく最初の baseline から最後の completed dispatch までを集約し、workspace がその path の最新 declared-owner evidence と一致することを検証します。これにより意図した削除と後続 repair で再変更しなかった文書は通過しますが、古い evidence、外部 drift、最終 reversion は拒否されます。
 
+1.8.17 は、ユーザーが選択した Change を完全な高速フローにします。推奨コマンドは `ospec change` で、`ospec new` は互換 alias として残ります。Change は Goal に自動昇格せず、段階別のコンパクト protocol と現在の AI による軽量 review を使います。feature/docs には実際の永続文書が必要で、closeout state は自動導出され、finalize の index rebuild は 1 回だけです。batch Change は queue で直列実行され、`APPROVED_WITH_CONCERNS` も自動 archive できます。
+
+1.8.16 は完了済み Goal が verification closeout metadata を更新した後に残る最終ブロックを修正します。dispatch の meaningful-change chain は引き続き必須で、最後の owner dispatch より後に割り当てられ、executor provenance が有効で、現在の target snapshot と完全一致する APPROVED task review だけが最終状態を許可できます。`ospec execute sync` は英語、中国語、日本語、アラビア語の worker-status template にある Combined review の status と checklist も同期します。capacity 不明時の implementation は既定の並列数 3 に一致し、global limit や review batch の制限ではありません。より大きい有効な session-bound harness capacity が報告され、resource と task graph が安全な場合は、5-10 の並列数を明示的に設定できます。
+
 1.8.5 では native child の待機による Goal controller の長時間停止を防ぎます。Codex/GPT の `wait_agent`、Claude Task polling、その他すべての native adapter は 60 秒以内に制御を返し、`heartbeatDueAt` 前に heartbeat を更新し、完了した結果を直ちに保存して再 tick します。task の target snapshot が不変なら Git HEAD の移動だけで再 review せず、final review は snapshot と HEAD の両方に厳密に拘束されます。native capacity が不明な implementation batch は 2 件までですが、安全な review 並列性は維持します。6 個を超える target を持つ新しい task は分割するか `scope_reason` が必要です。
 
 1.8.6 では、60 秒は controller の 1 回の poll 上限であり、child の実行上限ではないことを明確にします。absolute deadline の既定値は implementation が 120 分、review と verification が 60 分で、heartbeat lease は更新でき、evidence 完了後には既定 5 分の result grace があります。`ospec loop finalize` は成功を記録する前に durable evidence を検証します。再帰 directory snapshot、context-bound approval cache、改善された conflict-safe selection により、provenance を弱めず stale/repeated review を防ぎます。1.8.6 の新しい serial task には `serial_reason` が必要で、旧 graph は引き続き読み取れます。
@@ -136,7 +140,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ```bash
 ospec init [path]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 # full workflow が必要な場合だけ:
 ospec goal <goal-name> [path]
 ospec verify [changes/active/<change>]
@@ -145,7 +149,7 @@ ospec finalize [changes/active/<change>]
 
 ## Change と Goal
 
-`ospec new <change-name> [path]` は classic fast-flow files だけを作成します: `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`。`ospec goal <goal-name> [path]` は full workflow を作成し、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、`artifacts/agents/worker-status.md`、evidence artifacts を使います。
+`ospec change <change-name> [path]` は classic fast-flow files だけを作成します: `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md`。`ospec new` は互換 alias です。`ospec goal <goal-name> [path]` は full workflow を作成し、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、review artifacts、`artifacts/agents/worker-status.md`、evidence artifacts を使います。
 
 goal は **セッションスコープの task graph ループ** として動作します。`ospec loop run --once` は evidence を観察し、各 action に target-bound な `runtimeAdapter.selected.nativeSubagent` を持つ bounded batch を出力します。選択された model-native adapter が許可するときだけ並列実行し、capability がない、期限切れ、または target 不一致の場合は block します。agent CLI や current controller への fallback はありません。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
 
@@ -221,7 +225,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.15
+npm install -g @clawplays/ospec-cli@1.8.17
 ospec update [path]
 ```
 

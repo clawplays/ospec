@@ -14,7 +14,7 @@ ospec docs generate [path]
 ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
 ospec progress [changes/active/<change>]
 ospec run status [path]
@@ -84,6 +84,10 @@ Specialist design and plan reviews gained bounded defaults in 1.8.3. In 1.8.9 co
 
 1.8.15 fixes Goal finalization after documentation repair or deletion. Documentation evidence now treats an existing baseline becoming missing as a meaningful reviewed deletion, aggregates the first baseline through the final completed dispatch instead of reading only the last repair attempt, and verifies the workspace against the path's latest declared-owner evidence. This permits intentional deletion and unchanged later repair rounds without accepting stale evidence, external drift, or a final reversion.
 
+1.8.17 makes user-selected Changes a complete fast path. `ospec change` is the preferred command and `ospec new` remains an alias. Changes never auto-promote to Goals, read a compact stage-aware protocol, use one current-AI lightweight review, require real documentation for features and docs work, derive closeout state automatically, and finalize with one index rebuild. Batch Changes stay sequential in the queue and `APPROVED_WITH_CONCERNS` may auto-archive.
+
+1.8.16 fixes the remaining closeout layer after a completed Goal updates verification metadata. The dispatch meaningful-change chain remains mandatory, while a later APPROVED task review may authorize an exact current target snapshot only when its executor provenance is valid and the review was assigned after the last owner dispatch. `ospec execute sync` now also recognizes and updates Combined review sections and checklist lines in English, Chinese, Japanese, and Arabic worker-status templates. Unknown-capacity implementation now matches the default concurrency of three; it is not a global limit, does not cap review batches, and is replaced by a larger positive session-bound harness capacity so explicitly configured batches of 5-10 can run when resources and graph safety allow.
+
 1.8.5 prevents native child waits from freezing a Goal controller. Codex/GPT `wait_agent`, Claude Task polling, and every other native adapter must return within 60 seconds, refresh live heartbeats before `heartbeatDueAt`, persist each finished result immediately, and re-tick. Unrelated Git HEAD movement no longer invalidates an unchanged task review, while final review remains bound to both snapshot and HEAD. Unknown native capacity caps implementation batches at two without reducing conflict-safe review parallelism. New broad tasks with more than six targets must be split or include `scope_reason`.
 
 1.8.6 clarifies that 60 seconds limits one controller poll, not the child runtime. Implementation defaults to a 120-minute absolute deadline; review and verification default to 60 minutes, with renewable heartbeat leases and a five-minute evidence-to-result grace period. `ospec loop finalize` validates durable evidence before committing success. Recursive directory snapshots, context-bound approval reuse, and improved conflict-safe selection avoid stale or repeated review without weakening provenance. New 1.8.6 serial tasks require `serial_reason`; older graphs remain readable.
@@ -137,7 +141,7 @@ For a fresh directory:
 
 ```bash
 ospec init [path]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 # For full workflow:
 ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
 ospec verify [changes/active/<change>]
@@ -146,7 +150,7 @@ ospec finalize [changes/active/<change>]
 
 ## Change And Goal Documents
 
-`ospec new <change-name> [path]` creates the classic fast-flow files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. `ospec goal <goal-name> [path]` creates the full workflow with `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/final-review.md`, and `artifacts/agents/worker-status.md`.
+`ospec change <change-name> [path]` creates the classic fast-flow files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`; `ospec new` remains a compatible alias. `ospec goal <goal-name> [path]` creates the full workflow with `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/final-review.md`, and `artifacts/agents/worker-status.md`.
 
 A goal runs as a **session-bound task-graph loop**. For IDE-native execution, report the real harness explicitly, for example `--target codex --execution-model controller --harness-interactive true --native-subagents supported`; target names alone do not authorize child agents. `ospec loop run --once` emits bounded fresh-context actions. The IDE controller records child heartbeats and per-item results, while expired or explicitly released orphan items are requeued without duplicating completed siblings. Provider usage sidecars feed the token budget, and failed verification invalidates the previous final approval before reviewed repair. L1 reports only, L2 permits assisted execution, and L3 additionally requires canonical path and shell-safe command allowlists. See [loop-engineering.md](loop-engineering.md).
 
@@ -222,7 +226,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.15
+npm install -g @clawplays/ospec-cli@1.8.17
 ospec update [path]
 ```
 

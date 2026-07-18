@@ -363,6 +363,7 @@ export interface ActiveChangeStatusItem extends ExecutionFeatureSummary {
     warnCount: number;
     archiveReady: boolean;
     checks: ChangeStatusCheck[];
+    closeoutState?: FeatureState;
 }
 export interface ActiveChangeStatusReport {
     totalActiveChanges: number;

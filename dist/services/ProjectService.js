@@ -17,6 +17,7 @@ const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
 const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
+const ClassicChangeCloseoutService_1 = require("./ClassicChangeCloseoutService");
 const AGENT_WORKER_ALLOWED_STATUSES = [
     'DONE',
     'DONE_WITH_CONCERNS',
@@ -253,6 +254,7 @@ class ProjectService {
         const configLanguageUpdated = await this.syncConfigDocumentLanguage(rootDir, config, normalized.documentLanguage);
         const guidancePaths = [
             'for-ai/ai-guide.md',
+            'for-ai/change-protocol.md',
             'for-ai/execution-protocol.md',
             'for-ai/naming-conventions.md',
             'for-ai/skill-conventions.md',
@@ -690,7 +692,6 @@ class ProjectService {
                 throw new Error(`Change progress cannot be reconciled before finalize: ${progressProjection.issues.join('; ')}`);
             }
         }
-        await this.rebuildIndex(projectRoot);
         const item = await this.getActiveChangeStatusItem(resolvedFeaturePath);
         const blockingChecks = item.checks.filter(check => check.status === 'fail');
         if (blockingChecks.length > 0) {
@@ -701,7 +702,8 @@ class ProjectService {
         }
         const statePath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE);
         const proposalPath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL);
-        const featureState = await this.fileService.readJSON(statePath);
+        const persistedFeatureState = await this.fileService.readJSON(statePath);
+        const featureState = item.closeoutState || persistedFeatureState;
         const config = await this.configManager.loadConfig(projectRoot);
         const archivedRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         await this.fileService.ensureDir(archivedRoot);
@@ -753,7 +755,7 @@ class ProjectService {
                     await this.rebaseMovedChangeMarkdownLinks(archivePath, resolvedFeaturePath)
                         .catch((rollbackError) => rollbackErrors.push(`links: ${rollbackError?.message || rollbackError}`));
                 }
-                await this.fileService.writeJSON(path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE), featureState)
+                await this.fileService.writeJSON(path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE), persistedFeatureState)
                     .catch((rollbackError) => rollbackErrors.push(`state: ${rollbackError?.message || rollbackError}`));
                 if (originalProposal !== null) {
                     await this.fileService.writeFile(path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL), originalProposal)
@@ -2504,6 +2506,7 @@ ${formatSuggestion()}
         const agentWorkerStatusPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.AGENT_WORKER_STATUS);
         const tasksPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.TASKS);
         const verificationPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.VERIFICATION);
+        const reviewPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.REVIEW);
         const [state, proposalExists, designExists, implementationPlanExists, taskGraphExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
             this.fileService.readJSON(statePath),
             this.fileService.exists(proposalPath),
@@ -2516,7 +2519,9 @@ ${formatSuggestion()}
         ]);
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(featureDir, state);
         const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
-        const reviewArtifactSet = await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(this.fileService, featureDir);
+        const reviewArtifactSet = isGoalWorkflow
+            ? await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(this.fileService, featureDir)
+            : { mode: 'combined', missing: [], artifacts: [] };
         const reviewArtifactsReady = reviewArtifactSet.missing.length === 0;
         let flags = [];
         let description = 'No description yet';
@@ -2618,7 +2623,7 @@ ${formatSuggestion()}
         if (taskGraphAnalysis) {
             checks.push(...taskGraphAnalysis.checks);
         }
-        if (taskGraphExists) {
+        if (isGoalWorkflow && taskGraphExists) {
             const documentationUpdateAnalysis = await this.analyzeDocumentationUpdates(featureDir);
             checks.push(...documentationUpdateAnalysis.checks);
         }
@@ -2659,12 +2664,53 @@ ${formatSuggestion()}
         if (isGoalWorkflow) {
             checks.push(...await this.getGoalDocumentReviewChecks(featureDir));
         }
+        const classicCloseout = !isGoalWorkflow
+            ? new ClassicChangeCloseoutService_1.ClassicChangeCloseoutService(this.fileService)
+            : null;
+        const classicDocumentationAnalysis = classicCloseout
+            ? await classicCloseout.analyzeDocumentationContract(rootDir, proposalPath)
+            : null;
+        const classicReviewAnalysis = classicCloseout
+            ? await classicCloseout.analyzeReview(reviewPath)
+            : null;
+        const classicPluginAnalysis = classicCloseout
+            ? await classicCloseout.analyzePluginGates(featureDir, activatedSteps, workflow)
+            : null;
+        if (classicDocumentationAnalysis)
+            checks.push(...classicDocumentationAnalysis.checks);
+        if (classicReviewAnalysis)
+            checks.push(...classicReviewAnalysis.checks);
+        if (classicPluginAnalysis)
+            checks.push(...classicPluginAnalysis.checks);
+        const closeoutState = classicCloseout
+            ? classicCloseout.deriveCloseoutState(state, {
+                proposalReady: proposalExists,
+                tasksReady: tasksAnalysis?.checklistComplete ?? false,
+                verificationReady: verificationAnalysis?.checklistComplete ?? false,
+                reviewReady: classicReviewAnalysis?.archiveReady ?? false,
+                documentationReady: classicDocumentationAnalysis?.archiveReady ?? false,
+                pluginsReady: classicPluginAnalysis?.archiveReady ?? false,
+            })
+            : state;
+        const stateAligned = isGoalWorkflow
+            || (state.status === closeoutState.status
+                && state.current_step === closeoutState.current_step
+                && JSON.stringify([...(state.completed || [])].sort()) === JSON.stringify([...(closeoutState.completed || [])].sort()));
         checks.push({
             name: 'state.json',
-            status: 'pass',
-            message: `Status is ${state.status}, current step is ${state.current_step}`,
+            status: stateAligned ? 'pass' : 'warn',
+            message: stateAligned
+                ? `Status is ${state.status}, current step is ${state.current_step}`
+                : `Classic change state will be synchronized to ${closeoutState.status} during finalize`,
         });
-        const archiveResult = await ArchiveGate_1.archiveGate.checkArchiveReadiness(state, workflow.getArchiveGate(), {
+        const archiveConfig = isGoalWorkflow
+            ? workflow.getArchiveGate()
+            : {
+                ...workflow.getArchiveGate(),
+                require_skill_update: false,
+                require_index_regenerated: false,
+            };
+        const archiveResult = await ArchiveGate_1.archiveGate.checkArchiveReadiness(closeoutState, archiveConfig, {
             activatedSteps,
             tasksOptionalSteps: tasksAnalysis?.optionalSteps ?? [],
             verificationOptionalSteps: verificationAnalysis?.optionalSteps ?? [],
@@ -2672,14 +2718,14 @@ ${formatSuggestion()}
             tasksComplete: tasksAnalysis?.checklistComplete ?? false,
             verificationComplete: verificationAnalysis?.checklistComplete ?? false,
         });
-        if (state.status === 'archived') {
+        if (closeoutState.status === 'archived') {
             checks.push({
                 name: 'archive.location',
                 status: 'fail',
                 message: 'state.json.status is archived but the change is still under changes/active. Archive output is inconsistent.',
             });
         }
-        else if (state.status === 'ready_to_archive' && archiveResult.canArchive) {
+        else if (closeoutState.status === 'ready_to_archive' && archiveResult.canArchive) {
             checks.push({
                 name: 'archive.pending',
                 status: 'warn',
@@ -2692,11 +2738,11 @@ ${formatSuggestion()}
             && failCount === 0
             && (isGoalWorkflow ? (taskGraphAnalysis?.archiveReady ?? false) : true);
         return {
-            name: state.feature,
+            name: closeoutState.feature,
             path: this.toRelativePath(rootDir, featureDir),
-            status: state.status,
-            progress: this.calculateProgress(state),
-            currentStep: state.current_step,
+            status: closeoutState.status,
+            progress: this.calculateProgress(closeoutState),
+            currentStep: closeoutState.current_step,
             flags,
             description,
             activatedSteps,
@@ -2705,6 +2751,7 @@ ${formatSuggestion()}
             warnCount,
             archiveReady,
             checks,
+            ...(!isGoalWorkflow ? { closeoutState } : {}),
         };
     }
     async getGoalDocumentReviewChecks(featureDir) {
@@ -3207,11 +3254,13 @@ ${formatSuggestion()}
         })
             .map(({ dispatch }) => dispatch);
         const declaredPathsByTask = new Map();
+        const taskById = new Map();
         for (const [index, task] of tasks.entries()) {
             const taskId = typeof task?.id === 'string' && task.id.trim() ? task.id.trim() : `tasks[${index}]`;
             const updates = Array.isArray(task?.documentation_updates)
                 ? task.documentation_updates.map(normalize).filter(Boolean)
                 : [];
+            taskById.set(taskId, task);
             declaredPathsByTask.set(taskId, new Set(updates.map((update) => update.toLowerCase())));
         }
         const evidenceForTaskPath = (taskId, updateKey) => orderedCompletedDispatches
@@ -3229,8 +3278,13 @@ ${formatSuggestion()}
                 const evidence = Array.isArray(dispatch?.documentationEvidence)
                     ? dispatch.documentationEvidence.find((item) => normalize(item?.path).toLowerCase() === updateKey)
                     : null;
-                if (evidence)
-                    latest = evidence;
+                if (evidence) {
+                    latest = {
+                        taskId,
+                        completedAt: String(dispatch.completedAt || ''),
+                        evidence,
+                    };
+                }
             }
             return latest;
         };
@@ -3265,14 +3319,74 @@ ${formatSuggestion()}
             if (cached)
                 return cached;
             const exists = await this.fileService.exists(resolvedPath);
+            const content = exists ? await fs_1.promises.readFile(resolvedPath) : null;
             const state = {
                 exists,
-                contentHash: exists
-                    ? hashMeaningfulDocumentation(await this.fileService.readFile(resolvedPath))
-                    : null,
+                contentHash: content ? hashMeaningfulDocumentation(content.toString('utf8')) : null,
+                targetContentHash: content ? (0, crypto_1.createHash)('sha256').update(content).digest('hex') : null,
             };
             currentStateByPath.set(updateKey, state);
             return state;
+        };
+        const taskReviewService = new TaskGraphExecutionService_1.TaskGraphExecutionService(this.fileService);
+        const approvedTaskReviewSnapshots = new Map();
+        const readApprovedTaskReviewSnapshots = (taskId) => {
+            const cached = approvedTaskReviewSnapshots.get(taskId);
+            if (cached)
+                return cached;
+            const result = (async () => {
+                if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(taskId))
+                    return null;
+                const task = taskById.get(taskId);
+                const decision = String(task?.review?.decision || '').trim().toUpperCase();
+                if (decision !== 'APPROVED' && decision !== 'APPROVED_WITH_CONCERNS')
+                    return null;
+                const validation = await taskReviewService.validateTaskReviewEvidence(featureDir, taskId);
+                if (!validation.ready)
+                    return null;
+                const reviewArtifactPath = path_1.default.join(featureDir, 'artifacts', 'reviews', 'tasks', taskId, constants_1.FILE_NAMES.REVIEW);
+                const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+                const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+                if (!dispatchId)
+                    return null;
+                const dispatchPath = path_1.default.join(featureDir, 'artifacts', 'agents', 'review-dispatches', `${dispatchId}.json`);
+                if (!(await this.fileService.exists(dispatchPath)))
+                    return null;
+                const dispatch = await this.fileService.readJSON(dispatchPath);
+                if (dispatch?.id !== dispatchId
+                    || dispatch?.taskId !== taskId
+                    || !Array.isArray(dispatch?.targetSnapshots)) {
+                    return null;
+                }
+                return {
+                    assignedAt: String(dispatch.assignedAt || ''),
+                    targetSnapshots: dispatch.targetSnapshots,
+                };
+            })().catch(() => null);
+            approvedTaskReviewSnapshots.set(taskId, result);
+            return result;
+        };
+        const currentStateMatchesApprovedReview = async (latest, updateKey, currentState) => {
+            if (!latest)
+                return false;
+            const review = await readApprovedTaskReviewSnapshots(latest.taskId);
+            if (!review)
+                return false;
+            const dispatchCompletedAt = Date.parse(latest.completedAt);
+            const reviewAssignedAt = Date.parse(review.assignedAt);
+            if (!Number.isFinite(dispatchCompletedAt)
+                || !Number.isFinite(reviewAssignedAt)
+                || reviewAssignedAt < dispatchCompletedAt) {
+                return false;
+            }
+            const snapshot = review.targetSnapshots.find((item) => normalize(item?.path).toLowerCase() === updateKey);
+            if (!snapshot)
+                return false;
+            const snapshotExists = snapshot.kind
+                ? snapshot.kind === 'file'
+                : snapshot.exists === true;
+            return currentState.exists === snapshotExists
+                && (!currentState.exists || currentState.targetContentHash === snapshot.contentHash);
         };
         for (const [index, task] of tasks.entries()) {
             const taskId = typeof task?.id === 'string' && task.id.trim() ? task.id.trim() : `tasks[${index}]`;
@@ -3310,32 +3424,37 @@ ${formatSuggestion()}
                 const targeted = targetKeys.has(updateKey);
                 const currentState = resolvedUpdatePath
                     ? await readCurrentState(updateKey, resolvedUpdatePath)
-                    : { exists: false, contentHash: null };
+                    : { exists: false, contentHash: null, targetContentHash: null };
                 const latestDeclaredEvidence = latestDeclaredEvidenceForPath(updateKey);
-                const latestEvidenceHasFinalState = typeof latestDeclaredEvidence?.exists === 'boolean'
-                    && Object.prototype.hasOwnProperty.call(latestDeclaredEvidence, 'contentHash');
-                const latestEvidenceHashIsCanonical = typeof latestDeclaredEvidence?.contentHash === 'string'
-                    && /^[a-f0-9]{64}$/i.test(latestDeclaredEvidence.contentHash);
+                const latestEvidenceHasFinalState = typeof latestDeclaredEvidence?.evidence?.exists === 'boolean'
+                    && Object.prototype.hasOwnProperty.call(latestDeclaredEvidence.evidence, 'contentHash');
+                const latestEvidenceHashIsCanonical = typeof latestDeclaredEvidence?.evidence?.contentHash === 'string'
+                    && /^[a-f0-9]{64}$/i.test(latestDeclaredEvidence.evidence.contentHash);
                 const currentMatchesLatestEvidence = latestEvidenceHasFinalState
-                    ? currentState.exists === latestDeclaredEvidence.exists
+                    ? currentState.exists === latestDeclaredEvidence.evidence.exists
                         && (!currentState.exists
                             || !latestEvidenceHashIsCanonical
-                            || currentState.contentHash === latestDeclaredEvidence.contentHash)
+                            || currentState.contentHash === latestDeclaredEvidence.evidence.contentHash)
                     : currentState.exists;
+                const currentMatchesApprovedReview = !currentMatchesLatestEvidence
+                    && await currentStateMatchesApprovedReview(latestDeclaredEvidence, updateKey, currentState);
+                const currentStateIsAuthorized = currentMatchesLatestEvidence || currentMatchesApprovedReview;
                 checks.push({
                     name: `documentation_updates.${taskId}.${update}`,
-                    status: safe && targeted && currentMatchesLatestEvidence ? 'pass' : 'fail',
+                    status: safe && targeted && currentStateIsAuthorized ? 'pass' : 'fail',
                     message: !safe
                         ? `Unsafe documentation update path: ${update}`
                         : !targeted
                             ? `${update} is declared but missing from ${taskId}.target_files`
-                            : !currentMatchesLatestEvidence
+                            : !currentStateIsAuthorized
                                 ? latestEvidenceHasFinalState
-                                    ? `Current documentation state does not match the latest completed dispatch evidence: ${update}`
+                                    ? `Current documentation state does not match the latest completed dispatch evidence or a later approved task review snapshot: ${update}`
                                     : `Declared documentation update does not exist and has no deletion evidence: ${update}`
-                                : currentState.exists
-                                    ? `Declared documentation update is present, task-scoped, and matches final evidence: ${update}`
-                                    : `Declared documentation deletion is task-scoped and matches final evidence: ${update}`,
+                                : currentMatchesApprovedReview
+                                    ? `Declared documentation update is task-scoped and matches a later approved task review snapshot: ${update}`
+                                    : currentState.exists
+                                        ? `Declared documentation update is present, task-scoped, and matches final evidence: ${update}`
+                                        : `Declared documentation deletion is task-scoped and matches final evidence: ${update}`,
                 });
                 if (safe && targeted) {
                     const evidence = evidenceForTaskPath(taskId, updateKey);

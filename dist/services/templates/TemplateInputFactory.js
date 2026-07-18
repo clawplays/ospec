@@ -10,6 +10,7 @@ class TemplateInputFactory {
                 feature: input,
                 mode: 'standard',
                 placement: 'active',
+                workflowProfile: 'change',
                 affects: [],
                 flags: [],
                 optionalSteps: [],
@@ -32,6 +33,7 @@ class TemplateInputFactory {
             placement: input.placement === constants_1.DIR_NAMES.QUEUED
                 ? constants_1.DIR_NAMES.QUEUED
                 : constants_1.DIR_NAMES.ACTIVE,
+            workflowProfile: input.workflowProfile === 'goal' ? 'goal' : 'change',
             affects: input.affects ?? [],
             flags: input.flags ?? [],
             optionalSteps: input.optionalSteps ?? [],

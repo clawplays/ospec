@@ -29,6 +29,19 @@ exports.DIRECT_COPY_PROJECT_ASSETS = [
         },
     },
     {
+        id: 'change-protocol',
+        category: 'ai_guidance',
+        description: 'Compact stage-aware protocol for classic change execution.',
+        targetRelativePath: 'for-ai/change-protocol.md',
+        overwritePolicy: 'if_missing',
+        localizedSources: {
+            'zh-CN': 'assets/for-ai/zh-CN/change-protocol.md',
+            'en-US': 'assets/for-ai/en-US/change-protocol.md',
+            'ja-JP': 'assets/for-ai/ja-JP/change-protocol.md',
+            'ar': 'assets/for-ai/ar/change-protocol.md',
+        },
+    },
+    {
         id: 'build-index-script',
         category: 'tooling',
         description: 'Rebuild script for SKILL.index.json.',

@@ -118,9 +118,9 @@ Claude / Codex skill:
 <summary>コマンドライン</summary>
 
 ```bash
-ospec new docs-homepage-refresh .
-ospec new fix-login-timeout .
-ospec new update-billing-copy .
+ospec change docs-homepage-refresh .
+ospec change fix-login-timeout .
+ospec change update-billing-copy .
 ```
 
 </details>
@@ -162,7 +162,7 @@ CLI は `changes/active/<change-name>` の短縮パスも受け付けますが�
 
 ### Goal ワークフロー — フルフロー＋ハード強制
 
-複雑・横断的・高リスクな作業には `ospec goal <goal-name>`（または「OSpec、この要件で完全な goal を作成して進めて」と言うだけ）を使い、OSpec のフルワークフローを実行します：設計文書、実装計画、タスクグラフ、並列ワーカー派遣、文書・コードレビュー、永続的な TDD / デバッグ / 検証エビデンス。
+ユーザーがフルワークフローを明示的に選択した場合だけ `ospec goal <goal-name>` を使います。選択済みの Change は複雑さ、ファイル数、risk、batch size によって Goal へ自動昇格しません。
 
 **あなたは goal を起こして要件を説明するだけ。** 残りの `ospec` コマンドはすべて AI が自分で実行し、あなたはチャットで質問に答えるだけです（`Zero-Setup`）。
 
@@ -228,7 +228,7 @@ ospec update
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. EXECUTION                                                  │
-│     ospec new <change-name>                                    │
+│     ospec change <change-name>                                 │
 │     ospec progress                                             │
 │     ospec execute bootstrap / handoff / doc-review / status    │
 │     ospec execute next                                         │

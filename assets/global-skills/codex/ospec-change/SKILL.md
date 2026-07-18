@@ -20,19 +20,18 @@ This skill is the fast change lifecycle inside an initialized OSpec project:
 - archive readiness check
 - finalize closeout
 
-Use `ospec-goal` instead when the work needs design docs, implementation planning, task graph dispatch, parallel workers, document review, evidence artifacts, or full review gates.
+The user owns profile selection. Once the user chooses a change, keep it on the classic flow regardless of complexity, flags, file count, or batch size. Never auto-promote, reject, or replace it with a Goal. Use `ospec-goal` only when the user explicitly selects a Goal.
 
 ## Read Order
 
 1. `.skillrc`
-2. `.ospec/SKILL.index.json` for nested projects, or root `SKILL.index.json` for legacy classic projects
-3. `.ospec/for-ai/ai-guide.md` for nested projects, or legacy `for-ai/ai-guide.md`
-4. `.ospec/for-ai/execution-protocol.md` for nested projects, or legacy `for-ai/execution-protocol.md`
-5. `.ospec/changes/active/<change>/proposal.md` for nested projects, or legacy `changes/active/<change>/proposal.md`
-6. `.ospec/changes/active/<change>/tasks.md` for nested projects, or legacy `changes/active/<change>/tasks.md`
-7. `.ospec/changes/active/<change>/state.json` for nested projects, or legacy `changes/active/<change>/state.json`
-8. `.ospec/changes/active/<change>/verification.md` for nested projects, or legacy `changes/active/<change>/verification.md`
-9. `.ospec/changes/active/<change>/review.md` for nested projects, or legacy `changes/active/<change>/review.md`
+2. Relevant entries from `.ospec/SKILL.index.json` for nested projects, or root `SKILL.index.json` for legacy classic projects
+3. `.ospec/for-ai/change-protocol.md` for nested projects, or legacy `for-ai/change-protocol.md`
+4. `.ospec/changes/active/<change>/proposal.md`, `tasks.md`, and `state.json` for nested projects, or their legacy classic paths
+5. Read `verification.md` only when entering verification
+6. Read `review.md` only when entering closeout
+
+If `change-protocol.md` is missing, fall back to the full `ai-guide.md` and `execution-protocol.md`. Read those full guides otherwise only when a blocking plugin is active or one specific ambiguous rule requires them.
 
 ## Language
 
@@ -50,20 +49,22 @@ Use `ospec-goal` instead when the work needs design docs, implementation plannin
 
 1. Inspect repository state first when posture is unclear.
 2. If the repo is not initialized, stop at initialization guidance instead of forcing a change.
-3. If the request is a new requirement, derive a concise kebab-case change name and create it with `ospec new <change-name> [path]`.
+3. If the request is a new requirement, derive a concise kebab-case change name and create it with `ospec change <change-name> [path]` (`ospec new` remains a compatibility alias).
 4. If the matching active change already exists, continue it instead of duplicating it.
 5. Keep the work inside the active change container.
 6. Keep `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md` aligned with actual execution.
-7. Do not create `design.md`, `implementation-plan.md`, task graphs, worker packets, or review artifacts for routine small changes.
-8. Use `ospec-goal` when the requirement is complex enough to need the full workflow.
+7. Do not create `design.md`, `implementation-plan.md`, task graphs, worker packets, or Goal review artifacts for changes.
+8. Put batch changes in the queue and execute them sequentially in a shared worktree.
 9. Use OSpec closeout commands instead of inventing a parallel process.
-10. Closeout is automatic when ready: once implementation, `verification.md`, and `review.md` are aligned and `ospec verify [changes/active/<change>]` passes, run `ospec finalize [changes/active/<change>]` yourself. Do not stop at `ospec archive ... --check` (it is a preview only) and do not wait for the user to ask before archiving. **Closeout uses `direct-closeout` (archive locally, no PR) and `manual` merge as defaults — do NOT ask the user about PR, merge, branch, or worktree strategy; uncommitted change/OSpec files in the working tree are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause closeout when a gate genuinely needs a human: a pending required user decision, an unapproved blocking plugin gate (e.g. Checkpoint), real blockers reported by verify or archive, or an explicit user request to preview or approve before archiving.
+10. The current AI performs one lightweight `review.md` review. `APPROVED` and `APPROVED_WITH_CONCERNS` may close automatically; `PENDING`, `NEEDS_CHANGES`, and `BLOCKED` stop closeout.
+11. Set the proposal `change_type` and documentation contract. Bug fixes may record `documentation_impact: none` with a concrete reason. Features and docs changes require at least one real project, module, API, or user document; the generated archive summary does not count. Update `SKILL.md` only when module rules or AI usage contracts changed. Index rebuild is automatic.
+12. Closeout is automatic when ready: once implementation, `verification.md`, documentation policy, plugin gates, and `review.md` are aligned and `ospec verify [changes/active/<change>]` passes, run `ospec finalize [changes/active/<change>]` yourself. Do not stop at `ospec archive ... --check` (it is a preview only) and do not wait for the user to ask before archiving. **Closeout uses `direct-closeout` (archive locally, no PR) and `manual` merge as defaults — do NOT ask the user about PR, merge, branch, or worktree strategy; uncommitted change/OSpec files in the working tree are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause closeout when a gate genuinely needs a human: a pending required user decision, an unapproved blocking plugin gate (e.g. Checkpoint), real blockers reported by verify or archive, or an explicit user request to preview or approve before archiving.
 
 ## Commands
 
 ```bash
 ospec status [path]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 ospec changes status [path]
 ospec progress [changes/active/<change>]
 ospec verify [changes/active/<change>]
@@ -76,6 +77,6 @@ ospec finalize [changes/active/<change>]          # run automatically once verif
 - Do not assume dashboard workflows exist.
 - Do not confuse repository initialization with change execution.
 - Do not enter queue mode unless the user explicitly asks for queue behavior.
-- Do not escalate to the full goal workflow unless the work is complex, cross-cutting, high-risk, or explicitly requested as a goal.
+- Never escalate or auto-promote a change to the Goal workflow; only the user selects Goal.
 - Do not claim completion until implementation, verification notes, and closeout status are aligned.
 - If real project tests exist, run or recommend them separately from `ospec verify`.

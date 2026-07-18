@@ -89,7 +89,7 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 - `--document-language`: لغة المستندات المُنشأة، ويمكن أن تكون `en-US` أو `zh-CN` أو `ja-JP` أو `ar`
 - في محادثات AI تكون أولوية تحديد اللغة كالتالي: اللغة المطلوبة صراحة في المحادثة -> لغة المحادثة الحالية -> لغة المشروع المحفوظة في `.skillrc`
 - في CLI تكون أولوية تحديد اللغة كالتالي: `--document-language` الصريح -> لغة المشروع المحفوظة في `.skillrc` -> وثائق المشروع الحالية / `.ospec/for-ai/*` أو `for-ai/*` القديم / asset manifest -> الرجوع إلى `en-US`
-- يحفظ OSpec لغة مستندات المشروع المختارة داخل `.skillrc` ويعيد استخدامها في إرشادات `for-ai` وفي `ospec new` و `ospec update`
+- يحفظ OSpec لغة مستندات المشروع المختارة داخل `.skillrc` ويعيد استخدامها في إرشادات `for-ai` وفي `ospec change` و `ospec update`
 - تستخدم المشاريع الجديدة التي تُهيَّأ عبر `ospec init` تخطيط nested افتراضيا: يبقى في الجذر فقط `.skillrc` و `README.md` بينما تنتقل بقية ملفات OSpec المُدارة إلى `.ospec/`
 - لا ينشئ `init` العادي خرائط معرفة اختيارية مثل `.ospec/knowledge/src/` أو `.ospec/knowledge/tests/` بشكل افتراضي
 - ما زال CLI يقبل الاختصارات مثل `changes/active/<change-name>`، لكن المسار الفعلي في المشاريع nested هو `.ospec/changes/active/<change-name>`
@@ -114,9 +114,9 @@ ospec init . --architecture "Single web app with API and shared auth" --document
 <summary>سطر الأوامر</summary>
 
 ```bash
-ospec new docs-homepage-refresh .
-ospec new fix-login-timeout .
-ospec new update-billing-copy .
+ospec change docs-homepage-refresh .
+ospec change fix-login-timeout .
+ospec change update-billing-copy .
 ```
 
 </details>
@@ -153,7 +153,7 @@ ospec finalize changes/active/<change-name>
 
 ### سير عمل Goal — التدفق الكامل والفرض الصارم
 
-للعمل المعقّد أو المتشعّب أو عالي المخاطر، استخدم `ospec goal <goal-name>` (أو قل ببساطة «OSpec، أنشئ goal كاملاً لهذا المتطلب وادفعه») لتشغيل سير عمل OSpec الكامل: وثيقة التصميم، وخطة التنفيذ، ورسم المهام (task graph)، وتوزيع العمال المتوازي، ومراجعة الوثائق والكود، وأدلة TDD / التصحيح / التحقق الدائمة.
+استخدم `ospec goal <goal-name>` فقط عندما تختار صراحة سير العمل الكامل. لا تتم ترقية Change الذي اخترته إلى Goal بسبب التعقيد أو عدد الملفات أو المخاطر أو حجم الدفعة.
 
 **أنت فقط تبدأ goal وتصف المتطلب.** ينفّذ الذكاء الاصطناعي كل أمر `ospec` بنفسه، وأنت تجيب فقط على الأسئلة في المحادثة (`Zero-Setup`).
 

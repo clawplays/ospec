@@ -29,8 +29,8 @@ tags: [ai, guide, ospec]
 - 进入已有 OSpec 项目时，先运行 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`，记录 active change、queued change、queue run、cache fingerprint 和安全下一步命令；该项目入口简报不替代 active change 的 `ospec execute bootstrap`。只有需要接入 harness 启动流程时，才用 `ospec session hook [path]` 写入可选 hook artifacts，包括用于 session-start 注入的 `.ospec/hooks/using-ospec.md`、harness target 元数据、active-change bootstrap 指引，以及 decision/plugin gate 来源
 - 只有需要 change 前探索记录时，才用 `ospec brainstorm [path] --topic "..."`；只有需要计划草稿时，才用 `ospec plan [path] --change changes/active/<change>`，且只有确认要更新 `implementation-plan.md` 时才传 `--apply`
 - 将已激活的内建质量策略步骤（如 `tdd_cycle`、`root_cause_debug`、`verification_evidence`）视为受归档门禁约束的 `optional_steps`；收尾前必须在 `tasks.md`、`verification.md` 和对应 evidence artifacts 中覆盖
-- 小功能和常规改动使用 `ospec new` / `ospec-change`，保持 1.0 快速流程：`proposal.md`、`tasks.md`、实现、`verification.md`、`review.md` 和 `state.json`
-- 复杂工作使用 `ospec goal` / `ospec-goal`，才启用 `design.md`、`implementation-plan.md`、task graph、文档 review、worker/reviewer 交接和 evidence 门禁
+- 用户选择 Change 时使用 `ospec change` / `ospec-change`，`ospec new` 保留为别名；不因复杂度、flags、文件数量、风险或批量任务升级，始终保持 1.0 快速流程：`proposal.md`、`tasks.md`、实现、`verification.md`、`review.md` 和 `state.json`
+- 只有用户明确选择 Goal 时才使用 `ospec goal` / `ospec-goal`
 - `ospec execute …` 控制层（bootstrap、doc-review、dispatch、launch、review、worktree、finish、collect、retry、sync）和所有 goal-only artifacts 都属于 `workflow_profile_id: goal`。对 `workflow_profile_id: change`，保持经典快速流程——不要读取或运行 execute 层或 goal artifacts；编辑 `proposal.md` 和 `tasks.md`、实现、记录 `verification.md` 和 `review.md`，再用 `ospec verify` 和 `ospec finalize` 收尾——除非用户明确要求对这个 change 做 agent/worker 执行
 - AI 辅助执行 goal 时，不要求用户手写 `design.md` 或 `implementation-plan.md`；必须先基于需求、`proposal.md` 和项目上下文起草或更新它们，再推导 `artifacts/agents/task-graph.json`、编辑 `tasks.md` 或代码
 - 执行经典 change 时，不要创建 goal-only 文件，除非用户明确把该工作升级为 goal

@@ -14,7 +14,7 @@ ospec docs generate [path]
 ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
 ospec progress [changes/active/<change>]
 ospec run status [path]
@@ -84,6 +84,10 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.15 修复文档 repair 或删除后的 Goal finalize。已有 baseline 变为不存在会被记录为经过 review 的有效删除；多轮 repair 使用首个 baseline 到最终 completed dispatch 的完整证据链，而不是只读取最后一次 attempt；当前工作区还必须匹配该路径最后一个声明 owner 的 evidence。因此合法删除和后续未重复修改的 repair 可以归档，但旧 evidence、外部漂移或最终回退仍会失败。
 
+1.8.17 把用户选择的 Change 完整做成快速流程。首选命令是 `ospec change`，`ospec new` 继续作为兼容别名。Change 不会自动升级为 Goal，只读取分阶段精简协议，由当前 AI 做一次轻量 review；feature/docs 必须更新真实长期文档，closeout state 自动派生，finalize 只重建一次索引。批量 Change 在 queue 中串行执行，`APPROVED_WITH_CONCERNS` 也可以自动归档。
+
+1.8.16 修复已完成 Goal 更新 verification closeout metadata 后的最后一层阻塞。dispatch meaningful-change 证据链仍是硬门禁；只有在最后一次 owner dispatch 之后派发、executor provenance 有效且精确匹配当前 target snapshot 的 APPROVED task review，才能授权最终当前状态。`ospec execute sync` 现在也会识别并更新英文、中文、日文和阿拉伯文 worker-status 模板中的 Combined review 状态与 checklist。未知容量的 implementation 现在与默认并发 3 对齐；它不是全局上限，不限制 review 批次，并会被更大的 session-bound 正整数 harness 容量替代，因此资源和任务图安全时可显式配置 5-10 个并发。
+
 1.8.5 防止原生 child 的等待让 Goal controller 长时间卡死。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它所有 native adapter 的单次等待都必须在 60 秒内返回，在 `heartbeatDueAt` 前续租，完成一个结果就立即持久化一个，并重新 tick。只有 Git HEAD 变化但 task 目标快照未变时，不再重复 task review；final review 仍严格绑定快照和 HEAD。未知 native capacity 时 implementation 批次最多两个，但不会降低互不冲突的 review 并行度。新 task 超过六个目标时必须拆分，或填写 `scope_reason`。
 
 1.8.6 明确 60 秒只是 controller 的单次轮询上限，不是 child 的执行上限。implementation 的绝对期限默认 120 分钟，review 和 verification 默认 60 分钟；短 heartbeat 租约可续期，证据完成后另有默认 5 分钟的结果回传宽限。`ospec loop finalize` 会先校验持久证据再提交成功结果。递归目录快照、按完整上下文绑定的批准缓存和改进的无冲突批次选择，可减少陈旧或重复 review，同时不放宽来源校验。1.8.6 新图中的串行 task 必须填写 `serial_reason`，旧图继续可读。
@@ -137,7 +141,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ```bash
 ospec init [path]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 # 全流程工作使用：
 ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
 ospec verify [changes/active/<change>]
@@ -146,7 +150,7 @@ ospec finalize [changes/active/<change>]
 
 ## Change 与 Goal 文档
 
-`ospec new <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
+`ospec change <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`；`ospec new` 仍是兼容别名。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
 
 goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报告真实 harness，例如 `--target codex --execution-model controller --harness-interactive true --native-subagents supported`；target 名称本身不再授权子 agent。`ospec loop run --once` 输出有界 fresh-context action，IDE controller 逐个记录 child heartbeat 和 result；lease 过期或明确释放的 orphan 会重新排队，已完成 sibling 不会重复执行。provider usage sidecar 会进入 token budget，verification 失败会撤销旧 final approval 并先经过独立复审和 grouped repair。L1 只报告，L2 允许辅助执行，L3 还要求 canonical path 与 shell-safe command allowlist。详见 [loop-engineering.md](loop-engineering.md)。
 
@@ -222,7 +226,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.15
+npm install -g @clawplays/ospec-cli@1.8.17
 ospec update [path]
 ```
 

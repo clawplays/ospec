@@ -1,0 +1,23 @@
+{
+  "title_suffix": "reviewed closeout and localized worker status",
+  "summary": "OSpec 1.8.16 fixes the remaining Goal archive blockers after verification closeout. A later authoritative APPROVED task review may bind an exact current target state without replacing the dispatch meaningful-change chain, and worker-status sync now updates Combined review sections and checklists across all shipped languages.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.15...1.8.16",
+  "new": [
+    "Added path-specific final-state authorization through a later fully validated task-review snapshot.",
+    "Added localized visible status synchronization for worker-status closeout sections."
+  ],
+  "improved": [
+    "Keeps dispatch documentation evidence immutable while allowing independently reviewed controller closeout metadata.",
+    "Recognizes Combined review checklist text in English, Chinese, Japanese, and Arabic.",
+    "Clarifies that the unknown-capacity implementation cap of two is a replaceable safety fallback rather than a global or review concurrency limit.",
+    "Skips per-commit file-history scans when local structured release metadata is already complete."
+  ],
+  "fixed": [
+    "Fixed verification.md closeout metadata being rejected even when a fresh authoritative task review exactly covered the current file.",
+    "Fixed localized Combined review checkboxes remaining unchecked after ospec execute sync.",
+    "Fixed visible worker-status section states remaining PENDING after authoritative statuses reached terminal values."
+  ],
+  "docs": [
+    "Documented the AIHub post-1.8.15 closeout incident, strict review-snapshot fallback conditions, localized sync behavior, and no-replay recovery path."
+  ]
+}

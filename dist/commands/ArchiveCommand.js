@@ -73,9 +73,15 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             if (!(await services_1.services.fileService.exists(statePath))) {
                 throw new Error('Change state file not found.');
             }
-            const featureState = await services_1.services.fileService.readJSON(statePath);
+            let featureState = await services_1.services.fileService.readJSON(statePath);
             const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(targetPath, featureState);
             const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
+            const classicStatus = !isGoalWorkflow
+                ? await services_1.services.projectService.getActiveChangeStatusItem(targetPath)
+                : null;
+            if (classicStatus?.closeoutState) {
+                featureState = classicStatus.closeoutState;
+            }
             if (isGoalWorkflow) {
                 const progressProjection = await services_1.services.taskGraphExecutionService.reconcileGoalProgress(targetPath);
                 if (progressProjection.status === 'blocked') {
@@ -95,12 +101,19 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             const passedOptionalSteps = Array.isArray(verification.data.passed_optional_steps)
                 ? verification.data.passed_optional_steps
                 : [];
-            const archiveConfig = config.workflow?.archive_gate || {
+            const configuredArchiveGate = config.workflow?.archive_gate || {
                 require_verification: true,
                 require_skill_update: true,
                 require_index_regenerated: true,
                 require_optional_steps_passed: true,
             };
+            const archiveConfig = isGoalWorkflow
+                ? configuredArchiveGate
+                : {
+                    ...configuredArchiveGate,
+                    require_skill_update: false,
+                    require_index_regenerated: false,
+                };
             const result = await ArchiveGate_1.archiveGate.checkArchiveReadiness(featureState, archiveConfig, {
                 activatedSteps,
                 tasksOptionalSteps,
@@ -109,6 +122,23 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 tasksComplete: !/- \[ \]/.test(tasks.content),
                 verificationComplete: !/- \[ \]/.test(verification.content),
             });
+            if (classicStatus) {
+                for (const check of classicStatus.checks) {
+                    if (check.name === 'archive.pending')
+                        continue;
+                    if (!result.checks.some(item => item.name === check.name)) {
+                        result.checks.push({
+                            name: check.name,
+                            passed: check.status !== 'fail',
+                            message: check.message,
+                        });
+                    }
+                    if (check.status === 'fail')
+                        result.blockers.push(check.message);
+                    if (check.status === 'warn')
+                        result.warnings.push(check.message);
+                }
+            }
             if (isGoalWorkflow) {
                 const reviewArtifactSet = await (0, ReviewArtifacts_1.resolveGoalReviewArtifacts)(services_1.services.fileService, targetPath);
                 if (!(await services_1.services.fileService.exists(designPath))) {
@@ -229,15 +259,17 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     }
                 }
             }
-            const documentationUpdateAnalysis = await services_1.services.projectService.analyzeDocumentationUpdates(targetPath);
-            for (const check of documentationUpdateAnalysis.checks) {
-                result.checks.push({
-                    name: check.name,
-                    passed: check.status !== 'fail',
-                    message: check.message,
-                });
-                if (check.status === 'fail') {
-                    result.blockers.push(check.message);
+            if (isGoalWorkflow) {
+                const documentationUpdateAnalysis = await services_1.services.projectService.analyzeDocumentationUpdates(targetPath);
+                for (const check of documentationUpdateAnalysis.checks) {
+                    result.checks.push({
+                        name: check.name,
+                        passed: check.status !== 'fail',
+                        message: check.message,
+                    });
+                    if (check.status === 'fail') {
+                        result.blockers.push(check.message);
+                    }
                 }
             }
             if (activatedSteps.includes('stitch_design_review')) {
@@ -342,6 +374,8 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     result.blockers.push(`${pluginName} result.json or summary.md is required before archiving`);
                 }
             }
+            result.blockers.splice(0, result.blockers.length, ...Array.from(new Set(result.blockers)));
+            result.warnings.splice(0, result.warnings.length, ...Array.from(new Set(result.warnings)));
             result.canArchive = result.blockers.length === 0;
             console.log('\nArchive Gate Check:');
             console.log('===================\n');
@@ -370,7 +404,6 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     this.success('Change is ready to archive');
                     return;
                 }
-                await services_1.services.projectService.rebuildIndex(projectRoot);
                 const archivePath = await this.performArchive(targetPath, projectRoot, featureState, config);
                 this.success(`Change archived to ${archivePath}`);
                 return archivePath;

@@ -803,13 +803,27 @@ async function main() {
       'queued-smoke',
     );
 
-    const queuedOverviewLink = `[.ospec/docs/project/overview.md](${toPosixRelative(activatedQueuedDir, projectOverviewPath)})`;
-
-    assertContains(
-      await fs.readFile(path.join(activatedQueuedDir, 'tasks.md'), 'utf8'),
-      queuedOverviewLink,
-      'activated queued change link',
+    const queuedTasksContent = await fs.readFile(
+      path.join(activatedQueuedDir, 'tasks.md'),
+      'utf8',
     );
+    assertContains(
+      queuedTasksContent,
+      '## Fast Task Checklist',
+      'activated queued change compact checklist',
+    );
+    assertContains(
+      queuedTasksContent,
+      'documentation_impact',
+      'activated queued change documentation contract',
+    );
+    for (const goalOnlyFile of ['design.md', 'implementation-plan.md']) {
+      if (await fs.pathExists(path.join(activatedQueuedDir, goalOnlyFile))) {
+        throw new Error(
+          `Classic queued change must not create Goal file ${goalOnlyFile}`,
+        );
+      }
+    }
 
     console.log('[release:smoke] all checks passed');
   } finally {

@@ -18,9 +18,9 @@ Do not hand-write an approximation of `ospec init`. Do not assume a web stack, a
 
 ## Workflow Router
 
-- Use `ospec new` / `ospec-change` for routine, scoped work. Its source of truth is `changes/active/<change>/proposal.md`, `changes/active/<change>/tasks.md`, `state.json`, `verification.md`, and `review.md`.
-- Use `ospec goal` / `ospec-goal` for complex, cross-cutting, high-risk, parallel, or evidence-heavy work. It additionally owns `changes/active/<change>/design.md`, `changes/active/<change>/implementation-plan.md`, `changes/active/<change>/artifacts/agents/task-graph.json`, worker/reviewer artifacts, and evidence gates.
-- Do not silently promote a change to a goal or create goal-only artifacts for a classic change. A routing recommendation may explain why one workflow fits, but the user's explicit choice remains authoritative.
+- Use `ospec change` / `ospec-change` when the user selects a Change. Its source of truth is `changes/active/<change>/proposal.md`, `changes/active/<change>/tasks.md`, `state.json`, `verification.md`, and `review.md`; `ospec new` remains a compatibility alias.
+- Use `ospec goal` / `ospec-goal` only when the user selects a Goal. It additionally owns `changes/active/<change>/design.md`, `changes/active/<change>/implementation-plan.md`, `changes/active/<change>/artifacts/agents/task-graph.json`, worker/reviewer artifacts, and evidence gates.
+- Never auto-promote, reject, or replace a user-selected Change because of complexity, risk, file count, parallelism, or batch size. The user's explicit profile choice is authoritative.
 - Enter queue mode only when the user explicitly asks to queue or execute multiple changes.
 
 For an initialized project, read in this order:
@@ -77,7 +77,7 @@ Use `ospec docs generate` for a docs-only repair or refresh. Do not create a cha
 
 ```text
 Initialize:  ospec init [path] -> verify generated project shell
-Change:      ospec new <name> -> implement -> ospec verify -> ospec finalize
+Change:      ospec change <name> -> implement -> ospec verify -> ospec finalize
 Goal:        ospec goal <name> -> session/bootstrap -> design/plan reviews -> dispatch/review -> verify/finalize
 Docs:        ospec docs generate [path] -> ospec docs status -> ospec index check
 Resume:      ospec session [path] -> read brief/index -> run the persisted next safe command

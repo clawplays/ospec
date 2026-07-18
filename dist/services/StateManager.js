@@ -72,26 +72,29 @@ class StateManager {
     }
     createInitialState(feature, affects, mode = 'standard', options = {}) {
         const now = new Date().toISOString();
+        const workflowProfileId = options.workflowProfileId ?? 'change';
+        const pending = [
+            'proposal_complete',
+            'tasks_complete',
+            'implementation_complete',
+            ...(workflowProfileId === 'goal'
+                ? ['skill_updated', 'index_regenerated']
+                : []),
+            'tests_passed',
+            'verification_passed',
+            'archived',
+        ];
         if (options.queued) {
             return {
                 version: '1.0',
                 feature,
                 mode,
-                workflow_profile_id: options.workflowProfileId ?? 'change',
+                workflow_profile_id: workflowProfileId,
                 status: 'queued',
                 current_step: 'queued',
                 affects,
                 completed: [],
-                pending: [
-                    'proposal_complete',
-                    'tasks_complete',
-                    'implementation_complete',
-                    'skill_updated',
-                    'index_regenerated',
-                    'tests_passed',
-                    'verification_passed',
-                    'archived',
-                ],
+                pending: [...pending],
                 blocked_by: ['awaiting_activation'],
                 queued_at: now,
                 queue_source: options.source ?? 'queue',
@@ -102,21 +105,12 @@ class StateManager {
             version: '1.0',
             feature,
             mode,
-            workflow_profile_id: options.workflowProfileId ?? 'change',
+            workflow_profile_id: workflowProfileId,
             status: 'draft',
             current_step: 'write_proposal',
             affects,
             completed: [],
-            pending: [
-                'proposal_complete',
-                'tasks_complete',
-                'implementation_complete',
-                'skill_updated',
-                'index_regenerated',
-                'tests_passed',
-                'verification_passed',
-                'archived',
-            ],
+            pending,
             blocked_by: ['missing_proposal'],
             last_updated: now,
         };

@@ -92,7 +92,7 @@ CLI notes:
 - `--document-language`: generated doc language, choose from `en-US`, `zh-CN`, `ja-JP`, or `ar`
 - AI-first language resolution order: explicit language request in the conversation -> current conversation language -> persisted project language in `.skillrc`
 - CLI language resolution order: explicit `--document-language` -> persisted project language in `.skillrc` -> existing project docs / managed `for-ai/*` guidance / asset manifest -> fallback `en-US`
-- OSpec persists the chosen project document language in `.skillrc` and reuses it for `for-ai` guidance, `ospec new`, and `ospec update`
+- OSpec persists the chosen project document language in `.skillrc` and reuses it for `for-ai` guidance, `ospec change`, and `ospec update`
 - new projects initialized by `ospec init` default to the nested layout: root `.skillrc` and `README.md`, with OSpec-managed files under `.ospec/`
 - plain init does not create optional knowledge maps such as `.ospec/knowledge/src/` or `.ospec/knowledge/tests/`; those appear only when a project already has legacy knowledge content to migrate or when future explicit knowledge-generation flows create them
 - CLI commands still accept shorthand like `changes/active/<change-name>`, but the physical path in nested projects is `.ospec/changes/active/<change-name>`
@@ -122,9 +122,9 @@ Claude / Codex skill mode:
 <summary>Command line</summary>
 
 ```bash
-ospec new docs-homepage-refresh .
-ospec new fix-login-timeout .
-ospec new update-billing-copy .
+ospec change docs-homepage-refresh .
+ospec change fix-login-timeout .
+ospec change update-billing-copy .
 ```
 
 </details>
@@ -185,7 +185,7 @@ Archive notes:
 
 ### Goal: Use It For Work That Needs More Care
 
-Use a goal when the work touches several parts of the project, has important design choices, changes an API or data, carries security or migration risk, or will take several rounds to finish. For a small, well-defined edit, use `ospec new` instead.
+Use a Goal only when you choose the full workflow. A user-selected Change remains a Change regardless of complexity, file count, risk, or batch size; create it with `ospec change` (`ospec new` remains an alias).
 
 Start from a terminal:
 
@@ -271,7 +271,7 @@ If you want to convert an older classic project to the new layout, run `ospec la
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. EXECUTION                                                  │
-│     ospec new <change-name>      # classic fast change          │
+│     ospec change <change-name>   # classic fast change          │
 │     ospec goal <goal-name>       # full goal workflow           │
 │     ospec brainstorm / plan (optional pre-change aids)         │
 │     ospec session                                              │
@@ -321,7 +321,7 @@ If you want to convert an older classic project to the new layout, run `ospec la
 - **Scoped review evidence and cost metrics**: task and final review dispatches write `artifacts/agents/review-packages/*.diff` with scoped Git evidence, while `artifacts/agents/execution-metrics.json` records packet/report/package bytes and task duration. Goal task graphs can enable `documentation_updates` so missing or undeclared project docs block archive.
 - **Tracked requirement execution**: small changes keep proposal, tasks, state, verification, and review files aligned; full goals also keep design, implementation plan, task graph, handoff, review, worker status, and evidence artifacts aligned.
 - **Goal experience contracts**: every goal runs with `Announce-Before-Act` (the AI announces its skill and stage, the `ospec execute …` command and the artifact it writes, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, UI, risk, and scope decisions are asked one at a time through the native question UI before design is locked), and `Zero-Setup` (you only start a goal and describe the requirement — the AI runs every `ospec` command itself). In Claude Code, `ospec session hook --target claude --apply` adds hooks that announce every dispatch and hard-block subagent dispatch while a required decision is still pending.
-- **Optional pre-change aids**: `ospec brainstorm` writes durable exploration artifacts under `.ospec/brainstorms/`, with an optional static visual companion; `ospec plan` writes plan drafts under `.ospec/plans/` and only updates `implementation-plan.md` when `--apply` is passed. The default small-change flow starts with `ospec new`; the full workflow starts with `ospec goal`.
+- **Optional pre-change aids**: `ospec brainstorm` writes durable exploration artifacts under `.ospec/brainstorms/`, with an optional static visual companion; `ospec plan` writes plan drafts under `.ospec/plans/` and only updates `implementation-plan.md` when `--apply` is passed. The Change flow starts with `ospec change` (`ospec new` is an alias); the Goal flow starts with `ospec goal` only when selected by the user.
 - **Session brief and hooks**: `ospec session` writes `.ospec/session-brief.json` and `.ospec/session-brief.md` so agents or humans entering an existing project can see active changes, queued changes, queue-run state, indexed document and archived-feature counts, a cache fingerprint, and the next safe command before touching a change; `ospec session hook --target claude` writes opt-in harness startup artifacts plus a Claude Code hook bundle under `.ospec/hooks/`, and `--apply` idempotently merges it into `.claude/settings.json`.
 - **Integrated goal loop**: `ospec loop run --once` emits token-bounded task/review/verification action batches for fresh model-native subagents. It uses packet paths instead of duplicating the whole goal, persists pending actions and feedback, routes review failures through retry or one grouped repair wave, and enforces required decisions, L3 allowlists, budgets, no-progress stops, and comprehension-review pauses. The removed `loop watch` path now returns migration guidance without starting an agent process.
 - **Task graph controller**: `ospec execute bootstrap` writes a one-change startup/resume snapshot with the project session brief snapshot and next safe action; `handoff` writes a cross-tool worker handoff guide; `doc-review` creates design and implementation-plan reviewer packets; `status` and `next` report controller state; `workspace` records git workspace safety; `worktree` manages explicit git worktree plans/runs; `dispatch`, `launch`, `complete`, and `review` create and settle native-subagent packets; `retry` reopens blocked or needs-context work; `debug`, `tdd`, and `verify` record durable evidence; `sync` rebuilds `worker-status.md`. `orchestrate`, `launch --run --command`, and `review --run --command` are retained only as migration errors and never launch agent CLIs.

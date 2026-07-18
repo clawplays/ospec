@@ -2022,6 +2022,7 @@ export declare class TaskGraphExecutionService {
     private deriveSessionStatus;
     private buildDefaultWorkerStatusDocument;
     private updateWorkerStatusBody;
+    private updateWorkerStatusSummaryStatusLines;
     private updateWorkerStatusChecklistLine;
     private buildWorkerStatusSyncSummary;
     private escapeRegex;

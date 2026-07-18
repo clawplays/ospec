@@ -1,10 +1,11 @@
-import { ProjectMode } from '../../core/types';
+import { ProjectMode, WorkflowProfileId } from '../../core/types';
 import { ProjectPresetId } from '../../presets/ProjectPresets';
 export type TemplateDocumentLanguage = 'zh-CN' | 'en-US' | 'ja-JP' | 'ar';
 export interface FeatureTemplateInput {
     feature: string;
     mode?: ProjectMode;
     placement?: 'active' | 'queued';
+    workflowProfile?: WorkflowProfileId;
     affects?: string[];
     flags?: string[];
     optionalSteps?: string[];
@@ -22,6 +23,7 @@ export interface NormalizedFeatureTemplateInput {
     feature: string;
     mode: ProjectMode;
     placement: 'active' | 'queued';
+    workflowProfile: WorkflowProfileId;
     affects: string[];
     flags: string[];
     optionalSteps: string[];

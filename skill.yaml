@@ -20,6 +20,7 @@ protocol:
     - "SKILL.index.json"
     - ".ospec/tools/build-index-auto.cjs"
     - "for-ai/ai-guide.md"
+    - "for-ai/change-protocol.md"
     - "for-ai/execution-protocol.md"
     - "for-ai/naming-conventions.md"
     - "for-ai/skill-conventions.md"
@@ -30,6 +31,7 @@ protocol:
     - "changes/active/<feature>/tasks.md"
     - "changes/active/<feature>/state.json"
     - "changes/active/<feature>/verification.md"
+    - "changes/active/<feature>/review.md"
   feature_name_format: "kebab-case"
 
 commands:
@@ -43,7 +45,7 @@ commands:
     command: "ospec docs generate [project-dir]"
     purpose: "Refresh, repair, or backfill the project knowledge layer for an already initialized repository."
   - id: new
-    command: "ospec new <feature-name> [root-dir]"
+    command: "ospec change <feature-name> [root-dir]"
     purpose: "Create a new change under changes/active with proposal/tasks/state/verification/review."
   - id: changes_status
     command: "ospec changes status [project-dir]"
@@ -98,6 +100,7 @@ workflow:
     - "changes/active/<feature>/tasks.md"
     - "changes/active/<feature>/state.json"
     - "changes/active/<feature>/verification.md"
+    - "changes/active/<feature>/review.md"
   archive_requirements:
     - "state.json.status must be ready_to_archive"
     - "verification.md must be fully passed"

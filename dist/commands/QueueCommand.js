@@ -75,6 +75,7 @@ class QueueCommand extends BaseCommand_1.BaseCommand {
             flags: parsed.flags,
             placement: 'queued',
             source: 'queue',
+            workflowProfile: 'change',
         });
     }
     async showStatus(rootDir) {

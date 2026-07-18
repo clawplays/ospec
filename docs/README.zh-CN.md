@@ -93,7 +93,7 @@ ospec init . --architecture "单体 Web 应用 + API + 统一鉴权" --document-
 - `--document-language`：生成文档的语言，可选 `en-US`、`zh-CN`、`ja-JP`、`ar`
 - AI 对话优先按以下顺序解析文档语言：对话里明确指定的语言 -> 当前对话语言 -> `.skillrc` 里已持久化的项目语言
 - 命令行优先按以下顺序解析文档语言：显式 `--document-language` -> `.skillrc` 里已持久化的项目语言 -> 现有项目文档 / `.ospec/for-ai/*`（或旧 `for-ai/*`）/ asset manifest -> 回退 `en-US`
-- OSpec 会把最终选定的项目文档语言持久化到 `.skillrc`，并在 `for-ai` 指南、`ospec new` 和 `ospec update` 中复用
+- OSpec 会把最终选定的项目文档语言持久化到 `.skillrc`，并在 `for-ai` 指南、`ospec change` 和 `ospec update` 中复用
 - 新项目执行 `ospec init` 时默认采用 nested 布局：根目录保留 `.skillrc` 和 `README.md`，其它 OSpec 托管文件放在 `.ospec/` 下
 - 普通 `init` 不会默认创建 `.ospec/knowledge/src/` 或 `.ospec/knowledge/tests/` 这类可选知识地图目录
 - CLI 仍接受 `changes/active/<change-name>` 这样的简写路径，但 nested 项目的实际物理路径是 `.ospec/changes/active/<change-name>`
@@ -122,9 +122,9 @@ Claude / Codex Skill 方式：
 <summary>命令行</summary>
 
 ```bash
-ospec new docs-homepage-refresh .
-ospec new fix-login-timeout .
-ospec new update-billing-copy .
+ospec change docs-homepage-refresh .
+ospec change fix-login-timeout .
+ospec change update-billing-copy .
 ```
 
 </details>
@@ -165,7 +165,7 @@ ospec finalize changes/active/<change-name>
 
 ### Goal：适合需要认真规划和反复验证的工作
 
-当一个需求会改动多个模块、存在重要方案选择、涉及 API/数据/安全/迁移，或者预计要分几轮才能完成时，使用 goal。只是改一个明确的小功能或修一个局部问题，使用 `ospec new` 会更快。
+只有你明确选择完整流程时才使用 Goal。用户选择的 Change 不会因为复杂度、文件数量、风险或批量任务升级，使用 `ospec change` 创建即可；`ospec new` 仍是兼容别名。
 
 可以从终端开始：
 

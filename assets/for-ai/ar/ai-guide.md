@@ -28,8 +28,8 @@ tags: [ai, guide, ospec]
 - استخدم الفهرس لتحديد موقع المعرفة قبل قراءة الملفات الهدف
 - عند الدخول إلى مشروع OSpec موجود، شغّل `ospec session [path]` لكتابة `.ospec/session-brief.json` و`.ospec/session-brief.md` مع active change وqueued change وqueue run وcache fingerprint والأمر الآمن التالي؛ هذا project entry brief لا يستبدل `ospec execute bootstrap` للـ active change
 - تعامل مع خطوات built-in quality policy المفعّلة مثل `tdd_cycle` و`root_cause_debug` و`verification_evidence` كـ `optional_steps` خاضعة لـ archive gate؛ غطّها في `tasks.md` و`verification.md` وملفات evidence المطابقة قبل closeout
-- استخدم `ospec new` / `ospec-change` للتغييرات الصغيرة والروتينية، وأبقها على تدفق 1.0 السريع: `proposal.md` و`tasks.md` والتنفيذ و`verification.md` و`review.md` و`state.json`
-- استخدم `ospec goal` / `ospec-goal` للعمل المعقد الذي يحتاج `design.md` و`implementation-plan.md` وtask graph وdocument review وworker/reviewer handoff وevidence gates
+- استخدم `ospec change` / `ospec-change` عندما يختار المستخدم Change، ويبقى `ospec new` alias. أبقها على تدفق 1.0 السريع بغض النظر عن التعقيد أو flags أو عدد الملفات أو المخاطر أو حجم الدفعة: `proposal.md` و`tasks.md` والتنفيذ و`verification.md` و`review.md` و`state.json`
+- استخدم `ospec goal` / `ospec-goal` فقط عندما يختار المستخدم Goal صراحة
 - طبقة التحكم `ospec execute …` (bootstrap وdoc-review وdispatch وlaunch وreview وworktree وfinish وcollect وretry وsync) وكل artifacts الخاصة بـ goal تنتمي إلى `workflow_profile_id: goal`. وبالنسبة لـ `workflow_profile_id: change`، التزم بالتدفق السريع الكلاسيكي — لا تقرأ ولا تشغّل طبقة execute أو artifacts الخاصة بـ goal؛ حرّر `proposal.md` و`tasks.md`، ونفّذ، وسجّل `verification.md` و`review.md`، ثم أغلق بـ `ospec verify` و`ospec finalize` — ما لم يطلب المستخدم صراحةً تنفيذ agent/worker على هذا الـ change
 - عند تنفيذ goal بمساعدة AI، لا تطلب من المستخدم كتابة `design.md` أو `implementation-plan.md` يدوياً؛ أنشئهما أو حدّثهما من المتطلب و`proposal.md` وسياق المشروع قبل اشتقاق `artifacts/agents/task-graph.json` أو تعديل `tasks.md` أو الكود
 - عند تنفيذ classic change، لا تنشئ goal-only files ما لم يطلب المستخدم ترقية العمل صراحة إلى goal

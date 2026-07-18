@@ -28,8 +28,8 @@ tags: [ai, guide, ospec]
 - 目的の文書を読む前に、まず index を使って知識の所在を確認する
 - 既存の OSpec project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書き、active change、queued change、queue run、cache fingerprint、次の安全な command context を記録する。この project entry brief は active-change の `ospec execute bootstrap` を置き換えない
 - `tdd_cycle`、`root_cause_debug`、`verification_evidence` など有効化された built-in quality policy steps は、archive-gated `optional_steps` として扱う。closeout 前に `tasks.md`、`verification.md`、対応する evidence artifacts で coverage を記録する
-- 小さな通常変更には `ospec new` / `ospec-change` を使い、1.0 の高速フロー（`proposal.md`、`tasks.md`、実装、`verification.md`、`review.md`、`state.json`）に留める
-- 複雑な作業には `ospec goal` / `ospec-goal` を使い、`design.md`、`implementation-plan.md`、task graph、document review、worker/reviewer handoff、evidence gates を有効にする
+- ユーザーが Change を選択した場合は `ospec change` / `ospec-change` を使い、`ospec new` は alias として残す。複雑さ、flags、ファイル数、risk、batch size に関係なく 1.0 の高速フロー（`proposal.md`、`tasks.md`、実装、`verification.md`、`review.md`、`state.json`）に留める
+- ユーザーが Goal を明示的に選択した場合だけ `ospec goal` / `ospec-goal` を使う
 - `ospec execute …` コントローラ層（bootstrap、doc-review、dispatch、launch、review、worktree、finish、collect、retry、sync）と goal 専用 artifacts はすべて `workflow_profile_id: goal` に属する。`workflow_profile_id: change` では、クラシックな高速フローを維持し、execute 層や goal artifacts を読まず・実行せず、`proposal.md` と `tasks.md` を編集し、実装し、`verification.md` と `review.md` を記録してから `ospec verify` と `ospec finalize` で閉じる——ユーザーがこの change での agent/worker 実行を明示的に求めない限り
 - AI 支援で goal を進める場合、ユーザーに `design.md` や `implementation-plan.md` の手書きを求めない。要件、`proposal.md`、プロジェクト文脈からそれらを作成または更新してから `artifacts/agents/task-graph.json` を導出し、`tasks.md` やコードを編集する
 - classic change では、ユーザーが明示的に goal へ昇格させない限り goal-only files を作成しない

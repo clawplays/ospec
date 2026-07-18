@@ -14,7 +14,7 @@ ospec docs generate [path]
 ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
@@ -83,6 +83,10 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 يصلح الإصدار 1.8.15 إنهاء Goal بعد repair أو حذف الوثائق. يسجل انتقال baseline موجود إلى حالة missing كحذف فعلي تمت مراجعته، ويجمع evidence من أول baseline حتى آخر completed dispatch بدلا من قراءة آخر محاولة repair فقط، ويتحقق من أن workspace تطابق أحدث evidence لمالك المسار المعلن. يسمح ذلك بالحذف المقصود ومحاولات repair اللاحقة التي لم تعدل الوثيقة مرة أخرى، من دون قبول evidence قديم أو drift خارجي أو تراجع نهائي.
 
+يجعل الإصدار 1.8.17 الـ Change الذي يختاره المستخدم مسارا سريعا كاملا. الأمر المفضل هو `ospec change` ويبقى `ospec new` alias متوافقا. لا تتم ترقية Change تلقائيا إلى Goal، ويستخدم protocol مرحليا مختصرا ومراجعة خفيفة بواسطة AI الحالي. تتطلب feature/docs وثيقة دائمة حقيقية، وتشتق حالة closeout تلقائيا، ويعاد بناء index مرة واحدة فقط عند finalize. تنفذ Changes المجمعة بالتتابع في queue ويمكن أرشفة `APPROVED_WITH_CONCERNS` تلقائيا.
+
+يصلح الإصدار 1.8.16 طبقة closeout المتبقية بعد تحديث Goal مكتمل لبيانات verification. تظل meaningful-change chain الخاصة بـ dispatch إلزامية، ولا تعتمد الحالة النهائية إلا مراجعة task بحالة APPROVED تم تعيينها بعد آخر owner dispatch، مع executor provenance صالح وtarget snapshot يطابق الحالة الحالية تماما. كما يحدث `ospec execute sync` حالة Combined review وعناصر checklist في قوالب worker-status الإنجليزية والصينية واليابانية والعربية. عند غياب capacity يستخدم implementation التوازي الافتراضي وهو ثلاث مهام؛ وهذا ليس حدا عاما ولا يقيد review batch. وتستبدله capacity أكبر موجبة ومرتبطة بجلسة harness، مما يتيح إعداد توازٍ من 5 إلى 10 عندما تسمح الموارد وسلامة task graph.
+
 يمنع الإصدار 1.8.5 انتظار native child من تجميد Goal controller. يجب أن يعيد `wait_agent` في Codex/GPT وpolling لـ Claude Task وكل native adapter آخر التحكم خلال 60 ثانية، ويحدّث heartbeat قبل `heartbeatDueAt`، ويحفظ كل نتيجة مكتملة فوراً، ثم يعيد tick. لا تعيد حركة Git HEAD وحدها task review عندما تبقى target snapshot دون تغيير، بينما تظل final review مرتبطة بدقة بالـ snapshot وHEAD. عند غياب native capacity يقتصر implementation batch على مهمتين من دون تقليل توازي review الآمن. يجب تقسيم أي task جديدة تتجاوز ستة targets أو إضافة `scope_reason`.
 
 يوضح الإصدار 1.8.6 أن 60 ثانية هي حد دورة polling واحدة للـ controller وليست حد تشغيل child. الحد المطلق الافتراضي هو 120 دقيقة للـ implementation و60 دقيقة للـ review والـ verification، مع heartbeat lease قابلة للتجديد ومدة grace افتراضية قدرها خمس دقائق بين اكتمال evidence ووصول result. يتحقق `ospec loop finalize` من durable evidence قبل تسجيل النجاح. تمنع directory snapshots المتكررة وapproval cache المرتبطة بالسياق وتحسين conflict-safe selection المراجعات القديمة أو المكررة من دون إضعاف provenance. تتطلب serial tasks الجديدة في 1.8.6 قيمة `serial_reason`، وتظل الرسوم القديمة قابلة للقراءة.
@@ -136,7 +140,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 ```bash
 ospec init [path]
-ospec new <change-name> [path]
+ospec change <change-name> [path]
 # فقط عند الحاجة إلى full workflow:
 ospec goal <goal-name> [path]
 ospec verify [changes/active/<change>]
@@ -145,7 +149,7 @@ ospec finalize [changes/active/<change>]
 
 ## Change و Goal
 
-ينشئ `ospec new <change-name> [path]` ملفات classic fast-flow فقط: `proposal.md` و`tasks.md` و`state.json` و`verification.md` و`review.md`. أما `ospec goal <goal-name> [path]` فينشئ full workflow ويستخدم `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وreview artifacts و`artifacts/agents/worker-status.md` وevidence artifacts.
+ينشئ `ospec change <change-name> [path]` ملفات classic fast-flow فقط: `proposal.md` و`tasks.md` و`state.json` و`verification.md` و`review.md`، ويبقى `ospec new` alias متوافقا. أما `ospec goal <goal-name> [path]` فينشئ full workflow ويستخدم `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وreview artifacts و`artifacts/agents/worker-status.md` وevidence artifacts.
 
 يعمل goal كـ **حلقة task graph مرتبطة بالجلسة**. يراقب `ospec loop run --once` الـ evidence ثم يصدر bounded batch يحمل لكل action قيمة `runtimeAdapter.selected.nativeSubagent` مرتبطة بالـ target. يعمل بالتوازي فقط عندما يسمح model-native adapter المختار، ويجب block عند غياب capability أو انتهائها أو عدم مطابقة target. لا يوجد fallback إلى agent CLI أو current controller. راجع [loop-engineering.md](loop-engineering.md).
 
@@ -221,7 +225,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.15
+npm install -g @clawplays/ospec-cli@1.8.17
 ospec update [path]
 ```
 

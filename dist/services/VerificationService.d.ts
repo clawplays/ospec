@@ -1,3 +1,4 @@
+import type { ActiveChangeStatusItem } from '../core/types';
 export interface VerificationCheck {
     name: string;
     status: 'pass' | 'warn' | 'fail';
@@ -10,6 +11,7 @@ export interface VerificationOutcome {
     failCount: number;
     warnCount: number;
     workflowProfile: string;
+    changeStatus?: ActiveChangeStatusItem;
 }
 /**
  * Structured verification analysis that NEVER calls process.exit (Contract 3).
