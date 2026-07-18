@@ -79,6 +79,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.13 は再開した real Goal の次の停止層を修正します。不足する prerequisite review は retryable な dependent worker より先に dispatch されます。finding の追加 path は task graph の完了済み owner に属する場合だけ cross-task scope として許可され、完全な repair scope を snapshot 化して古くなった owner approval を再 review します。成功した bounded controller poll は claim 済み child の短期 lease を更新しますが absolute deadline は動かしません。service 未指定の full Docker Compose rebuild は dispatch packet に scope warning を出します。
 
+1.8.14 は cross-task repair 後の multi-review lease 境界 race を修正します。controller poll は短期 lease 境界後の bounded な 60 秒 wait 以内に同じ claim 済み child を更新できますが、期限切れ result の直接送信、実際の orphan、固定 absolute deadline は引き続き厳格です。記録済みで未承認の cross-task owner review または repair は新しい implementation と retryable worker より先に処理され、競合しない他の reviewer は同じ batch で並列実行できます。
+
 1.8.5 では native child の待機による Goal controller の長時間停止を防ぎます。Codex/GPT の `wait_agent`、Claude Task polling、その他すべての native adapter は 60 秒以内に制御を返し、`heartbeatDueAt` 前に heartbeat を更新し、完了した結果を直ちに保存して再 tick します。task の target snapshot が不変なら Git HEAD の移動だけで再 review せず、final review は snapshot と HEAD の両方に厳密に拘束されます。native capacity が不明な implementation batch は 2 件までですが、安全な review 並列性は維持します。6 個を超える target を持つ新しい task は分割するか `scope_reason` が必要です。
 
 1.8.6 では、60 秒は controller の 1 回の poll 上限であり、child の実行上限ではないことを明確にします。absolute deadline の既定値は implementation が 120 分、review と verification が 60 分で、heartbeat lease は更新でき、evidence 完了後には既定 5 分の result grace があります。`ospec loop finalize` は成功を記録する前に durable evidence を検証します。再帰 directory snapshot、context-bound approval cache、改善された conflict-safe selection により、provenance を弱めず stale/repeated review を防ぎます。1.8.6 の新しい serial task には `serial_reason` が必要で、旧 graph は引き続き読み取れます。
@@ -217,7 +219,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.13
+npm install -g @clawplays/ospec-cli@1.8.14
 ospec update [path]
 ```
 

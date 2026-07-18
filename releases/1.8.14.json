@@ -1,0 +1,20 @@
+{
+  "title_suffix": "multi-review lease and owner ordering",
+  "summary": "OSpec 1.8.14 fixes a cross-task multi-review race found in a resumed Mobile Goal. A bounded controller poll can now renew a claimed child for one 60-second wait after the short-lease boundary without weakening direct-result, orphan, or absolute-deadline guards, and unapproved cross-task owner reviews or repairs now precede downstream implementation while other safe reviewers remain parallel.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.13...1.8.14",
+  "new": [
+    "Added fail-closed discovery of cross-task repair owner IDs from frozen retry provenance.",
+    "Added a one-bounded-wait controller poll tolerance at the short lease boundary."
+  ],
+  "improved": [
+    "Keeps multi-review batches authoritative when one reviewer finishes and a sibling is still live near its lease boundary.",
+    "Prioritizes unapproved cross-task owner review and repair without serializing unrelated conflict-safe reviewers."
+  ],
+  "fixed": [
+    "Fixed a valid late owner finding losing its original action because scheduling overhead crossed the five-minute lease boundary.",
+    "Fixed downstream implementation being emitted before a cross-task owner review or repair had settled."
+  ],
+  "docs": [
+    "Documented the Mobile iteration 145/146 incident, bounded renewal policy, recovery path, owner barrier, and unchanged provenance and deadline guards."
+  ]
+}

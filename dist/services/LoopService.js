@@ -53,6 +53,7 @@ const LOOP_CONTROLLER_LOCK_FILE = 'controller.lock';
 const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
 const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
+const CONTROLLER_POLL_LEASE_TOLERANCE_MS = 60 * 1000;
 const INITIAL_ACTION_HEARTBEAT_BUFFER_MS = 60 * 1000;
 const MAX_ACTION_LEASE_MS = 30 * 60 * 1000;
 const DEFAULT_IMPLEMENTATION_MAX_RUNTIME_MS = 2 * 60 * 60 * 1000;
@@ -925,7 +926,8 @@ class LoopService {
                 continue;
             const leaseExpiresAt = Date.parse(item.leaseExpiresAt);
             const absoluteExpiresAt = Date.parse(item.absoluteExpiresAt || '');
-            if (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt <= now.getTime())
+            if (!Number.isFinite(leaseExpiresAt)
+                || now.getTime() - leaseExpiresAt > CONTROLLER_POLL_LEASE_TOLERANCE_MS)
                 continue;
             if (Number.isFinite(absoluteExpiresAt) && absoluteExpiresAt <= now.getTime())
                 continue;
@@ -1256,6 +1258,7 @@ class LoopService {
             return this.gateResult(resolved, state, trigger, 'Loop blocked: a valid task graph derived from the approved implementation plan is required before executable work.');
         }
         let report;
+        let crossTaskRepairOwnerIds;
         try {
             await this.taskGraph.restoreTaskReviewApprovals(resolved);
             const progressProjection = await this.taskGraph.reconcileGoalProgress(resolved);
@@ -1263,6 +1266,7 @@ class LoopService {
                 return this.gateResult(resolved, state, trigger, `Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`);
             }
             report = await this.taskGraph.getReport(resolved);
+            crossTaskRepairOwnerIds = new Set(await this.taskGraph.readCrossTaskRepairOwnerIds(resolved));
         }
         catch (error) {
             return this.gateResult(resolved, state, trigger, `Task graph inspection failed: ${error?.message || error}`);
@@ -1324,7 +1328,31 @@ class LoopService {
             const review = await this.taskGraph.review(resolved);
             return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], `${feedback || 'Verification failed.'} Independent final review is required before grouped repair.`, false, prepared);
         }
-        if (report.dispatchableTasks.length > 0) {
+        const allTasks = this.allReportTasks(report);
+        const reviewTasks = report.completedTasks.filter(task => !task.review || !APPROVED_REVIEW_DECISIONS.has(task.review.decision));
+        const crossTaskOwnerReviewTasks = reviewTasks.filter(task => crossTaskRepairOwnerIds.has(task.id));
+        const crossTaskOwnerGateTasks = allTasks.filter(task => crossTaskRepairOwnerIds.has(task.id)
+            && (!['DONE', 'DONE_WITH_CONCERNS'].includes(task.status)
+                || !task.review
+                || !APPROVED_REVIEW_DECISIONS.has(task.review.decision)));
+        const crossTaskOwnerReviewBarrier = crossTaskOwnerGateTasks.length > 0;
+        const crossTaskOwnerBarrierFeedback = crossTaskOwnerReviewBarrier
+            ? `Cross-task repair owner review or repair must settle before downstream work: ${crossTaskOwnerGateTasks.map(task => task.id).join(', ')}.`
+            : feedback;
+        const dispatchableCrossTaskOwners = report.dispatchableTasks.filter(task => crossTaskRepairOwnerIds.has(task.id));
+        if (dispatchableCrossTaskOwners.length > 0) {
+            const selected = this.taskGraph.selectConflictSafeTasks(dispatchableCrossTaskOwners).slice(0, 1);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, selected.length, false, now, 'implementation', dispatchableCrossTaskOwners.length > selected.length ? ['cross_task_owner_serial_recovery'] : []);
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+            }
+            const safetyError = await this.validateTaskSafety(resolved, config, selected);
+            if (safetyError)
+                return this.gateResult(resolved, state, trigger, safetyError);
+            const dispatch = await this.taskGraph.dispatch(resolved, { taskId: selected[0].id });
+            return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), crossTaskOwnerBarrierFeedback, verifyPassed, prepared);
+        }
+        if (report.dispatchableTasks.length > 0 && !crossTaskOwnerReviewBarrier) {
             const prepared = await this.prepareLoopBatch(resolved, config, state, report.dispatchableTasks.length, false, now, 'implementation');
             if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
@@ -1336,7 +1364,6 @@ class LoopService {
             const dispatch = await this.taskGraph.dispatch(resolved, { limit: selected.length });
             return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
-        const reviewTasks = report.completedTasks.filter(task => !task.review || !APPROVED_REVIEW_DECISIONS.has(task.review.decision));
         const blockedTasks = report.blockedTasks
             .map(item => item.task)
             .filter(task => task.status === 'BLOCKED' || task.status === 'NEEDS_CONTEXT');
@@ -1345,16 +1372,25 @@ class LoopService {
             await this.taskGraph.readLatestBlockerEscalation(resolved, task.id),
         ])));
         const retryableBlockedTasks = blockedTasks.filter(task => blockerRecords.get(task.id)?.retryable === true);
+        const retryableCrossTaskOwnerTasks = retryableBlockedTasks.filter(task => crossTaskRepairOwnerIds.has(task.id));
         const durableBlockedTasks = blockedTasks.filter(task => !retryableBlockedTasks.includes(task));
         const needsRepair = reviewTasks.filter(task => RETRY_REVIEW_DECISIONS.has(task.review?.decision || ''));
         const blockedReviewTasks = reviewTasks.filter(task => task.review?.decision === 'BLOCKED');
         const pendingReviewTasks = reviewTasks.filter(task => !needsRepair.includes(task) && !blockedReviewTasks.includes(task));
         const blockingReasonsByTask = new Map(report.blockedTasks.map(item => [item.task.id, item.reasons]));
         const pendingReviewIds = new Set(pendingReviewTasks.map(task => task.id));
-        const prerequisiteReviewIds = new Set([...needsRepair, ...retryableBlockedTasks].flatMap(task => (blockingReasonsByTask.get(task.id) || [])
-            .map(reason => reason.match(/^waiting_for_task_review:(.+)$/)?.[1] || null)
-            .filter((taskId) => Boolean(taskId && taskId !== task.id && pendingReviewIds.has(taskId)))));
-        const prerequisiteReviewTasks = pendingReviewTasks.filter(task => prerequisiteReviewIds.has(task.id));
+        const prerequisiteReviewIds = new Set([
+            ...pendingReviewTasks
+                .filter(task => crossTaskRepairOwnerIds.has(task.id))
+                .map(task => task.id),
+            ...[...needsRepair, ...retryableBlockedTasks].flatMap(task => (blockingReasonsByTask.get(task.id) || [])
+                .map(reason => reason.match(/^waiting_for_task_review:(.+)$/)?.[1] || null)
+                .filter((taskId) => Boolean(taskId && taskId !== task.id && pendingReviewIds.has(taskId)))),
+        ]);
+        const pendingCrossTaskOwnerReviews = pendingReviewTasks.filter(task => crossTaskRepairOwnerIds.has(task.id));
+        const prerequisiteReviewTasks = pendingCrossTaskOwnerReviews.length > 0
+            ? pendingReviewTasks
+            : pendingReviewTasks.filter(task => prerequisiteReviewIds.has(task.id));
         if (prerequisiteReviewTasks.length > 0) {
             const graphSafe = this.taskGraph.selectConflictSafeTasks(prerequisiteReviewTasks, { respectParallelizable: false });
             const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, true, now, 'task-review', graphSafe.length < prerequisiteReviewTasks.length ? ['graph_conflict'] : []);
@@ -1364,11 +1400,19 @@ class LoopService {
             const reviews = await this.taskGraph.reviewTasks(resolved, {
                 taskIds: graphSafe.slice(0, prepared.limit).map(task => task.id),
             });
-            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), `Prerequisite review required before dependent repair: ${graphSafe.map(task => task.id).join(', ')}.`, verifyPassed, prepared);
+            const ownerReviewIds = graphSafe
+                .filter(task => crossTaskRepairOwnerIds.has(task.id))
+                .map(task => task.id);
+            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), ownerReviewIds.length > 0
+                ? `Cross-task repair owner review required before downstream work: ${ownerReviewIds.join(', ')}.`
+                : `Prerequisite review required before dependent repair: ${graphSafe.map(task => task.id).join(', ')}.`, verifyPassed, prepared);
         }
-        if (retryableBlockedTasks.length > 0) {
-            const graphSafe = this.taskGraph.selectConflictSafeTasks(retryableBlockedTasks);
-            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < retryableBlockedTasks.length ? ['graph_conflict_or_serial_task'] : []);
+        if (retryableCrossTaskOwnerTasks.length > 0 || (retryableBlockedTasks.length > 0 && !crossTaskOwnerReviewBarrier)) {
+            const retryCandidates = retryableCrossTaskOwnerTasks.length > 0
+                ? retryableCrossTaskOwnerTasks
+                : retryableBlockedTasks;
+            const graphSafe = this.taskGraph.selectConflictSafeTasks(retryCandidates);
+            const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', graphSafe.length < retryCandidates.length ? ['graph_conflict_or_serial_task'] : []);
             if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
             }
@@ -1382,10 +1426,10 @@ class LoopService {
                     taskId: task.id,
                     force: true,
                     trigger: 'worker_status',
-                    summary: `Loop retry after worker status ${task.status}. ${feedback || ''}`.trim(),
+                    summary: `Loop retry after worker status ${task.status}. ${crossTaskOwnerBarrierFeedback || ''}`.trim(),
                 })),
             });
-            return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
+            return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), crossTaskOwnerBarrierFeedback, verifyPassed, prepared);
         }
         const graphReadyRepairs = needsRepair.filter(task => (blockingReasonsByTask.get(task.id) || []).every(reason => reason === `waiting_for_task_review:${task.id}`));
         const repairAssessments = new Map(await Promise.all(graphReadyRepairs.map(async (task) => [
@@ -1424,7 +1468,7 @@ class LoopService {
                         };
                     }),
                 });
-                return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
+                return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), crossTaskOwnerBarrierFeedback, verifyPassed, prepared);
             }
         }
         if (pendingReviewTasks.length > 0) {
@@ -1436,7 +1480,7 @@ class LoopService {
             const reviews = await this.taskGraph.reviewTasks(resolved, {
                 taskIds: graphSafe.slice(0, prepared.limit).map(task => task.id),
             });
-            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
+            return this.issueAction(resolved, config, state, trigger, 'task-review', reviews.dispatches.map(item => this.reviewAction(resolved, config, item, state.iteration + 1)), crossTaskOwnerBarrierFeedback, verifyPassed, prepared);
         }
         if (report.runningTasks.length > 0) {
             const recovery = await this.taskGraph.assessRunningTaskRecovery(resolved, report.runningTasks.map(task => task.id), config.efficiency.implementationMaxRuntimeMinutes, now);

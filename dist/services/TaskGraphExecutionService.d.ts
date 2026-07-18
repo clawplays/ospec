@@ -1541,6 +1541,7 @@ export declare class TaskGraphExecutionService {
     private retryWorkerRunUnlocked;
     private captureTaskReviewRepairContext;
     private readTaskReviewRepairHistory;
+    readCrossTaskRepairOwnerIds(changePath: string): Promise<string[]>;
     countTaskReviewRepairRounds(changePath: string, taskId: string): Promise<number>;
     assessRunningTaskRecovery(changePath: string, taskIds: string[], maxRuntimeMinutes: number, now?: Date): Promise<TaskRunningRecoveryAssessment[]>;
     assessTaskReviewRepairConvergence(changePath: string, taskId: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;

@@ -1627,6 +1627,34 @@ class TaskGraphExecutionService {
         }
         return history;
     }
+    async readCrossTaskRepairOwnerIds(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const retriesPath = path.join(resolvedChangePath, 'artifacts', 'agents', RETRIES_DIR);
+        if (!(await this.fileService.exists(retriesPath)))
+            return [];
+        const entries = (await fs_1.promises.readdir(retriesPath, { withFileTypes: true }))
+            .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+            .sort((left, right) => left.name.localeCompare(right.name));
+        const ownerIds = new Set();
+        for (const entry of entries) {
+            try {
+                const record = await this.fileService.readJSON(path.join(retriesPath, entry.name));
+                const recordedOwnerIds = record.repairContext?.crossTaskScopeOwnerIds;
+                if (recordedOwnerIds === undefined)
+                    continue;
+                if (!Array.isArray(recordedOwnerIds)
+                    || recordedOwnerIds.some(ownerId => typeof ownerId !== 'string' || !ownerId.trim())) {
+                    throw new Error('cross-task owner IDs are malformed');
+                }
+                for (const ownerId of recordedOwnerIds)
+                    ownerIds.add(ownerId.trim());
+            }
+            catch (error) {
+                throw new Error(`Cross-task repair owner history is unreadable at ${entry.name} (${error?.message || error}).`);
+            }
+        }
+        return [...ownerIds].sort();
+    }
     async countTaskReviewRepairRounds(changePath, taskId) {
         return (await this.readTaskReviewRepairHistory(changePath, taskId)).length;
     }
