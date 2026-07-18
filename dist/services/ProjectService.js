@@ -2663,6 +2663,16 @@ ${formatSuggestion()}
         }
         if (isGoalWorkflow) {
             checks.push(...await this.getGoalDocumentReviewChecks(featureDir));
+            const verificationFreshness = await new TaskGraphExecutionService_1.TaskGraphExecutionService(this.fileService)
+                .validateLatestVerificationEvidence(featureDir)
+                .catch((error) => ({ ready: false, reason: error?.message || String(error) }));
+            checks.push({
+                name: 'goal.verification_evidence.freshness',
+                status: verificationFreshness.ready ? 'pass' : 'fail',
+                message: verificationFreshness.ready
+                    ? 'Latest verification evidence matches the current Git and target-file snapshot'
+                    : verificationFreshness.reason || 'Latest verification evidence is stale',
+            });
         }
         const classicCloseout = !isGoalWorkflow
             ? new ClassicChangeCloseoutService_1.ClassicChangeCloseoutService(this.fileService)
@@ -3927,23 +3937,6 @@ ${formatSuggestion()}
                     name: 'verification.md.evidence',
                     status: 'warn',
                     message: `Latest verification evidence is ${normalizedStatus}`,
-                };
-            }
-            const latestReviewOrGraphUpdate = await this.getLatestUpdatedAt([
-                path_1.default.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
-                path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW),
-                path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW),
-                path_1.default.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.CODE_QUALITY_REVIEW),
-            ]);
-            const recordedAt = new Date(latest.recordedAt).getTime();
-            const sourceUpdatedAt = latestReviewOrGraphUpdate
-                ? new Date(latestReviewOrGraphUpdate).getTime()
-                : 0;
-            if (Number.isFinite(recordedAt) && sourceUpdatedAt > recordedAt) {
-                return {
-                    name: 'verification.md.evidence',
-                    status: 'warn',
-                    message: `Latest passing verification evidence is older than task graph or review artifact updates (${latest.recordedAt})`,
                 };
             }
             return {

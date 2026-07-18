@@ -164,7 +164,7 @@ A goal runs as a **session-bound task-graph loop**. For IDE-native execution, re
 - For `ospec-goal`, use `design.md` to record the chosen approach, tradeoffs, affected boundaries, risks, and open questions before implementation starts.
 - For `ospec-goal`, use `implementation-plan.md` to turn the design into agent-executable steps with files, expected results, verification commands, dependencies, and conflicts.
 - For `ospec-goal`, use `artifacts/agents/task-graph.json` to keep the execution graph machine-readable: task IDs, dependencies, parallel safety, conflicts, target files, verification commands, expected result, worker role, and task status.
-- Treat each loop action's dispatch, review, or verification packet path as authoritative context. Do not embed the full goal in every worker. Durable task status and review/verification evidence feed fresh retries, one grouped final-review repair wave, and the next loop tick.
+- Treat each loop action's dispatch, review, or verification packet path as authoritative context. Do not embed the full goal in every worker. Durable task status and review/verification evidence feed fresh retries, grouped final-review repair, and the next loop tick. In continuous mode, a stalled finding set receives one durable root-cause strategy escalation before the Loop stops repeated work.
 - Use `ospec run status [path]` when using the explicit queue runner to see the current queue run plus the active change task graph snapshot, including completed, running, dispatchable, blocked, invalid, and next-action counts.
 - Queue runner next instructions from `ospec run start`, `run resume`, `run step`, and `run status` use the active task graph when available, so dispatchable work points to `ospec execute dispatch ...`; the runner still does not dispatch workers or edit source files.
 - Use `ospec execute bootstrap [changes/active/<change>]` when starting or resuming one active change to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md` with the project session brief snapshot, then follow the next safe action it reports. When an active dispatch already exists, bootstrap recommends the matching `ospec execute launch ... --task ...` command.
@@ -226,7 +226,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.17
+npm install -g @clawplays/ospec-cli@1.8.18
 ospec update [path]
 ```
 

@@ -163,7 +163,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - goal では `design.md` に、実装前の採用方針、主なトレードオフ、影響する境界、リスク、未解決事項を記録します。
 - goal では `implementation-plan.md` に、設計を agent 実行可能な手順へ変換し、ファイル、期待結果、検証コマンド、依存関係、競合を記録します。
 - goal では `artifacts/agents/task-graph.json` に、task ID、依存関係、並行安全性、競合、対象ファイル、検証コマンド、期待結果、worker role、task 状態を機械可読な実行グラフとして記録します。
-- 各 loop action が参照する dispatch/review/verification packet path を authoritative context として扱い、goal 全体を各 worker に埋め込まないでください。永続化された task status と review/verification evidence が、fresh retry、単一の grouped final-review repair wave、次の tick を駆動します。
+- 各 loop action が参照する dispatch/review/verification packet path を authoritative context として扱い、goal 全体を各 worker に埋め込まないでください。永続化された task status と review/verification evidence が fresh retry、grouped final-review repair、次の tick を駆動します。continuous mode では停滞した finding 集合に durable root-cause strategy escalation を 1 回発行してから、反復作業を停止します。
 - explicit queue runner を使う場合は、`ospec run status [path]` で現在の queue run と active change task graph snapshot を確認できます。completed、running、dispatchable、blocked、invalid の件数と next action を表示します。
 - `ospec run start`、`run resume`、`run step`、`run status` の next instruction は active task graph を参照します。dispatchable work がある場合は `ospec execute dispatch ...` を示しますが、runner は worker dispatch や source file 編集を行いません。
 - one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `artifacts/agents/bootstrap.json` と `artifacts/agents/bootstrap.md` を書き、出力された次の安全な action に従います。active dispatch が既にある場合、bootstrap は対応する `ospec execute launch ... --task ...` command を推奨します。
@@ -225,7 +225,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.17
+npm install -g @clawplays/ospec-cli@1.8.18
 ospec update [path]
 ```
 

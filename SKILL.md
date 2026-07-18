@@ -51,7 +51,7 @@ Use the full `ospec execute ...` layer only for goal work or when the user expli
 - Dispatch scoped worker packets, use the launch plan with the current harness native agent mechanism, record completion, then perform one combined task review.
 - A worker profile is logical (`mechanical`, `standard`, `strong_reasoning`, `review`, `final_review`). Harness-specific model names come from `.skillrc`; absence is explicit and falls back to the harness default.
 - Record optional provider usage sidecars through the supported completion command. Metrics are evidence, not an archive gate unless project policy says otherwise.
-- When final review requires changes, group all findings into one repair wave and one repair task, run its covering verification once, then run one combined task review and one final re-review.
+- When final review requires changes, group all findings into one repair wave and one repair task, run its covering verification once, then run one combined task review and one final re-review. In continuous mode, a stalled task or final finding set may receive one durable root-cause strategy escalation; execute that packet normally, but never reissue the same strategy key or raise a limit to repeat unchanged work.
 - Keep reviewers independent: they read scoped evidence, do not edit implementation, do not accept hidden severity downgrades, and report findings before summaries. Record actionable findings in both Markdown and the sibling structured `*.findings.json`.
 - Do not archive while task graph, review, decision, documentation, optional-step, worker-status, or verification gates are unresolved.
 

@@ -163,7 +163,7 @@ ospec finalize [changes/active/<change>]
 - في goal استخدم `design.md` قبل التنفيذ لتسجيل النهج المختار والمفاضلات الرئيسية والحدود المتأثرة والمخاطر والأسئلة المفتوحة.
 - في goal استخدم `implementation-plan.md` لتحويل التصميم إلى خطوات قابلة للتنفيذ بواسطة agent مع الملفات والنتائج المتوقعة وأوامر التحقق والاعتماديات والتعارضات.
 - في goal استخدم `artifacts/agents/task-graph.json` لحفظ مخطط التنفيذ بصيغة قابلة للقراءة آلياً: معرفات المهام والاعتماديات وسلامة التوازي والتعارضات والملفات المستهدفة وأوامر التحقق والنتيجة المتوقعة ودور worker وحالة المهمة.
-- اعتبر مسار dispatch/review/verification packet الذي يشير إليه كل loop action هو authoritative context، ولا تضع goal كاملا داخل سياق كل worker. تقود task status وreview/verification evidence المحفوظة fresh retry وgrouped final-review repair wave واحدة والـ tick التالية.
+- اعتبر مسار dispatch/review/verification packet الذي يشير إليه كل loop action هو authoritative context، ولا تضع goal كاملا داخل سياق كل worker. تقود task status وreview/verification evidence المحفوظة fresh retry وgrouped final-review repair والـ tick التالية. في continuous mode تحصل مجموعة findings المتوقفة على root-cause strategy escalation دائمة واحدة قبل أن يوقف Loop العمل المتكرر.
 - عند استخدام explicit queue runner، استخدم `ospec run status [path]` لعرض queue run الحالي مع active change task graph snapshot، بما في ذلك أعداد completed وrunning وdispatchable وblocked وinvalid والخطوة التالية.
 - تستخدم تعليمات الخطوة التالية في `ospec run start` و`run resume` و`run step` و`run status` active task graph عند توفره. عند وجود dispatchable work ستقترح `ospec execute dispatch ...`، لكن runner لا يوزع workers ولا يحرر ملفات source.
 - عند بدء أو استئناف active change واحد، استخدم `ospec execute bootstrap [changes/active/<change>]` لكتابة `artifacts/agents/bootstrap.json` و`artifacts/agents/bootstrap.md` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي الذي يعرضه. عند وجود active dispatch، يوصي bootstrap بأمر `ospec execute launch ... --task ...` المطابق.
@@ -225,7 +225,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.17
+npm install -g @clawplays/ospec-cli@1.8.18
 ospec update [path]
 ```
 

@@ -164,7 +164,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 - 在 `ospec-goal` 中，用 `design.md` 在实现前记录选定方案、关键取舍、影响边界、风险和未决问题。
 - 在 `ospec-goal` 中，用 `implementation-plan.md` 把设计转成 agent 可执行步骤，明确文件、预期结果、验证命令、依赖和冲突。
 - 在 `ospec-goal` 中，用 `artifacts/agents/task-graph.json` 保存机器可读执行图：task ID、依赖、并行安全性、冲突、目标文件、验证命令、预期结果、worker 角色和 task 状态。
-- 把每个 loop action 引用的 dispatch、review 或 verification packet path 当作权威上下文，不要把整个 goal 内嵌到每个 worker。持久化 task 状态与 review/verification evidence 会驱动 fresh retry、一次合并的最终 review repair wave 和下一次 tick。
+- 把每个 loop action 引用的 dispatch、review 或 verification packet path 当作权威上下文，不要把整个 goal 内嵌到每个 worker。持久化 task 状态与 review/verification evidence 会驱动 fresh retry、合并的最终 review repair 和下一次 tick。连续模式下，停滞的 finding 集合会获得一次持久化根因策略升级，之后才停止重复工作。
 - 使用显式队列 runner 时，可用 `ospec run status [path]` 同时查看当前 queue run 和 active change task graph 快照，包括已完成、运行中、可分派、阻塞、无效任务数量和下一步动作。
 - `ospec run start`、`run resume`、`run step` 和 `run status` 的下一步提示会参考 active task graph；如果有可分派任务，会提示 `ospec execute dispatch ...`。runner 仍然不会自动派发 worker，也不会编辑源码。
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
@@ -226,7 +226,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.17
+npm install -g @clawplays/ospec-cli@1.8.18
 ospec update [path]
 ```
 

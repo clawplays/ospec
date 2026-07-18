@@ -34,6 +34,8 @@ export interface TaskReviewRepairContext {
     repairScopeSnapshots?: TaskDocumentationSnapshot[];
     /** Completed task owners whose declared paths authorize cross-task repair files. */
     crossTaskScopeOwnerIds?: string[];
+    /** One bounded strategy escalation after ordinary repairs stop converging. */
+    repairStrategy?: TaskRepairStrategyContext;
 }
 export interface TaskRepairConvergenceAssessment {
     scope: 'task' | 'final';
@@ -49,6 +51,22 @@ export interface TaskRepairConvergenceAssessment {
     comparable: boolean;
     progressing: boolean;
     reason: 'below_limit' | 'findings_changed' | 'findings_refined' | 'findings_unchanged' | 'findings_repeated' | 'reviewed_target_unchanged' | 'legacy_context_unavailable';
+}
+export interface TaskRepairStrategyContext {
+    kind: 'stalled_findings';
+    key: string;
+    reason: TaskRepairConvergenceAssessment['reason'];
+    priorRounds: number;
+    findingIds: string[];
+}
+export type TaskWorkerRetryTrigger = 'manual' | 'worker_status' | 'task_review' | 'repair_strategy';
+export interface TaskWorkerRetryInput {
+    taskId: string;
+    runId?: string;
+    summary?: string;
+    force?: boolean;
+    trigger?: TaskWorkerRetryTrigger;
+    repairStrategy?: TaskRepairStrategyContext;
 }
 export interface TaskRunningRecoveryAssessment {
     taskId: string;
@@ -513,6 +531,7 @@ export interface TaskRepairWaveRecord {
     sourceReviewDispatchId?: string;
     sourceReviewTargetSnapshotHash?: string;
     sourceRepairScopeSnapshotHash?: string;
+    repairStrategy?: TaskRepairStrategyContext;
 }
 export interface TaskRepairWaveResult {
     changePath: string;
@@ -1451,7 +1470,7 @@ export interface TaskWorkerRetryRecord {
     createdAt: string;
     previousStatus: string;
     previousRunId: string | null;
-    trigger?: 'manual' | 'worker_status' | 'task_review';
+    trigger?: TaskWorkerRetryTrigger;
     summary: string | null;
     recordPath: string;
     reportPath: string;
@@ -1522,31 +1541,21 @@ export declare class TaskGraphExecutionService {
         summary?: string;
     }): Promise<TaskWorkerCollectResult>;
     private collectWorkerRunUnlocked;
-    retryWorkerRun(changePath: string, options: {
-        taskId: string;
-        runId?: string;
-        summary?: string;
-        force?: boolean;
-        trigger?: 'manual' | 'worker_status' | 'task_review';
-    }): Promise<TaskWorkerRetryResult>;
+    retryWorkerRun(changePath: string, options: TaskWorkerRetryInput): Promise<TaskWorkerRetryResult>;
     retryWorkerRuns(changePath: string, options: {
-        tasks: Array<{
-            taskId: string;
-            runId?: string;
-            summary?: string;
-            force?: boolean;
-            trigger?: 'manual' | 'worker_status' | 'task_review';
-        }>;
+        tasks: TaskWorkerRetryInput[];
     }): Promise<TaskWorkerRetryBatchResult>;
     private retryWorkerRunUnlocked;
     private captureTaskReviewRepairContext;
     private readTaskReviewRepairHistory;
     readCrossTaskRepairOwnerIds(changePath: string): Promise<string[]>;
     countTaskReviewRepairRounds(changePath: string, taskId: string): Promise<number>;
+    hasTaskReviewRepairStrategyAttempt(changePath: string, taskId: string, strategyKey: string): Promise<boolean>;
     assessRunningTaskRecovery(changePath: string, taskIds: string[], maxRuntimeMinutes: number, now?: Date): Promise<TaskRunningRecoveryAssessment[]>;
     assessTaskReviewRepairConvergence(changePath: string, taskId: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;
     private readFinalReviewRepairHistory;
     countFinalReviewRepairWaves(changePath: string): Promise<number>;
+    hasFinalReviewRepairStrategyAttempt(changePath: string, strategyKey: string): Promise<boolean>;
     assessFinalReviewRepairConvergence(changePath: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;
     private assessRepairFindingProgress;
     private readRepairConvergenceReviewDispatch;
@@ -1629,7 +1638,9 @@ export declare class TaskGraphExecutionService {
         stage?: TaskReviewStage;
         summary?: string;
     }): Promise<TaskReviewFeedbackPlanResult>;
-    createRepairWave(changePath: string): Promise<TaskRepairWaveResult>;
+    createRepairWave(changePath: string, options?: {
+        repairStrategy?: TaskRepairStrategyContext;
+    }): Promise<TaskRepairWaveResult>;
     private createRepairWaveUnlocked;
     recordUserDecision(changePath: string, options: {
         id?: string;

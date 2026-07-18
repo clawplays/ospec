@@ -409,6 +409,7 @@ export declare class LoopService {
     private reportSummary;
     private buildProgressFingerprint;
     private allReportTasks;
+    private buildRepairStrategy;
     private readFinalReviewDecision;
     private resetFinalReviewForVerificationFailure;
     private metrics;

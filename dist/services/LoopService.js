@@ -1442,6 +1442,18 @@ class LoopService {
                 || (config.efficiency.continueWhileProgressing && assessment.progressing)));
         });
         const stalledRepairs = graphReadyRepairs.filter(task => !eligibleRepairs.includes(task));
+        const stalledRepairCandidates = stalledRepairs.flatMap(task => {
+            const assessment = repairAssessments.get(task.id);
+            return assessment
+                ? [{ task, assessment, repairStrategy: this.buildRepairStrategy('task', task.id, assessment) }]
+                : [];
+        });
+        const strategyRepairCandidates = config.efficiency.continueWhileProgressing
+            ? (await Promise.all(stalledRepairCandidates.map(async (candidate) => ({
+                ...candidate,
+                attempted: await this.taskGraph.hasTaskReviewRepairStrategyAttempt(resolved, candidate.task.id, candidate.repairStrategy.key),
+            })))).filter(item => !item.attempted)
+            : [];
         if (needsRepair.length > 0) {
             if (eligibleRepairs.length > 0) {
                 const graphSafe = this.taskGraph.selectConflictSafeTasks(eligibleRepairs);
@@ -1469,6 +1481,37 @@ class LoopService {
                     }),
                 });
                 return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), crossTaskOwnerBarrierFeedback, verifyPassed, prepared);
+            }
+            if (strategyRepairCandidates.length > 0) {
+                const graphSafe = this.taskGraph.selectConflictSafeTasks(strategyRepairCandidates.map(item => item.task));
+                const prepared = await this.prepareLoopBatch(resolved, config, state, graphSafe.length, false, now, 'implementation', [
+                    'task_review_strategy_escalation',
+                    ...(graphSafe.length < strategyRepairCandidates.length ? ['graph_conflict_or_serial_task'] : []),
+                ]);
+                if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                    return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
+                }
+                const selected = graphSafe.slice(0, prepared.limit);
+                const safetyError = await this.validateTaskSafety(resolved, config, selected);
+                if (safetyError)
+                    return this.gateResult(resolved, state, trigger, safetyError);
+                state.currentStep = 'repair';
+                const retry = await this.taskGraph.retryWorkerRuns(resolved, {
+                    tasks: selected.map(task => {
+                        const candidate = strategyRepairCandidates.find(item => item.task.id === task.id);
+                        if (!candidate) {
+                            throw new Error(`Missing repair-strategy candidate for ${task.id}.`);
+                        }
+                        return {
+                            taskId: task.id,
+                            force: true,
+                            trigger: 'repair_strategy',
+                            repairStrategy: candidate.repairStrategy,
+                            summary: `Loop strategy escalation after stalled task review; findings=${candidate.assessment.currentFindingIds.join(',')}; convergence=${candidate.assessment.reason}; prior-rounds=${candidate.assessment.roundsUsed}. Reassess the root cause and do not repeat the prior patch shape.`,
+                        };
+                    }),
+                });
+                return this.issueAction(resolved, config, state, trigger, 'implementation', retry.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), `One bounded repair-strategy escalation was issued for stalled finding set(s): ${selected.map(task => task.id).join(', ')}.`, verifyPassed, prepared);
             }
         }
         if (pendingReviewTasks.length > 0) {
@@ -1517,7 +1560,7 @@ class LoopService {
             return this.gateResult(resolved, state, trigger, `Loop blocked: task-review findings made no progress after the configured automatic threshold (${stalledRepairs.map(task => {
                 const assessment = repairAssessments.get(task.id);
                 return `${task.id}: rounds=${assessment?.roundsUsed ?? 0}, findings=${assessment?.currentFindingIds.join(',') || 'unknown'}, reason=${assessment?.reason || 'unknown'}`;
-            }).join('; ')}). Change repair strategy or review evidence before continuing.`);
+            }).join('; ')}). The bounded repair-strategy escalation for this finding set was already used; new external context or a materially revised review finding is required.`);
         }
         if (blockedReviewTasks.length > 0) {
             return this.gateResult(resolved, state, trigger, `Loop blocked: task review requires external context (${blockedReviewTasks.map(task => task.id).join(', ')}). Resolve the reviewer blocker before re-review; automatic implementation repair is disabled for BLOCKED decisions.`);
@@ -1548,9 +1591,12 @@ class LoopService {
                     && !config.efficiency.continueWhileProgressing) {
                     return this.gateResult(resolved, state, trigger, `Loop blocked: final-review repair limit reached (final=${convergence.roundsUsed}/${config.efficiency.maxFinalRepairRounds}). Inspect unresolved findings before raising --max-final-repair-rounds or enabling --continue-while-progressing.`);
                 }
-                if (convergence.roundsUsed >= config.efficiency.maxFinalRepairRounds
-                    && !convergence.progressing) {
-                    return this.gateResult(resolved, state, trigger, `Loop blocked: final-review findings made no progress after ${convergence.roundsUsed} repair wave(s) (findings=${convergence.currentFindingIds.join(',')}, reason=${convergence.reason}). Change repair strategy or review evidence before continuing.`);
+                const repairStrategy = convergence.roundsUsed >= config.efficiency.maxFinalRepairRounds
+                    && !convergence.progressing
+                    ? this.buildRepairStrategy('final', null, convergence)
+                    : null;
+                if (repairStrategy && await this.taskGraph.hasFinalReviewRepairStrategyAttempt(resolved, repairStrategy.key)) {
+                    return this.gateResult(resolved, state, trigger, `Loop blocked: final-review findings made no progress after ${convergence.roundsUsed} repair wave(s) (findings=${convergence.currentFindingIds.join(',')}, reason=${convergence.reason}). The bounded repair-strategy escalation for this finding set was already used; new external context or a materially revised review finding is required.`);
                 }
                 const safetyError = await this.validateTaskSafety(resolved, config, this.allReportTasks(report));
                 if (safetyError)
@@ -1560,8 +1606,10 @@ class LoopService {
                     return this.runtimeAdapterGateResult(resolved, state, trigger, 'implementation', prepared.runtimeAdapter);
                 }
                 state.currentStep = 'repair';
-                const repair = await this.taskGraph.createRepairWave(resolved);
-                return this.issueAction(resolved, config, state, trigger, 'implementation', repair.dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), `Final review ${finalDecision}; grouped repair dispatched.`, verifyPassed, prepared);
+                const repair = await this.taskGraph.createRepairWave(resolved, repairStrategy ? { repairStrategy } : {});
+                return this.issueAction(resolved, config, state, trigger, 'implementation', repair.dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), repairStrategy
+                    ? `Final review ${finalDecision}; one bounded grouped repair-strategy escalation dispatched.`
+                    : `Final review ${finalDecision}; grouped repair dispatched.`, verifyPassed, prepared);
             }
             if (!APPROVED_REVIEW_DECISIONS.has(finalDecision)) {
                 const prepared = await this.prepareLoopBatch(resolved, config, state, 1, true, now, 'final-review');
@@ -2400,6 +2448,16 @@ class LoopService {
         for (const task of [...report.readyTasks, ...report.dispatchableTasks, ...report.runningTasks, ...report.completedTasks, ...report.concernTasks, ...report.blockedTasks.map(item => item.task), ...report.invalidTasks.map(item => item.task)])
             map.set(task.id, task);
         return [...map.values()];
+    }
+    buildRepairStrategy(scope, taskId, assessment) {
+        const findingIds = [...assessment.currentFindingIds].sort();
+        return {
+            kind: 'stalled_findings',
+            key: `${scope}:${taskId || 'whole-change'}:findings:${findingIds.join('|')}`,
+            reason: assessment.reason,
+            priorRounds: assessment.roundsUsed,
+            findingIds,
+        };
     }
     async readFinalReviewDecision(changePath) {
         try {

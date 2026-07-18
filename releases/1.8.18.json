@@ -1,0 +1,21 @@
+{
+  "title_suffix": "consistent goal closeout and bounded repair strategy",
+  "summary": "OSpec 1.8.18 aligns Goal finalize readiness with canonical archive verification, adds one durable root-cause strategy escalation for stalled findings, and makes ospec loop tick a real single-iteration controller command.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.17...1.8.18",
+  "new": [
+    "Added one durable repair_strategy action for each stalled task or final-review finding set in continuous mode.",
+    "Added ospec loop tick as a supported compatibility alias for one transactional controller iteration."
+  ],
+  "improved": [
+    "Strategy packets preserve structured findings, review paths, frozen repair scope, snapshots, and cross-task owner provenance while requiring root-cause reassessment and focused regression coverage.",
+    "Goal status, finalize, and archive preview now share canonical verification freshness semantics."
+  ],
+  "fixed": [
+    "Fixed ospec execute sync timestamps invalidating otherwise current passing verification during Goal finalize.",
+    "Fixed stalled task and grouped final findings having no legal controller-owned repair route before a hard stop.",
+    "Fixed status guidance referring to a loop tick command that the CLI did not implement."
+  ],
+  "docs": [
+    "Documented verification freshness, bounded strategy escalation, loop tick compatibility, and recovery steps for the confirmed AIHub and Web Goals."
+  ]
+}

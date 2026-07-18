@@ -1415,6 +1415,12 @@ class TaskGraphExecutionService {
         if (!taskId) {
             throw new Error('Worker retry requires --task.');
         }
+        if (options.trigger === 'repair_strategy' && !options.repairStrategy) {
+            throw new Error('Repair-strategy retry requires a durable strategy context.');
+        }
+        if (options.repairStrategy && options.trigger !== 'repair_strategy') {
+            throw new Error('Repair strategy context is only valid for a repair_strategy retry.');
+        }
         const report = await this.getReport(resolvedChangePath);
         const allTasks = this.flattenReportTasks(report);
         const task = allTasks.find(item => item.id === taskId);
@@ -1435,6 +1441,9 @@ class TaskGraphExecutionService {
         }
         const now = new Date().toISOString();
         const repairContext = await this.captureTaskReviewRepairContext(resolvedChangePath, task, allTasks, options.trigger, now);
+        if (repairContext && options.repairStrategy) {
+            repairContext.repairStrategy = options.repairStrategy;
+        }
         const retryId = `retry-${this.toFileSafeTimestamp(now)}-${this.toFileSafeId(taskId)}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
         const sessionPath = this.getSessionPath(resolvedChangePath);
         const session = await this.readSession(sessionPath, report.feature);
@@ -1483,7 +1492,7 @@ class TaskGraphExecutionService {
     async captureTaskReviewRepairContext(changePath, task, allTasks, trigger, capturedAt) {
         const graphDecision = task.review?.decision;
         const reviewRepairPending = graphDecision === 'NEEDS_CHANGES' || graphDecision === 'BLOCKED';
-        if (trigger !== 'task_review' && !reviewRepairPending)
+        if (trigger !== 'task_review' && trigger !== 'repair_strategy' && !reviewRepairPending)
             return undefined;
         const reviewArtifactRelativePath = task.review?.reviewArtifactPath;
         if (!reviewArtifactRelativePath) {
@@ -1617,6 +1626,7 @@ class TaskGraphExecutionService {
                 if (record.taskId !== normalizedTaskId)
                     continue;
                 if (record.trigger === 'task_review'
+                    || record.trigger === 'repair_strategy'
                     || (!record.trigger && String(record.summary || '').startsWith('Loop retry after task review '))) {
                     history.push(record);
                 }
@@ -1657,6 +1667,14 @@ class TaskGraphExecutionService {
     }
     async countTaskReviewRepairRounds(changePath, taskId) {
         return (await this.readTaskReviewRepairHistory(changePath, taskId)).length;
+    }
+    async hasTaskReviewRepairStrategyAttempt(changePath, taskId, strategyKey) {
+        const normalizedKey = String(strategyKey || '').trim();
+        if (!normalizedKey)
+            throw new Error('Task repair strategy lookup requires a strategy key.');
+        const history = await this.readTaskReviewRepairHistory(changePath, taskId);
+        return history.some(record => record.trigger === 'repair_strategy'
+            && record.repairContext?.repairStrategy?.key === normalizedKey);
     }
     async assessRunningTaskRecovery(changePath, taskIds, maxRuntimeMinutes, now = new Date()) {
         const resolvedChangePath = path.resolve(changePath);
@@ -1836,6 +1854,13 @@ class TaskGraphExecutionService {
     }
     async countFinalReviewRepairWaves(changePath) {
         return (await this.readFinalReviewRepairHistory(changePath)).length;
+    }
+    async hasFinalReviewRepairStrategyAttempt(changePath, strategyKey) {
+        const normalizedKey = String(strategyKey || '').trim();
+        if (!normalizedKey)
+            throw new Error('Final repair strategy lookup requires a strategy key.');
+        const history = await this.readFinalReviewRepairHistory(changePath);
+        return history.some(record => record.repairStrategy?.key === normalizedKey);
     }
     async assessFinalReviewRepairConvergence(changePath, configuredLimit) {
         const resolvedChangePath = path.resolve(changePath);
@@ -3285,7 +3310,7 @@ class TaskGraphExecutionService {
             nextInstruction: plan.nextInstruction,
         };
     }
-    async createRepairWave(changePath) {
+    async createRepairWave(changePath, options = {}) {
         return this.withTaskGraphMutationLease(changePath, async () => {
             const resolvedChangePath = path.resolve(changePath);
             const finalReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
@@ -3304,10 +3329,10 @@ class TaskGraphExecutionService {
                     path.join(resolvedChangePath, 'artifacts', 'agents', DISPATCHES_DIR),
                     path.join(resolvedChangePath, 'artifacts', 'agents', REPAIR_WAVES_DIR),
                 ],
-            }, () => this.createRepairWaveUnlocked(resolvedChangePath));
+            }, () => this.createRepairWaveUnlocked(resolvedChangePath, options));
         });
     }
-    async createRepairWaveUnlocked(changePath) {
+    async createRepairWaveUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
         if (report.decisions.pendingRequired > 0 || report.decisions.blockers.length > 0) {
@@ -3326,6 +3351,11 @@ class TaskGraphExecutionService {
         const findings = findingResult.text;
         if (findings.length === 0) {
             throw new Error('Grouped repair requires at least one concrete final-review finding.');
+        }
+        if (options.repairStrategy && (options.repairStrategy.kind !== 'stalled_findings'
+            || !options.repairStrategy.key.trim()
+            || options.repairStrategy.findingIds.length === 0)) {
+            throw new Error('Grouped repair strategy context is malformed.');
         }
         const rawGraph = await this.fileService.readJSON(report.graphPath);
         const rawTasks = Array.isArray(rawGraph.tasks) ? rawGraph.tasks : [];
@@ -3410,6 +3440,7 @@ class TaskGraphExecutionService {
                 sourceReviewTargetSnapshotHash,
                 sourceRepairScopeSnapshotHash,
             } : {}),
+            ...(options.repairStrategy ? { repairStrategy: options.repairStrategy } : {}),
         };
         await this.fileService.writeJSON(path.join(resolvedChangePath, recordPath), record);
         await this.writeLocalizedReportFile(resolvedChangePath, path.join(resolvedChangePath, packetPath), this.buildRepairWavePacket(record));
@@ -9729,6 +9760,7 @@ class TaskGraphExecutionService {
             [/^## Recommendations$/u, '## 建议'],
             [/^## Required Context$/u, '## 必需上下文'],
             [/^## Task Review Repair Context$/u, '## 任务评审修复上下文'],
+            [/^## Repair Strategy Escalation$/u, '## 修复策略升级'],
             [/^### Required Repairs$/u, '### 必需修复项'],
             [/^### Repair Constraints$/u, '### 修复约束'],
             [/^## Review Output$/u, '## 评审输出'],
@@ -9857,6 +9889,10 @@ class TaskGraphExecutionService {
             'Review artifact SHA-256': '评审 artifact SHA-256',
             'Findings SHA-256': 'Findings SHA-256',
             'Repair context SHA-256': '修复上下文 SHA-256',
+            'Strategy key': '策略键',
+            'Stalled reason': '停滞原因',
+            'Prior repair rounds': '此前修复轮次',
+            'Prior repair waves': '此前修复波次',
             Severity: '严重程度',
             Category: '类别',
             Location: '位置',
@@ -12233,6 +12269,16 @@ class TaskGraphExecutionService {
         ].join('\n');
     }
     buildWorkerRetryReport(record) {
+        const strategy = record.repairContext?.repairStrategy
+            ? [
+                '## Repair Strategy Escalation',
+                '',
+                `- Strategy key: ${record.repairContext.repairStrategy.key}`,
+                `- Stalled reason: ${record.repairContext.repairStrategy.reason}`,
+                `- Prior repair rounds: ${record.repairContext.repairStrategy.priorRounds}`,
+                '',
+            ]
+            : [];
         const repairContext = record.repairContext
             ? [
                 '## Task Review Repair Context',
@@ -12256,6 +12302,7 @@ class TaskGraphExecutionService {
             `- Trigger: ${record.trigger || 'legacy/unknown'}`,
             `- Created at: ${record.createdAt}`,
             '',
+            ...strategy,
             ...repairContext,
             '## Summary',
             '',
@@ -12805,7 +12852,24 @@ class TaskGraphExecutionService {
             `- Repair scope: ${finding.repairScope.join(', ') || context.repairScope.join(', ') || 'not recorded'}`,
             '',
         ]);
+        const strategy = context.repairStrategy
+            ? [
+                '## Repair Strategy Escalation',
+                '',
+                `- Strategy key: ${context.repairStrategy.key}`,
+                `- Stalled reason: ${context.repairStrategy.reason}`,
+                `- Prior repair rounds: ${context.repairStrategy.priorRounds}`,
+                `- Finding IDs: ${context.repairStrategy.findingIds.join(', ')}`,
+                '',
+                '- Earlier automatic repairs did not converge. Do not repeat the previous patch shape or merely rewrite evidence.',
+                '- Re-read every cited location and requirement, identify the root cause, and implement the smallest end-to-end correction that makes the finding false.',
+                '- Add or strengthen a focused regression check before running the task verification commands.',
+                '- This is the single automatic strategy escalation for this finding set; return NEEDS_CONTEXT with the exact missing decision or scope if it still cannot be resolved.',
+                '',
+            ]
+            : [];
         return [
+            ...strategy,
             '## Task Review Repair Context',
             '',
             `- Review decision: ${context.decision}`,
@@ -13421,6 +13485,22 @@ class TaskGraphExecutionService {
         ].join('\n');
     }
     buildRepairWavePacket(record) {
+        const strategy = record.repairStrategy
+            ? [
+                '## Repair Strategy Escalation',
+                '',
+                `- Strategy key: ${record.repairStrategy.key}`,
+                `- Stalled reason: ${record.repairStrategy.reason}`,
+                `- Prior repair waves: ${record.repairStrategy.priorRounds}`,
+                `- Finding IDs: ${record.repairStrategy.findingIds.join(', ')}`,
+                '',
+                '- Earlier repair waves did not converge. Do not repeat the previous patch shape or merely rewrite evidence.',
+                '- Re-read every cited location and requirement, identify the shared root cause, and implement the smallest end-to-end correction that makes the finding false.',
+                '- Add or strengthen a focused regression check before running the covering verification boundary.',
+                '- This is the single automatic strategy escalation for this finding set; return NEEDS_CONTEXT with the exact missing decision or scope if it still cannot be resolved.',
+                '',
+            ]
+            : [];
         return [
             `# Grouped Repair Wave: ${record.id}`,
             '',
@@ -13434,6 +13514,7 @@ class TaskGraphExecutionService {
             `- Target files: ${record.targetFiles.join(', ')}`,
             `- Documentation updates: ${record.documentationUpdates.join(', ') || 'none'}`,
             '',
+            ...strategy,
             '## Complete Findings List',
             '',
             ...record.findings.map(finding => `- ${finding}`),

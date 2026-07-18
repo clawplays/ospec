@@ -39,13 +39,14 @@ const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
+const LOOP_ACTIONS = ['run', 'tick', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
             const normalized = (action || 'status').toLowerCase();
             switch (normalized) {
                 case 'run':
+                case 'tick':
                     await this.run(args);
                     return;
                 case 'watch':
