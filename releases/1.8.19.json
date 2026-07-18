@@ -1,0 +1,20 @@
+{
+  "title_suffix": "repairable worker reports and legacy review recovery",
+  "summary": "OSpec 1.8.19 makes canonical same-task worker reports reviewable and repairable evidence, and safely refreshes legacy task reviews whose findings could not be bound to older snapshots.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.18...1.8.19",
+  "new": [
+    "Added an automatic fresh-review recovery route for legacy task reviews whose findings target an unbound canonical worker report."
+  ],
+  "improved": [
+    "Fresh task reviews now snapshot the exact canonical worker report alongside declared task targets so later report corrections remain evidence-bound.",
+    "Legacy recovery preserves historical review artifacts and repair-round accounting while issuing a normal controller-owned review action."
+  ],
+  "fixed": [
+    "Fixed same-task worker-report findings being rejected as outside completed task targets during task repair.",
+    "Fixed worker-report changes after review remaining invisible to review freshness validation.",
+    "Kept other tasks' reports, report directories, and arbitrary controller artifacts outside legal repair scope."
+  ],
+  "docs": [
+    "Documented canonical worker-report evidence binding, legacy Goal recovery, repair-scope boundaries, and the confirmed Web task-9 failure mode."
+  ]
+}

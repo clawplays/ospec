@@ -225,7 +225,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.18
+npm install -g @clawplays/ospec-cli@1.8.19
 ospec update [path]
 ```
 

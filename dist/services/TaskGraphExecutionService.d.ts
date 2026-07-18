@@ -1550,6 +1550,7 @@ export declare class TaskGraphExecutionService {
     private readTaskReviewRepairHistory;
     readCrossTaskRepairOwnerIds(changePath: string): Promise<string[]>;
     countTaskReviewRepairRounds(changePath: string, taskId: string): Promise<number>;
+    requiresTaskReviewRepairEvidenceRefresh(changePath: string, taskId: string): Promise<boolean>;
     hasTaskReviewRepairStrategyAttempt(changePath: string, taskId: string, strategyKey: string): Promise<boolean>;
     assessRunningTaskRecovery(changePath: string, taskIds: string[], maxRuntimeMinutes: number, now?: Date): Promise<TaskRunningRecoveryAssessment[]>;
     assessTaskReviewRepairConvergence(changePath: string, taskId: string, configuredLimit: number): Promise<TaskRepairConvergenceAssessment>;
@@ -1878,6 +1879,8 @@ export declare class TaskGraphExecutionService {
     private getTaskReviewArtifactFile;
     private getTaskReviewArtifactRelativePath;
     private getTaskCombinedReviewArtifactRelativePath;
+    private getTaskWorkerReportRelativePath;
+    private getTaskWorkerReportProjectRelativePath;
     private getTaskReviewArtifactPath;
     private prepareTaskReviewDispatch;
     private buildDefaultTaskReviewArtifact;

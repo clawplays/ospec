@@ -1521,10 +1521,14 @@ class TaskGraphExecutionService {
         const reviewArtifactHash = (0, crypto_1.createHash)('sha256').update(reviewContent, 'utf8').digest('hex');
         const findingsHash = (0, crypto_1.createHash)('sha256').update(findingsContent, 'utf8').digest('hex');
         const repairScope = [...new Set(findingResult.structured.flatMap(finding => finding.repairScope).map(item => item.trim()).filter(Boolean))];
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const canonicalWorkerReportPath = normalizeTaskPath(this.getTaskWorkerReportProjectRelativePath(resolvedChangePath, projectRoot, task.id));
         const normalizedTargets = task.targetFiles.map(normalizeTaskPath).filter(Boolean);
+        const isTaskOwnedRepairScope = (normalizedScope) => normalizedScope === canonicalWorkerReportPath
+            || normalizedTargets.some(target => taskPathsOverlap(normalizedScope, target));
         const outsideTaskScope = repairScope.filter(scope => {
             const normalizedScope = normalizeTaskPath(scope);
-            return !normalizedScope || !normalizedTargets.some(target => taskPathsOverlap(normalizedScope, target));
+            return !normalizedScope || !isTaskOwnedRepairScope(normalizedScope);
         });
         const crossTaskScopeOwnerIds = new Set();
         for (const scope of outsideTaskScope) {
@@ -1553,12 +1557,11 @@ class TaskGraphExecutionService {
             if (crossTaskScopeOwnerIds.size > 0) {
                 const reviewedScope = effectiveRepairScope.filter(scope => {
                     const normalizedScope = normalizeTaskPath(scope);
-                    return normalizedScope && normalizedTargets.some(target => taskPathsOverlap(normalizedScope, target));
+                    return normalizedScope && isTaskOwnedRepairScope(normalizedScope);
                 });
                 if (reviewedScope.length > 0 && !this.repairScopeSnapshotHash(reviewDispatch, reviewedScope)) {
                     throw new Error(`Task review repair for ${task.id} cannot bind its task-owned repair scope to the reviewed target snapshot.`);
                 }
-                const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
                 repairScopeSnapshots = await this.captureTargetSnapshots(projectRoot, effectiveRepairScope);
                 repairScopeSnapshotHash = this.hashTargetSnapshots(repairScopeSnapshots);
             }
@@ -1667,6 +1670,36 @@ class TaskGraphExecutionService {
     }
     async countTaskReviewRepairRounds(changePath, taskId) {
         return (await this.readTaskReviewRepairHistory(changePath, taskId)).length;
+    }
+    async requiresTaskReviewRepairEvidenceRefresh(changePath, taskId) {
+        const resolvedChangePath = path.resolve(changePath);
+        const report = await this.getReport(resolvedChangePath);
+        const task = this.flattenReportTasks(report).find(item => item.id === String(taskId || '').trim());
+        if (!task || task.review?.decision !== 'NEEDS_CHANGES' || !task.review.reviewArtifactPath)
+            return false;
+        const reviewArtifactPath = path.join(resolvedChangePath, task.review.reviewArtifactPath);
+        if (!(await this.fileService.exists(reviewArtifactPath)))
+            return false;
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        const findings = await this.readReviewFindings(reviewArtifactPath, review.content);
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const canonicalWorkerReportPath = normalizeTaskPath(this.getTaskWorkerReportProjectRelativePath(resolvedChangePath, projectRoot, task.id));
+        const repairsWorkerReport = findings.structured.some(finding => finding.repairScope
+            .some(scope => normalizeTaskPath(scope) === canonicalWorkerReportPath));
+        if (!repairsWorkerReport)
+            return false;
+        const reviewDispatchId = String(review.data?.review_dispatch_id || '').trim();
+        const reviewTargetSnapshotHash = String(review.data?.target_snapshot_hash || '').trim();
+        if (!reviewDispatchId || !reviewTargetSnapshotHash)
+            return false;
+        const reviewDispatch = await this.readRepairConvergenceReviewDispatch(resolvedChangePath, task.id, reviewDispatchId);
+        if (!reviewDispatch || reviewDispatch.targetSnapshotHash !== reviewTargetSnapshotHash)
+            return false;
+        const reportInTargets = reviewDispatch.targetFiles
+            .some(target => normalizeTaskPath(target) === canonicalWorkerReportPath);
+        const reportInSnapshots = reviewDispatch.targetSnapshots
+            .some(snapshot => normalizeTaskPath(snapshot.path) === canonicalWorkerReportPath);
+        return !reportInTargets || !reportInSnapshots;
     }
     async hasTaskReviewRepairStrategyAttempt(changePath, taskId, strategyKey) {
         const normalizedKey = String(strategyKey || '').trim();
@@ -2845,7 +2878,10 @@ class TaskGraphExecutionService {
                 reviewId,
                 regressionTasks,
             });
-            const targetFiles = this.normalizeTargetFiles(taskReview.task.targetFiles);
+            const targetFiles = this.normalizeTargetFiles([
+                ...taskReview.task.targetFiles,
+                this.getTaskWorkerReportProjectRelativePath(resolvedChangePath, projectRoot, taskReview.task.id),
+            ]);
             const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
             const targetSnapshotHash = this.hashTargetSnapshots(targetSnapshots);
             const graphContract = await this.readTaskGraphContractVersion(resolvedChangePath);
@@ -3145,7 +3181,10 @@ class TaskGraphExecutionService {
                     if (this.normalizeReviewRunDecision(current.data?.decision) !== 'PENDING')
                         continue;
                 }
-                const targetFiles = this.normalizeTargetFiles(task.targetFiles);
+                const targetFiles = this.normalizeTargetFiles([
+                    ...task.targetFiles,
+                    this.getTaskWorkerReportProjectRelativePath(resolvedChangePath, projectRoot, task.id),
+                ]);
                 const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
                 const targetSnapshotHash = this.hashTargetSnapshots(targetSnapshots);
                 const regressionTasks = this.getUpstreamRegressionTasks(task, reportTasks);
@@ -8533,6 +8572,23 @@ class TaskGraphExecutionService {
             this.toFileSafeId(taskId) || 'task',
             constants_1.FILE_NAMES.REVIEW,
         ].join('/');
+    }
+    getTaskWorkerReportRelativePath(taskId) {
+        return [
+            'artifacts',
+            'agents',
+            WORKER_REPORTS_DIR,
+            `${this.toFileSafeId(taskId) || 'task'}.md`,
+        ].join('/');
+    }
+    getTaskWorkerReportProjectRelativePath(changePath, projectRoot, taskId) {
+        const absolutePath = path.join(changePath, this.getTaskWorkerReportRelativePath(taskId));
+        const relativePath = path.relative(projectRoot, absolutePath).replace(/\\/g, '/');
+        const normalized = this.normalizeTargetFiles([relativePath])[0];
+        if (!normalized) {
+            throw new Error(`Task ${taskId} worker report resolves outside the project root.`);
+        }
+        return normalized;
     }
     getTaskReviewArtifactPath(changePath, taskId, stage) {
         return path.join(changePath, this.getTaskReviewArtifactRelativePath(taskId, stage));
