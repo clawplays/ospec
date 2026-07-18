@@ -1,0 +1,21 @@
+{
+  "title_suffix": "documentation finalize evidence chains",
+  "summary": "OSpec 1.8.15 fixes Goal finalization after reviewed document deletion and multi-round repair. Documentation evidence now treats existence transitions as meaningful, aggregates each task path from its first baseline through its final completed dispatch, and verifies the workspace against the latest declared-owner evidence without accepting stale history or a final reversion.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.14...1.8.15",
+  "new": [
+    "Added final-state validation against the latest completed evidence from any task that declares a documentation path.",
+    "Added explicit evidence-chain semantics for reviewed document creation and deletion."
+  ],
+  "improved": [
+    "Aggregates multi-round documentation repair from the first task baseline to the final completed state.",
+    "Preserves compatibility for legacy runs with existing documents while requiring durable evidence for deletion."
+  ],
+  "fixed": [
+    "Fixed intentional document deletion being recorded as meaningfullyChanged=false and rejected during finalize.",
+    "Fixed later repair attempts erasing valid documentation changes recorded by earlier completed dispatches.",
+    "Fixed stale historical evidence being able to mask a final reversion or post-dispatch workspace drift."
+  ],
+  "docs": [
+    "Documented the AIHub iteration 49 finalize incident, recovery path, deletion contract, multi-dispatch aggregation, and unchanged fail-closed archive guarantees."
+  ]
+}

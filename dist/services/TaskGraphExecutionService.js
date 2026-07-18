@@ -9195,8 +9195,10 @@ class TaskGraphExecutionService {
                 ...completed,
                 baselineExists: item.exists,
                 baselineContentHash: item.contentHash,
-                meaningfullyChanged: completed.exists
-                    && (!item.exists || completed.contentHash !== item.contentHash),
+                meaningfullyChanged: completed.exists !== item.exists
+                    || (completed.exists
+                        && item.exists
+                        && completed.contentHash !== item.contentHash),
             };
         });
     }

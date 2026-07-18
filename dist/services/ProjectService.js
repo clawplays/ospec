@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createProjectService = exports.ProjectService = void 0;
 const fs_1 = require("fs");
+const crypto_1 = require("crypto");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
 const ProjectPresets_1 = require("../presets/ProjectPresets");
@@ -3197,6 +3198,82 @@ ${formatSuggestion()}
             const normalized = value.toLowerCase();
             return normalized.startsWith('docs/') || normalized.startsWith('.ospec/docs/');
         };
+        const orderedCompletedDispatches = dispatches
+            .map((dispatch, index) => ({ dispatch, index }))
+            .filter(({ dispatch }) => Boolean(dispatch?.completedAt))
+            .sort((left, right) => {
+            const completedOrder = String(left.dispatch.completedAt).localeCompare(String(right.dispatch.completedAt));
+            return completedOrder !== 0 ? completedOrder : left.index - right.index;
+        })
+            .map(({ dispatch }) => dispatch);
+        const declaredPathsByTask = new Map();
+        for (const [index, task] of tasks.entries()) {
+            const taskId = typeof task?.id === 'string' && task.id.trim() ? task.id.trim() : `tasks[${index}]`;
+            const updates = Array.isArray(task?.documentation_updates)
+                ? task.documentation_updates.map(normalize).filter(Boolean)
+                : [];
+            declaredPathsByTask.set(taskId, new Set(updates.map((update) => update.toLowerCase())));
+        }
+        const evidenceForTaskPath = (taskId, updateKey) => orderedCompletedDispatches
+            .filter((dispatch) => dispatch?.taskId === taskId)
+            .map((dispatch) => Array.isArray(dispatch?.documentationEvidence)
+            ? dispatch.documentationEvidence.find((item) => normalize(item?.path).toLowerCase() === updateKey)
+            : null)
+            .filter(Boolean);
+        const latestDeclaredEvidenceForPath = (updateKey) => {
+            let latest = null;
+            for (const dispatch of orderedCompletedDispatches) {
+                const taskId = typeof dispatch?.taskId === 'string' ? dispatch.taskId : '';
+                if (!declaredPathsByTask.get(taskId)?.has(updateKey))
+                    continue;
+                const evidence = Array.isArray(dispatch?.documentationEvidence)
+                    ? dispatch.documentationEvidence.find((item) => normalize(item?.path).toLowerCase() === updateKey)
+                    : null;
+                if (evidence)
+                    latest = evidence;
+            }
+            return latest;
+        };
+        const evidenceStateChanged = (evidence) => {
+            const first = evidence[0];
+            const last = evidence[evidence.length - 1];
+            const hasStructuredState = typeof first?.baselineExists === 'boolean'
+                && Object.prototype.hasOwnProperty.call(first, 'baselineContentHash')
+                && typeof last?.exists === 'boolean'
+                && Object.prototype.hasOwnProperty.call(last, 'contentHash');
+            if (!hasStructuredState) {
+                return evidence.some(item => item?.meaningfullyChanged === true);
+            }
+            return first.baselineExists !== last.exists
+                || (first.baselineExists === true
+                    && last.exists === true
+                    && first.baselineContentHash !== last.contentHash);
+        };
+        const hashMeaningfulDocumentation = (content) => {
+            const normalized = String(content || '')
+                .replace(/\r\n?/g, '\n')
+                .split('\n')
+                .map(line => line.trimEnd())
+                .join('\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            return (0, crypto_1.createHash)('sha256').update(normalized, 'utf8').digest('hex');
+        };
+        const currentStateByPath = new Map();
+        const readCurrentState = async (updateKey, resolvedPath) => {
+            const cached = currentStateByPath.get(updateKey);
+            if (cached)
+                return cached;
+            const exists = await this.fileService.exists(resolvedPath);
+            const state = {
+                exists,
+                contentHash: exists
+                    ? hashMeaningfulDocumentation(await this.fileService.readFile(resolvedPath))
+                    : null,
+            };
+            currentStateByPath.set(updateKey, state);
+            return state;
+        };
         for (const [index, task] of tasks.entries()) {
             const taskId = typeof task?.id === 'string' && task.id.trim() ? task.id.trim() : `tasks[${index}]`;
             const rawUpdates = task?.documentation_updates;
@@ -3227,36 +3304,52 @@ ${formatSuggestion()}
                 });
             }
             for (const update of updates) {
+                const updateKey = update.toLowerCase();
                 const resolvedUpdatePath = resolveSafeProjectPath(update);
                 const safe = resolvedUpdatePath !== null;
-                const targeted = targetKeys.has(update.toLowerCase());
-                const exists = resolvedUpdatePath ? await this.fileService.exists(resolvedUpdatePath) : false;
+                const targeted = targetKeys.has(updateKey);
+                const currentState = resolvedUpdatePath
+                    ? await readCurrentState(updateKey, resolvedUpdatePath)
+                    : { exists: false, contentHash: null };
+                const latestDeclaredEvidence = latestDeclaredEvidenceForPath(updateKey);
+                const latestEvidenceHasFinalState = typeof latestDeclaredEvidence?.exists === 'boolean'
+                    && Object.prototype.hasOwnProperty.call(latestDeclaredEvidence, 'contentHash');
+                const latestEvidenceHashIsCanonical = typeof latestDeclaredEvidence?.contentHash === 'string'
+                    && /^[a-f0-9]{64}$/i.test(latestDeclaredEvidence.contentHash);
+                const currentMatchesLatestEvidence = latestEvidenceHasFinalState
+                    ? currentState.exists === latestDeclaredEvidence.exists
+                        && (!currentState.exists
+                            || !latestEvidenceHashIsCanonical
+                            || currentState.contentHash === latestDeclaredEvidence.contentHash)
+                    : currentState.exists;
                 checks.push({
                     name: `documentation_updates.${taskId}.${update}`,
-                    status: safe && targeted && exists ? 'pass' : 'fail',
+                    status: safe && targeted && currentMatchesLatestEvidence ? 'pass' : 'fail',
                     message: !safe
                         ? `Unsafe documentation update path: ${update}`
                         : !targeted
                             ? `${update} is declared but missing from ${taskId}.target_files`
-                            : !exists
-                                ? `Declared documentation update does not exist: ${update}`
-                                : `Declared documentation update is present and task-scoped: ${update}`,
+                            : !currentMatchesLatestEvidence
+                                ? latestEvidenceHasFinalState
+                                    ? `Current documentation state does not match the latest completed dispatch evidence: ${update}`
+                                    : `Declared documentation update does not exist and has no deletion evidence: ${update}`
+                                : currentState.exists
+                                    ? `Declared documentation update is present, task-scoped, and matches final evidence: ${update}`
+                                    : `Declared documentation deletion is task-scoped and matches final evidence: ${update}`,
                 });
-                if (safe && targeted && exists) {
-                    const completedDispatch = [...dispatches]
-                        .reverse()
-                        .find((item) => item?.taskId === taskId && item?.completedAt);
-                    const evidence = Array.isArray(completedDispatch?.documentationEvidence)
-                        ? completedDispatch.documentationEvidence.find((item) => normalize(item?.path).toLowerCase() === update.toLowerCase())
-                        : null;
+                if (safe && targeted) {
+                    const evidence = evidenceForTaskPath(taskId, updateKey);
+                    const meaningfullyChanged = evidence.length > 0 ? evidenceStateChanged(evidence) : false;
                     checks.push({
                         name: `documentation_updates.${taskId}.${update}.meaningful_change`,
-                        status: evidence ? (evidence.meaningfullyChanged ? 'pass' : 'fail') : 'warn',
-                        message: evidence
-                            ? evidence.meaningfullyChanged
-                                ? `Declared documentation update contains a meaningful content change: ${update}`
-                                : `Declared documentation update did not change meaningfully from its dispatch baseline: ${update}`
-                            : `Documentation baseline evidence is unavailable for ${update}; existence was verified for backward compatibility`,
+                        status: evidence.length > 0 ? (meaningfullyChanged ? 'pass' : 'fail') : currentState.exists ? 'warn' : 'fail',
+                        message: evidence.length > 0
+                            ? meaningfullyChanged
+                                ? `Declared documentation update contains a meaningful final change across ${evidence.length} completed dispatch attempt(s): ${update}`
+                                : `Declared documentation update did not change meaningfully from its first dispatch baseline to its final completed state: ${update}`
+                            : currentState.exists
+                                ? `Documentation baseline evidence is unavailable for ${update}; existence was verified for backward compatibility`
+                                : `Documentation deletion evidence is unavailable for ${update}; the missing final state cannot be verified`,
                     });
                 }
             }
