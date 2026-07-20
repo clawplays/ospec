@@ -1476,14 +1476,19 @@ class ProjectService {
         const pending = loopState?.pendingControllerAction;
         if (!pending)
             return;
-        const activeItems = (Array.isArray(pending.itemStates) ? pending.itemStates : [])
+        const itemStates = Array.isArray(pending.itemStates) ? pending.itemStates : [];
+        const activeItems = itemStates
             .filter((item) => ['issued', 'running', 'awaiting-evidence'].includes(String(item?.status || '')))
             .map((item) => String(item?.actionItemId || '(unknown)'));
-        if (pending.status !== 'done' || activeItems.length > 0) {
-            const actionId = String(pending.actionId || '(unknown)');
-            const itemText = activeItems.length > 0 ? ` Active items: ${activeItems.join(', ')}.` : '';
-            throw new Error(`Force archive refused while Loop action ${actionId} is still pending.${itemText} Settle or recover its executors first.`);
-        }
+        const allItemsTerminal = itemStates.length > 0
+            && itemStates.every((item) => ['completed', 'failed', 'expired'].includes(String(item?.status || '')));
+        if ((pending.status === 'done' || allItemsTerminal) && activeItems.length === 0)
+            return;
+        const actionId = String(pending.actionId || '(unknown)');
+        const itemText = activeItems.length > 0
+            ? ` Active items: ${activeItems.join(', ')}.`
+            : ' Item states are missing or nonterminal.';
+        throw new Error(`Force archive refused while Loop action ${actionId} can still write evidence.${itemText} Settle or recover its executors first.`);
     }
     async preflightArchivedKnowledgeWrite(projectRoot, archivePath) {
         const config = await this.configManager.loadConfig(projectRoot);

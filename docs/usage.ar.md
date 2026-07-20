@@ -74,6 +74,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 يضيف 1.8.21 مسار force archive مدققا فقط عندما يقبل المستخدم صراحة مخاطر Change أو Goal غير مكتمل. يتطلب `--force-archive` و`--confirm-force-archive` المطابق تماما لاسم change وسببا غير فارغ. لا يحول evidence الفاشل أو `NOT_VERIFIED` إلى pass، ويرفض نقل Goal مع Loop action معلق، ويكتب `artifacts/agents/force-archive.json`. تبقى state وknowledge المولدة و`feature-index.md` و`SKILL.index.json` موسومة بوضوح `forced` و`incomplete` و`accepted-risk`؛ أما change الجاهز عاديا فيستخدم finalize العادي.
 
+يضبط 1.8.22 فحص أمان Loop للأرشفة القسرية. يمكن أرشفة pending Controller pointer عندما يحتوي item واحدة على الأقل وتكون كل items مسجلة نهائيا كـ `completed` أو `failed` أو `expired`، حتى لو لم يعد repair task مؤقت قديم قابلا للمطابقة مع graph الحالي. تظل item states المفقودة و`issued` و`running` وأي حالة غير نهائية مانعة، ويُحفظ terminal action بلا تغيير داخل Loop evidence المؤرشف.
+
 قدم الإصدار 1.8.3 قيما افتراضية محدودة لمراجعات design وplan المتخصصة. في continuous mode للإصدار 1.8.9 تصبح الجولتان المكتملتان و30 دقيقة لكل stage عتبات تقارب: يمكن لمجموعة structured finding-ID جديدة أن تستمر، بينما تتوقف المجموعات المتكررة أو الدورية. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز، ويحتفظ strict mode بنافذة extra round التي يصرح بها المستخدم بدقة.
 
 قدم الإصدار 1.8.4 حارسا من جولتين لكل من task-review repair وgrouped final-review repair، ويعامله continuous mode كعتبة تقارب. يستمر التنفيذ تلقائيا عندما تتغير معرفات findings المنظمة. بدءا من 1.8.11 يمكن أن يستمر المعرف نفسه أيضا عندما يتغير كل من structured finding fingerprint وcode snapshot داخل repair scope المصرح به سابقا. أما تغيير الصياغة فقط أو الكود فقط أو التكرار الدقيق أو الدورة فيتوقف قبل repair غير مفيد. يحافظ `--continue-while-progressing false` على حدود العمر الصارمة السابقة. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair.
@@ -228,7 +230,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.21
+npm install -g @clawplays/ospec-cli@1.8.22
 ospec update [path]
 ```
 

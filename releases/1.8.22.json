@@ -1,0 +1,16 @@
+{
+  "title_suffix": "terminal Loop force-archive recovery",
+  "summary": "OSpec 1.8.22 allows an explicitly accepted incomplete Goal to be force-archived when its retained pending Controller action contains only durably terminal items.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.21...1.8.22",
+  "new": [],
+  "improved": [
+    "Force archive now distinguishes live or incomplete Loop items from completed, failed, and expired terminal history."
+  ],
+  "fixed": [
+    "Fixed force archive rejecting an awaiting-evidence Controller pointer whose only item had already failed and whose executor had exited.",
+    "Avoided requiring an observation tick that can fail when an obsolete temporary repair task no longer exists in the current task graph."
+  ],
+  "docs": [
+    "Documented terminal pending-action eligibility and the unchanged non-bypassable safety boundary."
+  ]
+}

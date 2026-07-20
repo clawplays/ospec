@@ -74,6 +74,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.21 は、ユーザーが未完了の Change または Goal のリスクを明示的に受容した場合に限る監査付き force archive を追加します。`--force-archive`、change 名と完全一致する `--confirm-force-archive`、空でない理由が必要です。失敗または `NOT_VERIFIED` evidence を pass に変更せず、pending Loop action がある Goal の移動を拒否し、`artifacts/agents/force-archive.json` を記録します。state、生成 knowledge、`feature-index.md`、`SKILL.index.json` は `forced`、`incomplete`、`accepted-risk` と表示され、通常 ready な change は通常の finalize を使います。
 
+1.8.22 は force archive の Loop safety check を調整します。pending Controller pointer に 1 件以上の item があり、すべてが永続的な終端状態 `completed`、`failed`、`expired` のいずれかなら、古い一時 repair task が現在の graph と照合できなくても archive できます。item state 欠落、`issued`、`running`、その他の非終端状態は引き続き拒否され、終端 action は archive 済み Loop evidence にそのまま保持されます。
+
 1.8.3 では design/plan specialist review に bounded default を導入しました。1.8.9 の continuous mode では、stage ごとの 2 completed rounds と 30 分は収束しきい値です。新しい structured finding-ID set は続行でき、反復または循環する set は停止します。cache hit、pending reuse、heartbeat、同じ dispatch の recovery は round を消費しません。`--force` は guard を迂回できず、strict mode は exact user-authorized extra-round window を維持します。
 
 1.8.4 では task review-repair と grouped final-review repair に 2 round の guard を導入し、continuous mode では収束しきい値として扱います。structured finding ID が変化すれば自動続行します。1.8.11 以降は、同じ ID でも structured finding fingerprint と直前に許可された repair scope 内の code snapshot が両方変化した場合は続行します。文言だけの変更、code だけの churn、完全な反復、cycle は次の無効な repair の前に停止します。`--continue-while-progressing false` で従来の厳格な lifetime ceiling を維持できます。変更された全 path が完了済みの推移的 downstream task に帰属できる場合にだけ upstream の承認済み review を維持し、downstream reviewer packet に upstream contract を regression obligation として追加します。final review が `BLOCKED` の場合は blocker の解決まで停止します。
@@ -228,7 +230,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.21
+npm install -g @clawplays/ospec-cli@1.8.22
 ospec update [path]
 ```
 

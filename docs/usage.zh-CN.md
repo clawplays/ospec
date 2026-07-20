@@ -75,6 +75,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.21 增加了带审计的强制归档出口，仅用于用户明确接受未完成 Change 或 Goal 的情况。命令必须同时提供 `--force-archive`、与 change 名称完全一致的 `--confirm-force-archive`，以及非空原因。它不会把失败或 `NOT_VERIFIED` 证据改成通过；存在 pending Loop action 时会拒绝移动 Goal，并写入 `artifacts/agents/force-archive.json`。state、生成知识文档、`feature-index.md` 和 `SKILL.index.json` 都会持续标记为 `forced`、`incomplete`、`accepted-risk`；已经满足普通归档条件的 change 必须使用普通 finalize。
 
+1.8.22 收敛了强制归档的 Loop 安全检查。当 pending Controller 指针至少包含一个 item，且全部 item 已持久化为终态 `completed`、`failed` 或 `expired` 时，即使过期的临时 repair task 已无法和当前 task graph 对账，也允许归档。item 状态缺失、`issued`、`running` 或其它非终态仍严格阻止归档；终态 action 会原样保留在归档 Loop evidence 中。
+
 1.8.3 为设计和计划的 specialist review 引入了边界默认值。1.8.9 连续模式把每阶段两轮和 30 分钟作为收敛阈值：新的结构化 finding-ID 集合可以继续，重复或循环集合会停止。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；严格模式保留精确用户授权的额外轮次窗口。
 
 1.8.4 引入了 task review-repair 和 grouped final-review repair 的两轮门禁；连续模式把它们作为收敛阈值。结构化 finding ID 变化时自动继续。从 1.8.11 起，同一 ID 只有在结构化 finding 指纹和上一轮授权 repair scope 内的代码快照同时变化时也可继续；只改措辞、只改代码、精确重复或循环仍会在下一次无效 repair 前停止。使用 `--continue-while-progressing false` 可保留旧版严格生命周期上限。只有当全部文件变化都能归因到已完成的传递下游任务时，上游已批准 review 才会继续有效；下游 reviewer 包会继承这些上游合同作为回归义务。final review 为 `BLOCKED` 时会停下解决 blocker，不会错误进入 grouped repair。
@@ -229,7 +231,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.21
+npm install -g @clawplays/ospec-cli@1.8.22
 ospec update [path]
 ```
 

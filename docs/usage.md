@@ -75,6 +75,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 
 1.8.21 adds an audited force-archive escape hatch for a user who explicitly accepts an incomplete Change or Goal. It requires `--force-archive`, exact-name `--confirm-force-archive`, and one non-empty reason. It never changes failed or `NOT_VERIFIED` evidence to pass, refuses to move a Goal while a Loop action is pending, and writes `artifacts/agents/force-archive.json`. State, generated knowledge, `feature-index.md`, and `SKILL.index.json` remain visibly `forced`, `incomplete`, and `accepted-risk`; a normally ready change must use ordinary finalize.
 
+1.8.22 refines the force-archive Loop safety check. A retained pending Controller pointer may be archived when it has at least one item and every item is durably terminal (`completed`, `failed`, or `expired`), even if an obsolete temporary repair task can no longer be reconciled against the current graph. Missing item states and any `issued`, `running`, or otherwise nonterminal item still block. The terminal action remains unchanged in the archived Loop evidence.
+
 Specialist design and plan reviews gained bounded defaults in 1.8.3. In 1.8.9 continuous mode, two completed rounds and 30 minutes are convergence thresholds: a new structured finding-ID set can continue, while repeated or cycling sets stop. Cache hits, pending reuse, heartbeats, and recovery of the same dispatch do not consume rounds. `--force` cannot bypass a guard. Strict mode retains the exact user-authorized extra-round window.
 
 1.8.4 introduced two-round task-review and grouped final-review repair guards. In continuous mode, those values are convergence thresholds. Changed structured finding IDs continue automatically. From 1.8.11, a stable ID also continues when both its structured finding fingerprint and the code snapshot inside the prior authorized repair scope changed. Wording-only changes, code-only churn, exact repeats, and cycles still stop before another ineffective repair. `--continue-while-progressing false` preserves the earlier strict lifetime ceilings. Approved upstream reviews remain valid across shared-file edits only when every changed path is attributable to a completed transitive downstream task; that downstream review packet inherits the upstream contracts as regression obligations. A blocked final review stops for blocker resolution instead of entering grouped repair.
@@ -229,7 +231,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.21
+npm install -g @clawplays/ospec-cli@1.8.22
 ospec update [path]
 ```
 
