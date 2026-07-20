@@ -1,0 +1,19 @@
+{
+  "title_suffix": "legacy document-review recovery",
+  "summary": "OSpec 1.8.20 lets resumed Goals safely request fresh design and plan reviews when imported legacy completions have no durable per-run decision, without rewriting their append-only review ledger.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.19...1.8.20",
+  "new": [
+    "Added compatibility recovery for changed Goal documents whose legacy review completions predate durable decision snapshots."
+  ],
+  "improved": [
+    "Legacy completions still contribute to completed-round accounting while exposing unavailable convergence context instead of invented findings or decisions.",
+    "Continuous document review can issue a fresh specialist review after authoritative design or plan changes without forced recovery."
+  ],
+  "fixed": [
+    "Fixed resumed Goals failing before design or plan review dispatch with an empty Unsupported review run decision error.",
+    "Kept modern missing decisions and non-empty invalid legacy decisions as hard integrity errors."
+  ],
+  "docs": [
+    "Documented legacy document-review ledger migration, recovery boundaries, and the confirmed Dev Mobile scope-change failure mode."
+  ]
+}

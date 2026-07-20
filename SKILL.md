@@ -47,6 +47,7 @@ Use the full `ospec execute ...` layer only for goal work or when the user expli
 
 - Start or resume with `ospec session` and `ospec execute bootstrap`.
 - Complete design review before plan review under the configured document review policy. The default `always` policy requires independent review; `adaptive` may use deterministic inline preflight only when the target document explicitly declares `risk_level: low` (or `none`) and no risk signal exists. Missing or unparseable risk context requires specialist review.
+- Legacy imported document-review completions without a durable decision still count as completed rounds but provide no convergence decision. After authoritative documents change, let OSpec issue a fresh review; never hand-edit or rehash the append-only ledger.
 - Resolve required decisions and workspace isolation before dispatch.
 - Dispatch scoped worker packets, use the launch plan with the current harness native agent mechanism, record completion, then perform one combined task review.
 - Treat each task's canonical `artifacts/agents/worker-reports/<task-id>.md` as review-bound evidence. A fresh task review snapshots it alongside declared targets; a repair may edit only that same task's exact report path. When a legacy review finding names an unsnapshotted canonical report, let Loop issue a fresh review before repair instead of editing history or widening artifact scope.

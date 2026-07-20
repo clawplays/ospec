@@ -35,6 +35,8 @@ Each tick follows the persisted task graph and evidence instead of asking an age
 
 The loop stores the current batch and per-item `issued/running/completed/failed/expired` state in `artifacts/loop/state.json`. Only the issuing tick returns items in `actions`; observation ticks return the durable `pending` record with an empty action list, preventing duplicate launches. Heartbeat leases let a later session distinguish a live child from an orphan. Expired or explicitly released orphans are marked failed and requeued with fresh context; completed siblings are not duplicated. If Loop state is lost while a task remains `IN_PROGRESS`, OSpec waits through the task's absolute runtime window and then supersedes the orphan automatically. The 60-second native wait is only a polling boundary.
 
+Document-review ledger migration preserves legacy completed-round accounting without inventing review evidence. A legacy imported completion that has no durable decision or immutable findings context is treated as `legacy_context_unavailable` for convergence, allowing changed authoritative documents to receive a fresh review in continuous mode. Modern completion events still require a valid decision, and existing hash-chain events are never rewritten.
+
 A hard workflow gate persists Loop status as `blocked` and returns `stopped: true`; it is not active execution. After resolving the reported condition, `ospec loop resume` moves the state back to `idle` so the next tick can reevaluate every gate. Resume does not bypass required decisions, workspace ownership, document review, task-graph, capability, or L3 safety checks.
 
 ## Fresh context and packet references

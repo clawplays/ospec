@@ -5088,7 +5088,17 @@ class TaskGraphExecutionService {
             };
         }
         const record = documentReviewLedgerRecord(latestCompletion);
-        const decision = this.normalizeReviewRunDecision(String(latestCompletion.payload.decision || ''));
+        const legacyRecord = unknownRecord(latestCompletion.payload.record);
+        const rawDecision = String(latestCompletion.payload.decision || legacyRecord.decision || '').trim();
+        if (!rawDecision && latestCompletion.type === 'legacy_import') {
+            return {
+                progressing: true,
+                currentFindingIds: [],
+                previousFindingIds: [],
+                reason: 'legacy_context_unavailable',
+            };
+        }
+        const decision = this.normalizeReviewRunDecision(rawDecision);
         if (APPROVED_REVIEW_DECISIONS.has(decision)) {
             return { progressing: true, currentFindingIds: [], previousFindingIds: [], reason: 'approved' };
         }
