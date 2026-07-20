@@ -1,3 +1,9 @@
+export interface FinalizeCommandOptions {
+    forceArchive?: boolean;
+    confirmForceArchive?: string;
+    reason?: string;
+    reasonFile?: string;
+}
 export declare class FinalizeCommand {
-    execute(featurePath?: string): Promise<void>;
+    execute(featurePath?: string, options?: FinalizeCommandOptions): Promise<void>;
 }

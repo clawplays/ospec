@@ -12,7 +12,7 @@ export { IndexBuilder, createIndexBuilder } from './IndexBuilder';
 export { ProjectAssetService, createProjectAssetService } from './ProjectAssetService';
 export { ProjectScaffoldService, createProjectScaffoldService } from './ProjectScaffoldService';
 export { ProjectScaffoldCommandService, createProjectScaffoldCommandService, } from './ProjectScaffoldCommandService';
-export { ProjectService, createProjectService } from './ProjectService';
+export { ProjectService, createProjectService, type FinalizeChangeOptions } from './ProjectService';
 export { QueueService, createQueueService } from './QueueService';
 export { RunService, createRunService } from './RunService';
 export { TaskGraphExecutionService, createTaskGraphExecutionService } from './TaskGraphExecutionService';

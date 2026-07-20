@@ -19,6 +19,7 @@ export declare const FILE_NAMES: {
     AGENT_WORKER_STATUS: string;
     TASKS: string;
     VERIFICATION: string;
+    FORCE_ARCHIVE_RECORD: string;
     STATE: string;
     REVIEW: string;
     INDEX: string;

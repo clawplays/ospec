@@ -19,6 +19,7 @@ const ARCHIVED_DOCUMENTS = [
     'verification.md',
     'review.md',
     'artifacts/reviews/final-review.md',
+    'artifacts/agents/force-archive.json',
 ];
 async function pathExists(targetPath) {
     try {
@@ -424,6 +425,19 @@ class IndexBuilder {
                 }
             }
             const archive = path_1.default.relative(rootDir, archiveDir).replace(/\\/g, '/');
+            const disposition = state.archive_disposition === 'forced' ? 'forced' : undefined;
+            let forceArchiveRecord = null;
+            if (disposition === 'forced') {
+                const forceRecordPath = path_1.default.join(archiveDir, 'artifacts', 'agents', constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD);
+                if (await pathExists(forceRecordPath)) {
+                    try {
+                        forceArchiveRecord = await readJson(forceRecordPath);
+                    }
+                    catch {
+                        forceArchiveRecord = null;
+                    }
+                }
+            }
             const expectedKnowledgeDocument = this.getKnowledgeDocumentRelativePath(archive);
             const knowledgeDocument = expectedKnowledgeDocument
                 && await pathExists(path_1.default.join(rootDir, ...expectedKnowledgeDocument.split('/')))
@@ -434,17 +448,34 @@ class IndexBuilder {
                 summary,
                 affects: affects.sort(),
                 archive,
-                completed_at: typeof state.completed_at === 'string'
-                    ? state.completed_at
-                    : typeof state.last_updated === 'string'
-                        ? state.last_updated
-                        : null,
+                completed_at: disposition === 'forced'
+                    ? null
+                    : typeof state.completed_at === 'string'
+                        ? state.completed_at
+                        : typeof state.last_updated === 'string'
+                            ? state.last_updated
+                            : null,
                 documents,
                 project_documents: [...projectDocuments].sort(),
                 knowledge_document: knowledgeDocument,
                 target_files: [...targetFiles].sort(),
                 verification_commands: [...verificationCommands].sort(),
                 workflow_profile: typeof state.workflow_profile_id === 'string' ? state.workflow_profile_id : undefined,
+                ...(disposition === 'forced' ? {
+                    disposition,
+                    completion_status: 'incomplete',
+                    accepted_risk: true,
+                    force_archive_reason: typeof forceArchiveRecord?.reason === 'string'
+                        ? forceArchiveRecord.reason
+                        : '',
+                    failing_checks: Array.from(new Set([
+                        ...(Array.isArray(forceArchiveRecord?.failingChecks) ? forceArchiveRecord.failingChecks : [])
+                            .map((check) => String(check?.name || '').trim()),
+                        ...(Array.isArray(forceArchiveRecord?.progressIssues) ? forceArchiveRecord.progressIssues : [])
+                            .map((issue) => `goal.progress: ${String(issue || '').trim()}`),
+                    ].filter(Boolean))),
+                    archived_at: typeof state.archived_at === 'string' ? state.archived_at : undefined,
+                } : {}),
             };
         }
         catch {
@@ -477,23 +508,42 @@ class IndexBuilder {
             change.knowledge_document = knowledgeDocument;
             await this.assertGeneratedKnowledgeDocumentReplaceable(resolvedTarget, change.archive);
             const archiveLink = path_1.default.relative(path_1.default.dirname(resolvedTarget), archiveAbsolute).replace(/\\/g, '/');
+            const forced = change.disposition === 'forced';
             const lines = [
                 '---',
                 `name: ${JSON.stringify(`archived-change-${change.feature}`)}`,
                 `title: ${JSON.stringify(change.feature)}`,
-                'tags: [project, feature, completed, archive, ai-index]',
+                forced
+                    ? 'tags: [project, feature, archive, incomplete, accepted-risk, ai-index]'
+                    : 'tags: [project, feature, completed, archive, ai-index]',
                 `features: [${JSON.stringify(change.feature)}]`,
                 `archive: ${JSON.stringify(change.archive)}`,
                 `workflow_profile: ${JSON.stringify(change.workflow_profile || 'change')}`,
                 `completed_at: ${JSON.stringify(change.completed_at || '')}`,
+                ...(forced ? [
+                    'disposition: forced',
+                    'completion_status: incomplete',
+                    'accepted_risk: true',
+                    `force_archive_reason: ${JSON.stringify(change.force_archive_reason || '')}`,
+                ] : []),
                 'generated: true',
                 'generator: ospec-archive-knowledge',
                 '---',
                 '',
                 `# ${change.feature}`,
                 '',
-                `> ${copy.guidance}`,
+                forced ? `> **${copy.forceWarning}**` : `> ${copy.guidance}`,
                 '',
+                ...(forced ? [
+                    `## ${copy.archiveDisposition}`,
+                    '',
+                    `- ${copy.disposition}: forced`,
+                    `- ${copy.completionStatus}: incomplete`,
+                    `- ${copy.acceptedRisk}: true`,
+                    `- ${copy.forceReason}: ${change.force_archive_reason || copy.notRecorded}`,
+                    `- ${copy.failingGates}: ${(change.failing_checks || []).length > 0 ? (change.failing_checks || []).join(', ') : copy.none.replace(/^- /, '')}`,
+                    '',
+                ] : []),
                 `## ${copy.summary}`,
                 '',
                 change.summary || copy.notRecorded,
@@ -620,6 +670,13 @@ class IndexBuilder {
                 archive: '完整归档',
                 none: '- 无',
                 notRecorded: '未记录摘要，请打开归档 proposal 查看。',
+                forceWarning: '此 change 已在未完成状态下被强制归档，不能视为已验证完成。',
+                archiveDisposition: '强制归档状态',
+                disposition: '归档方式',
+                completionStatus: '完成状态',
+                acceptedRisk: '已接受风险',
+                forceReason: '强制归档原因',
+                failingGates: '未通过门禁',
             };
         if (documentLanguage === 'ja-JP')
             return {
@@ -633,6 +690,13 @@ class IndexBuilder {
                 archive: '完全なアーカイブ',
                 none: '- なし',
                 notRecorded: '概要は記録されていません。archive の proposal を開いてください。',
+                forceWarning: 'この change は未完了のまま強制 archive されており、検証済み完了として扱えません。',
+                archiveDisposition: '強制 archive 状態',
+                disposition: 'archive 方法',
+                completionStatus: '完了状態',
+                acceptedRisk: '受容済みリスク',
+                forceReason: '強制 archive 理由',
+                failingGates: '未通過 gate',
             };
         if (documentLanguage === 'ar')
             return {
@@ -646,6 +710,13 @@ class IndexBuilder {
                 archive: 'الأرشيف الكامل',
                 none: '- لا يوجد',
                 notRecorded: 'لم يسجل ملخص؛ افتح proposal المؤرشف.',
+                forceWarning: 'تمت أرشفة هذا التغيير قسريا وهو غير مكتمل، ولم يتم التحقق من اكتماله.',
+                archiveDisposition: 'حالة الأرشفة القسرية',
+                disposition: 'طريقة الأرشفة',
+                completionStatus: 'حالة الاكتمال',
+                acceptedRisk: 'المخاطر المقبولة',
+                forceReason: 'سبب الأرشفة القسرية',
+                failingGates: 'البوابات غير المجتازة',
             };
         return {
             guidance: 'Generated by OSpec at archive time so humans and AI can quickly see what this change delivered and where its evidence lives.',
@@ -658,6 +729,13 @@ class IndexBuilder {
             archive: 'Full archive',
             none: '- None',
             notRecorded: 'No summary was recorded; open the archived proposal.',
+            forceWarning: 'This change was force-archived incomplete. It was not verified as complete.',
+            archiveDisposition: 'Force Archive Status',
+            disposition: 'Disposition',
+            completionStatus: 'Completion status',
+            acceptedRisk: 'Accepted risk',
+            forceReason: 'Force archive reason',
+            failingGates: 'Failing gates',
         };
     }
     async writeFeatureIndex(rootDir, config, archivedChanges) {
@@ -685,6 +763,11 @@ class IndexBuilder {
         }
         for (const change of archivedChanges) {
             lines.push(`## ${change.feature}`, '');
+            if (change.disposition === 'forced') {
+                lines.push(`- ${copy.archiveStatus}: FORCED / INCOMPLETE / ACCEPTED RISK`);
+                lines.push(`- ${copy.forceReason}: ${change.force_archive_reason || copy.notRecorded}`);
+                lines.push(`- ${copy.failingGates}: ${(change.failing_checks || []).length > 0 ? (change.failing_checks || []).join(', ') : copy.none}`);
+            }
             if (change.summary)
                 lines.push(`- ${copy.summary}: ${change.summary}`);
             if (change.affects.length > 0)
@@ -715,7 +798,7 @@ class IndexBuilder {
         if (documentLanguage === 'zh-CN') {
             return {
                 title: '项目功能索引',
-                guidance: '由 OSpec 自动生成。使用本文件定位已完成功能，并只打开当前任务需要的归档证据或长期项目文档。',
+                guidance: '由 OSpec 自动生成。使用本文件定位归档记录；强制归档的未完成项会明确标记，不能视为已完成功能。',
                 empty: '暂无已归档 change。',
                 summary: '摘要',
                 affects: '影响范围',
@@ -723,12 +806,17 @@ class IndexBuilder {
                 open: '打开',
                 projectDocument: '长期项目文档',
                 knowledgeDocument: 'change 功能文档',
+                archiveStatus: '归档状态',
+                forceReason: '强制归档原因',
+                failingGates: '未通过门禁',
+                notRecorded: '未记录',
+                none: '无',
             };
         }
         if (documentLanguage === 'ja-JP') {
             return {
                 title: 'プロジェクト機能索引',
-                guidance: 'OSpec により自動生成されます。完了済み機能を特定し、現在のタスクに必要な archive evidence または永続 project document だけを開いてください。',
+                guidance: 'OSpec により自動生成されます。archive 記録を特定し、強制 archive された未完了項目を完了済み機能として扱わないでください。',
                 empty: 'archive 済みの change はまだありません。',
                 summary: '概要',
                 affects: '影響範囲',
@@ -736,12 +824,17 @@ class IndexBuilder {
                 open: '開く',
                 projectDocument: '長期プロジェクト文書',
                 knowledgeDocument: 'change 機能文書',
+                archiveStatus: 'archive 状態',
+                forceReason: '強制 archive 理由',
+                failingGates: '未通過 gate',
+                notRecorded: '記録なし',
+                none: 'なし',
             };
         }
         if (documentLanguage === 'ar') {
             return {
                 title: 'فهرس ميزات المشروع',
-                guidance: 'يُنشأ تلقائياً بواسطة OSpec. استخدمه لتحديد السلوك المكتمل، وافتح فقط دليل archive أو وثيقة المشروع الدائمة اللازمة للمهمة الحالية.',
+                guidance: 'يُنشأ تلقائياً بواسطة OSpec لتحديد سجلات الأرشيف؛ العناصر غير المكتملة المؤرشفة قسرياً ليست ميزات مكتملة.',
                 empty: 'لا توجد تغييرات مؤرشفة بعد.',
                 summary: 'الملخص',
                 affects: 'النطاق المتأثر',
@@ -749,11 +842,16 @@ class IndexBuilder {
                 open: 'فتح',
                 projectDocument: 'وثيقة المشروع الدائمة',
                 knowledgeDocument: 'وثيقة change',
+                archiveStatus: 'حالة الأرشفة',
+                forceReason: 'سبب الأرشفة القسرية',
+                failingGates: 'البوابات غير المجتازة',
+                notRecorded: 'غير مسجل',
+                none: 'لا يوجد',
             };
         }
         return {
             title: 'Project Feature Index',
-            guidance: 'Generated by OSpec. Use this file to locate completed behavior; open only the archived evidence or durable project documents needed for the current task.',
+            guidance: 'Generated by OSpec. Use this file to locate archived records; force-archived incomplete entries are marked and are not completed behavior.',
             empty: 'No archived changes yet.',
             summary: 'Summary',
             affects: 'Affects',
@@ -761,6 +859,11 @@ class IndexBuilder {
             open: 'open',
             projectDocument: 'Durable project document',
             knowledgeDocument: 'Change knowledge document',
+            archiveStatus: 'Archive status',
+            forceReason: 'Force archive reason',
+            failingGates: 'Failing gates',
+            notRecorded: 'Not recorded',
+            none: 'None',
         };
     }
 }

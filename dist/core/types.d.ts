@@ -207,6 +207,12 @@ export interface ArchivedChangeIndexEntry {
     target_files?: string[];
     verification_commands?: string[];
     workflow_profile?: string;
+    disposition?: 'completed' | 'forced';
+    completion_status?: 'completed' | 'incomplete';
+    accepted_risk?: boolean;
+    force_archive_reason?: string;
+    failing_checks?: string[];
+    archived_at?: string;
 }
 export interface SkillIndex {
     version: string;

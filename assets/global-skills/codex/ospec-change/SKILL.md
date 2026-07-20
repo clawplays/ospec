@@ -59,6 +59,7 @@ If `change-protocol.md` is missing, fall back to the full `ai-guide.md` and `exe
 10. The current AI performs one lightweight `review.md` review. `APPROVED` and `APPROVED_WITH_CONCERNS` may close automatically; `PENDING`, `NEEDS_CHANGES`, and `BLOCKED` stop closeout.
 11. Set the proposal `change_type` and documentation contract. Bug fixes may record `documentation_impact: none` with a concrete reason. Features and docs changes require at least one real project, module, API, or user document; the generated archive summary does not count. Update `SKILL.md` only when module rules or AI usage contracts changed. Index rebuild is automatic.
 12. Closeout is automatic when ready: once implementation, `verification.md`, documentation policy, plugin gates, and `review.md` are aligned and `ospec verify [changes/active/<change>]` passes, run `ospec finalize [changes/active/<change>]` yourself. Do not stop at `ospec archive ... --check` (it is a preview only) and do not wait for the user to ask before archiving. **Closeout uses `direct-closeout` (archive locally, no PR) and `manual` merge as defaults — do NOT ask the user about PR, merge, branch, or worktree strategy; uncommitted change/OSpec files in the working tree are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause closeout when a gate genuinely needs a human: a pending required user decision, an unapproved blocking plugin gate (e.g. Checkpoint), real blockers reported by verify or archive, or an explicit user request to preview or approve before archiving.
+13. Force archive is never automatic. Use it only after the user explicitly accepts incomplete work: report the failed gates, confirm there is no pending Loop action, then run `ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <exact-change-name> --reason "<accepted risk>"`. Preserve failed and `NOT_VERIFIED` evidence; the archive is marked incomplete and must not be presented as completed behavior.
 
 ## Commands
 
@@ -70,6 +71,7 @@ ospec progress [changes/active/<change>]
 ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>] --check   # optional preview only — do not stop here
 ospec finalize [changes/active/<change>]          # run automatically once verify passes and no human gate is pending
+ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <exact-change-name> --reason "<accepted risk>" # explicit user exception only
 ```
 
 ## Guardrails

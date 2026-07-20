@@ -55,6 +55,7 @@ ospec execute sync [changes/active/<change>]
 ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>]
 ospec finalize [changes/active/<change>]
+ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <exact-change-name> (--reason "..." | --reason-file <path>)
 ospec skill status
 ospec skill install
 ospec skill status-claude
@@ -71,6 +72,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 `loop configure --allow-path`, `--allow-command`, and `--allow-command-policy` replace the complete selected allowlist group and print a diff; they never append silently. Prefer the task-graph `derive -> check -> apply` flow for L3. Apply uses compare-and-swap hashes, and permission expansion requires explicit `--approve-expansion`.
+
+1.8.21 adds an audited force-archive escape hatch for a user who explicitly accepts an incomplete Change or Goal. It requires `--force-archive`, exact-name `--confirm-force-archive`, and one non-empty reason. It never changes failed or `NOT_VERIFIED` evidence to pass, refuses to move a Goal while a Loop action is pending, and writes `artifacts/agents/force-archive.json`. State, generated knowledge, `feature-index.md`, and `SKILL.index.json` remain visibly `forced`, `incomplete`, and `accepted-risk`; a normally ready change must use ordinary finalize.
 
 Specialist design and plan reviews gained bounded defaults in 1.8.3. In 1.8.9 continuous mode, two completed rounds and 30 minutes are convergence thresholds: a new structured finding-ID set can continue, while repeated or cycling sets stop. Cache hits, pending reuse, heartbeats, and recovery of the same dispatch do not consume rounds. `--force` cannot bypass a guard. Strict mode retains the exact user-authorized extra-round window.
 
@@ -226,7 +229,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.20
+npm install -g @clawplays/ospec-cli@1.8.21
 ospec update [path]
 ```
 

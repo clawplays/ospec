@@ -54,6 +54,7 @@ ospec execute sync [changes/active/<change>]
 ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>]
 ospec finalize [changes/active/<change>]
+ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <exact-change-name> (--reason "..." | --reason-file <path>)
 ospec skill status
 ospec skill install
 ospec skill status-claude
@@ -70,6 +71,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 تستبدل الخيارات `loop configure --allow-path` و`--allow-command` و`--allow-command-policy` مجموعة allowlist المحددة بالكامل وتعرض الفرق، ولا تضيف صلاحيات ضمنيا. في L3 استخدم مسار task graph: `derive -> check -> apply`. يستخدم apply قيم CAS، ويتطلب توسيع الصلاحيات الخيار الصريح `--approve-expansion`.
+
+يضيف 1.8.21 مسار force archive مدققا فقط عندما يقبل المستخدم صراحة مخاطر Change أو Goal غير مكتمل. يتطلب `--force-archive` و`--confirm-force-archive` المطابق تماما لاسم change وسببا غير فارغ. لا يحول evidence الفاشل أو `NOT_VERIFIED` إلى pass، ويرفض نقل Goal مع Loop action معلق، ويكتب `artifacts/agents/force-archive.json`. تبقى state وknowledge المولدة و`feature-index.md` و`SKILL.index.json` موسومة بوضوح `forced` و`incomplete` و`accepted-risk`؛ أما change الجاهز عاديا فيستخدم finalize العادي.
 
 قدم الإصدار 1.8.3 قيما افتراضية محدودة لمراجعات design وplan المتخصصة. في continuous mode للإصدار 1.8.9 تصبح الجولتان المكتملتان و30 دقيقة لكل stage عتبات تقارب: يمكن لمجموعة structured finding-ID جديدة أن تستمر، بينما تتوقف المجموعات المتكررة أو الدورية. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز، ويحتفظ strict mode بنافذة extra round التي يصرح بها المستخدم بدقة.
 
@@ -225,7 +228,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.20
+npm install -g @clawplays/ospec-cli@1.8.21
 ospec update [path]
 ```
 

@@ -173,11 +173,18 @@ ospec verify changes/active/<change-name>
 ospec finalize changes/active/<change-name>
 ```
 
+Explicit incomplete archive, only after the user accepts the unresolved risk:
+
+```bash
+ospec finalize changes/active/<change-name> --force-archive --confirm-force-archive <exact-change-name> --reason "Accepted unresolved verification risk"
+```
+
 Archive notes:
 
 - run your project-specific deploy, test, and QA flow first
 - use `ospec verify` to confirm the active change is ready
 - use `ospec finalize` to rebuild indexes and archive the accepted change
+- force archive is never automatic: it requires the force flag, an exact change-name confirmation, and an audit reason; it refuses a pending Loop action and marks the archive `forced`, `incomplete`, and `accepted-risk` instead of completed
 - new nested projects archive under `.ospec/changes/archived/YYYY-MM/YYYY-MM-DD/<change-name>`; CLI shorthand under `changes/archived/...` still works
 - existing flat archives are reorganized by `ospec update`
 

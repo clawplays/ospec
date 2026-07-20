@@ -10,7 +10,7 @@ export { PlanCommand } from './PlanCommand';
 export { VerifyCommand } from './VerifyCommand';
 export { ProgressCommand } from './ProgressCommand';
 export { ArchiveCommand } from './ArchiveCommand';
-export { FinalizeCommand } from './FinalizeCommand';
+export { FinalizeCommand, type FinalizeCommandOptions } from './FinalizeCommand';
 export { StatusCommand } from './StatusCommand';
 export { BatchCommand } from './BatchCommand';
 export { WorkflowCommand } from './WorkflowCommand';

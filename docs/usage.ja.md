@@ -54,6 +54,7 @@ ospec execute sync [changes/active/<change>]
 ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>]
 ospec finalize [changes/active/<change>]
+ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <正確な-change-名> (--reason "..." | --reason-file <path>)
 ospec skill status
 ospec skill install
 ospec skill status-claude
@@ -70,6 +71,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 `loop configure --allow-path`、`--allow-command`、`--allow-command-policy` は、選択した allowlist グループ全体を置換して差分を表示し、暗黙には追加しません。L3 では task graph の `derive -> check -> apply` を優先してください。apply は CAS hash を使い、権限拡張には明示的な `--approve-expansion` が必要です。
+
+1.8.21 は、ユーザーが未完了の Change または Goal のリスクを明示的に受容した場合に限る監査付き force archive を追加します。`--force-archive`、change 名と完全一致する `--confirm-force-archive`、空でない理由が必要です。失敗または `NOT_VERIFIED` evidence を pass に変更せず、pending Loop action がある Goal の移動を拒否し、`artifacts/agents/force-archive.json` を記録します。state、生成 knowledge、`feature-index.md`、`SKILL.index.json` は `forced`、`incomplete`、`accepted-risk` と表示され、通常 ready な change は通常の finalize を使います。
 
 1.8.3 では design/plan specialist review に bounded default を導入しました。1.8.9 の continuous mode では、stage ごとの 2 completed rounds と 30 分は収束しきい値です。新しい structured finding-ID set は続行でき、反復または循環する set は停止します。cache hit、pending reuse、heartbeat、同じ dispatch の recovery は round を消費しません。`--force` は guard を迂回できず、strict mode は exact user-authorized extra-round window を維持します。
 
@@ -225,7 +228,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.20
+npm install -g @clawplays/ospec-cli@1.8.21
 ospec update [path]
 ```
 

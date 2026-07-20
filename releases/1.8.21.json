@@ -1,0 +1,19 @@
+{
+  "title_suffix": "audited force archive",
+  "summary": "OSpec 1.8.21 adds an explicit double-confirmed force-archive path that preserves incomplete evidence and marks every generated archive surface as accepted risk.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.20...1.8.21",
+  "new": [
+    "Added ospec finalize --force-archive with exact change-name confirmation and a mandatory inline or file-based audit reason."
+  ],
+  "improved": [
+    "Forced archives retain failed checks, pending steps, blockers, and NOT_VERIFIED evidence instead of presenting them as completed work.",
+    "Generated archive knowledge, feature indexes, and SKILL.index.json visibly identify forced incomplete accepted-risk records."
+  ],
+  "fixed": [
+    "Added a supported closeout path for users who intentionally accept residual risk without hand-editing task graphs, reviews, or evidence.",
+    "Prevented force archive while a Loop action is pending and preserved transactional rollback across state, proposal, audit record, knowledge, links, and indexes."
+  ],
+  "docs": [
+    "Documented the double-confirmation command, non-bypassable safety checks, audit record, and AI authorization boundary."
+  ]
+}

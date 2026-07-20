@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.20';
+const CLI_VERSION = '1.8.21';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -151,6 +151,78 @@ function parseInitCommandArgs(commandArgs) {
         rootDir,
         options,
     };
+}
+function showFinalizeUsage() {
+    console.log('Usage: ospec finalize [changes/active/<change>] [--force-archive --confirm-force-archive <exact-change-name> (--reason "..." | --reason-file <path>)]');
+}
+function parseFinalizeCommandArgs(commandArgs) {
+    let featurePath;
+    const options = {};
+    const readValue = (index, flag) => {
+        const value = commandArgs[index + 1];
+        if (!value || value.startsWith('--')) {
+            console.error(`Error: ${flag} requires a value`);
+            showFinalizeUsage();
+            process.exit(1);
+        }
+        return value;
+    };
+    for (let index = 0; index < commandArgs.length; index += 1) {
+        const arg = commandArgs[index];
+        if (arg === '--help' || arg === '-h' || arg === 'help') {
+            showFinalizeUsage();
+            process.exit(0);
+        }
+        if (arg === '--force-archive') {
+            options.forceArchive = true;
+            continue;
+        }
+        if (arg === '--confirm-force-archive') {
+            options.confirmForceArchive = readValue(index, arg);
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith('--confirm-force-archive=')) {
+            options.confirmForceArchive = arg.slice('--confirm-force-archive='.length);
+            continue;
+        }
+        if (arg === '--reason') {
+            options.reason = readValue(index, arg);
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith('--reason=')) {
+            options.reason = arg.slice('--reason='.length);
+            continue;
+        }
+        if (arg === '--reason-file') {
+            options.reasonFile = readValue(index, arg);
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith('--reason-file=')) {
+            options.reasonFile = arg.slice('--reason-file='.length);
+            continue;
+        }
+        if (arg.startsWith('--')) {
+            console.error(`Error: unknown finalize option "${arg}"`);
+            showFinalizeUsage();
+            process.exit(1);
+        }
+        if (featurePath === undefined) {
+            featurePath = arg;
+            continue;
+        }
+        console.error(`Error: unexpected finalize argument "${arg}"`);
+        showFinalizeUsage();
+        process.exit(1);
+    }
+    if (options.reason !== undefined && options.reasonFile !== undefined) {
+        console.error('Error: use either --reason or --reason-file, not both');
+        showFinalizeUsage();
+        process.exit(1);
+    }
+    return { featurePath, options };
 }
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
@@ -379,7 +451,8 @@ async function main() {
             }
             case 'finalize': {
                 const finalizeCmd = new FinalizeCommand_1.FinalizeCommand();
-                await finalizeCmd.execute(commandArgs[0]);
+                const { featurePath, options } = parseFinalizeCommandArgs(commandArgs);
+                await finalizeCmd.execute(featurePath, options);
                 break;
             }
             case 'status': {
@@ -511,7 +584,7 @@ Commands:
   archive [path] [--check]  Archive a ready change or only check readiness
   status [path]             Show project status
   session [path]            Write a project session brief and safe next command
-  finalize [path]           Verify a completed change and archive it before commit
+  finalize [path]           Verify and archive, or force-archive with explicit double confirmation
   batch <action> [path]     Batch operations (export, stats)
   changes [action] [path]   Active change summaries (status)
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
@@ -546,6 +619,7 @@ Examples:
   ospec archive ./changes/active/onboarding-flow
   ospec archive ./changes/active/onboarding-flow --check
   ospec finalize ./changes/active/onboarding-flow
+  ospec finalize ./changes/active/onboarding-flow --force-archive --confirm-force-archive onboarding-flow --reason "Accepted incomplete verification risk"
   ospec status
   ospec session
   ospec session hook .

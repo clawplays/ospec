@@ -84,6 +84,11 @@ export interface DocumentationUpdateAnalysis {
     declared: string[];
     checks: ChangeStatusCheck[];
 }
+export interface FinalizeChangeOptions {
+    forceArchive?: boolean;
+    confirmForceArchive?: string;
+    reason?: string;
+}
 declare const REVIEW_ARTIFACT_ALLOWED_DECISIONS: readonly ["APPROVED", "APPROVED_WITH_CONCERNS", "NEEDS_CHANGES", "BLOCKED", "PENDING"];
 export type ReviewArtifactDecision = typeof REVIEW_ARTIFACT_ALLOWED_DECISIONS[number];
 export type { ReviewArtifactRole } from '../utils/ReviewArtifacts';
@@ -184,7 +189,7 @@ export declare class ProjectService {
     getActiveChangeStatusReport(rootDir: string): Promise<ActiveChangeStatusReport>;
     getActiveChangeStatusItem(featurePath: string): Promise<ActiveChangeStatusItem>;
     listActiveChangeNames(rootDir: string): Promise<string[]>;
-    finalizeChange(featurePath: string): Promise<{
+    finalizeChange(featurePath: string, options?: FinalizeChangeOptions): Promise<{
         archivePath: string;
         change: ActiveChangeStatusItem;
     }>;
@@ -232,8 +237,11 @@ export declare class ProjectService {
     getBootstrapStructurePolicy(rootDir: string): BootstrapStructurePolicy;
     private buildBootstrapPreview;
     rebuildIndex(rootDir: string): Promise<SkillsStatus['skillIndex']>;
+    private assertForceArchiveHasNoPendingLoopAction;
     preflightArchivedKnowledgeWrite(projectRoot: string, archivePath: string): Promise<void>;
-    assertArchivedKnowledgeIndexed(projectRoot: string, archivePath: string): Promise<void>;
+    assertArchivedKnowledgeIndexed(projectRoot: string, archivePath: string, expectations?: {
+        disposition?: 'forced';
+    }): Promise<void>;
     private getDirectorySkeleton;
     private getProtocolShellDirectorySkeleton;
     private getKnowledgeLayerDirectorySkeleton;

@@ -43,6 +43,7 @@ exports.FILE_NAMES = {
     AGENT_WORKER_STATUS: 'worker-status.md',
     TASKS: 'tasks.md',
     VERIFICATION: 'verification.md',
+    FORCE_ARCHIVE_RECORD: 'force-archive.json',
     STATE: 'state.json',
     REVIEW: 'review.md',
     INDEX: 'INDEX.json',

@@ -86,9 +86,10 @@ For legacy root-layout projects, use the same paths without the `.ospec/` prefix
 9. Run `ospec execute doc-review [changes/active/<goal>] --stage plan`. Reuse a valid approval; otherwise execute one fresh independent plan reviewer through `dispatch.runtimeAdapter`, claim its real executor id, wait for findings, then complete it before worker dispatch. The controlling AI must not self-approve either review.
 10. Use `ospec execute decision` for direction, architecture, API, UI, risk, or scope choices that need explicit user selection, and always include `--answered-by user` when persisting the user's answer. Persist every named browser/E2E/manual verification requirement before implementation.
 11. Use `ospec execute workspace`, `dispatch`, `launch`, `complete`, `review`, `feedback`, `repair`, `sync`, `tdd`, `debug`, and `verify` as needed for the full workflow. Run `ospec loop run <goal-path> --once --json`, dispatch every emitted packet through `runtimeAdapter.selected.nativeSubagent`, record completion/review evidence as each child finishes, and tick again without waiting for another user prompt. Never start Orca, Codex, Claude, or another agent CLI as a fallback. Model profiles are logical and resolve through `.skillrc.workflow.model_profiles`; `complete --usage-file` may record provider usage. Require reviewers to write Markdown plus sibling structured `*.findings.json`. If final review is `NEEDS_CHANGES`, create one grouped repair task instead of one worker per finding.
-12. Do not archive while task graph status, task-level reviews, final reviews, worker status, required user decisions, document reviews, or verification evidence are incomplete.
+12. Do not archive while task graph status, task-level reviews, final reviews, worker status, required user decisions, document reviews, or verification evidence are incomplete during normal closeout.
 13. Use `ospec execute finish` before finalize when the goal used task graph execution or worktree planning.
 14. Use `ospec finalize [changes/active/<goal>]` as the normal closeout path. Closeout is automatic when ready: once the goal is complete and `ospec verify` passes with no required user decision or blocking gate pending, run `ospec finalize` yourself — do not stop at `ospec archive ... --check` (preview only) or wait for the user to ask. **`ospec execute finish` strategy prompts (PR / merge / branch / worktree) are optional with safe defaults (`direct-closeout` + `manual` merge) — do NOT ask the user about them; uncommitted change/OSpec files are normal and do not block archive. Only open a PR if the user explicitly asked.** Only pause for a genuine human gate: a pending required decision, an unapproved blocking plugin gate (e.g. Checkpoint), real verify/archive blockers, or an explicit user request to preview or approve first.
+15. Force archive is never automatic. Only after the user explicitly asks to accept an incomplete Goal, report every failing gate and `NOT_VERIFIED` item, double-check that no Loop action or child is pending, and run `ospec finalize [changes/active/<goal>] --force-archive --confirm-force-archive <exact-goal-name> --reason "<accepted risk>"`. Do not rewrite failed evidence as passed. The resulting archive remains `forced`, `incomplete`, and `accepted-risk`, not completed behavior.
 
 ## Commands
 
@@ -148,6 +149,7 @@ ospec execute finish [changes/active/<goal>] [--target main] [--remote origin]
 ospec verify [changes/active/<goal>]
 ospec archive [changes/active/<goal>] --check
 ospec finalize [changes/active/<goal>]
+ospec finalize [changes/active/<goal>] --force-archive --confirm-force-archive <exact-goal-name> --reason "<accepted risk>"
 ```
 
 ## Guardrails

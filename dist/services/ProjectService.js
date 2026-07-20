@@ -674,7 +674,7 @@ class ProjectService {
             .map(entry => entry.name)
             .sort((left, right) => left.localeCompare(right));
     }
-    async finalizeChange(featurePath) {
+    async finalizeChange(featurePath, options = {}) {
         const resolvedFeaturePath = path_1.default.resolve(featurePath);
         const projectRoot = await this.findProjectRootFromPath(resolvedFeaturePath);
         const projectConfig = await this.configManager.loadConfig(projectRoot);
@@ -682,33 +682,98 @@ class ProjectService {
         if (path_1.default.dirname(resolvedFeaturePath) !== expectedParent) {
             throw new Error('Finalize target must be a change directory under changes/active.');
         }
+        const forceArchive = options.forceArchive === true;
+        if (!forceArchive && (options.confirmForceArchive !== undefined || options.reason !== undefined)) {
+            throw new Error('Force-archive confirmation and reason require --force-archive.');
+        }
         const progressStatePath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE);
         const progressState = await this.fileService.readJSON(progressStatePath);
+        const featureName = typeof progressState?.feature === 'string' && progressState.feature.trim()
+            ? progressState.feature.trim()
+            : path_1.default.basename(resolvedFeaturePath);
+        const forceReason = typeof options.reason === 'string' ? options.reason.trim() : '';
+        if (forceArchive) {
+            if (options.confirmForceArchive === undefined) {
+                throw new Error(`Force archive requires --confirm-force-archive ${featureName}.`);
+            }
+            if (options.confirmForceArchive !== featureName) {
+                throw new Error(`Force archive confirmation must exactly match change name "${featureName}".`);
+            }
+            if (!forceReason) {
+                throw new Error('Force archive requires a non-empty --reason or --reason-file.');
+            }
+            await this.assertForceArchiveHasNoPendingLoopAction(resolvedFeaturePath);
+        }
+        const progressIssues = [];
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(resolvedFeaturePath, progressState);
         if (workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE) {
-            const progressProjection = await new TaskGraphExecutionService_1.TaskGraphExecutionService(this.fileService)
-                .reconcileGoalProgress(resolvedFeaturePath);
-            if (progressProjection.status === 'blocked') {
-                throw new Error(`Change progress cannot be reconciled before finalize: ${progressProjection.issues.join('; ')}`);
+            try {
+                const progressProjection = await new TaskGraphExecutionService_1.TaskGraphExecutionService(this.fileService)
+                    .reconcileGoalProgress(resolvedFeaturePath);
+                if (progressProjection.status === 'blocked') {
+                    progressIssues.push(...progressProjection.issues);
+                    if (!forceArchive) {
+                        throw new Error(`Change progress cannot be reconciled before finalize: ${progressProjection.issues.join('; ')}`);
+                    }
+                }
+            }
+            catch (error) {
+                if (!forceArchive)
+                    throw error;
+                progressIssues.push(`Goal progress reconciliation failed: ${error?.message || error}`);
             }
         }
         const item = await this.getActiveChangeStatusItem(resolvedFeaturePath);
         const blockingChecks = item.checks.filter(check => check.status === 'fail');
-        if (blockingChecks.length > 0) {
+        if (!forceArchive && blockingChecks.length > 0) {
             throw new Error(`Change ${item.name} is not ready to finalize. Failing checks: ${blockingChecks.map(check => check.name).join(', ')}`);
         }
-        if (!item.archiveReady) {
+        if (!forceArchive && !item.archiveReady) {
             throw new Error(`Change ${item.name} is not ready to archive yet.`);
         }
         const statePath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE);
         const proposalPath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL);
         const persistedFeatureState = await this.fileService.readJSON(statePath);
-        const featureState = item.closeoutState || persistedFeatureState;
+        const featureState = forceArchive ? persistedFeatureState : item.closeoutState || persistedFeatureState;
+        if (forceArchive && item.archiveReady && blockingChecks.length === 0 && progressIssues.length === 0) {
+            throw new Error(`Change ${item.name} is already ready to finalize; use ordinary ospec finalize without --force-archive.`);
+        }
         const config = await this.configManager.loadConfig(projectRoot);
         const archivedRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         await this.fileService.ensureDir(archivedRoot);
         const archivePath = await this.resolveArchivePath(archivedRoot, featureState.feature, config);
-        const nextState = {
+        const archivedAt = new Date().toISOString();
+        const forceArchiveRecordRelativePath = `${constants_1.DIR_NAMES.ARTIFACTS}/${constants_1.DIR_NAMES.AGENTS}/${constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD}`;
+        const forceArchiveRecord = forceArchive ? {
+            version: '1.0',
+            feature: featureName,
+            disposition: 'forced',
+            completionStatus: 'incomplete',
+            acceptedRisk: true,
+            reason: forceReason,
+            confirmation: {
+                mode: 'explicit-cli-double-confirmation',
+                confirmedChange: options.confirmForceArchive,
+            },
+            requestedAt: archivedAt,
+            archivedAt,
+            sourcePath: this.toRelativePath(projectRoot, resolvedFeaturePath),
+            failingChecks: blockingChecks.map(check => ({ ...check })),
+            progressIssues: Array.from(new Set(progressIssues)),
+            recordPath: forceArchiveRecordRelativePath,
+        } : null;
+        const nextState = forceArchive ? {
+            ...featureState,
+            status: 'archived',
+            current_step: 'archived',
+            completed: Array.from(new Set([...(featureState.completed || []), 'archived'])).sort((left, right) => left.localeCompare(right)),
+            pending: (featureState.pending || []).filter(step => step !== 'archived'),
+            archive_disposition: 'forced',
+            completion_status: 'incomplete',
+            accepted_risk: true,
+            force_archive_record: forceArchiveRecordRelativePath,
+            archived_at: archivedAt,
+        } : {
             ...featureState,
             status: 'archived',
             current_step: 'archived',
@@ -720,22 +785,35 @@ class ProjectService {
         const originalProposal = await this.fileService.exists(proposalPath)
             ? await this.fileService.readFile(proposalPath)
             : null;
+        const originalForceRecordPath = path_1.default.join(resolvedFeaturePath, ...forceArchiveRecordRelativePath.split('/'));
+        const originalForceRecord = await this.fileService.exists(originalForceRecordPath)
+            ? await this.fileService.readFile(originalForceRecordPath)
+            : null;
         let moved = false;
         let linksRebased = false;
         try {
             await this.fileService.move(resolvedFeaturePath, archivePath);
             moved = true;
             await this.fileService.writeJSON(path_1.default.join(archivePath, constants_1.FILE_NAMES.STATE), nextState);
+            if (forceArchiveRecord) {
+                await this.fileService.writeJSON(path_1.default.join(archivePath, ...forceArchiveRecordRelativePath.split('/')), forceArchiveRecord);
+            }
             const archivedProposalPath = path_1.default.join(archivePath, constants_1.FILE_NAMES.PROPOSAL);
             if (await this.fileService.exists(archivedProposalPath)) {
                 const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(archivedProposalPath));
                 proposal.data.status = 'archived';
+                if (forceArchive) {
+                    proposal.data.archive_disposition = 'forced';
+                    proposal.data.completion_status = 'incomplete';
+                    proposal.data.accepted_risk = true;
+                    proposal.data.force_archive_record = forceArchiveRecordRelativePath;
+                }
                 await this.fileService.writeFile(archivedProposalPath, (0, helpers_1.stringifyFrontmatter)(proposal.content, proposal.data));
             }
             await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
             linksRebased = true;
             await this.rebuildIndex(projectRoot);
-            await this.assertArchivedKnowledgeIndexed(projectRoot, archivePath);
+            await this.assertArchivedKnowledgeIndexed(projectRoot, archivePath, forceArchive ? { disposition: 'forced' } : undefined);
             await this.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
         }
         catch (error) {
@@ -760,6 +838,15 @@ class ProjectService {
                 if (originalProposal !== null) {
                     await this.fileService.writeFile(path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL), originalProposal)
                         .catch((rollbackError) => rollbackErrors.push(`proposal: ${rollbackError?.message || rollbackError}`));
+                }
+                const restoredForceRecordPath = path_1.default.join(resolvedFeaturePath, ...forceArchiveRecordRelativePath.split('/'));
+                if (originalForceRecord !== null) {
+                    await this.fileService.writeFile(restoredForceRecordPath, originalForceRecord)
+                        .catch((rollbackError) => rollbackErrors.push(`force-record: ${rollbackError?.message || rollbackError}`));
+                }
+                else {
+                    await this.fileService.remove(restoredForceRecordPath)
+                        .catch((rollbackError) => rollbackErrors.push(`force-record: ${rollbackError?.message || rollbackError}`));
                 }
             }
             await this.rebuildIndex(projectRoot)
@@ -1381,6 +1468,23 @@ class ProjectService {
         await this.indexBuilder.write(rootDir);
         return this.getIndexStatus(rootDir);
     }
+    async assertForceArchiveHasNoPendingLoopAction(changePath) {
+        const loopStatePath = path_1.default.join(changePath, constants_1.DIR_NAMES.ARTIFACTS, 'loop', constants_1.FILE_NAMES.STATE);
+        if (!(await this.fileService.exists(loopStatePath)))
+            return;
+        const loopState = await this.fileService.readJSON(loopStatePath);
+        const pending = loopState?.pendingControllerAction;
+        if (!pending)
+            return;
+        const activeItems = (Array.isArray(pending.itemStates) ? pending.itemStates : [])
+            .filter((item) => ['issued', 'running', 'awaiting-evidence'].includes(String(item?.status || '')))
+            .map((item) => String(item?.actionItemId || '(unknown)'));
+        if (pending.status !== 'done' || activeItems.length > 0) {
+            const actionId = String(pending.actionId || '(unknown)');
+            const itemText = activeItems.length > 0 ? ` Active items: ${activeItems.join(', ')}.` : '';
+            throw new Error(`Force archive refused while Loop action ${actionId} is still pending.${itemText} Settle or recover its executors first.`);
+        }
+    }
     async preflightArchivedKnowledgeWrite(projectRoot, archivePath) {
         const config = await this.configManager.loadConfig(projectRoot);
         const archivedRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
@@ -1432,7 +1536,7 @@ class ProjectService {
             await Promise.all(probes.map(probe => fs_1.promises.unlink(probe).catch(() => undefined)));
         }
     }
-    async assertArchivedKnowledgeIndexed(projectRoot, archivePath) {
+    async assertArchivedKnowledgeIndexed(projectRoot, archivePath, expectations = {}) {
         const config = await this.configManager.loadConfig(projectRoot);
         const indexPath = this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config);
         const featureIndexPath = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/feature-index.md`, config);
@@ -1445,6 +1549,17 @@ class ProjectService {
             .find((item) => item?.archive === normalizedArchive);
         if (!archivedChange) {
             throw new Error(`Archive knowledge verification failed: ${normalizedArchive} is missing from archived_changes.`);
+        }
+        if (expectations.disposition === 'forced') {
+            if (archivedChange.disposition !== 'forced'
+                || archivedChange.completion_status !== 'incomplete'
+                || archivedChange.accepted_risk !== true) {
+                throw new Error('Archive knowledge verification failed: forced archive metadata is missing from archived_changes.');
+            }
+            const forceRecordPath = path_1.default.join(archivePath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD);
+            if (!(await this.fileService.exists(forceRecordPath))) {
+                throw new Error(`Archive knowledge verification failed: ${constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD} was not preserved.`);
+            }
         }
         const knowledgeDocument = typeof archivedChange.knowledge_document === 'string'
             ? archivedChange.knowledge_document
@@ -1459,12 +1574,25 @@ class ProjectService {
         if (!index?.documents || !index.documents[knowledgeDocument]) {
             throw new Error(`Archive knowledge verification failed: ${knowledgeDocument} is missing from SKILL.index.json documents.`);
         }
+        if (expectations.disposition === 'forced') {
+            const knowledge = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(knowledgePath));
+            const tags = Array.isArray(knowledge.data?.tags) ? knowledge.data.tags.map(String) : [];
+            if (knowledge.data?.disposition !== 'forced'
+                || knowledge.data?.completion_status !== 'incomplete'
+                || knowledge.data?.accepted_risk !== true
+                || tags.includes('completed')) {
+                throw new Error('Archive knowledge verification failed: forced archive knowledge is not visibly incomplete and accepted-risk.');
+            }
+        }
         if (!(await this.fileService.exists(featureIndexPath))) {
             throw new Error('Archive knowledge verification failed: docs/project/feature-index.md was not generated.');
         }
         const featureIndex = await this.fileService.readFile(featureIndexPath);
         if (!featureIndex.includes(knowledgeDocument)) {
             throw new Error(`Archive knowledge verification failed: feature-index.md does not link ${knowledgeDocument}.`);
+        }
+        if (expectations.disposition === 'forced' && !featureIndex.includes('FORCED / INCOMPLETE / ACCEPTED RISK')) {
+            throw new Error('Archive knowledge verification failed: feature-index.md does not visibly mark the forced incomplete archive.');
         }
     }
     getDirectorySkeleton(rootDir, config = null) {

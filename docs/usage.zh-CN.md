@@ -55,6 +55,7 @@ ospec execute sync [changes/active/<change>]
 ospec verify [changes/active/<change>]
 ospec archive [changes/active/<change>]
 ospec finalize [changes/active/<change>]
+ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <精确-change-名称> (--reason "..." | --reason-file <path>)
 ospec skill status
 ospec skill install
 ospec skill status-claude
@@ -71,6 +72,8 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 `loop configure --allow-path`、`--allow-command` 和 `--allow-command-policy` 会替换所选的完整白名单分组并打印差异，不会静默追加。L3 优先使用基于任务图的 `derive -> check -> apply` 流程；apply 使用 CAS 哈希，权限扩大必须显式传入 `--approve-expansion`。
+
+1.8.21 增加了带审计的强制归档出口，仅用于用户明确接受未完成 Change 或 Goal 的情况。命令必须同时提供 `--force-archive`、与 change 名称完全一致的 `--confirm-force-archive`，以及非空原因。它不会把失败或 `NOT_VERIFIED` 证据改成通过；存在 pending Loop action 时会拒绝移动 Goal，并写入 `artifacts/agents/force-archive.json`。state、生成知识文档、`feature-index.md` 和 `SKILL.index.json` 都会持续标记为 `forced`、`incomplete`、`accepted-risk`；已经满足普通归档条件的 change 必须使用普通 finalize。
 
 1.8.3 为设计和计划的 specialist review 引入了边界默认值。1.8.9 连续模式把每阶段两轮和 30 分钟作为收敛阈值：新的结构化 finding-ID 集合可以继续，重复或循环集合会停止。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；严格模式保留精确用户授权的额外轮次窗口。
 
@@ -226,7 +229,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.20
+npm install -g @clawplays/ospec-cli@1.8.21
 ospec update [path]
 ```
 
