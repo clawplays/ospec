@@ -2,7 +2,6 @@ export type ProjectMode = 'lite' | 'standard' | 'full';
 export type ProjectLayout = 'classic' | 'nested';
 export type WorkflowProfileId = 'change' | 'goal';
 export type HookCheckPolicy = 'off' | 'warn' | 'error';
-export type DocumentReviewPolicy = 'always' | 'adaptive';
 export type AgentModelProfileId = 'mechanical' | 'standard' | 'strong_reasoning' | 'review' | 'final_review';
 export interface AgentModelProfileConfig {
     default?: string;
@@ -139,7 +138,6 @@ export interface SkillrcConfig {
         feature_flags: {
             supported: string[];
         };
-        document_review_policy?: DocumentReviewPolicy;
         model_profiles?: Partial<Record<AgentModelProfileId, AgentModelProfileConfig>>;
     };
 }

@@ -130,7 +130,7 @@ function getExecuteHelpText() {
 Execute Commands:
   ospec execute bootstrap [change-path|project-path] - write a one-change startup/resume snapshot with project session brief context and next safe action
   ospec execute handoff [change-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
-  ospec execute doc-review [change-path|project-path] [--stage design|plan] [--force] [--claim-executor id|--heartbeat-executor id|--complete-executor id] [--usage-file usage.json] - dispatch/reuse a bounded document review or record its native executor lifecycle; --force cannot bypass review guards
+  ospec execute preflight [change-path|project-path] [--stage design|plan] [--force] - run or reuse a zero-token deterministic planning preflight
   ospec execute status [change-path|project-path] [--brief] - show task graph controller state; prefer --brief and the emitted packet path for controller loops
   ospec execute next [change-path|project-path]   - show dispatchable next task(s)
   ospec execute route [change-path|project-path]  - write a workflow-route artifact with the next recommended OSpec command
@@ -150,7 +150,6 @@ Execute Commands:
   ospec execute feedback [change-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files
   ospec execute repair [change-path|project-path] - convert all NEEDS_CHANGES final-review findings into one grouped repair task and dispatch
   ospec execute decision [change-path|project-path] --id id --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional] - record a durable user choice gate that can block dispatch until selected
-  ospec execute decision [change-path|project-path] --id id --question "Allow one extra review round?" --option allow:Allow:impact --option stop:Stop:impact --required --document-review-stage design|plan --review-context-hash H --review-round N --review-approval-option allow - create a decision bound to one explicit approval option and exactly one extra document-review round
   ospec execute decision [change-path|project-path] --id id --select option-id --answered-by user [--summary "..."] - record the user's selected option with explicit provenance and unblock required decision gates
   ospec execute debug [change-path|project-path] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." [--status CONFIRMED|FIXED|BLOCKED|SKIPPED] [--hypothesis "..."] [--command "..."] [--summary "..."] - record staged debugging evidence
   ospec execute tdd [change-path|project-path] --phase red|green|refactor --command "npm test -- focused" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--exit-code 1] [--test "..."] [--summary "..."] - record TDD cycle evidence

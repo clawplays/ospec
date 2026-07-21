@@ -1,0 +1,27 @@
+{
+  "title_suffix": "fast goal planning",
+  "summary": "OSpec 1.9.0 gives every Goal one fast quality workflow: deterministic planning preflights, one independent combined planning review, bounded repair, conflict-safe implementation, independent task review, integration review, and fresh verification.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.23...1.9.0",
+  "new": [
+    "Added deterministic inline preflights for design and implementation-plan readiness before task graph derivation.",
+    "Added one independent combined planning review across requirements, architecture, task boundaries, dependencies, and verification coverage.",
+    "Added compact Loop JSON output that keeps executable action data while omitting repeated adapter diagnostics."
+  ],
+  "improved": [
+    "Goals now use one quality path without workflow levels or repeated per-document reviewer rounds.",
+    "Planning preflights reserve no model tokens and reuse current evidence until authoritative inputs change.",
+    "A planning failure receives at most one grouped repair and one fresh combined re-review before stopping stably.",
+    "Final review focuses on integration and unresolved deltas instead of replaying every accepted task review.",
+    "Red tests, production implementation, and green/refactor evidence remain in one atomic task unless the test harness is independently reusable."
+  ],
+  "fixed": [
+    "Task graph derivation is now explicitly sequenced after design and plan preflights.",
+    "Incomplete planning documents, required decisions, and unfinished checklists fail before worker dispatch.",
+    "Identical planning snapshots no longer create duplicate review dispatches.",
+    "Planning repair state is transactionally bound to one Loop action and cannot be redispatched after failure or completion.",
+    "Empty pending actions settle without entering an observation loop, and old Goal controller contracts stop with a stable migration error."
+  ],
+  "docs": [
+    "Updated Goal workflow, controller, and multilingual usage guidance for the fast planning path."
+  ]
+}

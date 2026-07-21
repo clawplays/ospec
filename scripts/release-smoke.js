@@ -143,25 +143,6 @@ async function approveDispatchedReview(featureDir, dispatch) {
   });
 }
 
-async function approveNativeDocumentReview(
-  execution,
-  featureDir,
-  dispatch,
-  executorId,
-) {
-  await execution.claimDocumentReviewExecutor(
-    featureDir,
-    dispatch.stage,
-    executorId,
-  );
-  await approveDispatchedReview(featureDir, dispatch);
-  await execution.completeDocumentReviewExecutor(
-    featureDir,
-    dispatch.stage,
-    executorId,
-  );
-}
-
 async function approveNativeCodeReview(execution, featureDir, dispatch) {
   const loopConfig = await fs.readJson(
     path.join(featureDir, 'artifacts', 'loop', 'loop.json'),
@@ -198,6 +179,29 @@ async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
   const agentsDir = path.join(featureDir, 'artifacts', 'agents');
 
   await ensureDir(agentsDir);
+
+  const { FileService } = require(
+    path.join(rootDir, 'dist', 'services', 'FileService.js'),
+  );
+  const { TaskGraphExecutionService } = require(
+    path.join(rootDir, 'dist', 'services', 'TaskGraphExecutionService.js'),
+  );
+  const execution = new TaskGraphExecutionService(new FileService());
+
+  const designReview = await execution.reviewDocument(featureDir, {
+    stage: 'design',
+  });
+  if (designReview.dispatch.mode !== 'inline_preflight') {
+    throw new Error(
+      'Expected release smoke design preflight to complete inline',
+    );
+  }
+  const planReview = await execution.reviewDocument(featureDir, {
+    stage: 'plan',
+  });
+  if (planReview.dispatch.mode !== 'inline_preflight') {
+    throw new Error('Expected release smoke plan preflight to complete inline');
+  }
 
   await fs.writeJson(
     path.join(agentsDir, 'task-graph.json'),
@@ -237,33 +241,6 @@ async function writeCompletedReleaseSmokeArtifacts(featureDir, feature) {
       ],
     },
     { spaces: 2 },
-  );
-
-  const { FileService } = require(
-    path.join(rootDir, 'dist', 'services', 'FileService.js'),
-  );
-  const { TaskGraphExecutionService } = require(
-    path.join(rootDir, 'dist', 'services', 'TaskGraphExecutionService.js'),
-  );
-  const execution = new TaskGraphExecutionService(new FileService());
-
-  const designReview = await execution.reviewDocument(featureDir, {
-    stage: 'design',
-  });
-  await approveNativeDocumentReview(
-    execution,
-    featureDir,
-    designReview.dispatch,
-    'release-smoke-design-reviewer',
-  );
-  const planReview = await execution.reviewDocument(featureDir, {
-    stage: 'plan',
-  });
-  await approveNativeDocumentReview(
-    execution,
-    featureDir,
-    planReview.dispatch,
-    'release-smoke-plan-reviewer',
   );
 
   const taskReview = await execution.review(featureDir, {
@@ -589,8 +566,6 @@ async function main() {
       'goal',
       'release-smoke',
       projectDir,
-      '--level',
-      'L2',
       '--target',
       'codex',
       '--execution-model',
@@ -720,17 +695,29 @@ async function main() {
     );
 
     await fs.writeFile(
+      proposalPath,
+      (await fs.readFile(proposalPath, 'utf8'))
+        .replace(/\b(?:TBD|TODO)\b/g, 'Release smoke fixture')
+        .replace(/待补充|未定|قيد التحديد/g, 'Release smoke fixture')
+        .replace(/- \[ \]/g, '- [x]'),
+      'utf8',
+    );
+
+    await fs.writeFile(
       designPath,
-      (await fs.readFile(designPath, 'utf8')).replace(/- \[ \]/g, '- [x]'),
+      (await fs.readFile(designPath, 'utf8'))
+        .replace(/\b(?:TBD|TODO)\b/g, 'Release smoke fixture')
+        .replace(/待补充|未定|قيد التحديد/g, 'Release smoke fixture')
+        .replace(/- \[ \]/g, '- [x]'),
       'utf8',
     );
 
     await fs.writeFile(
       implementationPlanPath,
-      (await fs.readFile(implementationPlanPath, 'utf8')).replace(
-        /- \[ \]/g,
-        '- [x]',
-      ),
+      (await fs.readFile(implementationPlanPath, 'utf8'))
+        .replace(/\b(?:TBD|TODO)\b/g, 'Release smoke fixture')
+        .replace(/待补充|未定|قيد التحديد/g, 'Release smoke fixture')
+        .replace(/- \[ \]/g, '- [x]'),
       'utf8',
     );
 

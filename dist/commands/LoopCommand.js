@@ -39,7 +39,7 @@ const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'tick', 'watch', 'status', 'pause', 'resume', 'level', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
+const LOOP_ACTIONS = ['run', 'tick', 'watch', 'status', 'pause', 'resume', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
@@ -64,9 +64,6 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 case 'resume':
                     await this.resume(args[0]);
                     return;
-                case 'level':
-                    await this.level(args);
-                    return;
                 case 'configure':
                     await this.configure(args);
                     return;
@@ -86,7 +83,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                     await this.recover(args);
                     return;
                 default:
-                    this.info(`Usage: ospec loop <${LOOP_ACTIONS.join('|')}> [path] [--level L1|L2|L3]`);
+                    this.info(`Usage: ospec loop <${LOOP_ACTIONS.join('|')}> [path]`);
             }
         }
         catch (error) {
@@ -95,7 +92,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
     }
     async run(args) {
-        const inputPath = this.parseOptionalPath(args, [], ['--once', '--json']);
+        const inputPath = this.parseOptionalPath(args, [], ['--once', '--json', '--compact-json']);
         const changePath = await this.resolveChangePath(inputPath);
         const project = await this.resolveProjectRoot(changePath);
         const result = await services_1.services.loopService.runOnce(changePath, {
@@ -103,8 +100,8 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             projectRoot: project.projectRoot,
             layoutConfig: project.config,
         });
-        if (args.includes('--json')) {
-            console.log(JSON.stringify(result, null, 2));
+        if (args.includes('--json') || args.includes('--compact-json')) {
+            console.log(JSON.stringify(args.includes('--compact-json') ? this.compactTickResult(result) : result, null, 2));
             return;
         }
         console.log('\nLoop Tick');
@@ -143,6 +140,53 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
+    }
+    compactTickResult(result) {
+        const pending = result.pending
+            ? {
+                actionId: result.pending.actionId,
+                kind: result.pending.kind,
+                status: result.pending.status,
+                issuedAt: result.pending.issuedAt,
+                executorCompletedAt: result.pending.executorCompletedAt || null,
+                executorSucceeded: result.pending.executorSucceeded ?? null,
+                itemStates: result.pending.itemStates || [],
+            }
+            : null;
+        const actions = (result.actions || []).map((action) => ({
+            id: action.id,
+            kind: action.kind,
+            taskId: action.taskId,
+            role: action.role,
+            target: action.target,
+            packetPath: action.packetPath,
+            prompt: action.prompt,
+            completionCommand: action.completionCommand,
+            heartbeatCommand: action.heartbeatCommand,
+            resultCommand: action.resultCommand,
+            expectedEvidencePath: action.expectedEvidencePath,
+            usageKey: action.usageKey || null,
+            tokenAllowance: action.tokenAllowance ?? null,
+            heartbeatDueAt: action.heartbeatDueAt || null,
+            absoluteExpiresAt: action.absoluteExpiresAt || null,
+            runtimeAdapterId: action.runtimeAdapter?.selectedAdapterId || null,
+        }));
+        return {
+            version: '1.9.0',
+            changePath: result.changePath,
+            iteration: result.iteration,
+            status: result.status,
+            currentStep: result.currentStep,
+            verifyPassed: result.verifyPassed,
+            stopped: result.stopped,
+            stopReason: result.stopReason,
+            feedback: result.feedback,
+            nextInstruction: result.nextInstruction,
+            metrics: result.metrics,
+            pending,
+            actions,
+            batchDiagnostics: result.batchDiagnostics,
+        };
     }
     async tickPlan(inputPath) {
         const changePath = await this.resolveChangePath(inputPath);
@@ -220,9 +264,9 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         const config = await services_1.services.loopService.readConfig(changePath);
         const state = await services_1.services.loopService.readState(changePath);
-        const reviewGovernance = await services_1.services.taskGraphExecutionService.readDocumentReviewGovernanceSummary(changePath);
+        const planningDecision = await services_1.services.taskGraphExecutionService.readValidatedPlanningReviewDecision(changePath);
         if (args.includes('--json')) {
-            console.log(JSON.stringify({ version: '1.8.6', changePath, config, state, reviewGovernance }, null, 2));
+            console.log(JSON.stringify({ version: '1.9.0', changePath, config, state, planningDecision }, null, 2));
             return;
         }
         if (args.includes('--brief')) {
@@ -233,17 +277,13 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 .filter(Boolean)
                 .sort()[0] || null;
             const batch = state.lastBatchDiagnostics;
-            const review = ['design', 'plan'].map(stage => {
-                const summary = reviewGovernance.stages[stage];
-                return `${stage}=${summary.completedRounds}/${summary.continueWhileProgressing ? 'progress' : summary.guardLimits.maxCompletedRounds}${summary.activeRound ? `+active:${summary.activeRound}` : ''}`;
-            }).join(' ');
-            console.log(`Loop ${state.status}: level=${config.level} step=${state.currentStep} iteration=${state.iteration} parallel=${config.efficiency.maxParallel} reason=${config.efficiency.maxParallelReason || 'not-recorded'} emitted=${batch?.effectiveEmitted ?? 0}/${batch?.graphSafeCandidates ?? 0} deferred=${batch?.deferredReasons?.join(',') || 'none'} reviews=${review} pending=${pending?.items?.length || 0} heartbeat-due=${nextHeartbeat || 'none'}`);
+            console.log(`Loop ${state.status}: workflow=fast-quality step=${state.currentStep} iteration=${state.iteration} parallel=${config.efficiency.maxParallel} reason=${config.efficiency.maxParallelReason || 'not-recorded'} emitted=${batch?.effectiveEmitted ?? 0}/${batch?.graphSafeCandidates ?? 0} deferred=${batch?.deferredReasons?.join(',') || 'none'} planning=${planningDecision} pending=${pending?.items?.length || 0} heartbeat-due=${nextHeartbeat || 'none'}`);
             return;
         }
         console.log('\nLoop Status');
         console.log('===========\n');
         console.log(`Change path: ${changePath}`);
-        console.log(`Level: ${config.level}`);
+        console.log('Workflow: fast quality');
         console.log(`Primitive: ${config.primitive}`);
         console.log(`Target: ${config.target}`);
         console.log(`Execution model: ${config.executionModel}`);
@@ -265,10 +305,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             const batch = state.lastBatchDiagnostics;
             console.log(`Last batch: graph-safe=${batch.graphSafeCandidates} token-funded=${batch.tokenFundedLimit} adapter-capacity=${batch.adapterCapacityKnown ? batch.adapterCapacity : 'unknown'} emitted=${batch.effectiveEmitted} deferred=${batch.deferredReasons.join(', ') || 'none'}`);
         }
-        for (const stage of ['design', 'plan']) {
-            const review = reviewGovernance.stages[stage];
-            console.log(`Review ${stage}: rounds=${review.completedRounds}/${review.continueWhileProgressing ? 'continue-while-progressing' : review.guardLimits.maxCompletedRounds} active=${review.activeRound ?? 'none'} minutes-left=${review.guardRemaining.minutes ?? 'unbounded'} tokens-left=${review.guardRemaining.tokens ?? 'unbounded'} cache-hits=${review.cacheHits} no-progress=${review.noProgressCount}/${review.guardLimits.noProgressLimit} heartbeat-due=${review.currentDispatch?.heartbeatDueAt || 'none'} override-round=${review.overrideDispatchWindow?.round ?? 'none'} override-deadline=${review.overrideDispatchWindow?.deadline || 'none'} override-expired=${review.overrideDispatchWindow?.expired ?? 'none'}`);
-        }
+        console.log(`Combined planning review: ${planningDecision}`);
         if (state.lastFeedback)
             console.log(`Last feedback: ${state.lastFeedback}`);
         if (config.capability) {
@@ -286,37 +323,6 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const changePath = await this.resolveChangePath(inputPath);
         const state = await services_1.services.loopService.resume(changePath);
         this.success(`Loop resumed (status: ${state.status}).`);
-    }
-    async level(args) {
-        let inputPath;
-        let level;
-        for (let index = 0; index < args.length; index += 1) {
-            const arg = args[index];
-            if (arg === '--level') {
-                level = args[index + 1];
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--level=')) {
-                level = arg.slice('--level='.length);
-                continue;
-            }
-            if (!arg.startsWith('--') && /^L[123]$/i.test(arg) && !level) {
-                level = arg;
-                continue;
-            }
-            if (!arg.startsWith('--') && !inputPath) {
-                inputPath = arg;
-                continue;
-            }
-        }
-        const normalized = String(level || '').trim().toUpperCase();
-        if (normalized !== 'L1' && normalized !== 'L2' && normalized !== 'L3') {
-            throw new Error(`Loop level must be L1, L2, or L3 (received ${level || '(empty)'}).`);
-        }
-        const changePath = await this.resolveChangePath(inputPath);
-        const config = await services_1.services.loopService.setLevel(changePath, normalized);
-        this.success(`Loop level set to ${config.level}.`);
     }
     async configure(args) {
         const inputPath = args[0] && !args[0].startsWith('--') ? args[0] : undefined;

@@ -156,7 +156,6 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             await this.writePluginArtifacts(targetDir, featureDir, activatedSteps);
             if (isGoalWorkflow) {
                 const loopConfig = await services_1.services.loopService.scaffold(featureDir, {
-                    level: options.level,
                     primitive: 'goal',
                     target: options.target,
                     executionModel: options.executionModel,
@@ -164,13 +163,10 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                     nativeSubagentCapability: options.nativeSubagentCapability,
                     nativeLoopCapability: options.nativeGoalCapability,
                 });
-                this.info(`  Loop initialized: level ${loopConfig.level}, primitive ${loopConfig.primitive}, ${loopConfig.executionModel} (${loopConfig.schedule.lifecycle})`);
-                if (loopConfig.level === 'L1') {
-                    this.info('  L1 is report-only and will not launch implementation, review, or verification subagents. For executable work, the controlling AI must present the safety-level decision and the user must choose L2 or L3.');
-                }
-                else if (loopConfig.executionModel === 'controller' && loopConfig.capability?.controllerAvailable) {
+                this.info(`  Loop initialized: fast quality workflow, primitive ${loopConfig.primitive}, ${loopConfig.executionModel} (${loopConfig.schedule.lifecycle})`);
+                if (loopConfig.executionModel === 'controller' && loopConfig.capability?.controllerAvailable) {
                     const controllerCommand = (0, helpers_1.formatCliCommand)('ospec', 'loop', 'run', featureDir, '--once', '--json');
-                    this.info(`  IDE controller handoff: keep this AI session active. After required decisions, independent document reviews, and workspace gates are ready, run "${controllerCommand}"; for every non-empty actions[] batch launch one fresh IDE-native subagent per item, wait for all results, record each completionCommand/evidence, and tick again immediately. When actions[] is empty and pending is present, observe only and never relaunch it. Return only on a real gate, paused/stopped/done, or explicit user pause.`);
+                    this.info(`  IDE controller handoff: keep this AI session active. After required decisions, inline planning preflights, task graph derivation, and workspace gates are ready, run "${controllerCommand}"; for every non-empty actions[] batch launch one fresh IDE-native subagent per item, wait for all results, record each completionCommand/evidence, and tick again immediately. When actions[] is empty and pending is present, observe only and never relaunch it. Return only on a real gate, paused/stopped/done, or explicit user pause.`);
                 }
                 else {
                     this.warn(`  IDE controller blocked: target=${loopConfig.target}, interactive=${loopConfig.capability?.interactive ?? false}, nativeSubagents=${loopConfig.capability?.nativeSubagentCapability ?? 'unknown'}. Report the current harness capabilities explicitly before starting executable Loop actions.`);

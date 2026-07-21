@@ -19,6 +19,11 @@ ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop run [changes/active/<change>] --once --json
+ospec loop tick [changes/active/<change>] --json
+ospec loop heartbeat [changes/active/<change>] --action-item <id> --executor <child-id>
+ospec loop finalize [changes/active/<change>] --action-item <id> --executor <child-id> --exit-code 0 --summary "..."
+ospec loop recover [changes/active/<change>] --force
 ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N --continue-while-progressing true|false
 ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
@@ -26,9 +31,7 @@ ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expecte
 ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
-ospec execute doc-review [changes/active/<change>] [--stage design|plan]
-ospec execute doc-review [changes/active/<change>] --stage design|plan --claim-executor <executor-id>
-ospec execute doc-review [changes/active/<change>] --stage design|plan --complete-executor <executor-id>
+ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
 ospec execute route [changes/active/<change>]
@@ -44,6 +47,7 @@ ospec execute complete <task-id> [changes/active/<change>] --status DONE --summa
 ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
+ospec execute repair [changes/active/<change>]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user [--summary "..."]
 ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
@@ -70,31 +74,17 @@ ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
-تستبدل الخيارات `loop configure --allow-path` و`--allow-command` و`--allow-command-policy` مجموعة allowlist المحددة بالكامل وتعرض الفرق، ولا تضيف صلاحيات ضمنيا. في L3 استخدم مسار task graph: `derive -> check -> apply`. يستخدم apply قيم CAS، ويتطلب توسيع الصلاحيات الخيار الصريح `--approve-expansion`.
+تضبط الخيارات `loop configure --allow-path` و`--allow-command` و`--allow-command-policy` حدا إضافيا اختياريا، وتستبدل مجموعة allowlist المحددة بالكامل وتعرض الفرق. استخدم مسار task graph: `derive -> check -> apply`، ويتطلب توسيع الصلاحيات الخيار الصريح `--approve-expansion`.
 
-يضيف 1.8.21 مسار force archive مدققا فقط عندما يقبل المستخدم صراحة مخاطر Change أو Goal غير مكتمل. يتطلب `--force-archive` و`--confirm-force-archive` المطابق تماما لاسم change وسببا غير فارغ. لا يحول evidence الفاشل أو `NOT_VERIFIED` إلى pass، ويرفض نقل Goal مع Loop action معلق، ويكتب `artifacts/agents/force-archive.json`. تبقى state وknowledge المولدة و`feature-index.md` و`SKILL.index.json` موسومة بوضوح `forced` و`incomplete` و`accepted-risk`؛ أما change الجاهز عاديا فيستخدم finalize العادي.
+## سلوك سير العمل الحالي
 
-يضبط 1.8.22 فحص أمان Loop للأرشفة القسرية. يمكن أرشفة pending Controller pointer عندما يحتوي item واحدة على الأقل وتكون كل items مسجلة نهائيا كـ `completed` أو `failed` أو `expired`، حتى لو لم يعد repair task مؤقت قديم قابلا للمطابقة مع graph الحالي. تظل item states المفقودة و`issued` و`running` وأي حالة غير نهائية مانعة، ويُحفظ terminal action بلا تغيير داخل Loop evidence المؤرشف.
-
-قدم الإصدار 1.8.3 قيما افتراضية محدودة لمراجعات design وplan المتخصصة. في continuous mode للإصدار 1.8.9 تصبح الجولتان المكتملتان و30 دقيقة لكل stage عتبات تقارب: يمكن لمجموعة structured finding-ID جديدة أن تستمر، بينما تتوقف المجموعات المتكررة أو الدورية. لا تستهلك cache hits أو pending reuse أو heartbeat أو استعادة dispatch نفسه جولة. لا يتجاوز `--force` الحواجز، ويحتفظ strict mode بنافذة extra round التي يصرح بها المستخدم بدقة.
-
-قدم الإصدار 1.8.4 حارسا من جولتين لكل من task-review repair وgrouped final-review repair، ويعامله continuous mode كعتبة تقارب. يستمر التنفيذ تلقائيا عندما تتغير معرفات findings المنظمة. بدءا من 1.8.11 يمكن أن يستمر المعرف نفسه أيضا عندما يتغير كل من structured finding fingerprint وcode snapshot داخل repair scope المصرح به سابقا. أما تغيير الصياغة فقط أو الكود فقط أو التكرار الدقيق أو الدورة فيتوقف قبل repair غير مفيد. يحافظ `--continue-while-progressing false` على حدود العمر الصارمة السابقة. تبقى مراجعة upstream المعتمدة صالحة فقط عندما يمكن إسناد كل path متغير إلى task downstream متعدية ومكتملة، وتنتقل عقود upstream إلى حزمة reviewer اللاحقة كالتزامات regression. تتوقف final review بحالة `BLOCKED` لحل blocker بدلا من بدء grouped repair.
-
-يضيف الإصدار 1.8.12 تأجيلا صريحا للقبول الخارجي لمهمة durable بحالة `BLOCKED`. يتطلب `ospec execute defer-blocker` external blocker مسجلا ودليل dispatch مكتمل وسبب تفويض غير فارغ من المستخدم. تبقى المهمة محظورة ولا تتغير checklist، ويستمر فقط التنفيذ الآمن من ناحية التبعيات؛ وتظل final review وverify وfinalize وarchive محظورة.
-
-يصلح الإصدار 1.8.13 طبقة التوقف التالية في Goals المستأنفة. تنفذ prerequisite review المفقودة قبل retryable dependent worker. لا يسمح finding بمسارات cross-task إلا عندما يملكها owner مكتمل ومعلن في task graph؛ يجمد OSpec repair scope الكامل ويعيد review لموافقات owner القديمة. تجدد controller poll الناجحة والمحدودة lease القصيرة لـ child المطالب به من دون تحريك absolute deadline. وتصدر dispatch packet تحذيرا قبل full Docker Compose rebuild من دون أسماء خدمات.
-
-يصلح الإصدار 1.8.14 سباق حد lease في multi-review بعد cross-task repair. يمكن لـ controller poll تجديد نفس child المطالب به خلال wait محدودة قدرها 60 ثانية بعد حد lease القصيرة، مع بقاء النتائج المتأخرة المباشرة والـ orphan الحقيقي والـ absolute deadline الثابت صارمة. تسبق review أو repair لأي cross-task owner مسجل وغير معتمد أي implementation جديد أو retryable worker، بينما يمكن لبقية reviewers غير المتعارضين العمل بالتوازي في الدفعة نفسها.
-
-يصلح الإصدار 1.8.15 إنهاء Goal بعد repair أو حذف الوثائق. يسجل انتقال baseline موجود إلى حالة missing كحذف فعلي تمت مراجعته، ويجمع evidence من أول baseline حتى آخر completed dispatch بدلا من قراءة آخر محاولة repair فقط، ويتحقق من أن workspace تطابق أحدث evidence لمالك المسار المعلن. يسمح ذلك بالحذف المقصود ومحاولات repair اللاحقة التي لم تعدل الوثيقة مرة أخرى، من دون قبول evidence قديم أو drift خارجي أو تراجع نهائي.
-
-يجعل الإصدار 1.8.17 الـ Change الذي يختاره المستخدم مسارا سريعا كاملا. الأمر المفضل هو `ospec change` ويبقى `ospec new` alias متوافقا. لا تتم ترقية Change تلقائيا إلى Goal، ويستخدم protocol مرحليا مختصرا ومراجعة خفيفة بواسطة AI الحالي. تتطلب feature/docs وثيقة دائمة حقيقية، وتشتق حالة closeout تلقائيا، ويعاد بناء index مرة واحدة فقط عند finalize. تنفذ Changes المجمعة بالتتابع في queue ويمكن أرشفة `APPROVED_WITH_CONCERNS` تلقائيا.
-
-يصلح الإصدار 1.8.16 طبقة closeout المتبقية بعد تحديث Goal مكتمل لبيانات verification. تظل meaningful-change chain الخاصة بـ dispatch إلزامية، ولا تعتمد الحالة النهائية إلا مراجعة task بحالة APPROVED تم تعيينها بعد آخر owner dispatch، مع executor provenance صالح وtarget snapshot يطابق الحالة الحالية تماما. كما يحدث `ospec execute sync` حالة Combined review وعناصر checklist في قوالب worker-status الإنجليزية والصينية واليابانية والعربية. عند غياب capacity يستخدم implementation التوازي الافتراضي وهو ثلاث مهام؛ وهذا ليس حدا عاما ولا يقيد review batch. وتستبدله capacity أكبر موجبة ومرتبطة بجلسة harness، مما يتيح إعداد توازٍ من 5 إلى 10 عندما تسمح الموارد وسلامة task graph.
-
-يمنع الإصدار 1.8.5 انتظار native child من تجميد Goal controller. يجب أن يعيد `wait_agent` في Codex/GPT وpolling لـ Claude Task وكل native adapter آخر التحكم خلال 60 ثانية، ويحدّث heartbeat قبل `heartbeatDueAt`، ويحفظ كل نتيجة مكتملة فوراً، ثم يعيد tick. لا تعيد حركة Git HEAD وحدها task review عندما تبقى target snapshot دون تغيير، بينما تظل final review مرتبطة بدقة بالـ snapshot وHEAD. عند غياب native capacity يقتصر implementation batch على مهمتين من دون تقليل توازي review الآمن. يجب تقسيم أي task جديدة تتجاوز ستة targets أو إضافة `scope_reason`.
-
-يوضح الإصدار 1.8.6 أن 60 ثانية هي حد دورة polling واحدة للـ controller وليست حد تشغيل child. الحد المطلق الافتراضي هو 120 دقيقة للـ implementation و60 دقيقة للـ review والـ verification، مع heartbeat lease قابلة للتجديد ومدة grace افتراضية قدرها خمس دقائق بين اكتمال evidence ووصول result. يتحقق `ospec loop finalize` من durable evidence قبل تسجيل النجاح. تمنع directory snapshots المتكررة وapproval cache المرتبطة بالسياق وتحسين conflict-safe selection المراجعات القديمة أو المكررة من دون إضعاف provenance. تتطلب serial tasks الجديدة في 1.8.6 قيمة `serial_reason`، وتظل الرسوم القديمة قابلة للقراءة.
+- **الأرشفة القسرية:** استخدمها فقط بعد قبول المستخدم صراحة للمخاطر غير المحلولة. يلزم `--force-archive` و`--confirm-force-archive` مطابق تماما لاسم change وسبب غير فارغ. لا تتغير evidence الفاشلة أو `NOT_VERIFIED`. يكون Controller pointer المحتفظ به آمنا فقط عندما يحتوي item واحدة على الأقل وتكون كل items مسجلة نهائيا كـ `completed` أو `failed` أو `expired`. الحالات المفقودة و`issued` و`running` وأي حالة غير نهائية تظل مانعة، ويبقى archive موسوما `forced` و`incomplete` و`accepted-risk`.
+- **تقارب المراجعة:** تستخدم planning documents deterministic inline preflight بدون reviewer child أو token reservation. وتبقى task/final repair على عتبات تقارب محدودة؛ لا يستمر finding ثابت إلا عندما يتغير fingerprint وrepair-scope snapshot المصرح بهما معا.
+- **القبول الخارجي:** يتطلب `ospec execute defer-blocker` external blocker دائم موجودا ودليل dispatch مكتمل وتفويضا صريحا من المستخدم. يسمح باستمرار implementation الآمن من ناحية dependencies، لكنه يبقي task محظورة ويحافظ على بوابات final review وverify وfinalize وarchive.
+- **ملكية الإصلاح:** تنفذ prerequisite review قبل dependent retry. يجب أن تنتمي paths في cross-task repair إلى owners معلنين ومكتملين، وأن تستخدم frozen scope، وأن تطلق fresh owner review عندما تصبح الموافقة قديمة. تلتقط task review نسخة من canonical worker report لنفس task؛ يسمح بالإصلاح الدقيق لذلك report، أما evidence القديمة فتنتقل إلى fresh review بدلا من تعديل التاريخ.
+- **إغلاق الوثائق:** الإنشاء والحذف اللذان تمت مراجعتهما انتقالان فعليان للحالة. تجمع evidence من أول baseline حتى آخر completed dispatch، ويجب أن تطابق workspace أحدث declared-owner evidence. يمكن لمراجعة authoritative بحالة APPROVED ربط final snapshot الدقيق من دون استبدال meaningful-change chain. يحدث `ospec execute sync` worker status متعدد اللغات وCombined review checklist.
+- **Classic Change:** الأمر `ospec change` هو fast path المفضل ويبقى `ospec new` alias. لا تتم ترقية Change الذي اختاره المستخدم تلقائيا إلى Goal. يستخدم إرشادا مختصرا حسب المرحلة، ومراجعة خفيفة واحدة بواسطة AI الحالي، وقواعد توثيق عملية، وcloseout مشتقا، وإعادة بناء index مرة واحدة في finalize، وqueue متسلسلة. عندما تمر كل البوابات الأخرى يمكن أرشفة `APPROVED` و`APPROVED_WITH_CONCERNS` تلقائيا.
+- **Controller والتوازي:** تعود native wait الواحدة خلال 60 ثانية، لكن child الحي يمكنه العمل حتى absolute deadline مع تجديد heartbeat. fallback لتوازي implementation عند غياب native capacity هو 3 وليس 2. يمكن لـ session-bound capacity موجبة وأكبر دعم إعدادات مثل 5-10 عندما تسمح dependencies وfile conflicts وshared resources وtoken و`maxParallel`. تحتاج serial task الجديدة إلى `serial_reason`، ويجب تقسيم task التي تتجاوز ستة targets أو إعلان `scope_reason`.
 
 ## البدء السريع مع الإضافات
 
@@ -173,7 +163,7 @@ ospec finalize [changes/active/<change>]
 - تستخدم تعليمات الخطوة التالية في `ospec run start` و`run resume` و`run step` و`run status` active task graph عند توفره. عند وجود dispatchable work ستقترح `ospec execute dispatch ...`، لكن runner لا يوزع workers ولا يحرر ملفات source.
 - عند بدء أو استئناف active change واحد، استخدم `ospec execute bootstrap [changes/active/<change>]` لكتابة `artifacts/agents/bootstrap.json` و`artifacts/agents/bootstrap.md` مع project session brief snapshot، ثم اتبع الإجراء الآمن التالي الذي يعرضه. عند وجود active dispatch، يوصي bootstrap بأمر `ospec execute launch ... --task ...` المطابق.
 - عند نقل change بين agents أو tools أو worktrees أو shells أو operators بشريين، استخدم `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` لكتابة `artifacts/agents/handoff.json` و`artifacts/agents/handoff.md`. يسجل project session brief snapshot وtarget tool mapping وcommand sequence وقواعد السلامة وتحذيرات missing context.
-- قبل implementation dispatch، استخدم `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` لإنشاء packets تتضمن project session brief snapshot داخل `artifacts/agents/document-review-dispatches/*` و`artifacts/reviews/design-review.md` أو `artifacts/reviews/implementation-plan-review.md`. يجب اعتماد design review قبل dispatch لـ plan review.
+- قبل اشتقاق task graph شغّل `ospec execute preflight [changes/active/<change>] --stage design` ثم `--stage plan`. ينفذ الأمران deterministic inline readiness check ويسجلان approval evidence بدون reviewer child؛ وبعد نجاحهما اشتق أو حدّث graph ثم دع Loop يصدر combined planning review واحدا.
 - استخدم `ospec execute status [changes/active/<change>]` أو `ospec execute next [changes/active/<change>]` لفحص حالة controller والمهام التالية الآمنة للتوزيع. عندما تريد حفظ أمر OSpec التالي الموصى به للتسليم، استخدم `ospec execute route [changes/active/<change>]` لكتابة `artifacts/agents/workflow-route.json` و`workflow-route.md`.
 - عندما يحتاج direction أو architecture أو API أو UI أو risk أو scope إلى user choice صريح، استخدم `ospec execute decision [changes/active/<change>] ...`. تظهر required pending decision في `bootstrap` و`status` و`finish`، وتمنع worker dispatch حتى تسجل `--select <option-id> --answered-by user` أو `--skip` مقصودا مع provenance نفسها.
 - قبل handoff إلى worker استخدم `ospec execute workspace [changes/active/<change>]` لتسجيل `artifacts/agents/workspace-status.json` و`artifacts/agents/workspace-status.md`. إذا كانت الحالة `needs_isolation`، نظّف workspace أو انقل العمل إلى git worktree معزول قبل parallel dispatch.
@@ -200,7 +190,7 @@ ospec finalize [changes/active/<change>]
 - في مسارات AI / `/ospec-change` يبقي AI التدفق الصغير مركزا على `proposal.md` و`tasks.md` والتنفيذ و`verification.md` و`review.md`.
 - في مسارات AI / `/ospec-goal` ينشئ AI ملفات `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` أو يحدّثها من المتطلب و`proposal.md` وسياق المشروع؛ ولا تحتاج إلا إلى مراجعة الافتراضات أو تصحيح القرارات المهمة.
 - قيم حالة task graph هي `DONE` و`DONE_WITH_CONCERNS` و`IN_PROGRESS` و`NEEDS_CONTEXT` و`BLOCKED` و`PENDING`؛ وتتطلب جاهزية الأرشفة أن يكون `status` العلوي `"completed"` وأن تكون كل المهام `DONE` أو `DONE_WITH_CONCERNS`.
-- لا تعدّل أوامر artifact في `ospec execute` ملفات source مباشرة. يوزّع current model controller الـ workers فقط عبر `runtimeAdapter.selected.nativeSubagent`، وتستخدم specialist reviews الـ executor id الحقيقي في claim/complete. لا يشغّل OSpec agent CLI.
+- لا تعدّل أوامر artifact في `ospec execute` ملفات source مباشرة. يوزّع current model controller implementation/task/final review workers فقط عبر `runtimeAdapter.selected.nativeSubagent`. لا يشغّل OSpec agent CLI.
 - قيم حالة worker هي `DONE` و`DONE_WITH_CONCERNS` و`NEEDS_CONTEXT` و`BLOCKED` و`PENDING`؛ ويتطلب الاكتمال حل حالات worker وأن تكون `controller_status` مساوية لـ `DONE`.
 - في profile `change` يتطلب `ospec verify [changes/active/<change>]` ملفات classic فقط. وفي profile `goal` يتطلب أيضا `design.md` و`implementation-plan.md` و`artifacts/agents/task-graph.json` وdocument review artifacts وfinal review artifacts وverification evidence و`artifacts/agents/worker-status.md`.
 - اجعل `design.md` موجزا؛ دوره رفع دقة تقسيم المهام، وليس استبدال وثائق المشروع طويلة الأمد.
@@ -230,7 +220,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.23
+npm install -g @clawplays/ospec-cli@1.9.0
 ospec update [path]
 ```
 

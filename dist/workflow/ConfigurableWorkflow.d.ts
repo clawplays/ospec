@@ -21,7 +21,6 @@ export interface WorkflowConfigType {
     feature_flags: {
         supported: string[];
     };
-    document_review_policy: 'always' | 'adaptive';
     model_profiles: Partial<Record<'mechanical' | 'standard' | 'strong_reasoning' | 'review' | 'final_review', {
         default?: string;
         targets?: Record<string, string>;

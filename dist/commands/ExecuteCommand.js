@@ -65,8 +65,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 case 'handoff':
                     await this.handoff(args);
                     return;
-                case 'doc-review':
-                    await this.docReview(args);
+                case 'preflight':
+                    await this.preflight(args);
                     return;
                 case 'status':
                     await this.status(args[0]);
@@ -162,21 +162,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         });
         this.printHandoff(result);
     }
-    async docReview(args) {
+    async preflight(args) {
         const parsed = this.parseDocumentReviewArgs(args);
         const changePath = await this.resolveChangePath(parsed.inputPath);
-        if (parsed.claimExecutor || parsed.heartbeatExecutor || parsed.completeExecutor) {
-            if (!parsed.stage)
-                throw new Error('Execute doc-review executor lifecycle requires --stage design|plan.');
-            const record = parsed.claimExecutor
-                ? await services_1.services.taskGraphExecutionService.claimDocumentReviewExecutor(changePath, parsed.stage, parsed.claimExecutor)
-                : parsed.heartbeatExecutor
-                    ? await services_1.services.taskGraphExecutionService.heartbeatDocumentReviewExecutor(changePath, parsed.stage, parsed.heartbeatExecutor)
-                    : await services_1.services.taskGraphExecutionService.completeDocumentReviewExecutor(changePath, parsed.stage, parsed.completeExecutor, { usageFile: parsed.usageFile });
-            const action = parsed.claimExecutor ? 'claimed' : parsed.heartbeatExecutor ? 'heartbeat renewed' : 'completed';
-            this.success(`Document review ${record.id} ${action} by ${parsed.claimExecutor || parsed.heartbeatExecutor || parsed.completeExecutor}.`);
-            return;
-        }
         const result = await services_1.services.taskGraphExecutionService.reviewDocument(changePath, {
             stage: parsed.stage,
             force: parsed.force,
@@ -356,7 +344,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             skip: parsed.skip,
             summary: parsed.summary,
             answeredBy: parsed.answeredBy,
-            documentReviewOverride: parsed.documentReviewOverride,
         });
         this.printDecision(result);
     }
@@ -573,16 +560,14 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('');
     }
     printDocumentReview(result) {
-        console.log('\nDocument Review Dispatch Packet');
-        console.log('===============================\n');
+        console.log('\nPlanning Preflight');
+        console.log('==================\n');
         console.log(`Change path: ${result.changePath}`);
         console.log(`Stage: ${result.dispatch.stage}`);
-        console.log(`Reviewer: ${result.dispatch.reviewerRole}`);
         console.log(`Document: ${result.dispatch.documentPath}`);
         console.log(`Document readiness: ${result.dispatch.documentReadiness}`);
-        console.log(`Runtime adapter: ${result.dispatch.runtimeAdapter?.selectedAdapterId || (result.dispatch.mode === 'inline_preflight' ? 'inline' : 'manual')}`);
+        console.log('Runtime adapter: inline deterministic checks');
         console.log(`Reused approval: ${result.reused ? 'yes' : 'no'}`);
-        console.log(`Reused pending dispatch: ${result.pendingReused ? 'yes' : 'no'}`);
         console.log(`Project session: ${result.projectSession.exists ? result.projectSession.cacheStatus : 'missing'}`);
         if (result.projectSession.cacheKey) {
             console.log(`Project session cache: ${result.projectSession.cacheKey}`);
@@ -1817,17 +1802,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     parseDocumentReviewArgs(args) {
         let inputPath;
         let stage;
-        let claimExecutor;
-        let heartbeatExecutor;
-        let completeExecutor;
-        let usageFile;
         let force = false;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--stage') {
                 const value = args[index + 1];
                 if (!value || value.startsWith('--')) {
-                    throw new Error('Execute doc-review requires a value after --stage.');
+                    throw new Error('Execute preflight requires a value after --stage.');
                 }
                 stage = this.normalizeDocumentReviewStage(value);
                 index += 1;
@@ -1837,73 +1818,20 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 stage = this.normalizeDocumentReviewStage(arg.slice('--stage='.length));
                 continue;
             }
-            if (arg === '--claim-executor' || arg === '--heartbeat-executor' || arg === '--complete-executor') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--'))
-                    throw new Error(`Execute doc-review requires a value after ${arg}.`);
-                if (arg === '--claim-executor')
-                    claimExecutor = value;
-                else if (arg === '--heartbeat-executor')
-                    heartbeatExecutor = value;
-                else
-                    completeExecutor = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--claim-executor=')) {
-                claimExecutor = arg.slice('--claim-executor='.length).trim();
-                continue;
-            }
-            if (arg.startsWith('--complete-executor=')) {
-                completeExecutor = arg.slice('--complete-executor='.length).trim();
-                continue;
-            }
-            if (arg.startsWith('--heartbeat-executor=')) {
-                heartbeatExecutor = arg.slice('--heartbeat-executor='.length).trim();
-                continue;
-            }
-            if (arg === '--usage-file') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--'))
-                    throw new Error('Execute doc-review requires a value after --usage-file.');
-                usageFile = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--usage-file=')) {
-                usageFile = arg.slice('--usage-file='.length).trim();
-                continue;
-            }
             if (arg === '--force') {
                 force = true;
                 continue;
             }
             if (arg.startsWith('--')) {
-                throw new Error(`Unknown execute doc-review flag: ${arg}`);
+                throw new Error(`Unknown execute preflight flag: ${arg}`);
             }
             if (!inputPath) {
                 inputPath = arg;
                 continue;
             }
-            throw new Error(`Unexpected execute doc-review argument: ${arg}`);
+            throw new Error(`Unexpected execute preflight argument: ${arg}`);
         }
-        if (claimExecutor && completeExecutor) {
-            throw new Error('Execute doc-review cannot claim and complete an executor in the same command.');
-        }
-        if ([claimExecutor, heartbeatExecutor, completeExecutor].filter(Boolean).length > 1) {
-            throw new Error('Execute doc-review accepts only one executor lifecycle action per command.');
-        }
-        if (force && (claimExecutor || heartbeatExecutor || completeExecutor)) {
-            throw new Error('Execute doc-review --force cannot be combined with an executor lifecycle action.');
-        }
-        if (usageFile && !completeExecutor) {
-            throw new Error('Execute doc-review --usage-file requires --complete-executor.');
-        }
-        if (claimExecutor === '' || heartbeatExecutor === '' || completeExecutor === '')
-            throw new Error('Document review executor ID must be non-empty.');
-        if (usageFile === '')
-            throw new Error('Document review usage file must be non-empty.');
-        return { inputPath, stage, claimExecutor, heartbeatExecutor, completeExecutor, usageFile, force };
+        return { inputPath, stage, force };
     }
     parseFinishArgs(args) {
         let inputPath;
@@ -2384,10 +2312,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let skip = false;
         let summary;
         let answeredBy;
-        let documentReviewStage;
-        let reviewContextHash;
-        let reviewRound;
-        let reviewApprovalOptionId;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--id') {
@@ -2479,58 +2403,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 index += 1;
                 continue;
             }
-            if (arg === '--document-review-stage') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute decision requires a value after --document-review-stage.');
-                }
-                documentReviewStage = this.normalizeDocumentReviewStage(value);
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--document-review-stage=')) {
-                documentReviewStage = this.normalizeDocumentReviewStage(arg.slice('--document-review-stage='.length));
-                continue;
-            }
-            if (arg === '--review-context-hash') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute decision requires a value after --review-context-hash.');
-                }
-                reviewContextHash = value.trim().toLowerCase();
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--review-context-hash=')) {
-                reviewContextHash = arg.slice('--review-context-hash='.length).trim().toLowerCase();
-                continue;
-            }
-            if (arg === '--review-round') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute decision requires a value after --review-round.');
-                }
-                reviewRound = Number(value);
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--review-round=')) {
-                reviewRound = Number(arg.slice('--review-round='.length));
-                continue;
-            }
-            if (arg === '--review-approval-option') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute decision requires a value after --review-approval-option.');
-                }
-                reviewApprovalOptionId = value.trim();
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--review-approval-option=')) {
-                reviewApprovalOptionId = arg.slice('--review-approval-option='.length).trim();
-                continue;
-            }
             if (arg.startsWith('--summary=')) {
                 summary = arg.slice('--summary='.length);
                 continue;
@@ -2565,33 +2437,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (skip && selectOptionId) {
             throw new Error('Execute decision cannot combine --skip with --select.');
         }
-        const overrideParts = [
-            documentReviewStage !== undefined,
-            reviewContextHash !== undefined,
-            reviewRound !== undefined,
-            reviewApprovalOptionId !== undefined,
-        ];
-        if (overrideParts.some(Boolean) && !overrideParts.every(Boolean)) {
-            throw new Error('Document review override decisions require --document-review-stage, --review-context-hash, --review-round, and --review-approval-option together.');
-        }
-        if (reviewContextHash !== undefined && !/^[a-f0-9]{64}$/.test(reviewContextHash)) {
-            throw new Error('Execute decision --review-context-hash must be a 64-character SHA-256 hash.');
-        }
-        if (reviewRound !== undefined && (!Number.isInteger(reviewRound) || reviewRound <= 0)) {
-            throw new Error('Execute decision --review-round must be a positive integer.');
-        }
-        if (reviewApprovalOptionId !== undefined && !reviewApprovalOptionId) {
-            throw new Error('Execute decision --review-approval-option must be non-empty.');
-        }
-        const documentReviewOverride = documentReviewStage && reviewContextHash && reviewRound && reviewApprovalOptionId
-            ? {
-                stage: documentReviewStage,
-                reviewContextHash,
-                round: reviewRound,
-                extraRounds: 1,
-                approvalOptionId: reviewApprovalOptionId,
-            }
-            : undefined;
         return {
             inputPath,
             id,
@@ -2603,7 +2448,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             skip,
             summary,
             answeredBy,
-            documentReviewOverride,
         };
     }
     parseDecisionOption(value) {
@@ -3055,7 +2899,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (normalized === 'design' || normalized === 'plan') {
             return normalized;
         }
-        throw new Error(`Unsupported execute doc-review stage: ${value}`);
+        throw new Error(`Unsupported execute preflight stage: ${value}`);
     }
     normalizeHandoffTarget(value) {
         const normalized = value.trim().toLowerCase();

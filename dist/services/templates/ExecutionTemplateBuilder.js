@@ -335,8 +335,6 @@ ${this.formatReferenceList(linkedKnowledgeDocs, 'قيد التحديد')}
                 feature: context.feature,
                 created,
                 status: context.placement === 'queued' ? 'queued' : 'draft',
-                risk_level: 'pending',
-                risk_flags: [],
                 optional_steps: context.optionalSteps,
             }, this.copy(context.documentLanguage, zh, en, ja, ar));
         }
@@ -651,8 +649,6 @@ ${optionalStepTasksAr}`.trim();
                 feature: context.feature,
                 created,
                 status: context.placement === 'queued' ? 'queued' : 'draft',
-                risk_level: 'pending',
-                risk_flags: [],
                 optional_steps: context.optionalSteps,
             }, this.copy(context.documentLanguage, zh, en, ja, ar));
         }
@@ -838,7 +834,7 @@ ${this.formatChecklist(context.acceptanceCriteria, 'معيار قبول 1')}
         const context = this.inputs.normalizeFeatureTemplateInput(input);
         const taskGraph = {
             version: '1.0',
-            contract_version: '1.8.6',
+            contract_version: '1.9.0',
             feature: context.feature,
             status: 'pending',
             optional_steps: context.optionalSteps,

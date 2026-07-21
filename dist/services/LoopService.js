@@ -41,7 +41,6 @@ const crypto_1 = require("crypto");
 const constants_1 = require("../core/constants");
 const VerificationService_1 = require("./VerificationService");
 const CapabilityProbeService_1 = require("./CapabilityProbeService");
-const TriageService_1 = require("./TriageService");
 const RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
 const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
 const LOOP_DIR = ['artifacts', 'loop'];
@@ -62,6 +61,7 @@ const DEFAULT_VERIFICATION_MAX_RUNTIME_MS = 60 * 60 * 1000;
 const DEFAULT_EVIDENCE_RESULT_GRACE_MS = 5 * 60 * 1000;
 const UNKNOWN_IMPLEMENTATION_CAPACITY = 3;
 const MIN_ACTION_TOKEN_RESERVATION = 1000;
+const CURRENT_LOOP_CONFIG_VERSION = '3.0';
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
 const RETRY_REVIEW_DECISIONS = new Set(['NEEDS_CHANGES']);
 /**
@@ -115,7 +115,6 @@ class LoopService {
             return this.readConfig(changePath);
         }
         const primitive = options.primitive || 'goal';
-        const level = options.level || 'L1';
         const target = options.target || 'claude';
         const capability = (0, CapabilityProbeService_1.createCapabilityProbeService)().resolveHarnessCapability({
             target,
@@ -128,24 +127,22 @@ class LoopService {
         const executionModel = options.executionModel || 'controller';
         const now = this.now().toISOString();
         const config = {
-            version: '2.0',
+            version: CURRENT_LOOP_CONFIG_VERSION,
             pattern: options.pattern || 'goal-loop',
             primitive,
-            level,
             executionModel,
             target,
             schedule: { interval: options.interval || '10m', lifecycle: 'session-bound' },
             stopConditions: { testCommands: [], maxIterations: null, expiresAt: null, budgetTokens: null, budgetMinutes: null },
             allowlist: { paths: [], commands: [] },
             efficiency: this.defaultEfficiency(),
-            documentReviewGovernance: this.defaultDocumentReviewGovernance(),
             capability,
             nativeHarnessMetadata: null,
             createdAt: now,
         };
         await this.fileService.writeJSON(configPath, config);
         await this.writeState(changePath, this.normalizeState({
-            version: '2.0',
+            version: CURRENT_LOOP_CONFIG_VERSION,
             iteration: 0,
             lastTickTs: null,
             currentStep: 'idle',
@@ -178,7 +175,7 @@ class LoopService {
         return this.normalizeState(raw);
     }
     async writeState(changePath, state) {
-        state.version = '2.0';
+        state.version = CURRENT_LOOP_CONFIG_VERSION;
         state.updatedAt = this.now().toISOString();
         await this.fileService.writeJSON(this.statePath(changePath), state);
     }
@@ -186,16 +183,6 @@ class LoopService {
         if (!(await this.exists(changePath))) {
             throw new Error('No loop is initialized for this change. Create it with "ospec goal <name>".');
         }
-    }
-    async setLevel(changePath, level) {
-        await this.assertExists(changePath);
-        return this.withControllerLease(changePath, () => this.setLevelUnlocked(changePath, level));
-    }
-    async setLevelUnlocked(changePath, level) {
-        const config = await this.readConfig(changePath);
-        config.level = level;
-        await this.fileService.writeJSON(this.configPath(changePath), config);
-        return config;
     }
     async configure(changePath, options) {
         await this.assertExists(changePath);
@@ -325,7 +312,7 @@ class LoopService {
             config.efficiency.verificationMaxRuntimeMinutes = this.positiveInteger(options.verificationMaxRuntimeMinutes, 'verificationMaxRuntimeMinutes');
         if (options.evidenceResultGraceMinutes !== undefined)
             config.efficiency.evidenceResultGraceMinutes = this.positiveInteger(options.evidenceResultGraceMinutes, 'evidenceResultGraceMinutes');
-        config.version = '2.0';
+        config.version = CURRENT_LOOP_CONFIG_VERSION;
         await this.fileService.writeJSON(this.configPath(changePath), config);
         return config;
     }
@@ -586,8 +573,7 @@ class LoopService {
             itemState.leaseExpiresAt = new Date(boundedLeaseExpiry).toISOString();
             itemState.heartbeatDueAt = new Date(now.getTime() + Math.floor((boundedLeaseExpiry - now.getTime()) / 2)).toISOString();
             itemState.executorId = executorId;
-            if (actionItem?.usageKey
-                && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
+            if (actionItem?.usageKey && this.isReviewActionKind(actionItem.kind)) {
                 await this.taskGraph.claimReviewLoopExecutor(changePath, {
                     dispatchId: actionItem.usageKey,
                     actionId: pending.actionId,
@@ -643,7 +629,7 @@ class LoopService {
             const succeeded = result.timedOut !== true && result.exitCode === 0;
             if (succeeded) {
                 let evidenceReady = false;
-                if (item.usageKey && (item.kind === 'task-review' || item.kind === 'final-review')) {
+                if (item.usageKey && this.isReviewActionKind(item.kind)) {
                     evidenceReady = await this.taskGraph.hasReviewLoopEvidence(changePath, {
                         dispatchId: item.usageKey,
                         actionId: pending.actionId,
@@ -653,6 +639,13 @@ class LoopService {
                 }
                 else if (item.kind === 'verification') {
                     evidenceReady = Boolean(await this.readLatestVerificationEvidence(changePath, pending));
+                }
+                else if (item.kind === 'planning-repair') {
+                    await this.taskGraph.bindPlanningRepairLoopAction(changePath, {
+                        actionId: pending.actionId,
+                        actionItemId: item.id,
+                    });
+                    evidenceReady = (await this.taskGraph.validatePlanningRepairEvidence(changePath)).ready;
                 }
                 else if (item.taskId) {
                     const report = await this.taskGraph.getReport(changePath).catch(() => null);
@@ -716,8 +709,7 @@ class LoopService {
             itemState.timedOut = result.timedOut === true;
             itemState.tokensUsed = Math.max(0, Number(result.tokensUsed) || 0);
             itemState.summary = result.summary || null;
-            if (actionItem?.usageKey
-                && (actionItem.kind === 'task-review' || actionItem.kind === 'final-review')) {
+            if (actionItem?.usageKey && this.isReviewActionKind(actionItem.kind)) {
                 await this.taskGraph.completeReviewLoopExecutor(changePath, {
                     dispatchId: actionItem.usageKey,
                     actionId: pending.actionId,
@@ -725,6 +717,16 @@ class LoopService {
                     executorId,
                     completedAt: now,
                     succeeded: !failed,
+                });
+            }
+            else if (actionItem?.kind === 'planning-repair' && !failed) {
+                await this.taskGraph.bindPlanningRepairLoopAction(changePath, {
+                    actionId: pending.actionId,
+                    actionItemId: actionItem.id,
+                });
+                await this.taskGraph.completePlanningRepair(changePath, {
+                    actionId: pending.actionId,
+                    actionItemId: actionItem.id,
                 });
             }
             const usageKey = actionItem?.usageKey || result.actionItemId;
@@ -955,13 +957,16 @@ class LoopService {
         return new Date(anchor + Math.floor((expiry - anchor) / 2)).toISOString();
     }
     actionMaxRuntimeMs(kind, efficiency) {
-        if (kind === 'implementation' || kind === 'legacy') {
+        if (kind === 'implementation' || kind === 'planning-repair') {
             return efficiency ? efficiency.implementationMaxRuntimeMinutes * 60 * 1000 : DEFAULT_IMPLEMENTATION_MAX_RUNTIME_MS;
         }
         if (kind === 'verification') {
             return efficiency ? efficiency.verificationMaxRuntimeMinutes * 60 * 1000 : DEFAULT_VERIFICATION_MAX_RUNTIME_MS;
         }
         return efficiency ? efficiency.reviewMaxRuntimeMinutes * 60 * 1000 : DEFAULT_REVIEW_MAX_RUNTIME_MS;
+    }
+    isReviewActionKind(kind) {
+        return kind === 'planning-review' || kind === 'task-review' || kind === 'final-review';
     }
     async extendControllerCapabilitySession(changePath, now) {
         const config = await this.readConfig(changePath);
@@ -1145,6 +1150,9 @@ class LoopService {
         const trigger = options.trigger || 'manual';
         if (!state.startedAt)
             state.startedAt = nowIso;
+        if (config.version !== CURRENT_LOOP_CONFIG_VERSION) {
+            return this.gateResult(resolved, state, trigger, `Loop blocked: Goal controller contract ${config.version || 'unknown'} predates 1.9.0 and is not supported. Recreate the Goal planning artifacts or archive the old Goal; automatic migration is intentionally disabled.`);
+        }
         const immediateStop = await this.getImmediateStop(resolved, state);
         if (immediateStop) {
             state.status = immediateStop.status;
@@ -1168,8 +1176,9 @@ class LoopService {
             verificationRepairRequired = observation.repairRequired === true;
             state.lastFeedback = feedback;
             this.ensurePendingItemStates(state.pendingControllerAction);
-            const executorLifecycleSettled = (state.pendingControllerAction.itemStates || []).length > 0
-                && (state.pendingControllerAction.itemStates || []).every(item => this.isTerminalItemStatus(item.status));
+            const pendingItemStates = state.pendingControllerAction.itemStates || [];
+            const executorLifecycleSettled = pendingItemStates.length === 0
+                || pendingItemStates.every(item => this.isTerminalItemStatus(item.status));
             if (observation.settled && !executorLifecycleSettled) {
                 for (const itemState of state.pendingControllerAction.itemStates || []) {
                     if (!this.isTerminalItemStatus(itemState.status) && itemState.executorId && !itemState.evidenceReadyAt) {
@@ -1234,12 +1243,11 @@ class LoopService {
             state.currentStep = 'gate';
             state.lastTickTs = nowIso;
             await this.writeState(resolved, state);
-            const instruction = `Present ${pendingRequired} required user decision(s), do not auto-select the recommended option, and record the actual answers before continuing; no safety level bypasses required decisions.`;
+            const instruction = `Present ${pendingRequired} required user decision(s), do not auto-select the recommended option, and record the actual answers before continuing.`;
             await this.appendRunLog(resolved, this.logEntry(state, trigger, verifyPassed, instruction));
             return this.result(resolved, state, null, true, `${pendingRequired} pending required decision(s)`, instruction, verifyPassed, feedback);
         }
-        if (config.level !== 'L1'
-            && config.executionModel === 'controller'
+        if (config.executionModel === 'controller'
             && !this.isControllerCapabilityCurrent(config, now)) {
             const fallback = await this.resolveRuntimeAdapter(resolved, config, false, now);
             if (fallback.blocked) {
@@ -1249,9 +1257,6 @@ class LoopService {
         state.currentStep = 'plan';
         const taskGraphPath = path.join(resolved, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
         if (!(await this.fileService.exists(taskGraphPath))) {
-            if (config.level === 'L1') {
-                return this.runLegacyTick(resolved, config, state, { trigger, nowIso, projectRoot: options.projectRoot, layoutConfig: options.layoutConfig });
-            }
             const documentReadinessError = await this.validateDocumentReviewReadiness(resolved);
             if (documentReadinessError)
                 return this.gateResult(resolved, state, trigger, documentReadinessError);
@@ -1281,37 +1286,50 @@ class LoopService {
         if (state.progressFingerprint && state.progressFingerprint !== fingerprint)
             state.noProgressCount = 0;
         state.progressFingerprint = fingerprint;
-        if (config.level === 'L3') {
-            const safetyError = await this.validateTaskSafety(resolved, config, this.allReportTasks(report));
-            if (safetyError)
-                return this.gateResult(resolved, state, trigger, safetyError);
-        }
-        if (config.level !== 'L1') {
-            const documentReadinessError = await this.validateDocumentReviewReadiness(resolved);
-            if (documentReadinessError)
-                return this.gateResult(resolved, state, trigger, documentReadinessError);
-        }
-        if (config.level === 'L1') {
-            if (report.issues.length > 0 || report.invalidTasks.length > 0) {
-                return this.gateResult(resolved, state, trigger, `Task graph is invalid: ${[...report.issues, ...report.invalidTasks.flatMap(item => item.reasons)].join('; ')}`);
-            }
-            const summary = this.reportSummary(report);
-            if (options.projectRoot) {
-                await (0, TriageService_1.createTriageService)(this.fileService).append(options.projectRoot, options.layoutConfig ?? null, {
-                    source: 'loop', severity: 'info', title: `Loop audit: ${summary}`,
-                    suggestedAction: report.nextInstruction, changePath: resolved,
-                }).catch(() => undefined);
-            }
-            state.currentStep = 'log';
-            state.iteration += 1;
-            state.comprehensionDebtCounter += 1;
-            state.lastTickTs = nowIso;
-            await this.writeState(resolved, state);
-            await this.appendRunLog(resolved, this.logEntry(state, trigger, null, summary));
-            return this.result(resolved, state, null, false, null, `L1 report-only: ${summary}. ${report.nextInstruction}`, null, summary);
+        const documentReadinessError = await this.validateDocumentReviewReadiness(resolved);
+        if (documentReadinessError)
+            return this.gateResult(resolved, state, trigger, documentReadinessError);
+        const configuredSafetyError = await this.validateConfiguredTaskSafety(resolved, config, this.allReportTasks(report));
+        if (configuredSafetyError) {
+            return this.gateResult(resolved, state, trigger, configuredSafetyError);
         }
         if (report.issues.length > 0 || report.invalidTasks.length > 0) {
             return this.gateResult(resolved, state, trigger, `Task graph is invalid: ${[...report.issues, ...report.invalidTasks.flatMap(item => item.reasons)].join('; ')}`);
+        }
+        const planningDecision = await this.taskGraph.readValidatedPlanningReviewDecision(resolved);
+        if (planningDecision === 'BLOCKED') {
+            return this.gateResult(resolved, state, trigger, 'Loop blocked: combined planning review requires external context. Resolve the recorded blocker before implementation dispatch.');
+        }
+        if (planningDecision === 'NEEDS_CHANGES') {
+            const prepared = await this.prepareLoopBatch(resolved, config, state, 1, false, now, 'planning-repair');
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'planning-repair', prepared);
+            }
+            let repair;
+            try {
+                repair = await this.taskGraph.preparePlanningRepair(resolved);
+            }
+            catch (error) {
+                return this.gateResult(resolved, state, trigger, `Loop blocked: combined planning review did not converge after its single grouped repair allowance (${error?.message || error}).`);
+            }
+            const issued = await this.issueAction(resolved, config, state, trigger, 'planning-repair', [this.planningRepairAction(resolved, config, repair.record, state.iteration + 1)], 'Combined planning review requires one grouped repair. This is the only automatic planning repair attempt.', verifyPassed, prepared);
+            const actionItem = issued.actions[0];
+            if (!issued.pending || !actionItem) {
+                throw new Error('Planning repair action was not persisted before binding.');
+            }
+            await this.taskGraph.bindPlanningRepairLoopAction(resolved, {
+                actionId: issued.pending.actionId,
+                actionItemId: actionItem.id,
+            });
+            return issued;
+        }
+        if (!APPROVED_REVIEW_DECISIONS.has(planningDecision)) {
+            const prepared = await this.prepareLoopBatch(resolved, config, state, 1, true, now, 'planning-review');
+            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                return this.preparedBatchGateResult(resolved, state, trigger, 'planning-review', prepared);
+            }
+            const review = await this.taskGraph.reviewPlanning(resolved);
+            return this.issueAction(resolved, config, state, trigger, 'planning-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], 'One combined planning review is required before workspace inspection and implementation dispatch.', verifyPassed, prepared);
         }
         const allowedWorkspacePaths = this.allReportTasks(report)
             .filter(task => task.status !== 'PENDING')
@@ -1346,9 +1364,6 @@ class LoopService {
             if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
             }
-            const safetyError = await this.validateTaskSafety(resolved, config, selected);
-            if (safetyError)
-                return this.gateResult(resolved, state, trigger, safetyError);
             const dispatch = await this.taskGraph.dispatch(resolved, { taskId: selected[0].id });
             return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), crossTaskOwnerBarrierFeedback, verifyPassed, prepared);
         }
@@ -1358,9 +1373,6 @@ class LoopService {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
             }
             const selected = report.dispatchableTasks.slice(0, prepared.limit);
-            const safetyError = await this.validateTaskSafety(resolved, config, selected);
-            if (safetyError)
-                return this.gateResult(resolved, state, trigger, safetyError);
             const dispatch = await this.taskGraph.dispatch(resolved, { limit: selected.length });
             return this.issueAction(resolved, config, state, trigger, 'implementation', dispatch.dispatches.map(item => this.workerAction(resolved, config, item, state.iteration + 1)), feedback, verifyPassed, prepared);
         }
@@ -1429,9 +1441,6 @@ class LoopService {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
             }
             const selected = graphSafe.slice(0, prepared.limit);
-            const safetyError = await this.validateTaskSafety(resolved, config, selected);
-            if (safetyError)
-                return this.gateResult(resolved, state, trigger, safetyError);
             state.currentStep = 'repair';
             const retry = await this.taskGraph.retryWorkerRuns(resolved, {
                 tasks: selected.map(task => ({
@@ -1477,9 +1486,6 @@ class LoopService {
                     return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
                 }
                 const selected = graphSafe.slice(0, prepared.limit);
-                const safetyError = await this.validateTaskSafety(resolved, config, selected);
-                if (safetyError)
-                    return this.gateResult(resolved, state, trigger, safetyError);
                 state.currentStep = 'repair';
                 const retry = await this.taskGraph.retryWorkerRuns(resolved, {
                     tasks: selected.map(task => {
@@ -1504,9 +1510,6 @@ class LoopService {
                     return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
                 }
                 const selected = graphSafe.slice(0, prepared.limit);
-                const safetyError = await this.validateTaskSafety(resolved, config, selected);
-                if (safetyError)
-                    return this.gateResult(resolved, state, trigger, safetyError);
                 state.currentStep = 'repair';
                 const retry = await this.taskGraph.retryWorkerRuns(resolved, {
                     tasks: selected.map(task => {
@@ -1554,9 +1557,6 @@ class LoopService {
                     return this.preparedBatchGateResult(resolved, state, trigger, 'implementation', prepared);
                 }
                 const selected = graphSafe.slice(0, prepared.limit);
-                const safetyError = await this.validateTaskSafety(resolved, config, selected);
-                if (safetyError)
-                    return this.gateResult(resolved, state, trigger, safetyError);
                 state.currentStep = 'repair';
                 const retry = await this.taskGraph.retryWorkerRuns(resolved, {
                     tasks: selected.map(task => {
@@ -1618,9 +1618,6 @@ class LoopService {
                 if (repairStrategy && await this.taskGraph.hasFinalReviewRepairStrategyAttempt(resolved, repairStrategy.key)) {
                     return this.gateResult(resolved, state, trigger, `Loop blocked: final-review findings made no progress after ${convergence.roundsUsed} repair wave(s) (findings=${convergence.currentFindingIds.join(',')}, reason=${convergence.reason}). The bounded repair-strategy escalation for this finding set was already used; new external context or a materially revised review finding is required.`);
                 }
-                const safetyError = await this.validateTaskSafety(resolved, config, this.allReportTasks(report));
-                if (safetyError)
-                    return this.gateResult(resolved, state, trigger, safetyError);
                 const prepared = await this.prepareLoopBatch(resolved, config, state, 1, false, now, 'implementation');
                 if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
                     return this.runtimeAdapterGateResult(resolved, state, trigger, 'implementation', prepared.runtimeAdapter);
@@ -1657,17 +1654,6 @@ class LoopService {
                 await this.appendRunLog(resolved, this.logEntry(state, trigger, true, outcome.summary));
                 return this.result(resolved, state, null, true, 'goal verified', 'Loop complete: task graph, reviews, evidence, and protocol verification passed.', true, outcome.summary);
             }
-            if (config.level === 'L3') {
-                let invalidCommand;
-                for (const command of config.stopConditions.testCommands) {
-                    if (!(await this.isCommandAllowed(resolved, command, config.allowlist.commands))) {
-                        invalidCommand = command;
-                        break;
-                    }
-                }
-                if (invalidCommand)
-                    return this.gateResult(resolved, state, trigger, `L3 blocked final verification command outside the allowlist (${invalidCommand}).`);
-            }
             const verificationAction = this.verificationAction(resolved, config, outcome, state.iteration + 1);
             const prepared = await this.prepareLoopBatch(resolved, config, state, 1, false, now, 'verification');
             if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
@@ -1679,11 +1665,8 @@ class LoopService {
     }
     async observePending(changePath, pending) {
         const items = pending.items || [];
-        if (items.length === 0 || pending.kind === 'legacy') {
-            const outcome = await this.verification.verify(changePath).catch(() => null);
-            return outcome?.passed
-                ? { settled: true, verifyPassed: true, feedback: outcome.summary }
-                : { settled: false, verifyPassed: false, feedback: outcome?.summary || 'Protocol verification has not passed.' };
+        if (items.length === 0) {
+            return { settled: true, verifyPassed: null, feedback: 'Discarded an empty pending action without dispatching work.' };
         }
         if (pending.kind === 'verification') {
             const evidence = await this.readLatestVerificationEvidence(changePath, pending);
@@ -1708,6 +1691,18 @@ class LoopService {
             return outcome?.passed
                 ? { settled: true, verifyPassed: true, feedback: outcome.summary }
                 : { settled: false, verifyPassed: false, feedback: outcome?.summary || 'Verification evidence is still incomplete.' };
+        }
+        if (pending.kind === 'planning-review') {
+            const decision = await this.taskGraph.readValidatedPlanningReviewDecision(changePath);
+            return decision === 'PENDING' || !decision
+                ? { settled: false, verifyPassed: null, feedback: 'Combined planning review decision is still pending.' }
+                : { settled: true, verifyPassed: APPROVED_REVIEW_DECISIONS.has(decision), feedback: `Combined planning review decision: ${decision}.` };
+        }
+        if (pending.kind === 'planning-repair') {
+            const readiness = await this.taskGraph.validatePlanningRepairEvidence(changePath);
+            return readiness.ready
+                ? { settled: true, verifyPassed: null, feedback: 'Grouped planning repair evidence is complete.' }
+                : { settled: false, verifyPassed: null, feedback: readiness.reason };
         }
         if (pending.kind === 'final-review') {
             const decision = await this.readFinalReviewDecision(changePath);
@@ -1749,7 +1744,7 @@ class LoopService {
             if (!item)
                 continue;
             let ready = false;
-            if (item.usageKey && (item.kind === 'task-review' || item.kind === 'final-review')) {
+            if (item.usageKey && this.isReviewActionKind(item.kind)) {
                 ready = await this.taskGraph.hasReviewLoopEvidence(changePath, {
                     dispatchId: item.usageKey,
                     actionId: pending.actionId,
@@ -1757,7 +1752,10 @@ class LoopService {
                     executorId: itemState.executorId,
                 });
             }
-            else if (item.kind === 'verification' || item.kind === 'legacy') {
+            else if (item.kind === 'planning-repair') {
+                ready = (await this.taskGraph.validatePlanningRepairEvidence(changePath)).ready;
+            }
+            else if (item.kind === 'verification') {
                 verificationEvidence ?? (verificationEvidence = await this.readLatestVerificationEvidence(changePath, pending));
                 ready = Boolean(verificationEvidence);
             }
@@ -1812,7 +1810,7 @@ class LoopService {
     async issueAction(changePath, config, state, trigger, kind, items, feedback, verifyPassed = null, prepared) {
         const issuedAt = this.now();
         const now = issuedAt.toISOString();
-        const preparedBatch = prepared || await this.prepareLoopBatch(changePath, config, state, items.length, kind === 'task-review' || kind === 'final-review', issuedAt, kind);
+        const preparedBatch = prepared || await this.prepareLoopBatch(changePath, config, state, items.length, this.isReviewActionKind(kind), issuedAt, kind);
         const runtimeAdapter = preparedBatch.runtimeAdapter;
         if (runtimeAdapter.blocked || !runtimeAdapter.selected) {
             return this.gateResult(changePath, state, trigger, `Loop blocked: no safe runtime adapter can execute ${kind}. ${runtimeAdapter.warnings.join(' ')}`);
@@ -1827,7 +1825,7 @@ class LoopService {
         const initialLeaseExpiresAt = new Date(Date.parse(now) + DEFAULT_ACTION_LEASE_MS).toISOString();
         const controllerProvenanceRequired = runtimeAdapter.selected.kind === 'native'
             && this.isControllerCapabilityCurrent(config, issuedAt)
-            && (kind === 'task-review' || kind === 'final-review');
+            && this.isReviewActionKind(kind);
         const allowances = this.allocateTokenAllowances(config, state, items.length);
         const projectRoot = await this.findProjectRootForSafety(changePath);
         for (const item of items) {
@@ -1838,7 +1836,7 @@ class LoopService {
                     capability: config.capability,
                     preference: 'native',
                     strict: true,
-                    requiresIndependentWorker: item.kind === 'task-review' || item.kind === 'final-review',
+                    requiresIndependentWorker: this.isReviewActionKind(item.kind),
                     now: issuedAt,
                     modelSelection: item.modelSelection,
                     nativeHarness: config.nativeHarnessMetadata,
@@ -1886,7 +1884,7 @@ class LoopService {
             ]);
         }
         for (const item of items) {
-            if (!item.usageKey || (item.kind !== 'task-review' && item.kind !== 'final-review'))
+            if (!item.usageKey || !this.isReviewActionKind(item.kind))
                 continue;
             await this.taskGraph.bindReviewLoopAction(changePath, {
                 dispatchId: item.usageKey,
@@ -1984,7 +1982,7 @@ class LoopService {
         const completionCommand = `ospec execute sync ${this.quote(changePath)}`;
         return {
             id: `review-${iteration}-${dispatch.taskId || 'final'}`,
-            kind: dispatch.taskId ? 'task-review' : 'final-review',
+            kind: dispatch.stage === 'planning' ? 'planning-review' : dispatch.taskId ? 'task-review' : 'final-review',
             taskId: dispatch.taskId,
             role: dispatch.reviewerRole,
             target,
@@ -2005,6 +2003,29 @@ class LoopService {
                 configurationSource: dispatch.workerProfile?.modelConfigurationSource
                     || (dispatch.workerProfile?.model ? 'target' : 'harness-default'),
             },
+        };
+    }
+    planningRepairAction(changePath, config, record, iteration) {
+        const packetPath = path.resolve(changePath, record.packetPath);
+        return {
+            id: `planning-repair-${iteration}`,
+            kind: 'planning-repair',
+            taskId: null,
+            role: 'planning_repairer',
+            target: config.target,
+            packetPath,
+            instructionPath: packetPath,
+            prompt: this.boundPrompt([
+                'Start one fresh worker context for the single authorized grouped planning repair.',
+                `Read the authoritative repair packet at: ${packetPath}`,
+                'Resolve every finding within the exact authorized planning files. Do not implement production code.',
+                'Refresh design and plan preflights, keep the task graph valid, and synchronize derived task status.',
+                'Do not request or perform a second automatic planning repair.',
+            ], config.efficiency.promptMaxChars),
+            completionCommand: `ospec execute sync ${this.quote(changePath)}`,
+            expectedEvidencePath: path.resolve(changePath, record.recordPath),
+            usageKey: record.id,
+            modelSelection: null,
         };
     }
     verificationAction(changePath, config, outcome, iteration) {
@@ -2034,33 +2055,35 @@ class LoopService {
             verificationCommand: commands.length > 0 ? commandText : null,
         };
     }
-    async validateTaskSafety(changePath, config, tasks) {
-        if (config.level !== 'L3')
+    async validateConfiguredTaskSafety(changePath, config, tasks) {
+        const checksPaths = config.allowlist.paths.length > 0;
+        const checksCommands = config.allowlist.commands.length > 0;
+        if (!checksPaths && !checksCommands)
             return null;
-        if (config.allowlist.paths.length === 0 || config.allowlist.commands.length === 0) {
-            return 'L3 requires non-empty path and command allowlists before unattended task dispatch.';
-        }
         const exactTaskGraphPaths = (config.allowlist.metadata?.pathSource
             || config.allowlist.metadata?.source) === 'task-graph';
         for (const task of tasks) {
-            let invalidPath;
-            for (const file of task.targetFiles) {
-                if (!(await this.isPathAllowed(changePath, file, config.allowlist.paths, exactTaskGraphPaths))) {
-                    invalidPath = file;
-                    break;
+            if (checksPaths) {
+                for (const file of task.targetFiles) {
+                    if (!(await this.isPathAllowed(changePath, file, config.allowlist.paths, exactTaskGraphPaths))) {
+                        return `Configured allowlist blocked task ${task.id}: target path is outside the allowlist (${file}).`;
+                    }
                 }
             }
-            if (invalidPath)
-                return `L3 blocked task ${task.id}: target path is outside the allowlist (${invalidPath}).`;
-            let invalidCommand;
-            for (const command of task.verificationCommands) {
+            if (checksCommands) {
+                for (const command of task.verificationCommands) {
+                    if (!(await this.isCommandAllowed(changePath, command, config.allowlist.commands))) {
+                        return `Configured allowlist blocked task ${task.id}: verification command is outside the allowlist (${command}).`;
+                    }
+                }
+            }
+        }
+        if (checksCommands) {
+            for (const command of config.stopConditions.testCommands) {
                 if (!(await this.isCommandAllowed(changePath, command, config.allowlist.commands))) {
-                    invalidCommand = command;
-                    break;
+                    return `Configured allowlist blocked final verification command (${command}).`;
                 }
             }
-            if (invalidCommand)
-                return `L3 blocked task ${task.id}: verification command is outside the allowlist (${invalidCommand}).`;
         }
         return null;
     }
@@ -2090,33 +2113,6 @@ class LoopService {
             state.comprehensionDebtCounter = 0;
         }
         return null;
-    }
-    async runLegacyTick(changePath, config, state, input) {
-        state.currentStep = 'act';
-        state.iteration += 1;
-        state.comprehensionDebtCounter += 1;
-        state.lastTickTs = input.nowIso;
-        if (config.level === 'L1') {
-            if (input.projectRoot)
-                await (0, TriageService_1.createTriageService)(this.fileService).append(input.projectRoot, input.layoutConfig ?? null, {
-                    source: 'loop', severity: 'info', title: `Legacy L1 loop audit iteration ${state.iteration}`,
-                    suggestedAction: 'Add a valid task graph to enable executable loop actions.', changePath,
-                }).catch(() => undefined);
-            await this.writeState(changePath, state);
-            await this.appendRunLog(changePath, this.logEntry(state, input.trigger, null, 'Legacy L1 report-only tick; task graph missing.'));
-            return this.result(changePath, state, null, false, null, 'L1 report-only: no task graph exists, so no executable action was issued.', null, 'Task graph missing.');
-        }
-        const item = {
-            id: `legacy-${state.iteration}`,
-            kind: 'legacy', taskId: null, role: 'goal_worker', target: config.target,
-            packetPath: '', instructionPath: '',
-            prompt: 'A legacy goal has no task graph. Complete the goal through the documented OSpec workflow and record verification evidence.',
-            completionCommand: `ospec execute verify ${this.quote(changePath)} --status PASSED --exit-code 0 --command "..."`,
-            expectedEvidencePath: path.resolve(changePath, 'artifacts', 'agents', 'verification-evidence.json'),
-        };
-        state.iteration -= 1;
-        state.comprehensionDebtCounter -= 1;
-        return this.issueAction(changePath, config, state, input.trigger, 'legacy', [item], 'Legacy compatibility mode: task graph missing.');
     }
     async buildControllerTickPlan(changePath) {
         await this.assertExists(changePath);
@@ -2205,7 +2201,6 @@ class LoopService {
             version: raw.version || '1.0',
             pattern: raw.pattern || 'goal-loop',
             primitive,
-            level: raw.level || 'L1',
             executionModel: 'controller',
             target,
             schedule: { interval: raw.schedule?.interval || '10m', lifecycle: 'session-bound' },
@@ -2218,7 +2213,6 @@ class LoopService {
             },
             allowlist,
             efficiency: { ...this.defaultEfficiency(), ...(raw.efficiency || {}) },
-            documentReviewGovernance: this.normalizeDocumentReviewGovernance(raw.documentReviewGovernance),
             capability,
             nativeHarnessMetadata: raw.nativeHarnessMetadata
                 && raw.nativeHarnessMetadata.target === target
@@ -2232,14 +2226,12 @@ class LoopService {
         const pending = raw.pendingControllerAction || null;
         if (pending)
             this.ensurePendingItemStates(pending);
-        const legacyExecutorTokens = Math.max(0, raw.executorTokensUsed ?? raw.tokensUsed ?? 0);
-        const legacyArtifactTokens = Math.max(0, raw.artifactTokensUsed ?? 0);
         const executorUsageByKey = raw.executorUsageByKey && typeof raw.executorUsageByKey === 'object'
             ? raw.executorUsageByKey
-            : legacyExecutorTokens > 0 ? { legacy: legacyExecutorTokens } : {};
+            : {};
         const artifactUsageByKey = raw.artifactUsageByKey && typeof raw.artifactUsageByKey === 'object'
             ? raw.artifactUsageByKey
-            : legacyArtifactTokens > 0 ? { legacy: legacyArtifactTokens } : {};
+            : {};
         const usageKeys = new Set([...Object.keys(executorUsageByKey), ...Object.keys(artifactUsageByKey)]);
         const tokensUsed = [...usageKeys].reduce((total, key) => total
             + Math.max(0, Number(artifactUsageByKey[key] ?? executorUsageByKey[key]) || 0), 0);
@@ -2276,35 +2268,6 @@ class LoopService {
             reviewMaxRuntimeMinutes: 60,
             verificationMaxRuntimeMinutes: 60,
             evidenceResultGraceMinutes: 5,
-        };
-    }
-    defaultDocumentReviewGovernance() {
-        return {
-            stages: {
-                design: { maxCompletedRounds: 2, maxMinutes: 30, budgetTokens: null },
-                plan: { maxCompletedRounds: 2, maxMinutes: 30, budgetTokens: null },
-            },
-            noProgressLimit: 2,
-            tokenReservation: 4000,
-        };
-    }
-    normalizeDocumentReviewGovernance(raw) {
-        const defaults = this.defaultDocumentReviewGovernance();
-        const normalizeStage = (stage) => {
-            const source = raw?.stages?.[stage];
-            const budget = source?.budgetTokens;
-            return {
-                maxCompletedRounds: Math.min(2, this.positiveInteger(source?.maxCompletedRounds ?? 2, `${stage}.maxCompletedRounds`)),
-                maxMinutes: Math.min(30, this.positiveInteger(source?.maxMinutes ?? 30, `${stage}.maxMinutes`)),
-                budgetTokens: budget === null || budget === undefined
-                    ? null
-                    : this.positiveInteger(budget, `${stage}.budgetTokens`),
-            };
-        };
-        return {
-            stages: { design: normalizeStage('design'), plan: normalizeStage('plan') },
-            noProgressLimit: Math.min(2, this.positiveInteger(raw?.noProgressLimit ?? defaults.noProgressLimit, 'documentReviewGovernance.noProgressLimit')),
-            tokenReservation: this.positiveInteger(raw?.tokenReservation ?? defaults.tokenReservation, 'documentReviewGovernance.tokenReservation'),
         };
     }
     isControllerCapabilityCurrent(config, now) {

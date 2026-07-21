@@ -19,6 +19,11 @@ ospec goal <goal-name> [path]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop run [changes/active/<change>] --once --json
+ospec loop tick [changes/active/<change>] --json
+ospec loop heartbeat [changes/active/<change>] --action-item <id> --executor <child-id>
+ospec loop finalize [changes/active/<change>] --action-item <id> --executor <child-id> --exit-code 0 --summary "..."
+ospec loop recover [changes/active/<change>] --force
 ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N --continue-while-progressing true|false
 ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
@@ -26,9 +31,7 @@ ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expecte
 ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
-ospec execute doc-review [changes/active/<change>] [--stage design|plan]
-ospec execute doc-review [changes/active/<change>] --stage design|plan --claim-executor <executor-id>
-ospec execute doc-review [changes/active/<change>] --stage design|plan --complete-executor <executor-id>
+ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
 ospec execute route [changes/active/<change>]
@@ -44,6 +47,7 @@ ospec execute complete <task-id> [changes/active/<change>] --status DONE --summa
 ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
+ospec execute repair [changes/active/<change>]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user [--summary "..."]
 ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
@@ -70,31 +74,17 @@ ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
-`loop configure --allow-path`、`--allow-command`、`--allow-command-policy` は、選択した allowlist グループ全体を置換して差分を表示し、暗黙には追加しません。L3 では task graph の `derive -> check -> apply` を優先してください。apply は CAS hash を使い、権限拡張には明示的な `--approve-expansion` が必要です。
+`loop configure --allow-path`、`--allow-command`、`--allow-command-policy` は optional extra boundary を設定し、選択した allowlist グループ全体を置換して差分を表示します。task graph の `derive -> check -> apply` を優先し、権限拡張には明示的な `--approve-expansion` が必要です。
 
-1.8.21 は、ユーザーが未完了の Change または Goal のリスクを明示的に受容した場合に限る監査付き force archive を追加します。`--force-archive`、change 名と完全一致する `--confirm-force-archive`、空でない理由が必要です。失敗または `NOT_VERIFIED` evidence を pass に変更せず、pending Loop action がある Goal の移動を拒否し、`artifacts/agents/force-archive.json` を記録します。state、生成 knowledge、`feature-index.md`、`SKILL.index.json` は `forced`、`incomplete`、`accepted-risk` と表示され、通常 ready な change は通常の finalize を使います。
+## 現在のワークフロー動作
 
-1.8.22 は force archive の Loop safety check を調整します。pending Controller pointer に 1 件以上の item があり、すべてが永続的な終端状態 `completed`、`failed`、`expired` のいずれかなら、古い一時 repair task が現在の graph と照合できなくても archive できます。item state 欠落、`issued`、`running`、その他の非終端状態は引き続き拒否され、終端 action は archive 済み Loop evidence にそのまま保持されます。
-
-1.8.3 では design/plan specialist review に bounded default を導入しました。1.8.9 の continuous mode では、stage ごとの 2 completed rounds と 30 分は収束しきい値です。新しい structured finding-ID set は続行でき、反復または循環する set は停止します。cache hit、pending reuse、heartbeat、同じ dispatch の recovery は round を消費しません。`--force` は guard を迂回できず、strict mode は exact user-authorized extra-round window を維持します。
-
-1.8.4 では task review-repair と grouped final-review repair に 2 round の guard を導入し、continuous mode では収束しきい値として扱います。structured finding ID が変化すれば自動続行します。1.8.11 以降は、同じ ID でも structured finding fingerprint と直前に許可された repair scope 内の code snapshot が両方変化した場合は続行します。文言だけの変更、code だけの churn、完全な反復、cycle は次の無効な repair の前に停止します。`--continue-while-progressing false` で従来の厳格な lifetime ceiling を維持できます。変更された全 path が完了済みの推移的 downstream task に帰属できる場合にだけ upstream の承認済み review を維持し、downstream reviewer packet に upstream contract を regression obligation として追加します。final review が `BLOCKED` の場合は blocker の解決まで停止します。
-
-1.8.12 では durable な `BLOCKED` task の外部 acceptance を明示的に延期できます。`ospec execute defer-blocker` は記録済み external blocker、完了済み dispatch evidence、空でないユーザー承認理由を要求します。blocked task と checklist は変更せず dependency-safe な実装だけを続行し、final review、verify、finalize、archive は引き続きブロックします。
-
-1.8.13 は再開した real Goal の次の停止層を修正します。不足する prerequisite review は retryable な dependent worker より先に dispatch されます。finding の追加 path は task graph の完了済み owner に属する場合だけ cross-task scope として許可され、完全な repair scope を snapshot 化して古くなった owner approval を再 review します。成功した bounded controller poll は claim 済み child の短期 lease を更新しますが absolute deadline は動かしません。service 未指定の full Docker Compose rebuild は dispatch packet に scope warning を出します。
-
-1.8.14 は cross-task repair 後の multi-review lease 境界 race を修正します。controller poll は短期 lease 境界後の bounded な 60 秒 wait 以内に同じ claim 済み child を更新できますが、期限切れ result の直接送信、実際の orphan、固定 absolute deadline は引き続き厳格です。記録済みで未承認の cross-task owner review または repair は新しい implementation と retryable worker より先に処理され、競合しない他の reviewer は同じ batch で並列実行できます。
-
-1.8.15 は documentation repair または deletion 後の Goal finalize を修正します。既存 baseline が missing になった状態を reviewed deletion の有意な変更として記録し、最後の repair attempt だけでなく最初の baseline から最後の completed dispatch までを集約し、workspace がその path の最新 declared-owner evidence と一致することを検証します。これにより意図した削除と後続 repair で再変更しなかった文書は通過しますが、古い evidence、外部 drift、最終 reversion は拒否されます。
-
-1.8.17 は、ユーザーが選択した Change を完全な高速フローにします。推奨コマンドは `ospec change` で、`ospec new` は互換 alias として残ります。Change は Goal に自動昇格せず、段階別のコンパクト protocol と現在の AI による軽量 review を使います。feature/docs には実際の永続文書が必要で、closeout state は自動導出され、finalize の index rebuild は 1 回だけです。batch Change は queue で直列実行され、`APPROVED_WITH_CONCERNS` も自動 archive できます。
-
-1.8.16 は完了済み Goal が verification closeout metadata を更新した後に残る最終ブロックを修正します。dispatch の meaningful-change chain は引き続き必須で、最後の owner dispatch より後に割り当てられ、executor provenance が有効で、現在の target snapshot と完全一致する APPROVED task review だけが最終状態を許可できます。`ospec execute sync` は英語、中国語、日本語、アラビア語の worker-status template にある Combined review の status と checklist も同期します。capacity 不明時の implementation は既定の並列数 3 に一致し、global limit や review batch の制限ではありません。より大きい有効な session-bound harness capacity が報告され、resource と task graph が安全な場合は、5-10 の並列数を明示的に設定できます。
-
-1.8.5 では native child の待機による Goal controller の長時間停止を防ぎます。Codex/GPT の `wait_agent`、Claude Task polling、その他すべての native adapter は 60 秒以内に制御を返し、`heartbeatDueAt` 前に heartbeat を更新し、完了した結果を直ちに保存して再 tick します。task の target snapshot が不変なら Git HEAD の移動だけで再 review せず、final review は snapshot と HEAD の両方に厳密に拘束されます。native capacity が不明な implementation batch は 2 件までですが、安全な review 並列性は維持します。6 個を超える target を持つ新しい task は分割するか `scope_reason` が必要です。
-
-1.8.6 では、60 秒は controller の 1 回の poll 上限であり、child の実行上限ではないことを明確にします。absolute deadline の既定値は implementation が 120 分、review と verification が 60 分で、heartbeat lease は更新でき、evidence 完了後には既定 5 分の result grace があります。`ospec loop finalize` は成功を記録する前に durable evidence を検証します。再帰 directory snapshot、context-bound approval cache、改善された conflict-safe selection により、provenance を弱めず stale/repeated review を防ぎます。1.8.6 の新しい serial task には `serial_reason` が必要で、旧 graph は引き続き読み取れます。
+- **Force archive:** 未解決リスクをユーザーが明示的に受容した場合だけ使用します。`--force-archive`、change 名と完全一致する `--confirm-force-archive`、空でない理由が必要です。失敗および `NOT_VERIFIED` evidence は変更されません。保持された Controller pointer は、1 件以上の item があり、すべてが永続的に `completed`、`failed`、`expired` のいずれかである場合だけ安全です。state 欠落、`issued`、`running`、その他の非終端状態は引き続きブロックし、archive は `forced`、`incomplete`、`accepted-risk` と表示されます。
+- **Review convergence:** planning document は reviewer child や token reservation のない deterministic inline preflight を使います。task/final repair は引き続き有界の収束しきい値を使い、同じ finding は fingerprint と許可済み repair-scope snapshot の両方が有意に変わった場合だけ続行できます。
+- **External acceptance:** `ospec execute defer-blocker` には既存の durable external blocker、完了済み dispatch evidence、明示的なユーザー承認が必要です。dependency-safe な実装は続行できますが、task は blocked のままで、final review、verify、finalize、archive の gate は維持されます。
+- **Repair ownership:** prerequisite review は dependent retry より先に実行されます。cross-task repair path は宣言済みで完了した owner に属し、frozen scope を使い、approval が古くなった場合は fresh owner review を行う必要があります。task review は同じ task の canonical worker report を snapshot 化します。その report の正確な repair は許可されますが、古い evidence は履歴を書き換えず fresh review に送られます。
+- **Documentation closeout:** review 済みの作成と削除は有意な state transition です。evidence は最初の baseline から最後の completed dispatch まで集約され、workspace は最新の declared-owner evidence と一致する必要があります。後続の authoritative APPROVED review は正確な final snapshot を bind できますが、meaningful-change chain の代わりにはなりません。`ospec execute sync` は多言語 worker status と Combined review checklist を更新します。
+- **Classic Change:** `ospec change` が推奨 fast path で、`ospec new` は alias として残ります。ユーザーが選択した Change は Goal に自動昇格しません。compact な stage-aware guidance、現在の AI による 1 回の lightweight review、実用的な documentation rule、derived closeout、1 回の finalize index rebuild、sequential queue を使います。他の gate がすべて通れば `APPROVED` と `APPROVED_WITH_CONCERNS` は自動 archive できます。
+- **Controller runtime and concurrency:** 1 回の native wait は 60 秒以内に戻りますが、live child は heartbeat を更新しながら absolute deadline まで実行できます。native capacity 不明時の implementation fallback は 2 ではなく 3 です。より大きい正の session-bound capacity があれば、dependency、file conflict、shared resource、token、`maxParallel` が許す範囲で 5-10 などの設定を利用できます。新しい serial task には `serial_reason` が必要で、target が 6 個を超える task は分割するか `scope_reason` を宣言します。
 
 ## プラグインの最短手順
 
@@ -173,7 +163,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - `ospec run start`、`run resume`、`run step`、`run status` の next instruction は active task graph を参照します。dispatchable work がある場合は `ospec execute dispatch ...` を示しますが、runner は worker dispatch や source file 編集を行いません。
 - one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `artifacts/agents/bootstrap.json` と `artifacts/agents/bootstrap.md` を書き、出力された次の安全な action に従います。active dispatch が既にある場合、bootstrap は対応する `ospec execute launch ... --task ...` command を推奨します。
 - change を agent、tool、worktree、shell、human operator の間で引き渡すときは、`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` で `artifacts/agents/handoff.json` と `artifacts/agents/handoff.md` を書きます。project session brief snapshot、target tool mapping、command sequence、safety rules、missing-context warnings を記録します。
-- implementation dispatch の前に `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` を使うと、project session brief snapshot を含む `artifacts/agents/document-review-dispatches/*` packet と `artifacts/reviews/design-review.md` または `artifacts/reviews/implementation-plan-review.md` を作成します。design review が approved になる前に plan review は dispatch しません。
+- task graph 導出前に `ospec execute preflight [changes/active/<change>] --stage design`、続いて `--stage plan` を実行します。両方とも reviewer child を起動せず deterministic inline readiness check と approval evidence を記録し、通過後に graph を導出または更新して、Loop が combined planning review を 1 回発行します。
 - `ospec execute status [changes/active/<change>]` または `ospec execute next [changes/active/<change>]` で、controller 状態と次に安全に割り当てられる task 候補を確認します。次に推奨される OSpec command を handoff 用に永続化したい場合は、`ospec execute route [changes/active/<change>]` で `artifacts/agents/workflow-route.json` と `workflow-route.md` を書きます。
 - 方向、architecture、API、UI、risk、scope に明示的な user choice が必要な場合は `ospec execute decision [changes/active/<change>] ...` を使います。required pending decision は `bootstrap`、`status`、`finish` に表示され、`--select <option-id> --answered-by user` または同じ provenance を持つ意図的な `--skip` が記録されるまで worker dispatch を block します。
 - worker handoff の前に `ospec execute workspace [changes/active/<change>]` で `artifacts/agents/workspace-status.json` と `artifacts/agents/workspace-status.md` を記録します。status が `needs_isolation` の場合は、workspace を clean にするか isolated git worktree に移してから parallel dispatch します。
@@ -200,7 +190,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - AI / `/ospec-change` フローでは、AI は小さな flow を `proposal.md`、`tasks.md`、実装、`verification.md`、`review.md` に集中させます。
 - AI / `/ospec-goal` フローでは、AI が要件、`proposal.md`、プロジェクト文脈から `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json` を作成または更新します。ユーザーは仮定の確認や重要判断の修正だけを行えば十分です。
 - Task graph の状態値は `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING` です。archive 準備にはトップレベルの `status: "completed"` と、全 task の `DONE` または `DONE_WITH_CONCERNS` が必要です。
-- `ospec execute` の artifact command は project source file を直接編集しません。current model controller は `runtimeAdapter.selected.nativeSubagent` だけで worker を dispatch し、specialist review は実 executor id を claim/complete します。OSpec は agent CLI を実行しません。
+- `ospec execute` の artifact command は project source file を直接編集しません。current model controller は `runtimeAdapter.selected.nativeSubagent` だけで implementation/task/final review worker を dispatch します。OSpec は agent CLI を実行しません。
 - Worker 状態値は `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING` です。完了には worker 状態が解決済みで、`controller_status` が `DONE` である必要があります。
 - `change` profile では `ospec verify [changes/active/<change>]` は classic files だけを必須にします。`goal` profile では `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence、`artifacts/agents/worker-status.md` も必須にします。
 - `design.md` は簡潔に保ちます。役割はタスク分解の精度を上げることであり、長期的なプロジェクト文書の代替ではありません。
@@ -230,7 +220,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.23
+npm install -g @clawplays/ospec-cli@1.9.0
 ospec update [path]
 ```
 

@@ -41,7 +41,7 @@ AI コーディングアシスタントは強力ですが、要件がチャッ�
 - **要件をリポジトリ内のスペックファイルに**: OSpec は要件を proposal、design、計画、tasks、レビュー、検証エビデンスなどのファイルに落とし、チャット履歴ではなくリポジトリに残します——どのアシスタント（Codex/GPT、Claude Code、Gemini、OpenCode、または素の CLI）でも前の作業の続きから進められます。
 - **`ospec change` —— 日常の高速フロー**: 1 つの要件を 1 つの active change として、短い `init -> change -> verify/finalize` で進め、軽量でレビューしやすく保ちます。
 - **`ospec goal` —— エンジニアリング品質の規律**: コードを書く前にブレインストーミングして設計を固定し、作業をタスクグラフに分割して並列サブエージェントを派遣し、TDD と独立レビュアーによるコードレビューを徹底し、「完了」とする前に再確認可能なテスト/検証エビデンスを求めます。
-- **`ospec goal` はループとして動作**: 計画・実行・検証を繰り返し、テストが作業を証明するまで進めます。安全レベルは自分で選べます（`--level L1|L2|L3`：レポートのみ → 支援 → 無人）。`ospec loop …` で駆動し、`ospec triage …` で検出項目を triage 受信箱に集めます。
+- **`ospec goal` は統一 fast quality loop**: deterministic preflight、combined planning review、task 実行・review、final review、verification を 1 つの予測可能なフローで進めます。
 
 ## npm でインストール
 
@@ -149,6 +149,12 @@ ospec verify changes/active/<change-name>
 ospec finalize changes/active/<change-name>
 ```
 
+ユーザーが未解決リスクを明示的に受容した場合だけ force archive を使います：
+
+```bash
+ospec finalize changes/active/<change-name> --force-archive --confirm-force-archive <正確な-change-名> --reason "未解決の受け入れリスクを承認"
+```
+
 新規プロジェクトでは `ospec init` の既定レイアウトは nested です。リポジトリ直下に残るのは `.skillrc` と `README.md` だけで、change や `SKILL`、`for-ai` などの管理ファイルは `.ospec/` 配下に置かれます。
 CLI は `changes/active/<change-name>` の短縮パスも受け付けますが、nested プロジェクトでの実体パスは `.ospec/changes/active/<change-name>` です。
 
@@ -157,6 +163,7 @@ CLI は `changes/active/<change-name>` の短縮パスも受け付けますが�
 - 先にプロジェクト固有のデプロイ、テスト、QA を実行します
 - `ospec verify` で change がアーカイブ可能か確認します
 - `ospec finalize` でインデックスを再構築し、change をアーカイブします
+- force archive は失敗または `NOT_VERIFIED` evidence を pass に変更しません。force flag、正確な名前の再確認、監査理由が必要です。state 欠落、`issued`、`running` の Loop item は引き続きブロックし、全 item が `completed`、`failed`、`expired` の履歴 pointer は保持できます。archive は `forced`、`incomplete`、`accepted-risk` と表示されます
 
 </details>
 
@@ -164,15 +171,11 @@ CLI は `changes/active/<change-name>` の短縮パスも受け付けますが�
 
 ユーザーがフルワークフローを明示的に選択した場合だけ `ospec goal <goal-name>` を使います。選択済みの Change は複雑さ、ファイル数、risk、batch size によって Goal へ自動昇格しません。
 
+Change は compact な stage-aware guidance、現在の AI による 1 回の lightweight review、derived closeout を使います。verification、documentation、plugin、review の gate がすべて通れば、`APPROVED` または `APPROVED_WITH_CONCERNS` は自動的に finalize と archive が可能です。明示的な batch は queue で直列実行されます。
+
 **あなたは goal を起こして要件を説明するだけ。** 残りの `ospec` コマンドはすべて AI が自分で実行し、あなたはチャットで質問に答えるだけです（`Zero-Setup`）。
 
-goal は **セッションスコープのループ** として動作します：計画・実行・検証を繰り返し、作業がテストで証明されるまで進めます。作成時に安全レベルを選びます（`--level L1|L2|L3`、デフォルト L1）：
-
-- **L1** —— レポートのみ：検出項目を triage に記録し、コードは一切変更しません。
-- **L2** —— 変更しますが、重要な決定では一時停止して承認を求めます。
-- **L3** —— 設定した allowlist 内で無人実行します。
-
-`ospec loop run/watch/status/pause/resume/level` で駆動・確認し、`ospec triage list/claim/promote` で検出項目を処理し、pause / `STOP` ファイル / セッションを閉じることで停止します。harness にネイティブ `/goal`（Claude、Codex）があればループはそれを使い、なければ自動的にフォールバックします。`ospec change` は従来のクラシック高速フローのままです。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
+goal は **セッションスコープの fast quality loop** として動作します。design/plan deterministic preflight の後に task graph を導出し、workspace/worker dispatch 前に独立 combined planning review を 1 回実行します。planning repair と fresh re-review は各 1 回までです。controller は `ospec loop run --once --compact-json` を使い、現在の harness が報告した native subagent capability だけで action を実行します。capacity 不明時の implementation 既定並列数は 3 で、より大きい session-bound capacity があれば安全な範囲で 5-10 などを設定できます。optional allowlist は明示設定時だけ追加境界になります。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
 
 各 goal で AI が守る体験契約：
 
@@ -230,7 +233,7 @@ ospec update
 │  3. EXECUTION                                                  │
 │     ospec change <change-name>                                 │
 │     ospec progress                                             │
-│     ospec execute bootstrap / handoff / doc-review / status    │
+│     ospec execute bootstrap / handoff / preflight / status    │
 │     ospec execute next                                         │
 │     ospec execute workspace / worktree / finish                │
 │     ospec execute dispatch / review                            │
@@ -269,7 +272,7 @@ ospec update
 - **ガイド付き初期化**: AI 支援時は不足している概要や技術スタックを 1 回だけ確認可能
 - **ドキュメント保守**: `ospec docs generate` で後から知識レイヤを更新・修復
 - **change 実行の追跡**: proposal、design、implementation plan、task graph、tasks、handoff artifacts、document-review artifacts、worker status、state、verification、review を継続的に揃える
-- **task graph controller**: `ospec execute bootstrap` で project session brief snapshot を含む one-change startup/resume snapshot と次の安全な action を記録し、`handoff` で project session brief snapshot を含む cross-tool worker handoff guide を外部 worker を起動せずに記録し、`doc-review` で project session brief snapshot を含む task 実行前の design / implementation-plan reviewer packet を作成し、`status` と `next` で controller 状態と安全な次 task 候補を表示し、`workspace` で worker handoff 前の git workspace safety を記録し、`worktree` で isolated-worktree preparation plan を記録し、`finish` で closeout readiness を記録し、`dispatch` と `complete` で project session brief snapshot、worker profile、target tool mapping 付きの parallel-safe な worker packet と task 結果を OSpec artifact として記録し、`NEEDS_CONTEXT` または `BLOCKED` には blocker escalation を書き、`--limit` で dispatch batch size を制限でき、`review` で project session brief snapshot を含む task 完了後の統合 code review packet（spec compliance と code quality を一度に確認）を作成し、`debug` で symptom、hypothesis、root cause、fix evidence を記録し、`tdd` で red/green/refactor の test-cycle evidence を記録し、`verify` で fresh verification evidence を記録し、`sync` で execution と review artifacts から `worker-status.md` を再構築
+- **task graph controller**: `ospec execute bootstrap` で project session brief snapshot を含む one-change startup/resume snapshot と次の安全な action を記録し、`handoff` で project session brief snapshot を含む cross-tool worker handoff guide を外部 worker を起動せずに記録し、`preflight` で project session brief snapshot を含む task 実行前の design / implementation-plan reviewer packet を作成し、`status` と `next` で controller 状態と安全な次 task 候補を表示し、`workspace` で worker handoff 前の git workspace safety を記録し、`worktree` で isolated-worktree preparation plan を記録し、`finish` で closeout readiness を記録し、`dispatch` と `complete` で project session brief snapshot、worker profile、target tool mapping 付きの parallel-safe な worker packet と task 結果を OSpec artifact として記録し、`NEEDS_CONTEXT` または `BLOCKED` には blocker escalation を書き、`--limit` で dispatch batch size を制限でき、`review` で project session brief snapshot を含む task 完了後の統合 code review packet（spec compliance と code quality を一度に確認）を作成し、`debug` で symptom、hypothesis、root cause、fix evidence を記録し、`tdd` で red/green/refactor の test-cycle evidence を記録し、`verify` で fresh verification evidence を記録し、`sync` で execution と review artifacts から `worker-status.md` を再構築
 - **キュー支援**: `queue` と `run` で複数 change の明示的な実行を管理
 - **プラグインゲート**: Stitch のデザインレビューと Checkpoint の自動化チェックをサポート
 - **標準クローズアウト**: `finalize` が検証、インデックス再構築、アーカイブを行う

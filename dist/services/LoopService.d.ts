@@ -4,11 +4,10 @@ import { HarnessCapability, NativeLoopCapability, TaskAgentPrimitive } from './C
 import { LayoutConfigInput } from './TriageService';
 import { RuntimeExecutionModelSelectionInput, RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService, RuntimeNativeHarnessExecutionMetadata } from './RuntimeExecutionAdapterService';
 import { TaskGraphExecutionService, TaskVerificationLoopBinding, TaskWorkerToolTarget } from './TaskGraphExecutionService';
-export type LoopSafetyLevel = 'L1' | 'L2' | 'L3';
 export type LoopStatus = 'idle' | 'running' | 'blocked' | 'paused' | 'stopped' | 'done';
 /** `cli-driven` is retained only so callers can receive a migration error. */
 export type LoopExecutionModel = 'controller' | 'cli-driven';
-export type LoopActionKind = 'implementation' | 'task-review' | 'final-review' | 'verification' | 'legacy';
+export type LoopActionKind = 'implementation' | 'planning-review' | 'planning-repair' | 'task-review' | 'final-review' | 'verification';
 export interface LoopStopConditions {
     testCommands: string[];
     maxIterations: number | null;
@@ -151,30 +150,15 @@ export interface LoopConfig {
     version: string;
     pattern: string;
     primitive: TaskAgentPrimitive;
-    level: LoopSafetyLevel;
     executionModel: LoopExecutionModel;
     target: TaskWorkerToolTarget;
     schedule: LoopSchedule;
     stopConditions: LoopStopConditions;
     allowlist: LoopAllowlist;
     efficiency: LoopEfficiency;
-    documentReviewGovernance?: LoopDocumentReviewGovernance;
     capability: HarnessCapability | null;
     nativeHarnessMetadata?: RuntimeNativeHarnessExecutionMetadata | null;
     createdAt: string;
-}
-export interface LoopDocumentReviewGovernanceStage {
-    maxCompletedRounds: number;
-    maxMinutes: number;
-    budgetTokens: number | null;
-}
-export interface LoopDocumentReviewGovernance {
-    stages: {
-        design: LoopDocumentReviewGovernanceStage;
-        plan: LoopDocumentReviewGovernanceStage;
-    };
-    noProgressLimit: number;
-    tokenReservation: number;
 }
 export interface LoopState {
     version: string;
@@ -314,7 +298,6 @@ export declare class LoopService {
     stopFilePath(changePath: string): string;
     exists(changePath: string): Promise<boolean>;
     scaffold(changePath: string, options?: {
-        level?: LoopSafetyLevel;
         primitive?: TaskAgentPrimitive;
         pattern?: string;
         target?: TaskWorkerToolTarget;
@@ -328,8 +311,6 @@ export declare class LoopService {
     readState(changePath: string): Promise<LoopState>;
     private writeState;
     private assertExists;
-    setLevel(changePath: string, level: LoopSafetyLevel): Promise<LoopConfig>;
-    private setLevelUnlocked;
     configure(changePath: string, options: LoopConfigureOptions): Promise<LoopConfig>;
     private configureUnlocked;
     deriveAllowlist(changePath: string): Promise<LoopAllowlistDerivation>;
@@ -356,6 +337,7 @@ export declare class LoopService {
     private requireExecutorId;
     private recommendedHeartbeatDueAt;
     private actionMaxRuntimeMs;
+    private isReviewActionKind;
     private extendControllerCapabilitySession;
     private isTerminalItemStatus;
     private executionResultMatches;
@@ -378,11 +360,11 @@ export declare class LoopService {
     private issueAction;
     private workerAction;
     private reviewAction;
+    private planningRepairAction;
     private verificationAction;
-    private validateTaskSafety;
+    private validateConfiguredTaskSafety;
     private getImmediateStop;
     private getHardStop;
-    private runLegacyTick;
     buildControllerTickPlan(changePath: string): Promise<{
         interval: string;
         executionModel: LoopExecutionModel;
@@ -397,8 +379,6 @@ export declare class LoopService {
     private normalizeConfig;
     private normalizeState;
     private defaultEfficiency;
-    private defaultDocumentReviewGovernance;
-    private normalizeDocumentReviewGovernance;
     private isControllerCapabilityCurrent;
     private assertActionNativeSession;
     private resolveRuntimeAdapter;

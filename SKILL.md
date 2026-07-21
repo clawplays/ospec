@@ -25,7 +25,7 @@ Do not hand-write an approximation of `ospec init`. Do not assume a web stack, a
 
 For an initialized project, read in this order:
 
-1. `.skillrc` for layout, language, workflow policy, plugins, adaptive review policy, and model profiles.
+1. `.skillrc` for layout, language, workflow policy, plugins, and model profiles.
 2. `SKILL.index.json` and `docs/project/feature-index.md` as routers.
 3. The current session brief, bootstrap, dispatch, review, or repair packet.
 4. Only the indexed project documents, change files, and target files named by that packet.
@@ -46,11 +46,11 @@ In Claude Code, install the managed hook once with `ospec session hook --target 
 Use the full `ospec execute ...` layer only for goal work or when the user explicitly requests agent/worker execution for a change.
 
 - Start or resume with `ospec session` and `ospec execute bootstrap`.
-- Complete design review before plan review under the configured document review policy. The default `always` policy requires independent review; `adaptive` may use deterministic inline preflight only when the target document explicitly declares `risk_level: low` (or `none`) and no risk signal exists. Missing or unparseable risk context requires specialist review.
-- Legacy imported document-review completions without a durable decision still count as completed rounds but provide no convergence decision. After authoritative documents change, let OSpec issue a fresh review; never hand-edit or rehash the append-only ledger.
+- Run `ospec execute preflight ... --stage design`, then `--stage plan`, before deriving the task graph. These zero-token checks validate document readiness, required decisions, ordering, and provenance inline and never launch reviewer children.
+- After task graph derivation, let Loop issue one independent combined planning review across proposal, design, plan, tasks, graph, and acceptance-to-verification coverage. `NEEDS_CHANGES` permits one grouped planning repair and one fresh re-review; another failure is a stable blocker.
 - Resolve required decisions and workspace isolation before dispatch.
 - Dispatch scoped worker packets, use the launch plan with the current harness native agent mechanism, record completion, then perform one combined task review.
-- Treat each task's canonical `artifacts/agents/worker-reports/<task-id>.md` as review-bound evidence. A fresh task review snapshots it alongside declared targets; a repair may edit only that same task's exact report path. When a legacy review finding names an unsnapshotted canonical report, let Loop issue a fresh review before repair instead of editing history or widening artifact scope.
+- Treat each task's canonical `artifacts/agents/worker-reports/<task-id>.md` as review-bound evidence. A fresh task review snapshots it alongside declared targets; a repair may edit only that same task's exact report path. If a finding names an unsnapshotted canonical report, let Loop issue a fresh review before repair instead of editing history or widening artifact scope.
 - A worker profile is logical (`mechanical`, `standard`, `strong_reasoning`, `review`, `final_review`). Harness-specific model names come from `.skillrc`; absence is explicit and falls back to the harness default.
 - Record optional provider usage sidecars through the supported completion command. Metrics are evidence, not an archive gate unless project policy says otherwise.
 - When final review requires changes, group all findings into one repair wave and one repair task, run its covering verification once, then run one combined task review and one final re-review. In continuous mode, a stalled task or final finding set may receive one durable root-cause strategy escalation; execute that packet normally, but never reissue the same strategy key or raise a limit to repeat unchanged work.
@@ -82,7 +82,7 @@ Use `ospec docs generate` for a docs-only repair or refresh. Do not create a cha
 ```text
 Initialize:  ospec init [path] -> verify generated project shell
 Change:      ospec change <name> -> implement -> ospec verify -> ospec finalize
-Goal:        ospec goal <name> -> session/bootstrap -> design/plan reviews -> dispatch/review -> verify/finalize
+Goal:        ospec goal <name> -> preflights -> task graph -> combined planning review -> workers/task reviews -> final review -> verify/finalize
 Docs:        ospec docs generate [path] -> ospec docs status -> ospec index check
 Resume:      ospec session [path] -> read brief/index -> run the persisted next safe command
 Troubleshoot: ospec status [path] -> ospec help

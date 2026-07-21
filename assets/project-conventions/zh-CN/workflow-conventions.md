@@ -41,7 +41,7 @@ tags: [conventions, workflow, change, ospec]
 - `Brainstorm-First`：每个 goal 开局先做一次简短头脑风暴再锁定设计，把方向、架构、API、数据、UI、风险、范围的未决问题逐个问用户；优先升起持久 decision gate 而非静默假设，仅当用户明确让 AI 自行决定时才在 `design.md` 写入假设并标注待确认
 - `implementation-plan.md` 必须从已确认的 `design.md` 推导，并明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突
 - `artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色。生成的串行 task 还必须包含 `serial_reason`；显式限制为单 worker 时记录 `maxParallelReason`。超过六个目标的 task 必须拆分，或用具体的 `scope_reason` 说明其原子边界
-- L3 使用 CAS 和显式扩权确认从任务图 derive/check/apply 精确白名单；重复 configure 参数是替换而非追加
+- 可选白名单是额外边界：使用 CAS 和显式扩权确认从任务图 derive/check/apply 精确权限；重复 configure 参数是替换而非追加
 - `tasks.md` 必须从 `artifacts/agents/task-graph.json` 推导；若 `tasks.md` 已存在但上游文档仍是模板，先补上游文档再对齐任务
 - 执行经典 change 时，`tasks.md` 直接从 `proposal.md` 和实现范围推导
 
@@ -54,7 +54,8 @@ tags: [conventions, workflow, change, ospec]
 - 进入已有项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`；它只记录 active change、queued change、queue-run、cache fingerprint 和安全下一步命令上下文
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `bootstrap.json` 和 `bootstrap.md`，然后按其中的下一步安全动作继续
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `handoff.json` 和 `handoff.md`；该命令只记录 project session brief snapshot、目标工具映射和安全规则
-- 推导或派发实现任务前，用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 生成带 project session brief snapshot 的 `artifacts/agents/document-review-dispatches/` 交接包，并创建 `artifacts/reviews/design-review.md` 或 `artifacts/reviews/implementation-plan-review.md`；design review 通过后才能派发 implementation plan review
+- 派生 task graph 前，依次运行 `ospec execute preflight [changes/active/<change>] --stage design` 和 `--stage plan`，生成确定性 inline preflight packet 与 approval artifacts；两步通过后再派生或刷新 task graph，任何阶段都不启动 reviewer child。普通 red test、对应生产实现和 green/refactor 证据应放在同一个原子 task
+- task graph 派生后，Loop 必须在 workspace 或 worker 派发前执行一次独立 combined planning review。最多允许一次整体规划修复和一次 fresh re-review；重复失败必须稳定停止
 - 派发 worker 前，用 `ospec execute workspace [changes/active/<change>]` 在 `artifacts/agents/workspace-status.json`（`workspace-status.json`）中记录 git 工作区安全状态；已有 Goal 只允许非 `PENDING` 任务目标文件、由已启动任务声明的 build/typecheck 验证精确派生且位于其包内的 `tsconfig.tsbuildinfo`，或当前哈希校验通过的 `ospec update` 证明所归属的脏路径，其余脏路径显示 `needs_isolation`
 - 需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<change>]` 写入 `workflow-route.json` 和 `workflow-route.md`；该命令只记录 workflow routing artifacts，不会编辑源码
 - 方向、架构、API、UI、风险或范围需要用户明确选择时，用 `ospec execute decision [changes/active/<change>] ...` 记录决策门；向用户展示 `artifacts/agents/decisions/index.md` 或 decision report 的 `Chat Prompt`，required pending decision 未选择或跳过前不得继续 dispatch
@@ -72,7 +73,7 @@ tags: [conventions, workflow, change, ospec]
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 在 `artifacts/agents/debug-evidence.json` 下记录根因和修复证据
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 在 `artifacts/agents/tdd-evidence.json` 下记录 TDD cycle evidence
 - 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED --exit-code 0` 在 `artifacts/agents/verification-evidence.json` 下记录验证证据
-- `ospec session` 以及 `ospec execute bootstrap`、`handoff`、`doc-review`、`workspace`、plan 模式 `worktree`、`finish`、`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`debug`、`tdd`、`verify` 与 `sync` 只更新 OSpec artifacts；除 `workspace`、`worktree` 与 `finish` 会读取 git 状态外，不直接编辑项目源码。controller 只通过所选 model-native subagent adapter 派发 worker
+- `ospec session` 以及 `ospec execute bootstrap`、`handoff`、`preflight`、`workspace`、plan 模式 `worktree`、`finish`、`dispatch`、`launch`、`collect`、`retry`、`complete`、`review`、`debug`、`tdd`、`verify` 与 `sync` 只更新 OSpec artifacts；除 `workspace`、`worktree` 与 `finish` 会读取 git 状态外，不直接编辑项目源码。controller 只通过所选 model-native subagent adapter 派发 worker
 - task graph 存在未解决状态、无效依赖、缺失执行细节，或顶层 `status` 不是 `completed` 时不得归档
 - `artifacts/agents/worker-status.md` 记录 implementer、spec reviewer、quality reviewer 和 controller 状态
 - 每个 task 的一次合并 review（`artifacts/reviews/tasks/<task-id>/review.md`）必须通过；单一的最终 `artifacts/reviews/final-review.md` 必须通过
@@ -81,7 +82,7 @@ tags: [conventions, workflow, change, ospec]
 
 ## 文档语言
 
-- 项目采用中文 protocol 时，`proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/final-review.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`verification.md`、`review.md` 必须保持中文
+- 项目采用中文 protocol 时，`proposal.md`、`design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/planning-preflights/`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/review-feedback-plan.md`、`tasks.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/final-review.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`verification.md`、`review.md` 必须保持中文
 - 产品界面语言可以按业务使用英文，但不得把产品语言自动映射为 OSpec change 文档语言
 - 若当前 change 文档已用中文创建，后续更新必须延续中文，除非项目规则显式要求切换为英文
 

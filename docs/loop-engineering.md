@@ -26,7 +26,7 @@ Codex/GPT use `spawn_agent` plus bounded `wait_agent`, Claude uses background Ta
 Each tick follows the persisted task graph and evidence instead of asking an agent to rediscover the whole goal:
 
 1. **Observe:** inspect the pending implementation status, task-review decision, final-review decision, or verification evidence.
-2. **Gate:** stop before dispatch when the task graph is invalid, a required user decision is pending, document reviews are not approved, or workspace safety is not ready. When an L3 task graph exists, path/command safety is checked before expensive document reviewers are dispatched.
+2. **Gate:** stop before dispatch when the task graph is invalid, a required user decision is pending, deterministic design/plan preflights are not current, or workspace safety is not ready. Explicit path and command allowlists are checked after task graph derivation and before worker dispatch.
 3. **Repair:** retry technical executor failures with the latest feedback; route task-review changes back to an implementation retry while finding evidence and the authorized repair-scope snapshot converge. In continuous mode, a stalled task or final finding set receives one durable strategy escalation that requires root-cause reassessment and focused regression coverage; the same strategy key cannot be issued twice. Durable worker blockers are not redispatched. Cross-task finding paths are accepted only through declared completed owners; the complete repair scope is frozen, changed owners lose stale approval, and owner review/repair becomes a barrier before new implementation or retryable worker work.
 4. **Review:** create one combined task review for completed work before dependent tasks proceed.
 5. **Dispatch:** select a parallel-safe batch of ready tasks before ordinary independent review/repair work, bounded by `maxParallel`; an unapproved cross-task repair owner is the exception and must settle first. Unknown native capacity uses the default implementation concurrency of three while preserving conflict-safe review parallelism. A larger session-bound reported capacity replaces that fallback and can support configured batches of 5-10 when the graph, token budget, and harness all allow it.
@@ -35,9 +35,7 @@ Each tick follows the persisted task graph and evidence instead of asking an age
 
 The loop stores the current batch and per-item `issued/running/completed/failed/expired` state in `artifacts/loop/state.json`. Only the issuing tick returns items in `actions`; observation ticks return the durable `pending` record with an empty action list, preventing duplicate launches. Heartbeat leases let a later session distinguish a live child from an orphan. Expired or explicitly released orphans are marked failed and requeued with fresh context; completed siblings are not duplicated. If Loop state is lost while a task remains `IN_PROGRESS`, OSpec waits through the task's absolute runtime window and then supersedes the orphan automatically. The 60-second native wait is only a polling boundary.
 
-Document-review ledger migration preserves legacy completed-round accounting without inventing review evidence. A legacy imported completion that has no durable decision or immutable findings context is treated as `legacy_context_unavailable` for convergence, allowing changed authoritative documents to receive a fresh review in continuous mode. Modern completion events still require a valid decision, and existing hash-chain events are never rewritten.
-
-A hard workflow gate persists Loop status as `blocked` and returns `stopped: true`; it is not active execution. After resolving the reported condition, `ospec loop resume` moves the state back to `idle` so the next tick can reevaluate every gate. Resume does not bypass required decisions, workspace ownership, document review, task-graph, capability, or L3 safety checks.
+A hard workflow gate persists Loop status as `blocked` and returns `stopped: true`; it is not active execution. After resolving the reported condition, `ospec loop resume` moves the state back to `idle` so the next tick can reevaluate every gate. Resume does not bypass required decisions, workspace ownership, planning preflight, task-graph, capability, or configured allowlist checks.
 
 ## Fresh context and packet references
 
@@ -59,7 +57,7 @@ A successful child result is not enough to settle an action. The next tick check
 - task and final review settle from their recorded decisions;
 - verification settles on current PASSED evidence or on explicit FAILED/BLOCKED evidence. Failure invalidates the prior final approval and routes through an independent re-review and grouped repair before verification is retried.
 
-The canonical worker report is part of a task review's content-addressed target snapshot even though it is not a task-graph business target. A finding may route repair to the exact same-task report path, but never to another task's report, a report directory, or arbitrary controller history. Legacy review dispatches that predate this snapshot field are not rewritten: when their findings require report repair, Loop emits a fresh task review first and consumes no repair round.
+The canonical worker report is part of a task review's content-addressed target snapshot even though it is not a task-graph business target. A finding may route repair to the exact same-task report path, but never to another task's report, a report directory, or arbitrary controller history.
 
 Failures and non-approved decisions remain visible as feedback and feed the retry, grouped-repair, or verifier action on a later tick. A child that returns without writing its expected evidence becomes a bounded fresh-context retry and contributes to the no-progress circuit breaker. Verification after final review is read-only; a verifier records failures instead of editing reviewed implementation. Final completion still requires the project's real test/build commands, recorded verification evidence, approved review gates, and `ospec verify`.
 
@@ -69,21 +67,13 @@ The finalize documentation contract reconstructs each declared path across compl
 
 Controller closeout may legitimately update a declared verification document after the last worker completion. The dispatch evidence chain must still prove meaningful work. If the current path no longer matches that last dispatch state, finalize accepts it only when the same owner has a later APPROVED task review whose complete executor provenance validates and whose raw target snapshot exactly matches the current path. Review assignment must follow the owner dispatch. A stale, unapproved, provenance-incomplete, pre-dispatch, or subsequently changed review snapshot cannot authorize closeout.
 
-Specialist design/plan reviewers and Loop task/final reviewers require a fresh native subagent. Reviews bind to the exact child, target, and controller capability session. Completion validates the decision, document hash, and structured findings before reporting success. Approved document hashes and current PASSED verification snapshots remain reusable only while their inputs are unchanged.
+Loop task/final reviewers require a fresh native subagent. Their reviews bind to the exact child, target, and controller capability session, and completion validates the decision, target snapshot, and structured findings before reporting success. Planning preflight approvals and current PASSED verification snapshots remain reusable only while their inputs are unchanged.
 
-In default continuous mode, the two specialist document-review rounds and 30-minute stage value are convergence thresholds rather than unconditional stops. A later round is allowed only when stable structured finding IDs changed or the prior review approved an authoritative context that has since changed. Repeated IDs, `BLOCKED`, no-progress, Loop expiry, elapsed/token budgets, STOP, context, and executor-provenance guards still stop dispatch. `--continue-while-progressing false` preserves the strict bounded-round and authorized-extra-window behavior from 1.8.8.
+Design and implementation-plan checks are deterministic inline preflights in 1.9.0. They consume no reviewer token reservation and never create a native child. After task graph derivation, one independent combined planning reviewer checks requirements, architecture, task boundaries, dependencies, and verification coverage. `NEEDS_CHANGES` permits one grouped planning repair and one fresh re-review; a repeated failure blocks stably. Task and final review repair convergence remains controlled by `--continue-while-progressing` and the configured repair thresholds.
 
-## Safety levels and guards
+## Workflow guards
 
-Choose the initial level with `ospec goal <name> --level L1|L2|L3`:
-
-| Level | Behavior | Additional gate |
-| --- | --- | --- |
-| **L1 - report-only** | Inspects the task graph and writes findings to triage; emits no executable actions | None |
-| **L2 - assisted** | Emits real task/review/verification actions | Required decisions always block |
-| **L3 - unattended** | May execute through native controller dispatch | Requires non-empty path and command allowlists; task targets must stay in canonical paths and verification commands must match exact safe commands or structured policies |
-
-Required user decisions block every level; L3 never auto-selects them. Before issuing new work, the loop also enforces:
+Every Goal uses one executable fast quality workflow. Required user decisions always block implementation. An optional configured allowlist can add exact path and command boundaries without changing the workflow. Before issuing new work, the loop also enforces:
 
 - maximum iterations;
 - absolute expiry time;
@@ -101,12 +91,12 @@ Workspace safety is ownership-based when resuming an existing Goal. Dirty paths 
 ```bash
 # Inspect or drive one controller tick
 ospec loop status [path]
-ospec loop run [path] --once [--json]   # JSON is preferred by adapter-driven controllers
+ospec loop run [path] --once --compact-json   # token-lean controller output
+ospec loop run [path] --once --json           # full diagnostics when debugging the controller
 ospec loop tick [path] [--json]         # compatibility alias for one run --once iteration
 ospec loop tick-plan [path]
 
-# Change safety or stop/resume explicitly
-ospec loop level [path] <L1|L2|L3>
+# Stop or resume explicitly
 ospec loop pause [path]
 ospec loop resume [path]
 
@@ -126,10 +116,9 @@ ospec loop heartbeat [path] --action-item <id> --executor <child-id> --lease-ms 
 ospec loop finalize [path] --action-item <id> --executor <child-id> --exit-code 0 --summary "completed"
 ospec loop recover [path] --force   # only when the controller knows the prior session/child is gone
 
-# Specialist design/plan reviewer lifecycle (after spawn, then after wait)
-ospec execute doc-review [path] --stage design|plan --claim-executor <executor-id>
-ospec execute doc-review [path] --stage design|plan --heartbeat-executor <child-id>
-ospec execute doc-review [path] --stage design|plan --complete-executor <child-id>
+# Zero-token planning preflights
+ospec execute preflight [path] --stage design
+ospec execute preflight [path] --stage plan
 
 # Durable verification intent
 ospec execute require-verification [path] --id browser-flow --kind browser --description "Exercise the requested browser flow"
@@ -138,37 +127,30 @@ ospec execute verify [path] --command "npm run test:e2e" --status PASSED --exit-
 
 Repeatable flags such as `--allow-path`, `--allow-command`, `--allow-command-policy`, `--test-command`, and `--satisfies` may be supplied more than once. Use `none` for nullable stop limits such as `--max-iterations`, `--budget-tokens`, `--budget-minutes`, and `--expires-at` when you intentionally want them unbounded.
 
-`loop finalize` is the preferred completion path. Successful completion validates authoritative implementation, review, or verification evidence before recording the result. Failed or timed-out results remain recordable for retry diagnostics, and legacy `loop result` remains supported. Defaults are 120 minutes for implementation, 60 minutes for review, 60 minutes for verification, and five minutes between durable evidence completion and a missing executor result.
+`loop finalize` is the completion path. Successful completion validates authoritative implementation, review, or verification evidence before recording the result. Failed or timed-out results remain recordable for diagnostics. Defaults are 120 minutes for implementation, 60 minutes for review, 60 minutes for verification, and five minutes between durable evidence completion and a missing executor result.
 
 `--allow-command` values must match the complete normalized command. For example, permitting `go test ./internal/... -count=1` requires that full value, not only `go test`. Verification commands may use one exact project-relative working-directory wrapper such as `cd src/backend && go test ./...`; other shell operators, absolute paths, traversal, appended arguments, and cwd-changing arguments are rejected.
 
-`--allow-command-policy` accepts a JSON object with `command`, optional `argsPrefix`, and optional project-relative `cwd`. The current safety contract treats `argsPrefix` as the complete allowed argument vector; additional arguments are rejected. Prefer structured policies for generated L3 configurations because executable, arguments, and working directory are validated independently. Legacy exact-string entries remain supported.
+`--allow-command-policy` accepts a JSON object with `command`, optional `argsPrefix`, and optional project-relative `cwd`. The current safety contract treats `argsPrefix` as the complete allowed argument vector; additional arguments are rejected. Prefer structured policies when configuring an optional allowlist because executable, arguments, and working directory are validated independently.
 
 ## Operational guidance
 
 - Use controller mode with explicit target-bound native capability facts. If capability expires, refresh it from the current model session before issuing more work.
 - Do not use agent CLIs as subagent substitutes. OSpec intentionally fails closed when the harness has no native child primitive.
 - Keep `freshContext` enabled. Disabling it changes prompt guidance but does not turn durable artifacts into chat memory.
-- Inspect `ospec loop status` and `artifacts/loop/run-log.jsonl` before raising a budget or overriding a no-progress stop. Continuous mode resets periodic comprehension debt without pausing; strict mode retains the pause. Explicit `loop resume` resets the no-progress and comprehension counters but preserves task, review, and evidence history. `tick_metrics` entries report tick/gate duration, dispatch count, and repeated blockers; `document_review` entries report dispatches, cache hits, and reviewer duration.
-- Document reviewer claims use a five-minute executor lease. `--heartbeat-executor` renews it; an expired orphan claim is released automatically when the dispatch is reused or a fresh child claims it.
+- Inspect `ospec loop status --brief` and focused `run-log.jsonl` entries before raising a budget or overriding a no-progress stop. Continuous mode resets periodic comprehension debt without pausing; strict mode retains the pause. Explicit `loop resume` resets counters but preserves task, review, and evidence history. `tick_metrics` entries report tick/gate duration, dispatch count, and repeated blockers.
 - Do not weaken tests, review decisions, task boundaries, or allowlists to make the loop advance.
 
-## Engineering issue register
+## Current Controller Invariants
 
-- [Fixed in 1.8.8: authorized extra document review could not outlive the base stage budget](dev/known-issue-extra-document-review-stage-budget.md): an exact user-bound extra round now receives one bounded dispatch window from `selectedAt`, while Loop lifetime, token, STOP, no-progress, context, and one-time-consumption guards remain enforced.
-- [Fixed in 1.8.8: resumed Goals could not distinguish their dirty workspace](dev/known-issue-resumed-goal-workspace-ownership.md): workspace readiness now accepts exact non-`PENDING` task targets, exact task-generated TypeScript build metadata, and current hash-verified `ospec update` output while every unknown or tampered path still fails closed. Hard gates persist as resumable `blocked` state, and executed legacy Goals no longer route backwards because of valid angle-bracket technical notation.
-- [Fixed in 1.8.9: Goal continuation could stop or redispatch without useful work](dev/known-issue-goal-continuation-stalls.md): repair packets retain findings, changed finding IDs continue past thresholds, durable blockers are not redispatched, independent ready work runs first, and expired orphan tasks recover automatically.
-- [Fixed in 1.8.7: Goal progress drift across evidence, task graph, and `tasks.md`](dev/known-issue-goal-progress-projection-drift.md): Goal progress now reconciles validated review evidence into the raw graph and exact `task-*` checklist lines under the task-graph mutation lease. Legacy 1.8.6 Goals are backfilled on resume without redispatch, while ambiguous Markdown fails closed with `progress-projection.json` diagnostics.
-- [Parallel tasks can race through shared verification resources](dev/known-issue-parallel-verification-resource-conflicts.md): dependency/file-safe implementation tasks may still run build, test, capture, port, cache, or junction mutations concurrently in one worktree. Until the scheduler models these resources, serialize or rerun shared authoritative verification after the batch settles.
-- [Controllers can miss child heartbeat deadlines](dev/known-issue-multi-child-heartbeat-fairness.md): 1.8.8 moves the initial claim target to 60 seconds before lease expiry to avoid false early warnings while a child starts, but bounded native waits still do not guarantee renewal fairness. Multi-item sibling starvation, batch heartbeat, and durable lateness diagnostics remain open.
-- [Fixed in 1.8.9: repair limits exposed lifetime counts as if they were new work](dev/known-issue-repair-limit-lifetime-accounting.md): continuous mode preserves history but automatically continues only when stable finding IDs change; strict mode retains the absolute ceiling for compatibility.
-- [Fixed in 1.8.11: stable finding IDs hid real partial repair progress](dev/known-issue-same-id-repair-progress-misclassification.md): task and grouped final repair now continue only when both the structured finding fingerprint and the prior authorized repair-scope code snapshot changed; wording-only or code-only churn still stops.
-- [Fixed in 1.8.12: real Goals stopped at repair, update, or external-acceptance gates](dev/known-issue-real-goal-resumption-gates-1.8.12.md): mixed-case repair scopes bind correctly, update provenance covers non-destructive generated knowledge, and explicitly deferred external acceptance permits dependency-safe implementation without weakening final evidence gates.
-- [Fixed in 1.8.13: resumed Goals stopped at prerequisite review, cross-task repair, or long verification](dev/known-issue-real-goal-secondary-stalls-1.8.13.md): prerequisite reviews now outrank retryable dependent work, declared cross-task repair scope carries frozen owner provenance, bounded controller polls renew claimed leases, and unscoped full Docker rebuilds emit a scope warning.
-- [Fixed in 1.8.14: a multi-review lease boundary could orphan a valid owner finding and dispatch downstream work](dev/known-issue-cross-task-owner-review-race-1.8.14.md): one bounded poll tolerance prevents boundary expiry, and cross-task owner review/repair now blocks downstream implementation without serializing other safe reviewers.
-- [Fixed in 1.8.15: finalize rejected reviewed document deletion and lost earlier repair evidence](dev/known-issue-documentation-finalize-evidence-1.8.15.md): deletion is a meaningful state transition, multi-dispatch evidence is aggregated from first baseline to final state, and the workspace must still match the latest declared-owner evidence.
-- [Fixed in 1.8.16: reviewed closeout metadata and localized worker status still blocked archive](dev/known-issue-reviewed-closeout-worker-status-1.8.16.md): a later authoritative task review may bind the exact final path state without replacing dispatch evidence, and sync now updates Combined review status across all shipped languages.
-- [Fixed in 1.8.18: sync invalidated passing Goal verification during finalize](dev/known-issue-sync-finalize-verification-freshness-1.8.18.md): Goal status, finalize, and archive preview now share canonical Git and target-file snapshot freshness instead of comparing derived artifact timestamps.
-- [Fixed in 1.8.18: stalled findings had no legal root-cause repair route](dev/known-issue-stalled-findings-no-strategy-route-1.8.18.md): continuous mode issues one durable strategy escalation per exact finding set, then stops repeated strategies; `loop tick` is now a real single-iteration alias.
-- [Fixed for 1.8.19: task review could find but not repair its canonical worker report](dev/known-issue-task-worker-report-repair-scope-1.8.19.md): task reviews snapshot the same-task report, exact report repair is allowed, stale report approval fails, and legacy reviews receive a fresh review without artifact rewrites.
-- [Stage-blind repairs can ping-pong a shared artifact](dev/known-issue-stage-aware-shared-artifact-repair-ping-pong.md): an upstream source task can require `ready_for_implementation` while a transitive descendant legitimately advances the same record to `accepted`. Revalidate old findings before repair, model stage ownership, and stop contradictory postconditions before they consume repair rounds.
+- **Progress reconciliation:** validated task reviews reconcile the task graph and exact task checklist under one mutation lease. Ambiguous Markdown, stale snapshots, or unprovenanced state fail closed and emit diagnostics instead of being guessed or rewritten.
+- **Workspace ownership:** resumed Goals may retain exact started-task targets, declared task-generated build metadata, and hash-verified `ospec update` output. Unknown, future-task, stale, or tampered paths still require a clean or isolated worktree.
+- **Scheduling order:** missing prerequisite reviews and cross-task owner review or repair run before dependent implementation retries. Other dependency-safe and file-safe work may remain parallel.
+- **Repair convergence:** repair packets retain immutable structured findings and scope snapshots. Continuous mode advances only for a changed finding set or evidence-bound refinement, permits one root-cause strategy escalation for a stalled set, and stops repeats or cycles. Strict mode keeps absolute limits.
+- **Canonical task reports:** task reviews snapshot the same task's canonical worker report. Exact same-task report repair is allowed; stale or legacy review evidence triggers a fresh review rather than an artifact-history rewrite.
+- **External blockers:** durable blockers are not redispatched without a real external-state change. Explicit user-authorized deferral may free dependency-safe implementation, but final review and closeout still require the external evidence.
+- **Documentation evidence:** reviewed creation and deletion are meaningful transitions. Multi-dispatch evidence spans the first baseline through the final state, must match the latest declared owner, and may use a later authoritative review only to bind an exact final snapshot.
+- **Verification freshness:** Goal status, finalize, and archive preview use the same canonical Git and target-file freshness rules. Updating derived controller artifacts alone does not invalidate otherwise current verification.
+- **Executor lifecycle:** one native wait is bounded, heartbeats renew only the short lease, and absolute deadlines never move. Persist each finished sibling immediately; use forced recovery only after the previous session or child is known to be gone.
+- **Shared resources:** file-safe tasks can still contend for ports, caches, build outputs, screenshots, devices, or external services. Declare conflicts, serialize the shared operation, or rerun authoritative verification after the parallel batch settles.
+- **Stage ownership:** when upstream and downstream tasks legitimately advance the same artifact through different lifecycle states, encode that ownership in dependencies and acceptance criteria. Revalidate older findings before repair and stop contradictory postconditions before they consume repair rounds.

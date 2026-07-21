@@ -6,6 +6,7 @@ const RELEASE_REPO_EXCLUDED_PREFIXES = [
   'docs/dev/',
   'docs/benchmarks/',
   'docs/goal-1.8.',
+  'docs/change-1.8.',
 ];
 
 function normalizePublicationPath(value) {

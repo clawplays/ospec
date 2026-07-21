@@ -7,7 +7,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private status;
     private bootstrap;
     private handoff;
-    private docReview;
+    private preflight;
     private next;
     private route;
     private workspace;
@@ -89,10 +89,6 @@ export declare class ExecuteCommand extends BaseCommand {
     parseDocumentReviewArgs(args: string[]): {
         inputPath?: string;
         stage?: TaskDocumentReviewStage;
-        claimExecutor?: string;
-        heartbeatExecutor?: string;
-        completeExecutor?: string;
-        usageFile?: string;
         force?: boolean;
     };
     private parseFinishArgs;
@@ -114,13 +110,6 @@ export declare class ExecuteCommand extends BaseCommand {
         skip?: boolean;
         summary?: string;
         answeredBy?: 'user';
-        documentReviewOverride?: {
-            stage: TaskDocumentReviewStage;
-            reviewContextHash: string;
-            round: number;
-            extraRounds: 1;
-            approvalOptionId: string;
-        };
     };
     private parseDecisionOption;
     private parseVerificationArgs;

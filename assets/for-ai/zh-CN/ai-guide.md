@@ -22,7 +22,7 @@ tags: [ai, guide, ospec]
 
 ## 必须遵守
 
-- 文档语言按项目 adopted protocol 执行；如果项目采用中文协议，则 `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` 和所有 goal-only artifacts 必须保持中文，包括 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/document-review-dispatches/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/final-review.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json` 和 `artifacts/agents/verification-evidence.json`
+- 文档语言按项目 adopted protocol 执行；如果项目采用中文协议，则 `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` 和所有 goal-only artifacts 必须保持中文，包括 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/agents/bootstrap.md`、`artifacts/agents/handoff.md`、`artifacts/agents/planning-preflights/`、`artifacts/agents/workspace-status.md`、`artifacts/agents/worktree-plan.md`、`artifacts/agents/finish-plan.md`、`artifacts/agents/launch-plan.md`、`artifacts/agents/worker-runs/`、`artifacts/agents/review-runs/`、`artifacts/agents/retries/`、`artifacts/agents/blockers/`、`artifacts/agents/decisions/`、`artifacts/agents/review-feedback-plan.md`、`artifacts/reviews/design-review.md`、`artifacts/reviews/implementation-plan-review.md`、`artifacts/reviews/final-review.md`、`artifacts/agents/worker-status.md`、`artifacts/agents/debug-evidence.json`、`artifacts/agents/tdd-evidence.json` 和 `artifacts/agents/verification-evidence.json`
 - 产品界面文案、站点默认语言或 “English-first” 业务策略，不得自动推导为 change 文档应改成英文
 - 若当前 change 已存在中文内容，后续更新必须延续中文，除非项目规则显式声明文档语言切换为英文
 - 先按索引定位，再读目标知识文件
@@ -31,7 +31,7 @@ tags: [ai, guide, ospec]
 - 将已激活的内建质量策略步骤（如 `tdd_cycle`、`root_cause_debug`、`verification_evidence`）视为受归档门禁约束的 `optional_steps`；收尾前必须在 `tasks.md`、`verification.md` 和对应 evidence artifacts 中覆盖
 - 用户选择 Change 时使用 `ospec change` / `ospec-change`，`ospec new` 保留为别名；不因复杂度、flags、文件数量、风险或批量任务升级，始终保持 1.0 快速流程：`proposal.md`、`tasks.md`、实现、`verification.md`、`review.md` 和 `state.json`
 - 只有用户明确选择 Goal 时才使用 `ospec goal` / `ospec-goal`
-- `ospec execute …` 控制层（bootstrap、doc-review、dispatch、launch、review、worktree、finish、collect、retry、sync）和所有 goal-only artifacts 都属于 `workflow_profile_id: goal`。对 `workflow_profile_id: change`，保持经典快速流程——不要读取或运行 execute 层或 goal artifacts；编辑 `proposal.md` 和 `tasks.md`、实现、记录 `verification.md` 和 `review.md`，再用 `ospec verify` 和 `ospec finalize` 收尾——除非用户明确要求对这个 change 做 agent/worker 执行
+- `ospec execute …` 控制层（bootstrap、preflight、dispatch、launch、review、worktree、finish、collect、retry、sync）和所有 goal-only artifacts 都属于 `workflow_profile_id: goal`。对 `workflow_profile_id: change`，保持经典快速流程——不要读取或运行 execute 层或 goal artifacts；编辑 `proposal.md` 和 `tasks.md`、实现、记录 `verification.md` 和 `review.md`，再用 `ospec verify` 和 `ospec finalize` 收尾——除非用户明确要求对这个 change 做 agent/worker 执行
 - AI 辅助执行 goal 时，不要求用户手写 `design.md` 或 `implementation-plan.md`；必须先基于需求、`proposal.md` 和项目上下文起草或更新它们，再推导 `artifacts/agents/task-graph.json`、编辑 `tasks.md` 或代码
 - 执行经典 change 时，不要创建 goal-only 文件，除非用户明确把该工作升级为 goal
 - `Announce-Before-Act`：绝不静默执行流程。宣告 OSpec skill 与阶段、命令与产物、所选 model-native subagent adapter、worker 数量、当前 session capability，以及阻塞门禁和解锁条件
@@ -40,7 +40,7 @@ tags: [ai, guide, ospec]
 - 执行 goal 时，`implementation-plan.md` 必须从 `design.md` 推导，`artifacts/agents/task-graph.json` 必须从 `implementation-plan.md` 推导，`tasks.md` 必须从 task graph 推导；若任务已存在，先更新上游文档，再回头对齐任务。执行经典 change 时，`tasks.md` 直接从 `proposal.md` 和实现范围推导
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按其中的下一步安全动作继续；已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`；它只记录 project session brief snapshot、目标工具映射和安全规则，不会启动 worker 或编辑源码
-- 推导或派发实现任务前，用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 生成文档 reviewer 交接包。specialist 模式按独立 `runtimeAdapter` 执行，立即 claim 真实 executor id，等待 Markdown 和结构化 findings 后 complete；design review 验证通过后才能派发 implementation plan review。连续模式只有遇到新的结构化 finding-ID 集合才会超过默认阈值继续，重复或循环 findings 会停止；严格模式保留精确用户授权的额外轮次窗口
+- 派生 task graph 前，依次运行 `ospec execute preflight [changes/active/<change>] --stage design` 和 `--stage plan`。两步都只执行确定性的 inline 就绪预检并记录可审计 approval artifacts，不启动 reviewer child；两步通过后才能派生或刷新 `task-graph.json`。普通 red test、对应生产实现和 green/refactor 证据必须放在同一个原子 task，除非测试基础设施本身是可独立复用的交付物
 - 需要查看 ready、blocked、running、completed 和下一批安全任务时，用 `ospec execute status [changes/active/<change>]` 或 `ospec execute next [changes/active/<change>]` 查看 controller 视图
 - 需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<change>]` 写入 `artifacts/agents/workflow-route.json` 和 `artifacts/agents/workflow-route.md`；该命令只记录 workflow routing artifacts，不会编辑源码。
 - 方向、架构、API、UI、风险或范围需要用户明确选择时，用 `ospec execute decision [changes/active/<change>] ...` 记录决策门；required pending decision 会出现在 bootstrap/status/finish 中，也会汇总到 `artifacts/agents/decisions/index.md`，并阻止 dispatch，直到被选择或跳过
@@ -55,15 +55,15 @@ tags: [ai, guide, ospec]
 - dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run] [--json]` 写入启动计划；`runtimeAdapter` 只接受当前、target 匹配的模型原生 subagent capability，并给出 native primitive
 - 执行 `runtimeAdapter.selected.nativeSubagent`，只并行派发安全 batch。capability 缺失或过期时必须阻断并刷新当前模型会话，不得启动 agent CLI 或退回 controller context
 - goal 集成循环使用 controller 模式时，不要停在初始化或让用户手工运行 Loop 命令。运行 `ospec loop run [change] --once --json`，通过每个 action 的 `runtimeAdapter.selected.nativeSubagent` 执行，持久化 heartbeat/result evidence，再无需用户提示地继续 tick；每个 worker 只读取引用的 packet
-- `IDE-CONTROLLER-AUTO-DISPATCH`：L1 只报告；L2/L3 由 IDE 主 AI 负责 tick -> 通过每个 action 的 `runtimeAdapter.selected.nativeSubagent` 执行全部 `actions[]` -> 写 heartbeat/result evidence -> 立即再 tick。`actions[]` 为空但存在 `pending` 时只观察，绝不能重派
+- `IDE-CONTROLLER-AUTO-DISPATCH`：所有 Goal 使用同一条可执行的快速质量流程；IDE 主 AI 负责 tick -> 通过模型原生 subagent 执行全部 `actions[]` -> 写 heartbeat/result evidence -> 立即再 tick。`actions[]` 为空但存在 `pending` 时只观察，绝不能重派
 - agent CLI 执行已移除；`loop watch`、`execute orchestrate`、`launch --run --command` 和 `review --run --command` 都会在启动进程或创建 run artifact 前失败
-- required decision 会阻断所有安全级。L1 不产生可执行 action；L3 还要求 path 和 command allowlist 都非空，并阻断越界目标文件或验证命令
+- required decision 始终阻断实现。可选的 path/command allowlist 只在明确配置时增加 fail-closed 边界，不形成另一套 Goal 级别
 - 省 token（不改变任何门禁）：`ospec execute …` 和 `ospec loop status` 使用 `--brief`，从简要状态和 action 的 packet path 驱动每一步；复审先读上轮 findings sidecar/解决摘要，再按需打开完整历史，不要每轮重读或内嵌完整任务图、worker status、launch plan 或全部 goal 文档
 - 修复 blocked、needs-context 或 failed native work 后，用 `ospec execute retry` 重新派发；已完成任务默认不得 retry，除非显式 `--force`
 - 调试是 change 的一部分时，用 `ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED` 记录根因和修复证据；该命令只记录 evidence，不会运行 shell 命令
 - 运行聚焦测试后，用 `ospec execute tdd [changes/active/<change>] --phase red|green|refactor --command "..." --status ...` 记录 TDD cycle evidence；该命令只记录 evidence，不会运行 shell 命令
 - 运行最新项目检查后，用 `ospec execute verify [changes/active/<change>] --command "..." --status PASSED --exit-code 0` 记录验证证据；该命令只记录 evidence，不会运行 shell 命令
-- `ospec execute doc-review` 只记录 artifacts，不会启动 reviewer、运行 shell 命令、同步 worker status 或编辑源码；specialist review 必须通过 `runtimeAdapter.selected.nativeSubagent` 执行并绑定真实 child id
+- `ospec execute preflight` 只记录确定性 inline preflight artifacts，不会启动 reviewer、运行 shell 命令、同步 worker status 或编辑源码
 - 对 goal，`artifacts/agents/task-graph.json` 中存在未解决 task 状态、无效依赖、缺失目标文件、缺失验证命令，或顶层 `status` 不是 `completed` 时，不得 archive
 - 实现后每个任务必须完成该任务的一次合并 review（`artifacts/reviews/tasks/<task-id>/review.md`）；最终阶段必须完成单一的 `artifacts/reviews/final-review.md`；未解决的单任务或最终 review decision 会阻止 archive
 - 实现和 review 阶段必须保持 `artifacts/agents/worker-status.md` 与 implementer、spec reviewer、quality reviewer 和 controller 状态一致
@@ -145,7 +145,7 @@ X-Goog-Api-Key = "your-stitch-api-key"
 
 ## 执行效率策略
 
-- `.skillrc.workflow.document_review_policy` 默认 `always`；`adaptive` 只有在目标文档显式声明 `risk_level: low`（或 `none`），且没有 API、安全、迁移、数据、架构、外部集成或范围风险信号时才使用确定性 inline preflight。风险上下文缺失或无法解析时必须派独立 reviewer。
+- 依次执行 design/plan 确定性预检，派生 task graph，再执行一次独立 combined planning review；最多允许一次整体规划修复和一次 fresh re-review。task review、最终 combined review 和验证仍然保留。
 - worker/reviewer 使用逻辑 model profile，并按实际 dispatch target（包括 launch override）解析。requested/configured model 与 provider observed model 必须分开；没有 provider/usage 证据时 observed model 是未知，不能宣称已选择。
 - 命令执行器会收到 `OSPEC_USAGE_FILE` 并自动归集该 sidecar；`ospec execute complete ... --usage-file usage.json` 继续作为手工入口。指标必须记录来源、实际观测字段和 complete/partial/missing 覆盖率，未上报的计数不能显示成已测得的零。
 - reviewer 同时写人类可读 Markdown 和相邻的 `*.findings.json`，其中包含稳定 ID、严重度、类别、问题说明、文件/行证据、需求引用和修复范围。旧 Markdown 在 repair 前会生成兼容 sidecar。

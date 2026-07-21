@@ -41,7 +41,7 @@ AI 编码助手很强，但如果需求只留在聊天记录里，就很难检�
 - **把需求变成留在仓库里的规范文件**：OSpec 把一句需求落成 proposal、design、计划、tasks、评审、验证证据等文件，存进你的仓库而不是只留在聊天记录里——任何助手（Codex/GPT、Claude Code、Gemini、OpenCode 或纯 CLI）都能接着上一个停下的地方继续。
 - **`ospec change` —— 日常快速流程**：一条需求对应一个 active change，走简短的 `init -> change -> verify/finalize`，轻量、好评审。
 - **`ospec goal` 适合较大或风险较高的工作**：你只需要说明想要的结果；AI 会询问重要选择、写出可检查的方案、完成实现和测试、安排独立审查、更新项目文档，并持续推进到结果得到验证。
-- **你决定 AI 可以自动做到什么程度**：`L1` 只检查，`L2` 可以修改但会在重要选择处暂停，`L3` 可以在你设定的范围内持续执行。进度保存在项目中，换一个会话也能继续。
+- **统一、可预测的 Goal 流程**：所有 Goal 都走同一条快速质量路径，在重要选择处暂停，并把进度保存在项目中供后续会话继续。
 
 ## npm 安装
 
@@ -153,11 +153,18 @@ ospec verify changes/active/<change-name>
 ospec finalize changes/active/<change-name>
 ```
 
+只有在用户明确接受未解决风险时，才可以强制归档：
+
+```bash
+ospec finalize changes/active/<change-name> --force-archive --confirm-force-archive <精确-change-名称> --reason "接受未解决的验收风险"
+```
+
 归档说明：
 
 - 先完成你项目自己的部署、测试、QA 或验收流程
 - 使用 `ospec verify` 确认当前 change 已满足归档条件
 - 使用 `ospec finalize` 重建索引并归档这个已验收通过的 change
+- 强制归档不会把失败或 `NOT_VERIFIED` 证据改成通过；它要求 force flag、精确名称二次确认和审计原因。缺失状态、`issued` 或 `running` 的 Loop item 仍会阻断；全部 item 已为 `completed`、`failed` 或 `expired` 的历史指针可以保留，归档会标记为 `forced`、`incomplete`、`accepted-risk`
 - 新的 nested 项目会归档到 `.ospec/changes/archived/YYYY-MM/YYYY-MM-DD/<change-name>`；CLI 中 `changes/archived/...` 的简写依然可用
 - 已存在的平铺归档结构会在 `ospec update` 时被整理
 
@@ -166,6 +173,8 @@ ospec finalize changes/active/<change-name>
 ### Goal：适合需要认真规划和反复验证的工作
 
 只有你明确选择完整流程时才使用 Goal。用户选择的 Change 不会因为复杂度、文件数量、风险或批量任务升级，使用 `ospec change` 创建即可；`ospec new` 仍是兼容别名。
+
+Change 使用精简分阶段指导、当前 AI 的一次轻量 review 和自动派生 closeout。verification、documentation、plugin 和 review 门禁全部通过后，`APPROVED` 或 `APPROVED_WITH_CONCERNS` 可以自动 finalize 并归档；显式批量任务仍在 queue 中串行执行。
 
 可以从终端开始：
 
@@ -178,22 +187,16 @@ ospec goal improve-checkout
 普通用户只需要做到这里。后面的工作由 AI 完成：
 
 1. 只询问那些会真正改变结果的重要选择。
-2. 先把商定的做法写下来，让你在改代码前可以检查。
-3. 把工作拆成安全的小块，适合并行的部分同时处理。
+2. 先把商定的做法写下来，并在当前上下文完成 design/plan 确定性预检，不再等待文档 reviewer 往返。
+3. 把工作拆成安全的小块，把普通 red test 与对应实现放在同一个原子 task，适合并行的部分同时处理。
 4. 运行测试，再让独立的审查者检查实现，并处理发现的问题。
 5. 更新相关项目文档和索引，确认后续 AI 能找到这个功能，再完成归档。
 
 整个过程中你仍然掌握决定权。AI 会提前说明下一步做什么，遇到需要你选择的地方会暂停，并把进度保存在项目里。即使更换会话，也可以从已有记录继续；你不需要自己运行内部的 `ospec execute` 命令。
 
-创建时可用 `--level L1|L2|L3` 选择 AI 可以自主做到什么程度（默认 L1）：
+所有 Goal 统一执行：design/plan 确定性预检 -> task graph -> 一次独立 combined planning review -> worker/task review -> final review -> verification/finalize。规划 review 若为 `NEEDS_CHANGES`，最多允许一次整体修复和一次 fresh re-review，重复失败会稳定停止。查看进度使用 `ospec loop status --brief`；controller 使用 `ospec loop run --once --compact-json` 减少重复输出。未知容量时 implementation 默认并发为 3；更大的 session-bound capacity 可在依赖、文件冲突、共享资源、token 和 `maxParallel` 允许时支持 5-10 等配置。可选 allowlist 只在明确配置时增加边界。更多高级命令见 [loop-engineering.md](loop-engineering.md)。
 
-- **L1**：只检查和报告，不修改项目文件。
-- **L2**：可以修改，但遇到重要选择会暂停等待确认。
-- **L3**：可以持续执行，但只能在你预先设置的范围内操作。
-
-查看进度使用 `ospec loop status`；暂停和继续使用 `ospec loop pause`、`ospec loop resume`。直接关闭当前 AI 会话也不会丢失已记录的进度。更多高级命令见 [loop-engineering.md](loop-engineering.md)。
-
-在内部，OSpec 会阻止 AI 在重要问题尚未回答时开始实现，让实现者和审查者彼此独立，并要求有测试证据后才把 goal 标记为完成。
+在内部，OSpec 会阻止 AI 在重要问题尚未回答时开始实现，inline 检查 design/plan 就绪状态，让实现者和代码审查者彼此独立，并要求有测试证据后才把 goal 标记为完成。
 
 每次成功执行 `ospec finalize` 或 `ospec archive`，都会自动生成一份 `docs/project/changes/<归档路径>.md`（nested 布局下位于 `.ospec/docs/project/changes/`），并写入功能索引和 AI 索引。因此普通 change 和 goal 都至少有一份可检索文档。移动 active change 前，归档预检会拒绝覆盖该目标路径上的人工文档，并验证托管输出目录可写。goal 如果修改了架构、API、模块或运行方式，仍必须更新对应的长期项目文档；自动摘要不能代替这些文档。
 
@@ -213,7 +216,7 @@ hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生�
 
 ### 目标执行优化
 
-- `.skillrc.workflow.document_review_policy` 默认保持独立文档审查；显式设为 `adaptive` 后，也只有文档声明 `risk_level: low`（或 `none`）且未发现风险信号时才走确定性 inline preflight。
+- design/plan 预检不启动 reviewer child；task graph 派生后只运行一次独立 combined planning review。task review、最终 combined review 和验证仍然保留。
 - `.skillrc.workflow.model_profiles` 把逻辑 worker/reviewer profile 映射到各 harness 模型，OSpec 默认配置不硬编码供应商型号。
 - 命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`ospec execute complete --usage-file` 保留为手工入口。`execution-metrics.json` 会区分完整、部分和缺失数据。
 - review 同时保存人类可读 Markdown 和结构化 `*.findings.json`；归档会验证声明的文档确实发生有效变化，并从功能索引直接链接长期项目文档。
@@ -237,7 +240,6 @@ hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生�
 - [Skills Installation](skills-installation.zh-CN.md)
 - [External Plugins](external-plugins.zh-CN.md)
 - [Plugin Release](plugin-release.zh-CN.md)
-- [上下文效率与流程回归基准（2026-07-11）](benchmarks/context-efficiency-2026-07-11.zh-CN.md)
 
 ## 仓库结构
 

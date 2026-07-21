@@ -1,8 +1,8 @@
-import { AgentModelProfileId, DocumentReviewPolicy } from '../core/types';
+import { AgentModelProfileId } from '../core/types';
 import { FileService } from './FileService';
 import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
-export type TaskWorkerCapabilityTier = 'mechanical' | 'standard' | 'strong-reasoning' | 'specialist-review';
+export type TaskWorkerCapabilityTier = 'mechanical' | 'standard' | 'strong-reasoning' | 'review';
 export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
 export type TaskReviewRunDecision = 'APPROVED' | 'APPROVED_WITH_CONCERNS' | 'NEEDS_CHANGES' | 'BLOCKED' | 'PENDING';
@@ -155,10 +155,9 @@ export interface TaskGraphSchedulingDiagnostics {
     deferred: TaskGraphSchedulingDeferredTask[];
 }
 export type TaskGraphCompletionStatus = 'DONE' | 'DONE_WITH_CONCERNS' | 'NEEDS_CONTEXT' | 'BLOCKED';
-export type TaskReviewStage = 'spec' | 'quality' | 'review';
+export type TaskReviewStage = 'spec' | 'quality' | 'review' | 'planning';
 export type TaskReviewFeedbackAction = 'accept' | 'revise' | 'clarify' | 'blocked';
 export type TaskDocumentReviewStage = 'design' | 'plan';
-export type TaskDocumentReviewRole = 'design_reviewer' | 'implementation_plan_reviewer';
 export type TaskVerificationEvidenceStatus = 'PASSED' | 'FAILED' | 'BLOCKED' | 'SKIPPED';
 export type TaskVerificationRequirementKind = 'browser' | 'e2e' | 'test' | 'lint' | 'build' | 'manual' | 'other';
 export type TaskTddEvidencePhase = 'red' | 'green' | 'refactor';
@@ -292,7 +291,7 @@ export interface TaskReviewDispatchRecord {
     stage: TaskReviewStage;
     taskId?: string | null;
     taskTitle?: string | null;
-    reviewerRole: 'spec_compliance_reviewer' | 'code_quality_reviewer' | 'code_reviewer';
+    reviewerRole: 'spec_compliance_reviewer' | 'code_quality_reviewer' | 'code_reviewer' | 'planning_reviewer';
     projectSession?: TaskBootstrapProjectSessionSnapshot;
     status: 'DISPATCHED';
     assignedAt: string;
@@ -400,46 +399,19 @@ export interface TaskReviewFeedbackPlanResult {
 export interface TaskDocumentReviewDispatchRecord {
     id: string;
     stage: TaskDocumentReviewStage;
-    reviewerRole: TaskDocumentReviewRole;
     projectSession?: TaskBootstrapProjectSessionSnapshot;
-    status: 'DISPATCHED' | 'COMPLETED_INLINE';
+    status: 'COMPLETED_INLINE';
     assignedAt: string;
     packetPath: string;
     recordPath: string;
     documentPath: string;
     documentHash: string;
-    /** Binds every authoritative input for this review stage, not only the target document. */
-    reviewContextHash?: string;
-    reviewContractVersion?: string;
-    round?: number;
-    tokenReservation?: number;
-    roundOverrideDecisionId?: string | null;
-    roundOverrideSelectedAt?: string | null;
-    roundOverrideDispatchDeadline?: string | null;
-    usage?: TaskExecutionUsage | null;
-    priorDispatchId?: string | null;
-    priorFindings?: unknown[];
-    priorFindingIds?: string[];
-    boundedDocumentDiff?: string | null;
-    boundedDocumentDiffTruncated?: boolean;
+    reviewContextHash: string;
+    reviewContractVersion: string;
     mechanicalPreflight?: TaskDocumentReviewMechanicalPreflight;
-    resultSnapshotPath?: string | null;
-    resultManifestHash?: string | null;
     reviewArtifactPath: string;
     documentReadiness: TaskBootstrapDocumentReadiness;
-    mode: 'specialist' | 'inline_preflight';
-    policy: DocumentReviewPolicy;
-    riskSignals: string[];
-    workerProfile: TaskWorkerProfile;
-    runtimeAdapter?: RuntimeExecutionAdapterResolution | null;
-    requiresExecutorProvenance?: boolean;
-    requiresNativeExecutorProvenance?: boolean;
-    controllerSessionReportedAt?: string | null;
-    reviewerExecutorId?: string | null;
-    reviewerClaimedAt?: string | null;
-    reviewerHeartbeatAt?: string | null;
-    reviewerLeaseExpiresAt?: string | null;
-    heartbeatDueAt?: string | null;
+    mode: 'inline_preflight';
     reviewerCompletedAt?: string | null;
     reviewerSucceeded?: boolean | null;
 }
@@ -450,48 +422,6 @@ export interface TaskDocumentReviewMechanicalPreflight {
     checks: string[];
     warnings: string[];
     errors: string[];
-}
-export interface TaskDocumentReviewGovernanceStageSummary {
-    stage: TaskDocumentReviewStage;
-    completedRounds: number;
-    activeRound: number | null;
-    elapsedMs: number;
-    tokenReservation: number;
-    tokenUsage: number | null;
-    cacheHits: number;
-    continueWhileProgressing: boolean;
-    guardLimits: {
-        maxCompletedRounds: number;
-        maxMinutes: number;
-        budgetTokens: number | null;
-        noProgressLimit: number;
-    };
-    guardRemaining: {
-        rounds: number | null;
-        minutes: number | null;
-        tokens: number | null;
-    };
-    overrideDispatchWindow: {
-        decisionId: string;
-        round: number;
-        selectedAt: string;
-        deadline: string;
-        remainingMs: number;
-        expired: boolean;
-    } | null;
-    currentDispatch: {
-        id: string;
-        heartbeatDueAt: string | null;
-        leaseExpiresAt: string | null;
-    } | null;
-    lastDecision: string | null;
-    noProgressCount: number;
-}
-export interface TaskDocumentReviewGovernanceSummary {
-    version: '1.0';
-    contractVersion: string;
-    ledgerPath: string;
-    stages: Record<TaskDocumentReviewStage, TaskDocumentReviewGovernanceStageSummary>;
 }
 export interface TaskLoopReadinessResult {
     ready: boolean;
@@ -508,7 +438,6 @@ export interface TaskDocumentReviewDispatchResult {
     warnings: string[];
     nextInstruction: string;
     reused?: boolean;
-    pendingReused?: boolean;
 }
 export interface TaskRepairWaveRecord {
     version: string;
@@ -537,6 +466,33 @@ export interface TaskRepairWaveResult {
     changePath: string;
     record: TaskRepairWaveRecord;
     dispatch: TaskDispatchResult;
+    nextInstruction: string;
+}
+export interface TaskPlanningRepairRecord {
+    version: '1.0';
+    id: string;
+    feature: string;
+    status: 'ready' | 'dispatched' | 'completed';
+    createdAt: string;
+    completedAt: string | null;
+    loopActionId: string | null;
+    loopActionItemId: string | null;
+    sourceReviewDispatchId: string;
+    sourceReviewContextHash: string;
+    findingFingerprint: string;
+    findingIds: string[];
+    findings: TaskReviewFinding[];
+    targetFiles: string[];
+    beforeSnapshotHash: string;
+    afterSnapshotHash: string | null;
+    workspaceGitHead: string | null;
+    workspaceBaselineSnapshots: TaskDocumentationSnapshot[] | null;
+    recordPath: string;
+    packetPath: string;
+}
+export interface TaskPlanningRepairResult {
+    changePath: string;
+    record: TaskPlanningRepairRecord;
     nextInstruction: string;
 }
 export interface TaskVerificationEvidenceRecord {
@@ -1079,13 +1035,6 @@ export interface TaskUserDecisionOption {
     label: string;
     description: string;
 }
-export interface TaskDocumentReviewOverrideBinding {
-    stage: TaskDocumentReviewStage;
-    reviewContextHash: string;
-    round: number;
-    extraRounds: 1;
-    approvalOptionId: string;
-}
 export interface TaskUserDecisionRecord {
     version: string;
     feature: string;
@@ -1101,7 +1050,6 @@ export interface TaskUserDecisionRecord {
     updatedAt: string;
     selectedAt: string | null;
     answeredBy?: 'user' | null;
-    documentReviewOverride?: TaskDocumentReviewOverrideBinding | null;
     recordPath: string;
     reportPath: string;
     nextInstruction: string;
@@ -1603,6 +1551,20 @@ export declare class TaskGraphExecutionService {
     reviewTasks(changePath: string, options: {
         taskIds: string[];
     }): Promise<TaskReviewDispatchBatchResult>;
+    reviewPlanning(changePath: string): Promise<TaskReviewDispatchResult>;
+    preparePlanningRepair(changePath: string): Promise<TaskPlanningRepairResult>;
+    bindPlanningRepairLoopAction(changePath: string, options: {
+        actionId: string;
+        actionItemId: string;
+    }): Promise<TaskPlanningRepairRecord>;
+    validatePlanningRepairEvidence(changePath: string): Promise<TaskLoopReadinessResult>;
+    completePlanningRepair(changePath: string, options: {
+        actionId: string;
+        actionItemId: string;
+    }): Promise<TaskPlanningRepairRecord>;
+    private capturePlanningContext;
+    private capturePlanningRepairWorkspaceBaseline;
+    private validatePlanningRepairWorkspaceScope;
     private reviewUnlocked;
     bindReviewLoopAction(changePath: string, options: {
         dispatchId: string;
@@ -1653,58 +1615,22 @@ export declare class TaskGraphExecutionService {
         skip?: boolean;
         summary?: string;
         answeredBy?: 'user';
-        documentReviewOverride?: TaskDocumentReviewOverrideBinding;
     }): Promise<TaskUserDecisionResult>;
     reviewDocument(changePath: string, options?: {
         stage?: TaskDocumentReviewStage;
         force?: boolean;
     }): Promise<TaskDocumentReviewDispatchResult>;
-    readDocumentReviewGovernanceSummary(changePath: string): Promise<TaskDocumentReviewGovernanceSummary>;
-    private reviewDocumentUnlocked;
-    private buildDocumentReviewNextInstruction;
-    claimDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
-    heartbeatDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string): Promise<TaskDocumentReviewDispatchRecord>;
-    completeDocumentReviewExecutor(changePath: string, stage: TaskDocumentReviewStage, executorId: string, options?: {
-        usageFile?: string;
-    }): Promise<TaskDocumentReviewDispatchRecord>;
-    private documentReviewExecutorLeaseExpiresAt;
-    private isDocumentReviewExecutorLeaseExpired;
-    private documentReviewHeartbeatDueAt;
-    private releaseDocumentReviewExecutorClaimUnlocked;
-    private readCurrentDocumentReviewDispatch;
-    private updateDocumentReviewExecutorProvenance;
-    private extendDocumentReviewControllerSession;
-    private validateDocumentReviewCompletionArtifact;
-    private getDocumentReviewCachePaths;
+    private runPlanningPreflightUnlocked;
     private getTaskReviewCachePaths;
     private computeTaskReviewContextHash;
     private readTaskGraphContractVersion;
     private cacheTaskReviewApproval;
-    private cacheDocumentReviewApproval;
-    private restoreDocumentReviewCache;
-    private appendDocumentReviewRunMetric;
-    private getDocumentReviewLedgerPath;
     private canonicalJson;
-    private cloneJson;
-    private documentReviewLedgerEventHash;
-    private validateDocumentReviewLedger;
-    private ensureDocumentReviewLedgerUnlocked;
-    private appendDocumentReviewLedgerEvent;
-    private appendDocumentReviewLedgerEventUnlocked;
-    private recoverDocumentReviewDispatchProjectionUnlocked;
     private computeDocumentReviewContextHash;
-    private assertDocumentReviewDispatchGovernanceUnlocked;
-    private assessDocumentReviewProgressUnlocked;
-    private findDocumentReviewRoundOverrideDecisionUnlocked;
-    private positiveIntegerOrDefault;
-    private readDocumentReviewConvergenceContextUnlocked;
-    private buildBoundedDocumentDiff;
-    private snapshotDocumentReviewResultUnlocked;
-    private validateDocumentReviewResultSnapshot;
     private runDocumentReviewMechanicalPreflight;
-    private tokenizeDocumentReviewCommand;
-    private parseDocumentReviewCommand;
     private taskReviewScopeKey;
+    private planningReviewScopeKey;
+    private reviewDispatchScopeKey;
     private documentReviewScopeKey;
     private getCurrentReviewDispatchIndexPath;
     private setCurrentReviewDispatch;
@@ -1766,8 +1692,12 @@ export declare class TaskGraphExecutionService {
     private recordDebugEvidenceUnlocked;
     inspectWorkspace(changePath: string): Promise<TaskWorkspaceInspectionResult>;
     validateDocumentReviewEvidence(changePath: string, stage: TaskDocumentReviewStage): Promise<TaskLoopReadinessResult>;
+    private validatePlanningPreflightEvidence;
     validateTaskReviewEvidence(changePath: string, taskId: string | null): Promise<TaskLoopReadinessResult>;
+    validatePlanningReviewEvidence(changePath: string): Promise<TaskLoopReadinessResult>;
+    private validateReviewEvidence;
     readValidatedFinalReviewDecision(changePath: string): Promise<TaskReviewRunDecision>;
+    readValidatedPlanningReviewDecision(changePath: string): Promise<TaskReviewRunDecision>;
     validateLatestVerificationEvidence(changePath: string): Promise<TaskLoopReadinessResult>;
     validateWorkspaceEvidence(changePath: string, allowedTaskPaths?: string[]): Promise<TaskLoopReadinessResult>;
     readAuthoritativeTokenUsage(changePath: string): Promise<number>;
@@ -1839,7 +1769,6 @@ export declare class TaskGraphExecutionService {
     private readUserDecisionSnapshot;
     private writeUserDecisionIndex;
     private normalizeUserDecisionRecord;
-    private normalizeDocumentReviewOverrideBinding;
     private validateStructuredFindingIds;
     private normalizeUserDecisionOptions;
     private getUserDecisionNextInstruction;
@@ -1874,7 +1803,6 @@ export declare class TaskGraphExecutionService {
     private deriveReviewFeedbackAction;
     private selectNextDocumentReviewStage;
     private getDocumentReviewTarget;
-    private assessDocumentReviewRisk;
     private getDocumentReviewArtifactPath;
     private getTaskReviewArtifactFile;
     private getTaskReviewArtifactRelativePath;
@@ -1885,6 +1813,7 @@ export declare class TaskGraphExecutionService {
     private prepareTaskReviewDispatch;
     private buildDefaultTaskReviewArtifact;
     private buildDefaultFinalReviewArtifact;
+    private buildDefaultPlanningReviewArtifact;
     private deriveImplementerWorkerStatus;
     private deriveControllerWorkerStatus;
     private deriveWorkerStatusDocumentStatus;
@@ -1953,6 +1882,7 @@ export declare class TaskGraphExecutionService {
     private runGit;
     private readGitOutput;
     private parseGitStatusEntries;
+    private parseGitStatusV2ZPaths;
     private workspaceEntryPaths;
     private workspaceEntryMatchesPaths;
     private normalizeProjectOwnedPath;
@@ -2061,7 +1991,6 @@ export declare class TaskGraphExecutionService {
     private buildReviewFeedbackPlanReport;
     private buildRepairWavePacket;
     private buildDocumentReviewArtifact;
-    private buildDocumentReviewDispatchPacket;
     private buildVerificationEvidenceReport;
     private buildTddEvidenceReport;
     private buildDebugEvidenceReport;

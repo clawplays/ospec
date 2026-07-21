@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.8.23';
+const CLI_VERSION = '1.9.0';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -226,14 +226,13 @@ function parseFinalizeCommandArgs(commandArgs) {
 }
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
-        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--level L1|L2|L3] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
+        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
         : `Usage: ospec ${commandName} <change-name> [root-dir] [--flags flag1,flag2]`;
 }
 function parseNewCommandArgs(commandArgs, commandName = 'new') {
     const featureName = commandArgs[0];
     let rootDir;
     const flags = [];
-    let level;
     let target;
     let executionModel;
     let harnessInteractive;
@@ -253,28 +252,6 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         }
         if (arg.startsWith('--flags=')) {
             flags.push(...arg.slice('--flags='.length).split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
-            continue;
-        }
-        const levelValue = arg === '--level'
-            ? commandArgs[index + 1]
-            : arg.startsWith('--level=')
-                ? arg.slice('--level='.length)
-                : undefined;
-        if (levelValue !== undefined) {
-            if (commandName !== 'goal') {
-                console.error(`Unknown option for ${commandName}: --level (only valid for ospec goal)`);
-                console.error(getNewLikeUsage(commandName));
-                process.exit(1);
-            }
-            const normalizedLevel = String(levelValue || '').trim().toUpperCase();
-            if (normalizedLevel !== 'L1' && normalizedLevel !== 'L2' && normalizedLevel !== 'L3') {
-                console.error(`Invalid --level value for goal: ${levelValue || '(empty)'} (expected L1, L2, or L3)`);
-                process.exit(1);
-            }
-            level = normalizedLevel;
-            if (arg === '--level') {
-                index += 1;
-            }
             continue;
         }
         const goalOnlyValue = (flag) => arg === flag
@@ -364,7 +341,6 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         featureName,
         rootDir,
         flags: Array.from(new Set(flags)),
-        level,
         target,
         executionModel,
         harnessInteractive,
@@ -409,11 +385,10 @@ async function main() {
                     console.log(getNewLikeUsage('goal'));
                     process.exit(1);
                 }
-                const { featureName, rootDir, flags, level, target, executionModel, harnessInteractive, nativeSubagentCapability, nativeGoalCapability, } = parseNewCommandArgs(commandArgs, 'goal');
+                const { featureName, rootDir, flags, target, executionModel, harnessInteractive, nativeSubagentCapability, nativeGoalCapability, } = parseNewCommandArgs(commandArgs, 'goal');
                 const goalCmd = new GoalCommand_1.GoalCommand();
                 await goalCmd.execute(featureName, rootDir, {
                     flags,
-                    level,
                     target,
                     executionModel,
                     harnessInteractive,
@@ -589,7 +564,7 @@ Commands:
   changes [action] [path]   Active change summaries (status)
   queue [action] [path]     Explicit queue helpers (status, add, activate, next)
   run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
-  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, doc-review, status, next, workspace, worktree, finish, dispatch, launch, complete, repair)
+  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, preflight, status, next, workspace, worktree, finish, dispatch, launch, complete, repair)
   loop [action] [path]      Goal loop controller (run/tick, status, heartbeat, result, recover, configure, pause, resume)
   triage [action] [path]    Triage inbox helpers (list, claim, promote)
   docs [action] [path]      Docs helpers (status, generate)
@@ -609,7 +584,7 @@ Examples:
   ospec change onboarding-flow
   ospec change landing-refresh . --flags ui_change,page_design
   ospec goal billing-refactor . --flags complex_feature,multi_file_change
-  ospec goal billing-refactor . --level L2 --target codex --execution-model controller --harness-interactive true --native-subagents supported
+  ospec goal billing-refactor . --target codex --execution-model controller --harness-interactive true --native-subagents supported
   ospec brainstorm . --topic "Improve onboarding conversion" --change onboarding-flow
   ospec brainstorm . --topic "Explore dashboard UX" --visual
   ospec plan ./changes/active/onboarding-flow
@@ -631,7 +606,7 @@ Examples:
   ospec execute status ./changes/active/onboarding-flow
   ospec execute bootstrap ./changes/active/onboarding-flow
   ospec execute handoff ./changes/active/onboarding-flow --target codex
-  ospec execute doc-review ./changes/active/onboarding-flow --stage design
+  ospec execute preflight ./changes/active/onboarding-flow --stage design
   ospec execute next ./changes/active/onboarding-flow
   ospec execute workspace ./changes/active/onboarding-flow
   ospec execute worktree ./changes/active/onboarding-flow --branch ospec/onboarding-flow

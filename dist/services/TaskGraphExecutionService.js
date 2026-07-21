@@ -80,19 +80,16 @@ const REVIEW_PACKAGES_DIR = 'review-packages';
 const EXECUTION_METRICS_FILE = 'execution-metrics.json';
 const USAGE_SIDECARS_DIR = 'usage';
 const REVIEW_DISPATCHES_DIR = 'review-dispatches';
-const DOCUMENT_REVIEW_DISPATCHES_DIR = 'document-review-dispatches';
+const PLANNING_PREFLIGHTS_DIR = 'planning-preflights';
 const CURRENT_REVIEW_DISPATCHES_FILE = 'current-review-dispatches.json';
 const REPAIR_WAVES_DIR = 'repair-waves';
 const DESIGN_DOCUMENT_REVIEW_FILE = 'design-review.md';
 const IMPLEMENTATION_PLAN_DOCUMENT_REVIEW_FILE = 'implementation-plan-review.md';
-const DOCUMENT_REVIEW_CACHE_DIR = 'cache';
-const DOCUMENT_REVIEW_HISTORY_DIR = 'history';
-const DOCUMENT_REVIEW_LEDGER_FILE = 'document-review-ledger.json';
-const DOCUMENT_REVIEW_CONTRACT_VERSION = '1.8.3-document-review-v1';
+const PLANNING_REVIEW_FILE = 'planning-review.md';
+const PLANNING_REPAIR_FILE = 'planning-repair.json';
+const PLANNING_REPAIR_PACKET_FILE = 'planning-repair.md';
+const PLANNING_CONTRACT_VERSION = '1.9.0-planning-review-v1';
 const MAX_UNEXPLAINED_TASK_TARGETS = 6;
-const DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS = 2;
-const DEFAULT_DOCUMENT_REVIEW_TOKEN_RESERVATION = 4000;
-const MAX_DOCUMENT_REVIEW_DIFF_CHARS = 12000;
 const VERIFICATION_EVIDENCE_DIR = 'verification-evidence';
 const VERIFICATION_ACTIONS_DIR = 'verification-actions';
 const TDD_EVIDENCE_DIR = 'tdd-evidence';
@@ -119,7 +116,6 @@ const GOAL_PROGRESS_PROJECTION_FILE = 'progress-projection.json';
 const TASK_GRAPH_MUTATION_LOCK_TIMEOUT_MS = 30 * 1000;
 const STALE_TASK_GRAPH_MUTATION_LOCK_MS = 2 * 60 * 1000;
 const TASK_GRAPH_MUTATION_LOCK_HEARTBEAT_MS = 30 * 1000;
-const DEFAULT_DOCUMENT_REVIEW_EXECUTOR_LEASE_MS = 5 * 60 * 1000;
 function emptyExecutionUsage() {
     return {
         inputTokens: null,
@@ -165,9 +161,6 @@ function unknownRecord(value) {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value
         : {};
-}
-function documentReviewLedgerRecord(event) {
-    return unknownRecord(event?.payload.record);
 }
 function normalizeStatus(value) {
     return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -320,34 +313,12 @@ function buildWorkerProfile(task, modelProfiles = {}, modelProfileOverride) {
         ...task.targetFiles,
         task.expectedResult,
     ].join(' ').toLowerCase();
-    if (roleKey === 'design_reviewer' || roleKey === 'implementation_plan_reviewer') {
-        const recommendedTarget = 'generic';
-        return {
-            role,
-            recommendedTarget,
-            capabilityTier: 'specialist-review',
-            summary: roleKey === 'design_reviewer'
-                ? 'Architecture and requirement reviewer before implementation planning.'
-                : 'Execution-plan reviewer before task graph dispatch.',
-            rationale: [
-                'Document review work depends on cross-file reasoning and should stay independent from implementation.',
-                'The worker must review and update review artifacts, not implement source changes.',
-            ],
-            requiredBehavior: [
-                'Read proposal.md and the reviewed document before deciding.',
-                'Record concrete findings and the final decision in the matching review artifact.',
-                'Do not dispatch implementation workers or edit project source files from this review packet.',
-            ],
-            targetToolMapping: buildWorkerTargetToolMapping(recommendedTarget),
-            ...resolveWorkerModel(modelProfileOverride || 'review', recommendedTarget, modelProfiles),
-        };
-    }
     if (roleKey.includes('reviewer')) {
         const recommendedTarget = 'generic';
         return {
             role,
             recommendedTarget,
-            capabilityTier: 'specialist-review',
+            capabilityTier: 'review',
             summary: 'Independent reviewer for implementation correctness and quality gates.',
             rationale: [
                 'Review work should be independent from the implementer to catch requirement and code-quality drift.',
@@ -1053,7 +1024,7 @@ class TaskGraphExecutionService {
                 target,
                 capability: await this.readRuntimeHarnessCapability(resolvedChangePath, target),
                 nativeHarness: await this.readRuntimeHarnessExecutionMetadata(resolvedChangePath, target),
-                requiresIndependentWorker: actualProfile?.capabilityTier === 'specialist-review'
+                requiresIndependentWorker: actualProfile?.capabilityTier === 'review'
                     || /review/i.test(selected.workerRole),
                 modelSelection: actualProfile
                     ? {
@@ -2814,6 +2785,439 @@ class TaskGraphExecutionService {
             });
         });
     }
+    async reviewPlanning(changePath) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+            for (const stage of ['design', 'plan']) {
+                const readiness = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
+                if (!readiness.ready) {
+                    throw new Error(`Cannot dispatch combined planning review: ${readiness.reason}`);
+                }
+            }
+            await this.syncWorkerStatusUnlocked(resolvedChangePath);
+            const report = await this.getReport(resolvedChangePath);
+            if (report.issues.length > 0 || report.invalidTasks.length > 0 || report.taskCount === 0) {
+                throw new Error(`Cannot dispatch combined planning review until the task graph is valid: ${[
+                    ...report.issues,
+                    ...report.invalidTasks.flatMap(item => item.reasons),
+                ].join('; ') || 'task graph has no tasks'}`);
+            }
+            const planningReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
+            if (!(await this.fileService.exists(planningReviewPath))) {
+                await this.writeLocalizedReportFile(resolvedChangePath, planningReviewPath, this.buildDefaultPlanningReviewArtifact(report.feature));
+            }
+            const planningFiles = [
+                constants_1.FILE_NAMES.PROPOSAL,
+                constants_1.FILE_NAMES.DESIGN,
+                constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
+                constants_1.FILE_NAMES.TASKS,
+                path.join('artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
+            ].map(file => path.relative(projectRoot, path.join(resolvedChangePath, file)).replace(/\\/g, '/'));
+            const targetFiles = this.normalizeTargetFiles(planningFiles);
+            const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+            const targetSnapshotHash = this.hashTargetSnapshots(targetSnapshots);
+            const reviewContextHash = (0, crypto_1.createHash)('sha256').update(this.canonicalJson({
+                contractVersion: PLANNING_CONTRACT_VERSION,
+                targetSnapshotHash,
+            }), 'utf8').digest('hex');
+            const current = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(planningReviewPath));
+            const currentDispatchId = String(current.data?.review_dispatch_id || '').trim();
+            if (currentDispatchId && this.toFileSafeId(currentDispatchId) === currentDispatchId) {
+                const currentRecordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${currentDispatchId}.json`);
+                if (await this.fileService.exists(currentRecordPath)) {
+                    const currentRecord = await this.fileService.readJSON(currentRecordPath);
+                    if (currentRecord.stage === 'planning'
+                        && currentRecord.reviewContextHash === reviewContextHash
+                        && currentRecord.targetSnapshotHash === targetSnapshotHash
+                        && !currentRecord.loopActionId) {
+                        return {
+                            changePath: resolvedChangePath,
+                            graphPath: report.graphPath,
+                            workerStatusPath: path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.AGENT_WORKER_STATUS),
+                            dispatch: currentRecord,
+                            projectSession: currentRecord.projectSession || await this.readBootstrapProjectSessionSnapshot(projectRoot),
+                            warnings: ['Combined planning review already has a current dispatch for this exact planning snapshot.'],
+                            nextInstruction: 'Reuse the current combined planning review action; do not create another reviewer.',
+                        };
+                    }
+                }
+            }
+            const now = new Date().toISOString();
+            const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
+            const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
+            const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
+            const reviewTarget = this.normalizeWorkerToolTarget(loopControllerSession.target || 'generic');
+            const workerProfile = resolveWorkerProfileForTarget(buildReviewerWorkerProfile('planning_reviewer', executionPolicy.modelProfiles), reviewTarget, executionPolicy.modelProfiles);
+            const runtimeAdapter = loopControllerSession.controllerMode
+                ? this.runtimeAdapterService.resolve({
+                    projectRoot,
+                    target: reviewTarget,
+                    capability: loopControllerSession.capability,
+                    nativeHarness: loopControllerSession.nativeHarnessMetadata,
+                    requiresIndependentWorker: true,
+                    modelSelection: {
+                        requestedModel: workerProfile.requestedModel ?? workerProfile.model,
+                        configuredModel: workerProfile.configuredModel ?? workerProfile.model,
+                        configurationSource: workerProfile.modelConfigurationSource || (workerProfile.model ? 'target' : 'harness-default'),
+                    },
+                    cacheFilePath: path.join(resolvedChangePath, 'artifacts', 'agents', RUNTIME_ADAPTER_CACHE_FILE),
+                })
+                : null;
+            const reviewId = `review-${this.toFileSafeTimestamp(now)}-planning-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
+            const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
+            const reviewPackage = await this.writeTaskReviewPackage({
+                projectRoot,
+                changePath: resolvedChangePath,
+                task: { id: 'planning', targetFiles },
+                dispatch: null,
+                reviewId,
+            });
+            const record = {
+                id: reviewId,
+                stage: 'planning',
+                taskId: null,
+                taskTitle: 'Combined planning review',
+                reviewerRole: 'planning_reviewer',
+                projectSession,
+                status: 'DISPATCHED',
+                assignedAt: now,
+                packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
+                recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
+                reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, planningReviewPath),
+                reviewPackagePath: reviewPackage.path,
+                workerProfile,
+                gitHead: reviewPackage.gitHead,
+                targetFiles,
+                targetSnapshots,
+                targetSnapshotHash,
+                reviewContextHash,
+                runtimeAdapter,
+                requiresExecutorProvenance: Boolean(runtimeAdapter?.selected),
+                requiresNativeExecutorProvenance: false,
+                controllerSessionReportedAt: null,
+            };
+            await this.fileService.writeJSON(recordPath, record);
+            await this.setCurrentReviewDispatch(resolvedChangePath, this.planningReviewScopeKey(), reviewId);
+            await this.prepareReviewArtifactForDispatch(resolvedChangePath, record);
+            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+            await this.recordExecutionMetric(resolvedChangePath, report.feature, [{
+                    kind: 'review_packet',
+                    id: reviewId,
+                    taskId: null,
+                    path: record.packetPath,
+                    recordedAt: now,
+                    durationMs: null,
+                    capabilityTier: workerProfile.capabilityTier,
+                    modelProfile: workerProfile.modelProfile,
+                    model: workerProfile.model,
+                    workflowStage: 'planning_review',
+                }]);
+            const workerStatusSync = await this.syncWorkerStatusUnlocked(resolvedChangePath);
+            return {
+                changePath: resolvedChangePath,
+                graphPath: report.graphPath,
+                workerStatusPath: workerStatusSync.workerStatusPath,
+                dispatch: record,
+                projectSession,
+                warnings: runtimeAdapter?.warnings || [],
+                nextInstruction: 'Launch one fresh independent combined planning reviewer for proposal, design, implementation plan, task graph, and acceptance-to-verification coverage.',
+            };
+        });
+    }
+    async preparePlanningRepair(changePath) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const existingPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+            if (await this.fileService.exists(existingPath)) {
+                const existing = await this.fileService.readJSON(existingPath);
+                if (existing.status !== 'ready') {
+                    throw new Error(`Automatic planning repair limit reached; ${existing.id} already consumed the single grouped repair attempt.`);
+                }
+                const reviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
+                const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+                const context = await this.capturePlanningContext(resolvedChangePath);
+                if (this.normalizeReviewRunDecision(review.data?.decision) === 'NEEDS_CHANGES'
+                    && String(review.data?.review_dispatch_id || '') === existing.sourceReviewDispatchId
+                    && context.targetSnapshotHash === existing.beforeSnapshotHash) {
+                    return {
+                        changePath: resolvedChangePath,
+                        record: existing,
+                        nextInstruction: 'Reuse the prepared grouped planning repair; it has not yet consumed the single repair allowance.',
+                    };
+                }
+                await this.fileService.remove(existingPath);
+                await this.fileService.remove(path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_PACKET_FILE));
+            }
+            const validation = await this.validatePlanningReviewEvidence(resolvedChangePath);
+            if (!validation.ready)
+                throw new Error(`Cannot prepare planning repair: ${validation.reason}`);
+            const reviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
+            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+            const decision = this.normalizeReviewRunDecision(review.data?.decision);
+            if (decision !== 'NEEDS_CHANGES') {
+                throw new Error(`Combined planning repair requires NEEDS_CHANGES (current: ${decision}).`);
+            }
+            const dispatchId = String(review.data?.review_dispatch_id || '').trim();
+            const dispatchPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(dispatchId)}.json`);
+            const dispatch = await this.fileService.readJSON(dispatchPath);
+            if (dispatch.stage !== 'planning' || dispatch.id !== dispatchId || !dispatch.reviewContextHash) {
+                throw new Error('Combined planning repair source dispatch is invalid.');
+            }
+            const findingResult = await this.readReviewFindings(reviewPath, review.content);
+            if (findingResult.structured.length === 0) {
+                throw new Error('Combined planning review NEEDS_CHANGES requires at least one structured finding.');
+            }
+            const context = await this.capturePlanningContext(resolvedChangePath);
+            const changePrefix = path.relative(context.projectRoot, resolvedChangePath).replace(/\\/g, '/');
+            const allowed = new Map(context.targetFiles.map(file => [normalizeTaskPath(file), file]));
+            const normalizeRepairPath = (value) => {
+                const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+                if (!normalized)
+                    return '';
+                const changeRelative = normalizeTaskPath(normalized);
+                if (allowed.has(changeRelative))
+                    return allowed.get(changeRelative);
+                const prefixed = normalizeTaskPath(`${changePrefix}/${normalized}`);
+                return allowed.get(prefixed) || '';
+            };
+            const requestedScope = findingResult.structured.flatMap(finding => finding.repairScope);
+            if (requestedScope.length === 0) {
+                throw new Error('Combined planning findings must declare a bounded repair_scope.');
+            }
+            const targetFiles = Array.from(new Set(requestedScope.map(normalizeRepairPath)));
+            if (targetFiles.some(file => !file) || targetFiles.length === 0) {
+                throw new Error('Combined planning repair scope contains a path outside proposal, design, implementation plan, tasks, or task graph.');
+            }
+            const findingFingerprint = (0, crypto_1.createHash)('sha256').update(this.canonicalJson(findingResult.structured.map(finding => ({
+                id: finding.id,
+                severity: finding.severity,
+                message: finding.message,
+                evidence: finding.evidence,
+                requirementRefs: finding.requirementRefs,
+                repairScope: finding.repairScope,
+            }))), 'utf8').digest('hex');
+            const now = new Date().toISOString();
+            const id = `planning-repair-${this.toFileSafeTimestamp(now)}`;
+            const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_PACKET_FILE);
+            const workspaceBaseline = await this.capturePlanningRepairWorkspaceBaseline(context.projectRoot);
+            const record = {
+                version: '1.0',
+                id,
+                feature: await this.readFeatureName(resolvedChangePath),
+                status: 'ready',
+                createdAt: now,
+                completedAt: null,
+                loopActionId: null,
+                loopActionItemId: null,
+                sourceReviewDispatchId: dispatch.id,
+                sourceReviewContextHash: dispatch.reviewContextHash,
+                findingFingerprint,
+                findingIds: findingResult.structured.map(finding => finding.id),
+                findings: findingResult.structured,
+                targetFiles,
+                beforeSnapshotHash: context.targetSnapshotHash,
+                afterSnapshotHash: null,
+                workspaceGitHead: workspaceBaseline?.gitHead || null,
+                workspaceBaselineSnapshots: workspaceBaseline?.snapshots || null,
+                recordPath: this.toChangeRelativePath(resolvedChangePath, existingPath),
+                packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
+            };
+            await this.fileService.writeJSON(existingPath, record);
+            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, [
+                '# Grouped Planning Repair',
+                '',
+                `- Repair ID: ${record.id}`,
+                `- Source review: ${record.sourceReviewDispatchId}`,
+                `- Finding fingerprint: ${record.findingFingerprint}`,
+                `- Authorized target files: ${record.targetFiles.join(', ')}`,
+                `- Planning snapshot before repair: ${record.beforeSnapshotHash}`,
+                '',
+                '## Findings',
+                '',
+                ...record.findings.map(finding => `- ${this.renderReviewFinding(finding)}`),
+                '',
+                '## Repair Contract',
+                '',
+                '- Resolve all findings in one coherent edit. Do not modify files outside the authorized target list.',
+                '- Keep tasks.md generated from task graph state; run ospec execute sync instead of hand-editing derived status.',
+                '- Rerun deterministic design and plan preflights after changing authoritative documents.',
+                '- The repair is complete only when the planning snapshot changes and the task graph remains valid.',
+                '',
+            ].join('\n'));
+            return {
+                changePath: resolvedChangePath,
+                record,
+                nextInstruction: 'Launch exactly one grouped planning repair worker. A second automatic repair is forbidden.',
+            };
+        });
+    }
+    async bindPlanningRepairLoopAction(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.status === 'completed') {
+                throw new Error(`Planning repair ${record.id} is already completed.`);
+            }
+            if (record.status === 'dispatched') {
+                if (record.loopActionId !== options.actionId || record.loopActionItemId !== options.actionItemId) {
+                    throw new Error(`Planning repair ${record.id} is already bound to another Loop action.`);
+                }
+                return record;
+            }
+            record.status = 'dispatched';
+            record.loopActionId = options.actionId;
+            record.loopActionItemId = options.actionItemId;
+            await this.fileService.writeJSON(recordPath, record);
+            return record;
+        });
+    }
+    async validatePlanningRepairEvidence(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+        if (!(await this.fileService.exists(recordPath))) {
+            return { ready: false, reason: 'Grouped planning repair record is missing.' };
+        }
+        try {
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.status !== 'dispatched' || !record.loopActionId || !record.loopActionItemId) {
+                return { ready: false, reason: 'Grouped planning repair is not bound to an issued Loop action.' };
+            }
+            const context = await this.capturePlanningContext(resolvedChangePath);
+            if (context.targetSnapshotHash === record.beforeSnapshotHash) {
+                return { ready: false, reason: 'Grouped planning repair made no planning snapshot change.' };
+            }
+            const workspaceScopeError = await this.validatePlanningRepairWorkspaceScope(resolvedChangePath, record, context);
+            if (workspaceScopeError)
+                return { ready: false, reason: workspaceScopeError };
+            for (const stage of ['design', 'plan']) {
+                const readiness = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
+                if (!readiness.ready)
+                    return { ready: false, reason: readiness.reason };
+            }
+            const report = await this.getReport(resolvedChangePath);
+            if (report.issues.length > 0 || report.invalidTasks.length > 0 || report.taskCount === 0) {
+                return { ready: false, reason: `Grouped planning repair left an invalid task graph: ${[
+                        ...report.issues,
+                        ...report.invalidTasks.flatMap(item => item.reasons),
+                    ].join('; ') || 'task graph has no tasks'}` };
+            }
+            return { ready: true, reason: null };
+        }
+        catch (error) {
+            return { ready: false, reason: `Grouped planning repair evidence is invalid (${error?.message || error}).` };
+        }
+    }
+    async completePlanningRepair(changePath, options) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const validation = await this.validatePlanningRepairEvidence(resolvedChangePath);
+            if (!validation.ready)
+                throw new Error(validation.reason || 'Grouped planning repair evidence is incomplete.');
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+            const record = await this.fileService.readJSON(recordPath);
+            if (record.loopActionId !== options.actionId || record.loopActionItemId !== options.actionItemId) {
+                throw new Error(`Planning repair ${record.id} completion does not match its issued Loop action.`);
+            }
+            const context = await this.capturePlanningContext(resolvedChangePath);
+            record.status = 'completed';
+            record.completedAt = new Date().toISOString();
+            record.afterSnapshotHash = context.targetSnapshotHash;
+            await this.fileService.writeJSON(recordPath, record);
+            return record;
+        });
+    }
+    async capturePlanningContext(changePath) {
+        const resolvedChangePath = path.resolve(changePath);
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        const targetFiles = this.normalizeTargetFiles([
+            constants_1.FILE_NAMES.PROPOSAL,
+            constants_1.FILE_NAMES.DESIGN,
+            constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
+            constants_1.FILE_NAMES.TASKS,
+            path.join('artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
+        ].map(file => path.relative(projectRoot, path.join(resolvedChangePath, file)).replace(/\\/g, '/')));
+        const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+        return {
+            projectRoot,
+            targetFiles,
+            targetSnapshots,
+            targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
+        };
+    }
+    async capturePlanningRepairWorkspaceBaseline(projectRoot) {
+        const status = this.runGit(projectRoot, [
+            'status',
+            '--porcelain=v2',
+            '--untracked-files=all',
+            '--no-renames',
+            '-z',
+        ]);
+        if (!status.ok)
+            return null;
+        const paths = this.parseGitStatusV2ZPaths(status.stdout);
+        return {
+            gitHead: this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
+            snapshots: await this.captureTargetSnapshots(projectRoot, paths),
+        };
+    }
+    async validatePlanningRepairWorkspaceScope(changePath, record, context) {
+        if (!Array.isArray(record.workspaceBaselineSnapshots))
+            return null;
+        const status = this.runGit(context.projectRoot, [
+            'status',
+            '--porcelain=v2',
+            '--untracked-files=all',
+            '--no-renames',
+            '-z',
+        ]);
+        if (!status.ok) {
+            return 'Grouped planning repair workspace scope cannot be verified because Git status is unavailable.';
+        }
+        const currentHead = this.readGitOutput(context.projectRoot, ['rev-parse', 'HEAD']) || null;
+        if (record.workspaceGitHead !== currentHead) {
+            return 'Grouped planning repair changed Git HEAD; planning repair workers may not commit or switch revisions.';
+        }
+        const currentStatusPaths = this.parseGitStatusV2ZPaths(status.stdout);
+        const baselineByPath = new Map(record.workspaceBaselineSnapshots.map(snapshot => [
+            normalizeTaskPath(snapshot.path),
+            snapshot,
+        ]));
+        const allPaths = this.normalizeTargetFiles([
+            ...record.workspaceBaselineSnapshots.map(snapshot => snapshot.path),
+            ...currentStatusPaths,
+        ]);
+        const currentSnapshots = await this.captureTargetSnapshots(context.projectRoot, allPaths);
+        const changedPaths = currentSnapshots
+            .filter(snapshot => {
+            const baseline = baselineByPath.get(normalizeTaskPath(snapshot.path));
+            return !baseline
+                || baseline.exists !== snapshot.exists
+                || baseline.kind !== snapshot.kind
+                || baseline.contentHash !== snapshot.contentHash
+                || baseline.entryCount !== snapshot.entryCount;
+        })
+            .map(snapshot => snapshot.path);
+        const planningTargets = context.targetFiles.map(normalizeTaskPath);
+        const authorizedTargets = record.targetFiles.map(normalizeTaskPath);
+        const changePrefix = path.relative(context.projectRoot, changePath).replace(/\\/g, '/').replace(/\/$/, '');
+        const outsideScope = changedPaths.filter(changedPath => {
+            const normalized = normalizeTaskPath(changedPath);
+            const planningFile = planningTargets.some(target => taskPathsOverlap(normalized, target));
+            if (planningFile) {
+                return !authorizedTargets.some(target => taskPathsOverlap(normalized, target));
+            }
+            if (!changePrefix && (normalized.startsWith('artifacts/') || normalized === constants_1.FILE_NAMES.STATE)) {
+                return false;
+            }
+            return !this.isGoalWorkspaceControlPath(changedPath, changePrefix);
+        });
+        return outsideScope.length > 0
+            ? `Grouped planning repair changed files outside its authorized planning scope: ${outsideScope.join(', ')}.`
+            : null;
+    }
     async reviewUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
@@ -3077,7 +3481,7 @@ class TaskGraphExecutionService {
             const record = await this.fileService.readJSON(recordPath);
             if (record.id !== options.dispatchId)
                 throw new Error(`Review dispatch identity mismatch for ${options.dispatchId}.`);
-            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.reviewDispatchScopeKey(record), record.id);
             const selected = options.runtimeAdapter.selected;
             if (!selected || !selected.available || !selected.verified || selected.kind === 'generic') {
                 throw new Error(`Review dispatch ${options.dispatchId} requires a verified independent runtime adapter.`);
@@ -3112,7 +3516,7 @@ class TaskGraphExecutionService {
             const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(options.dispatchId)}.json`);
             const record = await this.fileService.readJSON(recordPath);
             this.assertReviewLoopBinding(record, options);
-            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.reviewDispatchScopeKey(record), record.id);
             if (record.requiresNativeExecutorProvenance) {
                 const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
                 if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
@@ -3134,7 +3538,7 @@ class TaskGraphExecutionService {
             const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${this.toFileSafeId(options.dispatchId)}.json`);
             const record = await this.fileService.readJSON(recordPath);
             this.assertReviewLoopBinding(record, options);
-            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.reviewDispatchScopeKey(record), record.id);
             if (record.requiresNativeExecutorProvenance) {
                 const controllerSession = await this.readLoopControllerSession(resolvedChangePath);
                 if (!controllerSession.current || controllerSession.reportedAt !== record.controllerSessionReportedAt) {
@@ -3234,7 +3638,7 @@ class TaskGraphExecutionService {
                 || record.reviewerExecutorId !== options.executorId
                 || !record.reviewerClaimedAt)
                 return false;
-            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, this.reviewDispatchScopeKey(record), record.id);
             const reviewPath = path.join(resolvedChangePath, record.reviewArtifactPath);
             const findingsPath = reviewPath.replace(/\.md$/i, '.findings.json');
             if (!(await this.fileService.exists(reviewPath)) || !(await this.fileService.exists(findingsPath)))
@@ -3267,7 +3671,7 @@ class TaskGraphExecutionService {
         }
     }
     async updateReviewLoopProvenance(changePath, record) {
-        await this.assertCurrentReviewDispatch(changePath, this.taskReviewScopeKey(record.taskId || null), record.id);
+        await this.assertCurrentReviewDispatch(changePath, this.reviewDispatchScopeKey(record), record.id);
         const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
         const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
         if (String(review.data?.review_dispatch_id || '') !== record.id) {
@@ -3535,18 +3939,6 @@ class TaskGraphExecutionService {
             throw new Error('Selecting or skipping a user decision requires --answered-by user provenance.');
         }
         const required = options.required ?? existing?.required ?? true;
-        const documentReviewOverride = options.documentReviewOverride
-            ? this.normalizeDocumentReviewOverrideBinding(options.documentReviewOverride)
-            : existing?.documentReviewOverride || null;
-        if (options.documentReviewOverride && !documentReviewOverride) {
-            throw new Error('Document review override requires stage design|plan, a 64-character review context hash, a positive round, exactly one extra round, and an approval option ID.');
-        }
-        if (documentReviewOverride && !required) {
-            throw new Error('Document review override decisions must be required.');
-        }
-        if (documentReviewOverride && !nextOptions.some(item => item.id === documentReviewOverride.approvalOptionId)) {
-            throw new Error(`Document review override approval option not found: ${documentReviewOverride.approvalOptionId}`);
-        }
         const status = selectedOptionId
             ? 'SELECTED'
             : options.skip
@@ -3569,7 +3961,6 @@ class TaskGraphExecutionService {
             updatedAt: now,
             selectedAt: selectedOptionId || options.skip ? now : existing?.selectedAt || null,
             answeredBy: selectedOptionId || options.skip ? 'user' : existing?.answeredBy || null,
-            documentReviewOverride,
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
             nextInstruction: '',
@@ -3590,914 +3981,110 @@ class TaskGraphExecutionService {
         };
     }
     async reviewDocument(changePath, options = {}) {
-        return this.withTaskGraphMutationLease(changePath, () => this.reviewDocumentUnlocked(changePath, options));
+        return this.withTaskGraphMutationLease(changePath, () => this.runPlanningPreflightUnlocked(changePath, options));
     }
-    async readDocumentReviewGovernanceSummary(changePath) {
-        const resolvedChangePath = path.resolve(changePath);
-        const ledgerPath = this.getDocumentReviewLedgerPath(resolvedChangePath);
-        const now = Date.now();
-        let ledger = {
-            version: '1.0',
-            contractVersion: DOCUMENT_REVIEW_CONTRACT_VERSION,
-            createdAt: new Date(now).toISOString(),
-            updatedAt: new Date(now).toISOString(),
-            events: [],
-        };
-        if (await this.fileService.exists(ledgerPath)) {
-            ledger = await this.fileService.readJSON(ledgerPath);
-            this.validateDocumentReviewLedger(ledger);
-        }
-        const configPath = path.join(resolvedChangePath, 'artifacts', 'loop', 'loop.json');
-        const config = await this.fileService.exists(configPath)
-            ? await this.fileService.readJSON(configPath)
-            : {};
-        const governance = config?.documentReviewGovernance
-            || config?.document_review_governance
-            || config?.documentReview
-            || config?.reviewGovernance
-            || {};
-        const continueWhileProgressing = config?.efficiency?.continueWhileProgressing !== false;
-        const usageById = {};
-        const metricsPath = path.join(resolvedChangePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
-        if (await this.fileService.exists(metricsPath)) {
-            const metrics = await this.fileService.readJSON(metricsPath);
-            for (const entry of Array.isArray(metrics.entries) ? metrics.entries : []) {
-                if (entry.kind !== 'usage' || !entry.id || !entry.usage)
-                    continue;
-                usageById[entry.id] = Math.max(0, Number(entry.usage.inputTokens) || 0)
-                    + Math.max(0, Number(entry.usage.outputTokens) || 0);
-            }
-        }
-        const stages = {};
-        for (const stage of ['design', 'plan']) {
-            const events = ledger.events.filter(event => event.stage === stage);
-            const stageGovernance = governance?.stages?.[stage] || governance?.[stage] || {};
-            const maxCompletedRounds = Math.min(DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS, this.positiveIntegerOrDefault(stageGovernance.maxCompletedRounds ?? stageGovernance.maxRounds, DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS));
-            const maxMinutes = Math.min(30, this.positiveIntegerOrDefault(stageGovernance.maxMinutes, 30));
-            const noProgressLimit = Math.min(2, this.positiveIntegerOrDefault(stageGovernance.noProgressLimit ?? governance.noProgressLimit, 2));
-            const budgetTokens = stageGovernance.budgetTokens === null || stageGovernance.budgetTokens === undefined
-                ? null
-                : Math.max(0, Number(stageGovernance.budgetTokens) || 0);
-            const completedEvents = events.filter(event => event.type === 'review_completed'
-                || (event.type === 'legacy_import'
-                    && documentReviewLedgerRecord(event).mode === 'specialist'
-                    && Boolean(documentReviewLedgerRecord(event).reviewerCompletedAt)));
-            const completedById = new Map(completedEvents.map(event => [event.dispatchId, event]));
-            const dispatchEvents = events.filter(event => event.type === 'dispatch_created'
-                && documentReviewLedgerRecord(event).mode === 'specialist');
-            const authority = [...events].reverse().find(event => event.type === 'dispatch_created' || event.type === 'cache_reused');
-            const terminalIds = new Set(events
-                .filter(event => event.type === 'review_completed' || event.type === 'inline_completed')
-                .map(event => event.dispatchId));
-            const activeDispatch = authority?.type === 'dispatch_created' && !terminalIds.has(authority.dispatchId)
-                ? authority
-                : null;
-            const lifecycle = activeDispatch
-                ? [...events].reverse().find(event => event.dispatchId === activeDispatch.dispatchId
-                    && (event.type === 'executor_claimed'
-                        || event.type === 'executor_heartbeat'
-                        || event.type === 'executor_claim_released'))
-                : null;
-            const heartbeat = lifecycle?.type === 'executor_claim_released' ? null : lifecycle;
-            const firstAt = events.map(event => Date.parse(event.at)).filter(Number.isFinite).sort((left, right) => left - right)[0];
-            const elapsedMs = Number.isFinite(firstAt) ? Math.max(0, now - firstAt) : 0;
-            let tokenReservation = 0;
-            let tokenUsage = 0;
-            let hasUsage = false;
-            for (const dispatch of dispatchEvents) {
-                let usage = usageById[dispatch.dispatchId];
-                if (usage === undefined) {
-                    const completion = [...events].reverse().find(event => event.dispatchId === dispatch.dispatchId
-                        && (event.type === 'review_completed' || event.type === 'legacy_import'));
-                    const recordedUsage = unknownRecord(completion?.payload.usage
-                        || documentReviewLedgerRecord(completion).usage);
-                    if (Object.keys(recordedUsage).length > 0) {
-                        const input = recordedUsage.inputTokens ?? recordedUsage.input_tokens;
-                        const output = recordedUsage.outputTokens ?? recordedUsage.output_tokens;
-                        if (input !== undefined || output !== undefined) {
-                            usage = Math.max(0, Number(input) || 0) + Math.max(0, Number(output) || 0);
-                        }
-                    }
-                }
-                if (usage !== undefined) {
-                    tokenUsage += usage;
-                    hasUsage = true;
-                }
-                else {
-                    tokenReservation += Math.max(0, Number(documentReviewLedgerRecord(dispatch).tokenReservation) || DEFAULT_DOCUMENT_REVIEW_TOKEN_RESERVATION);
-                }
-            }
-            const lastCompletion = [...completedEvents].reverse().find(event => event.type === 'review_completed') || null;
-            const currentReviewContextHash = await this.computeDocumentReviewContextHash(resolvedChangePath, stage).catch(() => null);
-            const currentNoProgressCount = currentReviewContextHash
-                && String(lastCompletion?.payload.reviewContextHash || '') === currentReviewContextHash
-                ? Math.max(0, Number(lastCompletion?.payload.noProgressCount) || 0)
-                : 0;
-            let overrideDispatchWindow = null;
-            const activeRecord = documentReviewLedgerRecord(activeDispatch);
-            const activeOverrideDecisionId = String(activeRecord.roundOverrideDecisionId || '').trim();
-            const activeOverrideSelectedAt = String(activeRecord.roundOverrideSelectedAt || '').trim();
-            const activeOverrideDeadline = String(activeRecord.roundOverrideDispatchDeadline || '').trim();
-            if (activeOverrideDecisionId
-                && Number.isFinite(Date.parse(activeOverrideSelectedAt))
-                && Number.isFinite(Date.parse(activeOverrideDeadline))) {
-                const deadlineMs = Date.parse(activeOverrideDeadline);
-                overrideDispatchWindow = {
-                    decisionId: activeOverrideDecisionId,
-                    round: Math.max(1, Number(activeRecord.round) || completedById.size + 1),
-                    selectedAt: new Date(Date.parse(activeOverrideSelectedAt)).toISOString(),
-                    deadline: new Date(deadlineMs).toISOString(),
-                    remainingMs: Math.max(0, deadlineMs - now),
-                    expired: now >= deadlineMs,
-                };
-            }
-            else if (completedById.size >= maxCompletedRounds && currentReviewContextHash) {
-                const grant = await this.findDocumentReviewRoundOverrideDecisionUnlocked(resolvedChangePath, stage, currentReviewContextHash, completedById.size + 1, ledger);
-                if (grant) {
-                    const deadlineMs = Date.parse(grant.selectedAt) + maxMinutes * 60000;
-                    overrideDispatchWindow = {
-                        decisionId: grant.decisionId,
-                        round: completedById.size + 1,
-                        selectedAt: grant.selectedAt,
-                        deadline: new Date(deadlineMs).toISOString(),
-                        remainingMs: Math.max(0, deadlineMs - now),
-                        expired: now >= deadlineMs,
-                    };
-                }
-            }
-            stages[stage] = {
-                stage,
-                completedRounds: completedById.size,
-                activeRound: activeDispatch ? Math.max(1, Number(documentReviewLedgerRecord(activeDispatch).round) || completedById.size + 1) : null,
-                elapsedMs,
-                tokenReservation,
-                tokenUsage: hasUsage ? tokenUsage : null,
-                cacheHits: events.filter(event => event.type === 'cache_reused').length,
-                continueWhileProgressing,
-                guardLimits: { maxCompletedRounds, maxMinutes, budgetTokens, noProgressLimit },
-                guardRemaining: {
-                    rounds: continueWhileProgressing ? null : Math.max(0, maxCompletedRounds - completedById.size),
-                    minutes: continueWhileProgressing ? null : Math.max(0, maxMinutes - elapsedMs / 60000),
-                    tokens: budgetTokens === null ? null : Math.max(0, budgetTokens - tokenUsage - tokenReservation),
-                },
-                overrideDispatchWindow,
-                currentDispatch: activeDispatch ? {
-                    id: activeDispatch.dispatchId,
-                    heartbeatDueAt: String(heartbeat?.payload.heartbeatDueAt || '') || null,
-                    leaseExpiresAt: String(heartbeat?.payload.leaseExpiresAt || '') || null,
-                } : null,
-                lastDecision: lastCompletion ? String(lastCompletion.payload.decision || '') || null : null,
-                noProgressCount: currentNoProgressCount,
-            };
-        }
-        return {
-            version: '1.0',
-            contractVersion: DOCUMENT_REVIEW_CONTRACT_VERSION,
-            ledgerPath: this.toChangeRelativePath(resolvedChangePath, ledgerPath),
-            stages,
-        };
-    }
-    async reviewDocumentUnlocked(changePath, options = {}) {
+    async runPlanningPreflightUnlocked(changePath, options = {}) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const feature = await this.readFeatureName(resolvedChangePath);
-        await this.ensureDocumentReviewLedgerUnlocked(resolvedChangePath);
-        await this.ingestReviewUsageSidecars(resolvedChangePath, feature);
-        const designReviewPath = this.getDocumentReviewArtifactPath(resolvedChangePath, 'design');
-        const designDecision = await this.readReviewDecision(designReviewPath);
+        const designDecision = await this.readReviewDecision(this.getDocumentReviewArtifactPath(resolvedChangePath, 'design'));
         const stage = options.stage || this.selectNextDocumentReviewStage(designDecision);
         if (stage === 'plan' && !APPROVED_REVIEW_DECISIONS.has(designDecision)) {
-            throw new Error(`Cannot dispatch implementation plan review before design document review is approved (current: ${designDecision || 'PENDING'}).`);
+            throw new Error(`Cannot run implementation plan preflight before design preflight is approved (current: ${designDecision || 'PENDING'}).`);
         }
         const target = this.getDocumentReviewTarget(stage);
-        const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
-        const documentStatus = await this.readBootstrapDocumentStatus(resolvedChangePath, target.documentFile);
-        if (!documentStatus.exists || documentStatus.readiness === 'missing' || documentStatus.readiness === 'empty') {
-            throw new Error(`Cannot dispatch ${target.label} until ${target.documentFile} exists and is non-empty.`);
+        const mechanicalPreflight = await this.runDocumentReviewMechanicalPreflight(resolvedChangePath, stage);
+        if (mechanicalPreflight.errors.length > 0) {
+            throw new Error(`Planning ${stage} preflight failed: ${mechanicalPreflight.errors.join('; ')}`);
         }
-        const documentContent = await this.fileService.readFile(path.join(resolvedChangePath, target.documentFile));
-        const documentHash = this.hashMeaningfulDocumentation(documentContent);
+        const documentPath = path.join(resolvedChangePath, target.documentFile);
+        const documentHash = this.hashMeaningfulDocumentation(await this.fileService.readFile(documentPath));
         const reviewContextHash = await this.computeDocumentReviewContextHash(resolvedChangePath, stage);
         const reviewArtifactPath = this.getDocumentReviewArtifactPath(resolvedChangePath, stage);
+        if (await this.fileService.exists(reviewArtifactPath) && !options.force) {
+            const existing = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            const existingId = String(existing.data?.review_dispatch_id || '').trim();
+            if (this.normalizeReviewRunDecision(existing.data?.decision) === 'APPROVED'
+                && String(existing.data?.document_hash || '') === documentHash
+                && String(existing.data?.review_context_hash || '') === reviewContextHash
+                && String(existing.data?.planning_contract_version || '') === PLANNING_CONTRACT_VERSION
+                && existingId) {
+                const existingRecordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_PREFLIGHTS_DIR, `${existingId}.json`);
+                if (await this.fileService.exists(existingRecordPath)) {
+                    return {
+                        changePath: resolvedChangePath,
+                        dispatch: await this.fileService.readJSON(existingRecordPath),
+                        projectSession: await this.readBootstrapProjectSessionSnapshot(projectRoot),
+                        warnings: [],
+                        reused: true,
+                        nextInstruction: stage === 'design'
+                            ? 'Design preflight remains current. Run the implementation plan preflight.'
+                            : 'Implementation plan preflight remains current. Derive or refresh the task graph.',
+                    };
+                }
+            }
+        }
         if (!(await this.fileService.exists(reviewArtifactPath))) {
             await this.writeLocalizedReportFile(resolvedChangePath, reviewArtifactPath, this.buildDocumentReviewArtifact(feature, target));
         }
         const now = new Date().toISOString();
+        const id = `preflight-${this.toFileSafeTimestamp(now)}-${stage}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
+        const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_PREFLIGHTS_DIR, `${id}.json`);
         const projectSession = await this.readBootstrapProjectSessionSnapshot(projectRoot);
-        const warnings = [...projectSession.warnings];
-        const recoveredDispatch = await this.recoverDocumentReviewDispatchProjectionUnlocked(resolvedChangePath, feature, stage, reviewContextHash, target);
-        if (recoveredDispatch) {
-            warnings.push(`${target.label} recovered its ledger-committed dispatch projection after an interrupted publish.`);
-            return {
-                changePath: resolvedChangePath,
-                dispatch: recoveredDispatch,
-                projectSession,
-                warnings,
-                reused: recoveredDispatch.mode === 'inline_preflight',
-                pendingReused: recoveredDispatch.mode === 'specialist',
-                nextInstruction: this.buildDocumentReviewNextInstruction(recoveredDispatch, target),
-            };
-        }
-        const reusableEvidence = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
-        if (reusableEvidence.ready) {
-            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-            const dispatchId = String(review.data?.review_dispatch_id || '').trim();
-            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
-            const record = await this.fileService.readJSON(recordPath);
-            warnings.push(`${target.label} already approves the current document hash; reused existing review ${record.id}.`);
-            await this.appendDocumentReviewRunMetric(resolvedChangePath, {
-                stage,
-                dispatchId: record.id,
-                cacheHit: true,
-                cacheSource: 'current',
-                durationMs: 0,
-            });
-            await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                type: 'cache_reused',
-                stage,
-                dispatchId: record.id,
-                payload: { source: 'current', reviewContextHash },
-            });
-            return {
-                changePath: resolvedChangePath,
-                dispatch: record,
-                projectSession,
-                warnings,
-                reused: true,
-                nextInstruction: stage === 'design'
-                    ? 'The current design review remains valid. Continue with the implementation plan review.'
-                    : 'The current implementation plan review remains valid. Continue with task graph and workspace readiness checks.',
-            };
-        }
-        const restoredFromCache = await this.restoreDocumentReviewCache(resolvedChangePath, stage, reviewContextHash, documentHash);
-        if (restoredFromCache) {
-            await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                type: 'cache_reused',
-                stage,
-                dispatchId: restoredFromCache.id,
-                payload: { source: 'immutable', reviewContextHash },
-            });
-            const restoredEvidence = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
-            if (restoredEvidence.ready) {
-                warnings.push(`${target.label} approval was restored from the immutable document-hash cache.`);
-                await this.appendDocumentReviewRunMetric(resolvedChangePath, {
-                    stage,
-                    dispatchId: restoredFromCache.id,
-                    cacheHit: true,
-                    cacheSource: 'immutable',
-                    durationMs: 0,
-                });
-                return {
-                    changePath: resolvedChangePath,
-                    dispatch: restoredFromCache,
-                    projectSession,
-                    warnings,
-                    reused: true,
-                    nextInstruction: stage === 'design'
-                        ? 'The cached design review remains valid. Continue with the implementation plan review.'
-                        : 'The cached implementation plan review remains valid. Continue with task graph and workspace readiness checks.',
-                };
-            }
-        }
-        const mechanicalPreflight = await this.runDocumentReviewMechanicalPreflight(resolvedChangePath, stage);
-        if (mechanicalPreflight.errors.length > 0) {
-            throw new Error(`Document review ${stage} mechanical preflight failed: ${mechanicalPreflight.errors.join('; ')}`);
-        }
-        warnings.push(...mechanicalPreflight.warnings.map(warning => `Document review preflight: ${warning}.`));
-        const riskSignals = await this.assessDocumentReviewRisk(resolvedChangePath, stage);
-        const mode = executionPolicy.documentReviewPolicy === 'adaptive' && riskSignals.length === 0
-            ? 'inline_preflight'
-            : 'specialist';
-        const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
-        const documentReviewTarget = this.normalizeWorkerToolTarget(loopControllerSession.target || 'generic');
-        const workerProfile = resolveWorkerProfileForTarget(buildReviewerWorkerProfile(target.reviewerRole, executionPolicy.modelProfiles), documentReviewTarget, executionPolicy.modelProfiles);
-        const runtimeAdapter = mode === 'specialist' && loopControllerSession.executionModel
-            ? this.runtimeAdapterService.resolve({
-                projectRoot,
-                target: documentReviewTarget,
-                capability: loopControllerSession.capability,
-                nativeHarness: loopControllerSession.nativeHarnessMetadata,
-                preference: 'native',
-                strict: true,
-                requiresIndependentWorker: true,
-                modelSelection: {
-                    requestedModel: workerProfile.requestedModel ?? workerProfile.model,
-                    configuredModel: workerProfile.configuredModel ?? workerProfile.model,
-                    configurationSource: workerProfile.modelConfigurationSource || (workerProfile.model ? 'target' : 'harness-default'),
-                },
-                cacheFilePath: path.join(resolvedChangePath, 'artifacts', 'agents', RUNTIME_ADAPTER_CACHE_FILE),
-            })
-            : null;
-        if (runtimeAdapter?.blocked || (runtimeAdapter && !runtimeAdapter.selected)) {
-            const reasons = runtimeAdapter.candidates
-                .filter(candidate => !candidate.available)
-                .map(candidate => `${candidate.id}: ${candidate.reason}`)
-                .join('; ');
-            warnings.push(`No automated independent runtime adapter is available for ${target.label}; use an independent human reviewer. ${reasons}`);
-        }
-        if (mode === 'specialist' && !options.force) {
-            const pendingReview = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-            const pendingDispatchId = String(pendingReview.data?.review_dispatch_id || '').trim();
-            const pendingDecision = this.normalizeReviewRunDecision(pendingReview.data?.decision);
-            if (pendingDispatchId && this.toFileSafeId(pendingDispatchId) === pendingDispatchId && pendingDecision === 'PENDING') {
-                const pendingRecordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${pendingDispatchId}.json`);
-                if (await this.fileService.exists(pendingRecordPath)) {
-                    const pendingRecord = await this.fileService.readJSON(pendingRecordPath);
-                    const sameAdapter = (pendingRecord.runtimeAdapter?.selectedAdapterId || null) === (runtimeAdapter?.selectedAdapterId || null)
-                        && Boolean(pendingRecord.runtimeAdapter?.blocked) === Boolean(runtimeAdapter?.blocked);
-                    if (pendingRecord.id === pendingDispatchId
-                        && pendingRecord.stage === stage
-                        && pendingRecord.documentHash === documentHash
-                        && (!pendingRecord.reviewContextHash || pendingRecord.reviewContextHash === reviewContextHash)
-                        && pendingRecord.status === 'DISPATCHED'
-                        && sameAdapter) {
-                        await this.assertCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), pendingDispatchId);
-                        if (this.isDocumentReviewExecutorLeaseExpired(pendingRecord, new Date(now))) {
-                            await this.releaseDocumentReviewExecutorClaimUnlocked(resolvedChangePath, pendingRecord);
-                            warnings.push(`${target.label} reviewer lease expired; released its orphaned executor claim.`);
-                        }
-                        await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                            type: 'pending_reused',
-                            stage,
-                            dispatchId: pendingRecord.id,
-                            payload: { reviewContextHash },
-                        });
-                        warnings.push(`${target.label} already has a current pending dispatch; reused ${pendingDispatchId} instead of creating duplicate review work.`);
-                        return {
-                            changePath: resolvedChangePath,
-                            dispatch: pendingRecord,
-                            projectSession,
-                            warnings,
-                            reused: false,
-                            pendingReused: true,
-                            nextInstruction: this.buildDocumentReviewNextInstruction(pendingRecord, target),
-                        };
-                    }
-                }
-            }
-        }
-        if (mode === 'specialist' && workerProfile.modelSelectionSource === 'harness-default') {
-            warnings.push(`Document review model profile ${workerProfile.modelProfile} has no configured model; the harness default will be used.`);
-        }
-        const governance = await this.assertDocumentReviewDispatchGovernanceUnlocked(resolvedChangePath, stage, mode, reviewContextHash);
-        const convergence = await this.readDocumentReviewConvergenceContextUnlocked(resolvedChangePath, stage, documentContent);
-        const reviewId = `doc-review-${this.toFileSafeTimestamp(now)}-${stage}-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
-        const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
-        const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${reviewId}.md`);
         const record = {
-            id: reviewId,
+            id,
             stage,
-            reviewerRole: target.reviewerRole,
             projectSession,
-            status: mode === 'inline_preflight' ? 'COMPLETED_INLINE' : 'DISPATCHED',
+            status: 'COMPLETED_INLINE',
             assignedAt: now,
-            packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
+            packetPath: this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath),
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
-            documentPath: this.toChangeRelativePath(resolvedChangePath, path.join(resolvedChangePath, target.documentFile)),
+            documentPath: this.toChangeRelativePath(resolvedChangePath, documentPath),
             documentHash,
             reviewContextHash,
-            reviewContractVersion: DOCUMENT_REVIEW_CONTRACT_VERSION,
-            round: governance.round,
-            tokenReservation: mode === 'specialist' ? governance.tokenReservation : 0,
-            roundOverrideDecisionId: governance.roundOverrideDecisionId,
-            roundOverrideSelectedAt: governance.roundOverrideSelectedAt,
-            roundOverrideDispatchDeadline: governance.roundOverrideDispatchDeadline,
-            usage: null,
-            priorDispatchId: convergence.priorDispatchId,
-            priorFindings: convergence.priorFindings,
-            priorFindingIds: convergence.priorFindingIds,
-            boundedDocumentDiff: convergence.diff,
-            boundedDocumentDiffTruncated: convergence.diffTruncated,
+            reviewContractVersion: PLANNING_CONTRACT_VERSION,
             mechanicalPreflight,
-            resultSnapshotPath: null,
-            resultManifestHash: null,
             reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath),
-            documentReadiness: documentStatus.readiness,
-            mode,
-            policy: executionPolicy.documentReviewPolicy,
-            riskSignals,
-            workerProfile,
-            runtimeAdapter,
-            requiresExecutorProvenance: mode === 'specialist' && Boolean(runtimeAdapter?.selected),
-            requiresNativeExecutorProvenance: mode === 'specialist' && runtimeAdapter?.selected?.kind === 'native',
-            controllerSessionReportedAt: mode === 'specialist' && runtimeAdapter?.selected?.kind === 'native'
-                ? loopControllerSession.reportedAt
-                : null,
-            reviewerExecutorId: null,
-            reviewerClaimedAt: null,
-            reviewerHeartbeatAt: null,
-            reviewerLeaseExpiresAt: null,
-            heartbeatDueAt: null,
-            reviewerCompletedAt: null,
-            reviewerSucceeded: null,
+            documentReadiness: 'ready',
+            mode: 'inline_preflight',
+            reviewerCompletedAt: now,
+            reviewerSucceeded: true,
         };
-        const reviewDocument = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        reviewDocument.data = {
-            ...(reviewDocument.data || {}),
-            reviewer_role: target.reviewerRole,
-            review_dispatch_id: reviewId,
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+        review.data = {
+            ...(review.data || {}),
+            status: 'approved',
+            decision: 'APPROVED',
+            reviewer_role: 'deterministic_preflight',
+            review_dispatch_id: id,
             document_hash: documentHash,
             review_context_hash: reviewContextHash,
-            review_contract_version: DOCUMENT_REVIEW_CONTRACT_VERSION,
-            review_round: record.round,
-            review_policy: executionPolicy.documentReviewPolicy,
-            review_mode: mode,
-            runtime_adapter_id: record.runtimeAdapter?.selectedAdapterId || null,
-            controller_session_reported_at: record.controllerSessionReportedAt || null,
-            reviewer_executor_id: null,
-            reviewer_claimed_at: null,
-            reviewer_heartbeat_at: null,
-            reviewer_lease_expires_at: null,
-            heartbeat_due_at: null,
-            reviewer_completed_at: null,
-            reviewer_succeeded: null,
+            planning_contract_version: PLANNING_CONTRACT_VERSION,
+            reviewed_at: now,
         };
-        let reviewArtifactContent;
-        if (mode === 'inline_preflight') {
-            reviewDocument.data = {
-                ...(reviewDocument.data || {}),
-                status: 'reviewed',
-                decision: 'APPROVED',
-                reviewed_at: now,
-            };
-            const inlineFinding = [
-                reviewDocument.content.trimEnd(),
-                '',
-                '## Inline Preflight',
-                '',
-                '- Deterministic readiness checks passed.',
-                '- No configured high-risk document signals were detected.',
-                '- This approval used the adaptive low-risk path; any later API, security, migration, data, architecture, or scope signal must trigger specialist review.',
-                '',
-            ].join('\n');
-            reviewArtifactContent = (0, helpers_1.stringifyFrontmatter)(inlineFinding, reviewDocument.data);
-        }
-        else {
-            reviewDocument.data = {
-                ...(reviewDocument.data || {}),
-                status: 'pending',
-                decision: 'PENDING',
-                reviewed_at: null,
-            };
-            reviewArtifactContent = (0, helpers_1.stringifyFrontmatter)(reviewDocument.content, reviewDocument.data);
-        }
-        // The ledger is the commit point. Pointers and packets below are recoverable projections.
-        await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-            type: 'dispatch_created',
-            stage,
-            dispatchId: reviewId,
-            payload: { record: this.cloneJson(record) },
-        });
-        await this.fileService.writeFile(reviewArtifactPath, reviewArtifactContent);
-        if (mode === 'inline_preflight') {
-            await this.fileService.writeJSON(reviewArtifactPath.replace(/\.md$/i, '.findings.json'), {
-                version: '1.0',
-                findings: [],
-            });
-        }
-        else {
-            await this.fileService.remove(reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
-        }
+        const body = [
+            review.content.replace(/\n*## Inline Preflight[\s\S]*$/m, '').trimEnd(),
+            '',
+            '## Inline Preflight',
+            '',
+            '- Deterministic structure, readiness, required-decision, and ordering checks passed.',
+            '- Semantic planning quality is decided later by the single independent combined planning review.',
+            '',
+        ].join('\n');
         await this.fileService.writeJSON(recordPath, record);
-        await this.setCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), reviewId);
-        await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
-        await this.appendDocumentReviewRunMetric(resolvedChangePath, {
-            stage,
-            dispatchId: record.id,
-            cacheHit: false,
-            cacheSource: null,
-            durationMs: null,
-        });
-        if (mode === 'inline_preflight') {
-            const snapshot = await this.snapshotDocumentReviewResultUnlocked(resolvedChangePath, record);
-            record.resultSnapshotPath = snapshot.path;
-            record.resultManifestHash = snapshot.manifestHash;
-            await this.fileService.writeJSON(recordPath, record);
-            await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                type: 'inline_completed',
-                stage,
-                dispatchId: reviewId,
-                payload: {
-                    mode,
-                    decision: 'APPROVED',
-                    reviewContextHash,
-                    resultSnapshotPath: record.resultSnapshotPath,
-                    resultManifestHash: record.resultManifestHash,
-                },
-            });
-            await this.cacheDocumentReviewApproval(resolvedChangePath, record);
-        }
-        await this.recordExecutionMetric(resolvedChangePath, feature, [{
-                kind: 'review_packet',
-                id: reviewId,
-                taskId: null,
-                path: record.packetPath,
-                recordedAt: now,
-                durationMs: null,
-                capabilityTier: record.workerProfile.capabilityTier,
-                modelProfile: record.workerProfile.modelProfile,
-                model: record.workerProfile.model,
-                workflowStage: 'document_review',
-                usageExpected: mode === 'specialist',
-            }]);
+        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(body, review.data));
+        await this.fileService.remove(reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
+        await this.setCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), id);
         return {
             changePath: resolvedChangePath,
             dispatch: record,
             projectSession,
-            warnings,
+            warnings: mechanicalPreflight.warnings,
             reused: false,
-            pendingReused: false,
-            nextInstruction: this.buildDocumentReviewNextInstruction(record, target),
+            nextInstruction: stage === 'design'
+                ? 'Design preflight passed. Run the implementation plan preflight.'
+                : 'Implementation plan preflight passed. Derive or refresh the task graph, then let Loop issue one combined planning review.',
         };
-    }
-    buildDocumentReviewNextInstruction(record, target) {
-        if (record.mode === 'inline_preflight') {
-            return record.stage === 'design'
-                ? 'Adaptive design preflight approved the low-risk document. Run ospec execute doc-review [change-path] --stage plan.'
-                : 'Adaptive implementation plan preflight approved the low-risk document. Derive or refresh artifacts/agents/task-graph.json.';
-        }
-        if (record.requiresExecutorProvenance) {
-            return `Execute one fresh independent ${target.reviewerRole} with runtime adapter ${record.runtimeAdapter?.selectedAdapterId}, immediately run ospec execute doc-review [change-path] --stage ${record.stage} --claim-executor <executor-id>, wait for its review artifacts, then run ospec execute doc-review [change-path] --stage ${record.stage} --complete-executor <executor-id>.`;
-        }
-        return record.stage === 'design'
-            ? 'Hand the design review packet to an independent reviewer, then update artifacts/reviews/design-review.md. If approved, run ospec execute doc-review [change-path] --stage plan.'
-            : 'Hand the implementation plan review packet to an independent reviewer, then update artifacts/reviews/implementation-plan-review.md. If approved, derive or refresh artifacts/agents/task-graph.json.';
-    }
-    async claimDocumentReviewExecutor(changePath, stage, executorId) {
-        return this.withTaskGraphMutationLease(changePath, async () => {
-            const resolvedChangePath = path.resolve(changePath);
-            await this.ensureDocumentReviewLedgerUnlocked(resolvedChangePath);
-            const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
-            if (!record.requiresExecutorProvenance && !record.requiresNativeExecutorProvenance) {
-                throw new Error(`Document review ${record.id} does not require an executor claim.`);
-            }
-            if (record.requiresNativeExecutorProvenance) {
-                const session = await this.readLoopControllerSession(resolvedChangePath);
-                if (!session.current || session.reportedAt !== record.controllerSessionReportedAt) {
-                    throw new Error('Document review executor claim does not match the current IDE controller session.');
-                }
-            }
-            const normalizedExecutor = String(executorId || '').trim();
-            if (!normalizedExecutor)
-                throw new Error('Document review executor ID must be non-empty.');
-            const claimedAt = new Date();
-            if (record.reviewerExecutorId
-                && record.reviewerExecutorId !== normalizedExecutor
-                && this.isDocumentReviewExecutorLeaseExpired(record, claimedAt)) {
-                await this.releaseDocumentReviewExecutorClaimUnlocked(resolvedChangePath, record);
-            }
-            if (record.reviewerExecutorId && record.reviewerExecutorId !== normalizedExecutor) {
-                throw new Error(`Document review ${record.id} is already claimed by another executor.`);
-            }
-            if (record.requiresNativeExecutorProvenance && record.controllerSessionReportedAt) {
-                await this.extendDocumentReviewControllerSession(resolvedChangePath, record.controllerSessionReportedAt);
-            }
-            record.reviewerExecutorId = normalizedExecutor;
-            record.reviewerClaimedAt = record.reviewerClaimedAt || claimedAt.toISOString();
-            record.reviewerHeartbeatAt = claimedAt.toISOString();
-            record.reviewerLeaseExpiresAt = new Date(claimedAt.getTime() + DEFAULT_DOCUMENT_REVIEW_EXECUTOR_LEASE_MS).toISOString();
-            record.heartbeatDueAt = this.documentReviewHeartbeatDueAt(record);
-            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
-            await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
-            await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                type: 'executor_claimed',
-                stage,
-                dispatchId: record.id,
-                payload: {
-                    executorId: normalizedExecutor,
-                    claimedAt: record.reviewerClaimedAt,
-                    heartbeatAt: record.reviewerHeartbeatAt,
-                    leaseExpiresAt: record.reviewerLeaseExpiresAt,
-                    heartbeatDueAt: record.heartbeatDueAt,
-                },
-            });
-            return record;
-        });
-    }
-    async heartbeatDocumentReviewExecutor(changePath, stage, executorId) {
-        return this.withTaskGraphMutationLease(changePath, async () => {
-            const resolvedChangePath = path.resolve(changePath);
-            await this.ensureDocumentReviewLedgerUnlocked(resolvedChangePath);
-            const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
-            const currentLedger = await this.fileService.readJSON(this.getDocumentReviewLedgerPath(resolvedChangePath));
-            this.validateDocumentReviewLedger(currentLedger);
-            if (currentLedger.events.some(event => event.type === 'review_completed' && event.dispatchId === record.id)) {
-                return record;
-            }
-            const normalizedExecutor = String(executorId || '').trim();
-            const heartbeatAt = new Date();
-            if (this.isDocumentReviewExecutorLeaseExpired(record, heartbeatAt)) {
-                await this.releaseDocumentReviewExecutorClaimUnlocked(resolvedChangePath, record);
-                throw new Error(`Document review ${record.id} executor lease expired; claim it again before continuing.`);
-            }
-            if ((!record.requiresExecutorProvenance && !record.requiresNativeExecutorProvenance)
-                || !record.reviewerExecutorId
-                || record.reviewerExecutorId !== normalizedExecutor
-                || !record.reviewerClaimedAt
-                || record.reviewerCompletedAt) {
-                throw new Error(`Document review ${record.id} heartbeat does not match its active claimed executor.`);
-            }
-            if (record.requiresNativeExecutorProvenance && record.controllerSessionReportedAt) {
-                await this.extendDocumentReviewControllerSession(resolvedChangePath, record.controllerSessionReportedAt);
-            }
-            record.reviewerHeartbeatAt = heartbeatAt.toISOString();
-            record.reviewerLeaseExpiresAt = new Date(heartbeatAt.getTime() + DEFAULT_DOCUMENT_REVIEW_EXECUTOR_LEASE_MS).toISOString();
-            record.heartbeatDueAt = this.documentReviewHeartbeatDueAt(record);
-            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
-            await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
-            await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                type: 'executor_heartbeat',
-                stage,
-                dispatchId: record.id,
-                payload: {
-                    executorId: normalizedExecutor,
-                    heartbeatAt: record.reviewerHeartbeatAt,
-                    leaseExpiresAt: record.reviewerLeaseExpiresAt,
-                    heartbeatDueAt: record.heartbeatDueAt,
-                },
-            });
-            return record;
-        });
-    }
-    async completeDocumentReviewExecutor(changePath, stage, executorId, options = {}) {
-        return this.withTaskGraphMutationLease(changePath, async () => {
-            const resolvedChangePath = path.resolve(changePath);
-            await this.ensureDocumentReviewLedgerUnlocked(resolvedChangePath);
-            const record = await this.readCurrentDocumentReviewDispatch(resolvedChangePath, stage);
-            const completionLedger = await this.fileService.readJSON(this.getDocumentReviewLedgerPath(resolvedChangePath));
-            this.validateDocumentReviewLedger(completionLedger);
-            if (completionLedger.events.some(event => event.type === 'review_completed' && event.dispatchId === record.id)) {
-                return record;
-            }
-            const normalizedExecutor = String(executorId || '').trim();
-            const completedAtDate = new Date();
-            if (this.isDocumentReviewExecutorLeaseExpired(record, completedAtDate)) {
-                await this.releaseDocumentReviewExecutorClaimUnlocked(resolvedChangePath, record);
-                throw new Error(`Document review ${record.id} executor lease expired; claim it again before completion.`);
-            }
-            if ((!record.requiresExecutorProvenance && !record.requiresNativeExecutorProvenance)
-                || !record.reviewerExecutorId
-                || record.reviewerExecutorId !== normalizedExecutor
-                || !record.reviewerClaimedAt) {
-                throw new Error(`Document review ${record.id} completion does not match its claimed executor.`);
-            }
-            const completedAt = record.reviewerSucceeded === true && record.reviewerCompletedAt
-                ? record.reviewerCompletedAt
-                : completedAtDate.toISOString();
-            if (record.requiresNativeExecutorProvenance && record.controllerSessionReportedAt) {
-                await this.extendDocumentReviewControllerSession(resolvedChangePath, record.controllerSessionReportedAt);
-            }
-            await this.validateDocumentReviewCompletionArtifact(resolvedChangePath, record, completedAt);
-            const usage = options.usageFile
-                ? await this.readExecutionUsageFile(options.usageFile)
-                : record.usage || null;
-            record.reviewerCompletedAt = completedAt;
-            record.reviewerHeartbeatAt = completedAt;
-            record.reviewerSucceeded = true;
-            record.heartbeatDueAt = null;
-            record.usage = usage;
-            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
-            await this.updateDocumentReviewExecutorProvenance(resolvedChangePath, record);
-            const snapshot = await this.snapshotDocumentReviewResultUnlocked(resolvedChangePath, record);
-            record.resultSnapshotPath = snapshot.path;
-            record.resultManifestHash = snapshot.manifestHash;
-            await this.fileService.writeJSON(path.resolve(resolvedChangePath, record.recordPath), record);
-            await this.cacheDocumentReviewApproval(resolvedChangePath, record);
-            await this.appendDocumentReviewRunMetric(resolvedChangePath, {
-                stage,
-                dispatchId: record.id,
-                cacheHit: false,
-                cacheSource: null,
-                durationMs: Math.max(0, Date.parse(completedAt) - Date.parse(record.assignedAt)),
-            });
-            if (usage) {
-                const feature = await this.readFeatureName(resolvedChangePath);
-                await this.recordExecutionMetric(resolvedChangePath, feature, [{
-                        kind: 'usage',
-                        id: record.id,
-                        taskId: null,
-                        path: null,
-                        recordedAt: completedAt,
-                        durationMs: usage.elapsedMs,
-                        usage,
-                        capabilityTier: record.workerProfile.capabilityTier,
-                        modelProfile: record.workerProfile.modelProfile,
-                        model: record.workerProfile.model,
-                        workflowStage: 'document_review',
-                    }]);
-            }
-            const reviewArtifact = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(path.resolve(resolvedChangePath, record.reviewArtifactPath)));
-            const findingsPath = path.resolve(resolvedChangePath, record.reviewArtifactPath).replace(/\.md$/i, '.findings.json');
-            const findingsContent = await this.fileService.readFile(findingsPath);
-            const findingsSidecar = unknownRecord(JSON.parse(findingsContent));
-            const decision = this.normalizeReviewRunDecision(reviewArtifact.data?.decision);
-            const priorLedger = await this.fileService.readJSON(this.getDocumentReviewLedgerPath(resolvedChangePath));
-            this.validateDocumentReviewLedger(priorLedger);
-            const priorCompletion = [...priorLedger.events]
-                .reverse()
-                .find(event => event.stage === stage && event.type === 'review_completed');
-            const previousNoProgress = Math.max(0, Number(priorCompletion?.payload.noProgressCount) || 0);
-            const resolutionStatuses = Array.isArray(findingsSidecar?.prior_finding_resolutions)
-                ? findingsSidecar.prior_finding_resolutions.map(resolution => String(unknownRecord(resolution).status || '').trim().toLowerCase())
-                : [];
-            const hasProgressResolution = resolutionStatuses.some((status) => status === 'resolved' || status === 'superseded');
-            const allPersist = resolutionStatuses.length > 0
-                && resolutionStatuses.every((status) => ['persists', 'persisting', 'open', 'unresolved'].includes(status));
-            const unchangedNeedsChanges = decision === 'NEEDS_CHANGES'
-                && record.boundedDocumentDiff === '(no meaningful document change)';
-            const noProgressCount = APPROVED_REVIEW_DECISIONS.has(decision) || hasProgressResolution
-                ? 0
-                : allPersist || unchangedNeedsChanges
-                    ? previousNoProgress + 1
-                    : 0;
-            await this.appendDocumentReviewLedgerEventUnlocked(resolvedChangePath, {
-                type: 'review_completed',
-                stage,
-                dispatchId: record.id,
-                payload: {
-                    mode: record.mode,
-                    round: record.round || 1,
-                    decision,
-                    reviewContextHash: record.reviewContextHash || record.documentHash,
-                    documentHash: record.documentHash,
-                    findingsHash: (0, crypto_1.createHash)('sha256').update(findingsContent, 'utf8').digest('hex'),
-                    resultSnapshotPath: record.resultSnapshotPath,
-                    resultManifestHash: record.resultManifestHash,
-                    usage: usage ? this.cloneJson(usage) : null,
-                    priorFindingResolutions: this.cloneJson(findingsSidecar?.prior_finding_resolutions || []),
-                    noProgressCount,
-                    record: this.cloneJson(record),
-                },
-            });
-            return record;
-        });
-    }
-    documentReviewExecutorLeaseExpiresAt(record) {
-        const explicit = Date.parse(String(record.reviewerLeaseExpiresAt || ''));
-        if (Number.isFinite(explicit))
-            return explicit;
-        const heartbeat = Date.parse(String(record.reviewerHeartbeatAt || record.reviewerClaimedAt || ''));
-        return Number.isFinite(heartbeat)
-            ? heartbeat + DEFAULT_DOCUMENT_REVIEW_EXECUTOR_LEASE_MS
-            : Number.NaN;
-    }
-    isDocumentReviewExecutorLeaseExpired(record, now) {
-        if (!record.reviewerExecutorId || record.reviewerCompletedAt)
-            return false;
-        const expiresAt = this.documentReviewExecutorLeaseExpiresAt(record);
-        return !Number.isFinite(expiresAt) || expiresAt <= now.getTime();
-    }
-    documentReviewHeartbeatDueAt(record) {
-        const heartbeatAt = Date.parse(String(record.reviewerHeartbeatAt || record.reviewerClaimedAt || ''));
-        const expiresAt = this.documentReviewExecutorLeaseExpiresAt(record);
-        if (!Number.isFinite(heartbeatAt) || !Number.isFinite(expiresAt) || expiresAt <= heartbeatAt)
-            return null;
-        return new Date(heartbeatAt + Math.floor((expiresAt - heartbeatAt) / 2)).toISOString();
-    }
-    async releaseDocumentReviewExecutorClaimUnlocked(changePath, record) {
-        record.reviewerExecutorId = null;
-        record.reviewerClaimedAt = null;
-        record.reviewerHeartbeatAt = null;
-        record.reviewerLeaseExpiresAt = null;
-        record.heartbeatDueAt = null;
-        record.reviewerCompletedAt = null;
-        record.reviewerSucceeded = null;
-        await this.fileService.writeJSON(path.resolve(changePath, record.recordPath), record);
-        await this.updateDocumentReviewExecutorProvenance(changePath, record);
-        await this.appendDocumentReviewLedgerEventUnlocked(changePath, {
-            type: 'executor_claim_released',
-            stage: record.stage,
-            dispatchId: record.id,
-            payload: { reason: 'expired_or_replaced' },
-        });
-    }
-    async readCurrentDocumentReviewDispatch(changePath, stage) {
-        const reviewArtifactPath = this.getDocumentReviewArtifactPath(changePath, stage);
-        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        const dispatchId = String(review.data?.review_dispatch_id || '').trim();
-        if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId) {
-            throw new Error(`Document review ${stage} has no valid dispatch to claim.`);
-        }
-        const recordPath = path.join(changePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
-        const record = await this.fileService.readJSON(recordPath);
-        if (record.id !== dispatchId || record.stage !== stage || record.mode !== 'specialist') {
-            throw new Error(`Document review ${stage} dispatch provenance is invalid.`);
-        }
-        await this.assertCurrentReviewDispatch(changePath, this.documentReviewScopeKey(stage), dispatchId);
-        return record;
-    }
-    async updateDocumentReviewExecutorProvenance(changePath, record) {
-        await this.assertCurrentReviewDispatch(changePath, this.documentReviewScopeKey(record.stage), record.id);
-        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
-        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        if (String(review.data?.review_dispatch_id || '') !== record.id) {
-            throw new Error(`Document review ${record.id} is stale because its artifact no longer names the current dispatch.`);
-        }
-        review.data = {
-            ...(review.data || {}),
-            runtime_adapter_id: record.runtimeAdapter?.selectedAdapterId || null,
-            controller_session_reported_at: record.controllerSessionReportedAt || null,
-            reviewer_executor_id: record.reviewerExecutorId || null,
-            reviewer_claimed_at: record.reviewerClaimedAt || null,
-            reviewer_heartbeat_at: record.reviewerHeartbeatAt || null,
-            reviewer_lease_expires_at: record.reviewerLeaseExpiresAt || null,
-            heartbeat_due_at: record.heartbeatDueAt || null,
-            reviewer_completed_at: record.reviewerCompletedAt || null,
-            reviewer_succeeded: record.reviewerSucceeded,
-        };
-        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, review.data));
-    }
-    async extendDocumentReviewControllerSession(changePath, expectedReportedAt) {
-        const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
-        const config = await this.fileService.readJSON(configPath);
-        const capability = config?.capability;
-        const now = new Date();
-        if (config?.executionModel !== 'controller'
-            || capability?.controllerAvailable !== true
-            || capability?.interactive !== true
-            || capability?.nativeSubagentCapability !== 'supported'
-            || String(capability?.target || '') !== String(config?.target || '')
-            || String(capability?.reportedAt || '') !== expectedReportedAt
-            || !Number.isFinite(Date.parse(String(capability?.reportedAt || '')))
-            || Date.parse(String(capability.reportedAt)) > now.getTime()
-            || !Number.isFinite(Date.parse(String(capability?.expiresAt || '')))
-            || Date.parse(String(capability.expiresAt)) <= now.getTime()) {
-            throw new Error('Document review does not match a current IDE controller session.');
-        }
-        capability.expiresAt = new Date(now.getTime() + CapabilityProbeService_1.DEFAULT_CAPABILITY_SESSION_TTL_MS).toISOString();
-        await this.fileService.writeJSON(configPath, config);
-    }
-    async validateDocumentReviewCompletionArtifact(changePath, record, completedAt) {
-        const documentPath = path.resolve(changePath, record.documentPath);
-        const currentHash = this.hashMeaningfulDocumentation(await this.fileService.readFile(documentPath));
-        if (currentHash !== record.documentHash) {
-            throw new Error(`Document review ${record.id} cannot complete because the reviewed document changed.`);
-        }
-        if (record.reviewContextHash) {
-            const currentContextHash = await this.computeDocumentReviewContextHash(changePath, record.stage);
-            if (currentContextHash !== record.reviewContextHash) {
-                throw new Error(`Document review ${record.id} cannot complete because its authoritative review context changed.`);
-            }
-        }
-        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
-        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        if (String(review.data?.review_dispatch_id || '') !== record.id) {
-            throw new Error(`Document review ${record.id} cannot complete because its artifact names another dispatch.`);
-        }
-        const decision = this.normalizeReviewRunDecision(review.data?.decision);
-        if (decision === 'PENDING') {
-            throw new Error(`Document review ${record.id} cannot complete while its decision is PENDING.`);
-        }
-        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
-        if (!(await this.fileService.exists(findingsPath))) {
-            throw new Error(`Document review ${record.id} structured findings are missing.`);
-        }
-        const findings = await this.fileService.readJSON(findingsPath);
-        if (!Array.isArray(findings.findings)) {
-            throw new Error(`Document review ${record.id} structured findings are invalid.`);
-        }
-        this.validateStructuredFindingIds(findings.findings, `Document review ${record.id}`);
-        if ((record.round || 1) > 1) {
-            if (!Array.isArray(findings.prior_finding_resolutions)) {
-                throw new Error(`Document review ${record.id} round ${record.round} structured findings must include prior_finding_resolutions.`);
-            }
-            const priorIds = record.priorFindingIds || [];
-            const seenIds = new Set();
-            const allowedStatuses = new Set(['resolved', 'persists', 'superseded']);
-            for (const rawResolution of findings.prior_finding_resolutions) {
-                const resolution = unknownRecord(rawResolution);
-                const findingId = String(resolution.finding_id || resolution.id || '').trim();
-                const status = String(resolution.status || '').trim().toLowerCase();
-                const evidence = String(resolution.evidence || '').trim();
-                if (!findingId || !priorIds.includes(findingId)) {
-                    throw new Error(`Document review ${record.id} prior_finding_resolutions contain an unknown finding ID (${findingId || '(missing)'}).`);
-                }
-                if (seenIds.has(findingId)) {
-                    throw new Error(`Document review ${record.id} prior_finding_resolutions contain duplicate finding ID ${findingId}.`);
-                }
-                if (!allowedStatuses.has(status)) {
-                    throw new Error(`Document review ${record.id} prior_finding_resolutions status for ${findingId} must be resolved, persists, or superseded.`);
-                }
-                if (!evidence) {
-                    throw new Error(`Document review ${record.id} prior_finding_resolutions evidence for ${findingId} must be non-empty.`);
-                }
-                seenIds.add(findingId);
-            }
-            const missing = priorIds.filter(id => !seenIds.has(id));
-            if (missing.length > 0) {
-                throw new Error(`Document review ${record.id} prior_finding_resolutions do not cover: ${missing.join(', ')}.`);
-            }
-        }
-        review.data = {
-            ...(review.data || {}),
-            status: 'reviewed',
-            reviewed_at: completedAt,
-        };
-        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(review.content, review.data));
-    }
-    getDocumentReviewCachePaths(changePath, stage, documentHash) {
-        const base = path.join(changePath, 'artifacts', 'reviews', DOCUMENT_REVIEW_CACHE_DIR, stage, documentHash);
-        return { reviewPath: `${base}.md`, findingsPath: `${base}.findings.json` };
     }
     getTaskReviewCachePaths(changePath, taskId, reviewContextHash) {
         const base = path.join(changePath, 'artifacts', 'reviews', 'cache', 'task', this.toFileSafeId(taskId), reviewContextHash);
@@ -4545,91 +4132,6 @@ class TaskGraphExecutionService {
         if (!(await this.fileService.exists(cache.findingsPath)))
             await this.fileService.copy(findingsPath, cache.findingsPath);
     }
-    async cacheDocumentReviewApproval(changePath, record) {
-        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
-        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
-        if (!(await this.fileService.exists(reviewArtifactPath)) || !(await this.fileService.exists(findingsPath)))
-            return;
-        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        if (!APPROVED_REVIEW_DECISIONS.has(this.normalizeReviewRunDecision(review.data?.decision)))
-            return;
-        const cache = this.getDocumentReviewCachePaths(changePath, record.stage, record.reviewContextHash || record.documentHash);
-        if (!(await this.fileService.exists(cache.reviewPath))) {
-            await this.fileService.copy(reviewArtifactPath, cache.reviewPath);
-        }
-        if (!(await this.fileService.exists(cache.findingsPath))) {
-            await this.fileService.copy(findingsPath, cache.findingsPath);
-        }
-    }
-    async restoreDocumentReviewCache(changePath, stage, reviewContextHash, documentHash) {
-        const cache = this.getDocumentReviewCachePaths(changePath, stage, reviewContextHash);
-        if (!(await this.fileService.exists(cache.reviewPath)) || !(await this.fileService.exists(cache.findingsPath)))
-            return null;
-        const cachedReview = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(cache.reviewPath));
-        const dispatchId = String(cachedReview.data?.review_dispatch_id || '').trim();
-        if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId) {
-            throw new Error(`Document review ${stage} immutable cache has invalid dispatch provenance.`);
-        }
-        const recordPath = path.join(changePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
-        if (!(await this.fileService.exists(recordPath))) {
-            throw new Error(`Document review ${stage} immutable cache dispatch record is missing.`);
-        }
-        const record = await this.fileService.readJSON(recordPath);
-        if (record.id !== dispatchId
-            || record.stage !== stage
-            || record.documentHash !== documentHash
-            || record.reviewContextHash !== reviewContextHash
-            || String(cachedReview.data?.review_context_hash || '') !== reviewContextHash
-            || !APPROVED_REVIEW_DECISIONS.has(this.normalizeReviewRunDecision(cachedReview.data?.decision))) {
-            throw new Error(`Document review ${stage} immutable cache conflicts with its approved context.`);
-        }
-        const cachedFindings = await this.fileService.readJSON(cache.findingsPath);
-        if (!Array.isArray(cachedFindings?.findings)) {
-            throw new Error(`Document review ${stage} immutable cache findings are invalid.`);
-        }
-        const reviewArtifactPath = this.getDocumentReviewArtifactPath(changePath, stage);
-        await this.fileService.copy(cache.reviewPath, reviewArtifactPath);
-        await this.fileService.copy(cache.findingsPath, reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
-        await this.setCurrentReviewDispatch(changePath, this.documentReviewScopeKey(stage), dispatchId);
-        return record;
-    }
-    async appendDocumentReviewRunMetric(changePath, input) {
-        const runLogPath = path.join(changePath, 'artifacts', 'loop', 'run-log.jsonl');
-        if (!(await this.fileService.exists(path.dirname(runLogPath))))
-            return;
-        const entry = {
-            event: 'document_review',
-            ts: new Date().toISOString(),
-            iteration: 0,
-            trigger: 'document-review',
-            tokensEst: null,
-            exitCode: null,
-            verifyPassed: null,
-            summary: input.cacheHit
-                ? `Document review ${input.stage} reused from ${input.cacheSource} cache.`
-                : input.durationMs === null
-                    ? `Document review ${input.stage} dispatched.`
-                    : `Document review ${input.stage} completed.`,
-            costToDate: null,
-            actionId: input.dispatchId,
-            actionCount: input.durationMs === null && !input.cacheHit ? 1 : 0,
-            dispatchCount: input.durationMs === null && !input.cacheHit ? 1 : 0,
-            durationMs: input.durationMs,
-            reviewCacheHit: input.cacheHit,
-            reviewCacheSource: input.cacheSource,
-        };
-        const line = `${JSON.stringify(entry)}\n`;
-        const append = this.fileService.appendFile;
-        if (append) {
-            await append.call(this.fileService, runLogPath, line);
-            return;
-        }
-        const current = await this.fileService.exists(runLogPath) ? await this.fileService.readFile(runLogPath) : '';
-        await this.fileService.writeFile(runLogPath, `${current}${current && !current.endsWith('\n') ? '\n' : ''}${line}`);
-    }
-    getDocumentReviewLedgerPath(changePath) {
-        return path.join(changePath, 'artifacts', 'agents', DOCUMENT_REVIEW_LEDGER_FILE);
-    }
     canonicalJson(value) {
         if (value === null || typeof value !== 'object')
             return JSON.stringify(value);
@@ -4641,262 +4143,6 @@ class TaskGraphExecutionService {
             .map(([key, item]) => `${JSON.stringify(key)}:${this.canonicalJson(item)}`)
             .join(',')}}`;
     }
-    cloneJson(value) {
-        return JSON.parse(JSON.stringify(value));
-    }
-    documentReviewLedgerEventHash(event) {
-        return (0, crypto_1.createHash)('sha256').update(this.canonicalJson(event), 'utf8').digest('hex');
-    }
-    validateDocumentReviewLedger(ledger) {
-        if (!ledger
-            || ledger.version !== '1.0'
-            || ledger.contractVersion !== DOCUMENT_REVIEW_CONTRACT_VERSION
-            || !Array.isArray(ledger.events)) {
-            throw new Error('Document review ledger is invalid.');
-        }
-        let previousHash = null;
-        for (let index = 0; index < ledger.events.length; index += 1) {
-            const event = ledger.events[index];
-            const expectedBase = {
-                sequence: index + 1,
-                type: event.type,
-                at: event.at,
-                stage: event.stage,
-                dispatchId: event.dispatchId,
-                previousHash,
-                payload: event.payload,
-            };
-            const expectedHash = this.documentReviewLedgerEventHash(expectedBase);
-            if (event.sequence !== index + 1
-                || event.previousHash !== previousHash
-                || event.hash !== expectedHash) {
-                throw new Error(`Document review ledger hash chain is invalid at event ${index + 1}.`);
-            }
-            previousHash = event.hash;
-        }
-    }
-    async ensureDocumentReviewLedgerUnlocked(changePath) {
-        const ledgerPath = this.getDocumentReviewLedgerPath(changePath);
-        const now = new Date().toISOString();
-        let ledger;
-        if (await this.fileService.exists(ledgerPath)) {
-            ledger = await this.fileService.readJSON(ledgerPath);
-            this.validateDocumentReviewLedger(ledger);
-        }
-        else {
-            ledger = {
-                version: '1.0',
-                contractVersion: DOCUMENT_REVIEW_CONTRACT_VERSION,
-                createdAt: now,
-                updatedAt: now,
-                events: [],
-            };
-        }
-        const knownDispatches = new Set(ledger.events.map(event => event.dispatchId));
-        const dispatchDirectory = path.join(changePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR);
-        if (await this.fileService.exists(dispatchDirectory)) {
-            const entries = (await fs_1.promises.readdir(dispatchDirectory, { withFileTypes: true }))
-                .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
-                .sort((left, right) => left.name.localeCompare(right.name));
-            for (const entry of entries) {
-                const record = await this.fileService.readJSON(path.join(dispatchDirectory, entry.name));
-                if (!record?.id)
-                    throw new Error(`Legacy document review dispatch record ${entry.name} has no durable ID.`);
-                if (`${record.id}.json` !== entry.name
-                    || (record.stage !== 'design' && record.stage !== 'plan')
-                    || this.toFileSafeId(record.id) !== record.id) {
-                    throw new Error(`Legacy document review dispatch record ${entry.name} conflicts with its durable identity.`);
-                }
-                const recordEvents = ledger.events.filter(event => event.dispatchId === record.id);
-                const hasImportedState = recordEvents.some(event => event.type === 'legacy_import');
-                const hasClaimState = recordEvents.some(event => event.type === 'executor_claimed');
-                const hasCompletionState = recordEvents.some(event => event.type === 'review_completed' || event.type === 'inline_completed');
-                const needsInitialImport = !knownDispatches.has(record.id);
-                const needsCrashRecoveryImport = !hasImportedState && ((Boolean(record.reviewerExecutorId) && !hasClaimState)
-                    || (Boolean(record.reviewerCompletedAt) && !hasCompletionState));
-                if (!needsInitialImport && !needsCrashRecoveryImport)
-                    continue;
-                const usagePath = path.join(changePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${record.id}.json`);
-                let usageSidecar = null;
-                if (await this.fileService.exists(usagePath)) {
-                    try {
-                        usageSidecar = await this.fileService.readJSON(usagePath);
-                    }
-                    catch {
-                        usageSidecar = { invalid: true, path: this.toChangeRelativePath(changePath, usagePath) };
-                    }
-                }
-                ledger = this.appendDocumentReviewLedgerEvent(ledger, {
-                    type: 'legacy_import',
-                    stage: record.stage,
-                    dispatchId: record.id,
-                    payload: {
-                        record: this.cloneJson(record),
-                        claim: {
-                            executorId: record.reviewerExecutorId || null,
-                            claimedAt: record.reviewerClaimedAt || null,
-                            heartbeatAt: record.reviewerHeartbeatAt || null,
-                            leaseExpiresAt: record.reviewerLeaseExpiresAt || null,
-                        },
-                        completion: {
-                            completedAt: record.reviewerCompletedAt || null,
-                            succeeded: record.reviewerSucceeded ?? null,
-                            resultSnapshotPath: record.resultSnapshotPath || null,
-                        },
-                        usage: record.usage || usageSidecar,
-                        recovery: needsCrashRecoveryImport,
-                    },
-                    at: record.assignedAt || now,
-                });
-                knownDispatches.add(record.id);
-            }
-        }
-        const currentIndexPath = this.getCurrentReviewDispatchIndexPath(changePath);
-        if (await this.fileService.exists(currentIndexPath)) {
-            const currentIndex = await this.fileService.readJSON(currentIndexPath);
-            for (const stage of ['design', 'plan']) {
-                const dispatchId = String(currentIndex.dispatches?.[this.documentReviewScopeKey(stage)] || '').trim();
-                if (!dispatchId)
-                    continue;
-                if (!knownDispatches.has(dispatchId)) {
-                    throw new Error(`Current document review pointer ${stage}=${dispatchId} has no ledger-backed dispatch record.`);
-                }
-                const artifactPath = this.getDocumentReviewArtifactPath(changePath, stage);
-                if (await this.fileService.exists(artifactPath)) {
-                    const artifact = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(artifactPath));
-                    const artifactDispatchId = String(artifact.data?.review_dispatch_id || '').trim();
-                    if (artifactDispatchId && artifactDispatchId !== dispatchId) {
-                        const ledgerAuthority = [...ledger.events].reverse().find(event => event.stage === stage
-                            && (event.type === 'dispatch_created' || event.type === 'cache_reused'));
-                        if (ledgerAuthority?.dispatchId !== artifactDispatchId) {
-                            throw new Error(`Current document review pointer ${stage}=${dispatchId} conflicts with artifact dispatch ${artifactDispatchId}.`);
-                        }
-                    }
-                }
-            }
-        }
-        ledger.contractVersion = ledger.contractVersion || DOCUMENT_REVIEW_CONTRACT_VERSION;
-        ledger.updatedAt = now;
-        await this.fileService.writeJSON(ledgerPath, ledger);
-        return ledger;
-    }
-    appendDocumentReviewLedgerEvent(ledger, input) {
-        this.validateDocumentReviewLedger(ledger);
-        const previousHash = ledger.events.at(-1)?.hash || null;
-        const base = {
-            sequence: ledger.events.length + 1,
-            type: input.type,
-            at: input.at || new Date().toISOString(),
-            stage: input.stage,
-            dispatchId: input.dispatchId,
-            previousHash,
-            payload: this.cloneJson(input.payload),
-        };
-        ledger.events.push({ ...base, hash: this.documentReviewLedgerEventHash(base) });
-        ledger.updatedAt = base.at;
-        return ledger;
-    }
-    async appendDocumentReviewLedgerEventUnlocked(changePath, input) {
-        const ledgerPath = this.getDocumentReviewLedgerPath(changePath);
-        const ledger = await this.fileService.readJSON(ledgerPath);
-        this.validateDocumentReviewLedger(ledger);
-        this.appendDocumentReviewLedgerEvent(ledger, input);
-        await this.fileService.writeJSON(ledgerPath, ledger);
-    }
-    async recoverDocumentReviewDispatchProjectionUnlocked(changePath, feature, stage, reviewContextHash, target) {
-        const ledger = await this.fileService.readJSON(this.getDocumentReviewLedgerPath(changePath));
-        this.validateDocumentReviewLedger(ledger);
-        const dispatchEvent = [...ledger.events].reverse().find(event => event.stage === stage
-            && event.type === 'dispatch_created'
-            && String(documentReviewLedgerRecord(event).reviewContextHash || '') === reviewContextHash);
-        if (!dispatchEvent)
-            return null;
-        const terminal = ledger.events.some(event => event.dispatchId === dispatchEvent.dispatchId
-            && (event.type === 'review_completed' || event.type === 'inline_completed'));
-        if (terminal)
-            return null;
-        const record = this.cloneJson((dispatchEvent.payload.record || null));
-        if (!record || record.id !== dispatchEvent.dispatchId || record.stage !== stage) {
-            throw new Error(`Document review ledger dispatch ${dispatchEvent.dispatchId} has an invalid recovery record.`);
-        }
-        const recordPath = path.resolve(changePath, record.recordPath);
-        const packetPath = path.resolve(changePath, record.packetPath);
-        const reviewArtifactPath = path.resolve(changePath, record.reviewArtifactPath);
-        let published = await this.fileService.exists(recordPath) && await this.fileService.exists(packetPath);
-        if (published) {
-            try {
-                const existing = await this.fileService.readJSON(recordPath);
-                const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-                const indexPath = this.getCurrentReviewDispatchIndexPath(changePath);
-                const index = await this.fileService.exists(indexPath)
-                    ? await this.fileService.readJSON(indexPath)
-                    : null;
-                published = existing.id === record.id
-                    && String(review.data?.review_dispatch_id || '') === record.id
-                    && index?.dispatches?.[this.documentReviewScopeKey(stage)] === record.id;
-            }
-            catch {
-                published = false;
-            }
-        }
-        if (published)
-            return null;
-        const artifact = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        artifact.data = {
-            ...(artifact.data || {}),
-            reviewer_role: record.reviewerRole,
-            review_dispatch_id: record.id,
-            document_hash: record.documentHash,
-            review_context_hash: record.reviewContextHash,
-            review_contract_version: record.reviewContractVersion,
-            review_round: record.round,
-            review_policy: record.policy,
-            review_mode: record.mode,
-            runtime_adapter_id: record.runtimeAdapter?.selectedAdapterId || null,
-            controller_session_reported_at: record.controllerSessionReportedAt || null,
-            reviewer_executor_id: null,
-            reviewer_claimed_at: null,
-            reviewer_heartbeat_at: null,
-            reviewer_lease_expires_at: null,
-            heartbeat_due_at: null,
-            reviewer_completed_at: null,
-            reviewer_succeeded: null,
-            status: record.mode === 'inline_preflight' ? 'reviewed' : 'pending',
-            decision: record.mode === 'inline_preflight' ? 'APPROVED' : 'PENDING',
-            reviewed_at: record.mode === 'inline_preflight' ? dispatchEvent.at : null,
-        };
-        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(artifact.content, artifact.data));
-        if (record.mode === 'inline_preflight') {
-            await this.fileService.writeJSON(reviewArtifactPath.replace(/\.md$/i, '.findings.json'), { version: '1.0', findings: [] });
-        }
-        else {
-            await this.fileService.remove(reviewArtifactPath.replace(/\.md$/i, '.findings.json'));
-        }
-        await this.fileService.writeJSON(recordPath, record);
-        await this.setCurrentReviewDispatch(changePath, this.documentReviewScopeKey(stage), record.id);
-        await this.writeLocalizedReportFile(changePath, packetPath, this.buildDocumentReviewDispatchPacket(feature, record, target));
-        if (record.mode === 'inline_preflight') {
-            const snapshot = await this.snapshotDocumentReviewResultUnlocked(changePath, record);
-            record.resultSnapshotPath = snapshot.path;
-            record.resultManifestHash = snapshot.manifestHash;
-            await this.fileService.writeJSON(recordPath, record);
-            await this.appendDocumentReviewLedgerEventUnlocked(changePath, {
-                type: 'inline_completed',
-                stage,
-                dispatchId: record.id,
-                payload: {
-                    mode: record.mode,
-                    decision: 'APPROVED',
-                    reviewContextHash,
-                    resultSnapshotPath: record.resultSnapshotPath,
-                    resultManifestHash: record.resultManifestHash,
-                    recovered: true,
-                },
-            });
-            await this.cacheDocumentReviewApproval(changePath, record);
-        }
-        return record;
-    }
     async computeDocumentReviewContextHash(changePath, stage) {
         const authorityFiles = stage === 'design'
             ? [constants_1.FILE_NAMES.PROPOSAL, constants_1.FILE_NAMES.DESIGN]
@@ -4905,7 +4151,6 @@ class TaskGraphExecutionService {
                 constants_1.FILE_NAMES.DESIGN,
                 constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
                 path.join('artifacts', 'reviews', DESIGN_DOCUMENT_REVIEW_FILE),
-                path.join('artifacts', 'reviews', DESIGN_DOCUMENT_REVIEW_FILE.replace(/\.md$/i, '.findings.json')),
             ];
         const authority = [];
         for (const fileName of authorityFiles) {
@@ -4918,425 +4163,10 @@ class TaskGraphExecutionService {
             });
         }
         return (0, crypto_1.createHash)('sha256').update(this.canonicalJson({
-            contractVersion: DOCUMENT_REVIEW_CONTRACT_VERSION,
+            contractVersion: PLANNING_CONTRACT_VERSION,
             stage,
             authority,
         }), 'utf8').digest('hex');
-    }
-    async assertDocumentReviewDispatchGovernanceUnlocked(changePath, stage, mode, reviewContextHash) {
-        const ledger = await this.ensureDocumentReviewLedgerUnlocked(changePath);
-        const completedCandidates = ledger.events.filter(event => event.stage === stage && ((event.type === 'review_completed' && event.payload.mode === 'specialist')
-            || (event.type === 'legacy_import'
-                && documentReviewLedgerRecord(event).mode === 'specialist'
-                && Boolean(documentReviewLedgerRecord(event).reviewerCompletedAt))));
-        const completed = [...new Map(completedCandidates.map(event => [event.dispatchId, event])).values()];
-        const round = completed.length + 1;
-        if (mode !== 'specialist') {
-            return {
-                round,
-                tokenReservation: 0,
-                roundOverrideDecisionId: null,
-                roundOverrideSelectedAt: null,
-                roundOverrideDispatchDeadline: null,
-            };
-        }
-        const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
-        const statePath = path.join(changePath, 'artifacts', 'loop', 'state.json');
-        const stopPath = path.join(changePath, 'artifacts', 'loop', 'STOP');
-        let config = null;
-        let state = null;
-        if (await this.fileService.exists(configPath))
-            config = await this.fileService.readJSON(configPath);
-        if (await this.fileService.exists(statePath))
-            state = await this.fileService.readJSON(statePath);
-        const governance = config?.documentReviewGovernance
-            || config?.document_review_governance
-            || config?.documentReview
-            || config?.reviewGovernance
-            || {};
-        const stageGovernance = governance?.stages?.[stage] || governance?.[stage] || {};
-        const configuredMaxRounds = this.positiveIntegerOrDefault(stageGovernance.maxCompletedRounds ?? stageGovernance.maxRounds, DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS);
-        const maxRounds = Math.min(DEFAULT_DOCUMENT_REVIEW_MAX_COMPLETED_ROUNDS, configuredMaxRounds);
-        const continueWhileProgressing = config?.efficiency?.continueWhileProgressing !== false;
-        const tokenReservation = this.positiveIntegerOrDefault(stageGovernance.tokenReservation
-            ?? governance.tokenReservation
-            ?? governance.reservationTokens, DEFAULT_DOCUMENT_REVIEW_TOKEN_RESERVATION);
-        let roundOverrideDecisionId = null;
-        let roundOverrideSelectedAt = null;
-        if (completed.length >= maxRounds && continueWhileProgressing) {
-            const convergence = await this.assessDocumentReviewProgressUnlocked(changePath, completed);
-            if (!convergence.progressing) {
-                throw new Error(`Document review ${stage} made no finding progress after ${completed.length} completed round(s) (current=${convergence.currentFindingIds.join(',') || 'none'}, previous=${convergence.previousFindingIds.join(',') || 'none'}, reason=${convergence.reason}); revise the document or review strategy before another specialist review.`);
-            }
-        }
-        if (completed.length >= maxRounds && !continueWhileProgressing) {
-            const roundOverride = await this.findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger);
-            if (!roundOverride) {
-                throw new Error(`Document review ${stage} reached its completed-round limit of ${maxRounds}; one existing required user decision bound to stage=${stage}, reviewContextHash=${reviewContextHash}, round=${round}, and exactly one extra round is required.`);
-            }
-            roundOverrideDecisionId = roundOverride.decisionId;
-            roundOverrideSelectedAt = roundOverride.selectedAt;
-        }
-        if (await this.fileService.exists(stopPath)) {
-            throw new Error(`Document review ${stage} dispatch blocked because the Loop STOP file is present.`);
-        }
-        if (state?.status === 'paused' || state?.status === 'stopped') {
-            throw new Error(`Document review ${stage} dispatch blocked because the Loop is ${state.status}.`);
-        }
-        const stopConditions = config?.stopConditions || {};
-        const now = Date.now();
-        const stageMaxMinutes = Math.min(30, this.positiveIntegerOrDefault(stageGovernance.maxMinutes, 30));
-        const roundOverrideSelectedAtMs = roundOverrideSelectedAt ? Date.parse(roundOverrideSelectedAt) : Number.NaN;
-        const roundOverrideDispatchDeadlineMs = Number.isFinite(roundOverrideSelectedAtMs)
-            ? roundOverrideSelectedAtMs + stageMaxMinutes * 60000
-            : Number.NaN;
-        if (roundOverrideDecisionId && roundOverrideSelectedAtMs > now) {
-            throw new Error(`Document review ${stage} round ${round} authorization ${roundOverrideDecisionId} has a future selectedAt timestamp.`);
-        }
-        if (roundOverrideDecisionId && now >= roundOverrideDispatchDeadlineMs) {
-            throw new Error(`Document review ${stage} round ${round} authorization ${roundOverrideDecisionId} expired at ${new Date(roundOverrideDispatchDeadlineMs).toISOString()}; obtain a fresh exact user authorization before dispatch.`);
-        }
-        const firstStageActivity = ledger.events
-            .filter(event => event.stage === stage)
-            .map(event => Date.parse(event.at))
-            .filter(Number.isFinite)
-            .sort((left, right) => left - right)[0];
-        if (Number.isFinite(firstStageActivity)
-            && now - firstStageActivity >= stageMaxMinutes * 60000
-            && !roundOverrideDecisionId
-            && !continueWhileProgressing) {
-            throw new Error(`Document review ${stage} dispatch blocked because its ${stageMaxMinutes}-minute stage budget was reached.`);
-        }
-        if (stopConditions.maxIterations !== null && stopConditions.maxIterations !== undefined
-            && Number(state?.iteration || 0) >= Number(stopConditions.maxIterations)) {
-            throw new Error(`Document review ${stage} dispatch blocked because maxIterations was reached.`);
-        }
-        if (stopConditions.expiresAt) {
-            const expiresAt = Date.parse(String(stopConditions.expiresAt));
-            if (!Number.isFinite(expiresAt) || now >= expiresAt) {
-                throw new Error(`Document review ${stage} dispatch blocked because expiresAt was reached or is invalid.`);
-            }
-        }
-        if (stopConditions.budgetMinutes !== null && stopConditions.budgetMinutes !== undefined) {
-            const starts = [
-                Date.parse(String(state?.startedAt || '')),
-                ledger.events.map(event => Date.parse(event.at)).filter(Number.isFinite).sort((left, right) => left - right)[0],
-            ].filter(Number.isFinite);
-            const startedAt = starts.length > 0 ? Math.min(...starts) : Number.NaN;
-            if (!Number.isFinite(startedAt)
-                || Math.max(0, now - startedAt) >= Number(stopConditions.budgetMinutes) * 60000) {
-                throw new Error(`Document review ${stage} dispatch blocked because the time budget was reached.`);
-            }
-        }
-        const noProgressLimit = Math.min(2, this.positiveIntegerOrDefault(stageGovernance.noProgressLimit ?? governance.noProgressLimit, 2));
-        const latestCompletion = [...completed].reverse().find(event => event.type === 'review_completed');
-        const latestCompletionContext = String(latestCompletion?.payload.reviewContextHash || '');
-        const noProgressCount = latestCompletionContext === reviewContextHash
-            ? Math.max(0, Number(latestCompletion?.payload.noProgressCount) || 0)
-            : 0;
-        if (noProgressCount >= noProgressLimit) {
-            throw new Error(`Document review ${stage} dispatch blocked by the no-progress limit (${noProgressLimit}); revise authoritative inputs before another specialist review.`);
-        }
-        const authoritativeUsage = await this.readAuthoritativeUsageSnapshotUnlocked(changePath);
-        const dispatchEvents = ledger.events.filter(event => event.type === 'dispatch_created'
-            && documentReviewLedgerRecord(event).mode === 'specialist');
-        const conservativeReservationByStage = new Map([['design', 0], ['plan', 0]]);
-        let conservativeReservation = 0;
-        for (const event of dispatchEvents) {
-            if (authoritativeUsage.byId[event.dispatchId] !== undefined)
-                continue;
-            const reservation = Math.max(0, Number(documentReviewLedgerRecord(event).tokenReservation) || DEFAULT_DOCUMENT_REVIEW_TOKEN_RESERVATION);
-            conservativeReservation += reservation;
-            conservativeReservationByStage.set(event.stage, (conservativeReservationByStage.get(event.stage) || 0) + reservation);
-        }
-        if (stopConditions.budgetTokens !== null && stopConditions.budgetTokens !== undefined) {
-            const recordedUsage = Math.max(0, Number(state?.tokensUsed) || 0, authoritativeUsage.totalTokens);
-            const remaining = Number(stopConditions.budgetTokens) - recordedUsage - conservativeReservation;
-            if (!Number.isFinite(remaining) || remaining < tokenReservation) {
-                throw new Error(`Document review ${stage} dispatch needs a ${tokenReservation}-token reservation but only ${Math.max(0, Math.floor(remaining || 0))} tokens remain.`);
-            }
-        }
-        const stageBudgetTokens = stageGovernance.budgetTokens;
-        if (stageBudgetTokens !== null && stageBudgetTokens !== undefined) {
-            const stageActual = dispatchEvents
-                .filter(event => event.stage === stage)
-                .reduce((total, event) => total + Math.max(0, Number(authoritativeUsage.byId[event.dispatchId]) || 0), 0);
-            const stageUsed = stageActual + (conservativeReservationByStage.get(stage) || 0);
-            const remaining = Number(stageBudgetTokens) - stageUsed;
-            if (!Number.isFinite(remaining) || remaining < tokenReservation) {
-                throw new Error(`Document review ${stage} dispatch needs a ${tokenReservation}-token reservation but its stage budget has only ${Math.max(0, Math.floor(remaining || 0))} tokens remaining.`);
-            }
-        }
-        return {
-            round,
-            tokenReservation,
-            roundOverrideDecisionId,
-            roundOverrideSelectedAt,
-            roundOverrideDispatchDeadline: Number.isFinite(roundOverrideDispatchDeadlineMs)
-                ? new Date(roundOverrideDispatchDeadlineMs).toISOString()
-                : null,
-        };
-    }
-    async assessDocumentReviewProgressUnlocked(changePath, completed) {
-        const latestCompletion = completed.at(-1);
-        if (!latestCompletion) {
-            return {
-                progressing: true,
-                currentFindingIds: [],
-                previousFindingIds: [],
-                reason: 'legacy_context_unavailable',
-            };
-        }
-        const record = documentReviewLedgerRecord(latestCompletion);
-        const legacyRecord = unknownRecord(latestCompletion.payload.record);
-        const rawDecision = String(latestCompletion.payload.decision || legacyRecord.decision || '').trim();
-        if (!rawDecision && latestCompletion.type === 'legacy_import') {
-            return {
-                progressing: true,
-                currentFindingIds: [],
-                previousFindingIds: [],
-                reason: 'legacy_context_unavailable',
-            };
-        }
-        const decision = this.normalizeReviewRunDecision(rawDecision);
-        if (APPROVED_REVIEW_DECISIONS.has(decision)) {
-            return { progressing: true, currentFindingIds: [], previousFindingIds: [], reason: 'approved' };
-        }
-        if (decision === 'BLOCKED') {
-            return { progressing: false, currentFindingIds: [], previousFindingIds: [], reason: 'blocked' };
-        }
-        const snapshotRelative = String(latestCompletion.payload.resultSnapshotPath || record.resultSnapshotPath || '').trim();
-        const expectedManifestHash = String(latestCompletion.payload.resultManifestHash || record.resultManifestHash || '').trim().toLowerCase();
-        if (!snapshotRelative || !/^[a-f0-9]{64}$/.test(expectedManifestHash)) {
-            return {
-                progressing: true,
-                currentFindingIds: [],
-                previousFindingIds: [],
-                reason: 'legacy_context_unavailable',
-            };
-        }
-        await this.validateDocumentReviewResultSnapshot(changePath, snapshotRelative, expectedManifestHash);
-        const findings = await this.fileService.readJSON(path.join(path.resolve(changePath, snapshotRelative), 'findings.json'));
-        if (!Array.isArray(findings?.findings)) {
-            throw new Error(`Document review ${latestCompletion.dispatchId} convergence history structured findings are invalid.`);
-        }
-        const currentFindingIds = this.validateStructuredFindingIds(findings.findings, `Document review ${latestCompletion.dispatchId} convergence history`).sort();
-        const previousFindingIds = [...new Set((Array.isArray(record.priorFindingIds) ? record.priorFindingIds : [])
-                .map(id => String(id || '').trim())
-                .filter(Boolean))].sort();
-        const comparable = Boolean(record.priorDispatchId) || previousFindingIds.length > 0;
-        if (!comparable) {
-            return {
-                progressing: true,
-                currentFindingIds,
-                previousFindingIds,
-                reason: 'legacy_context_unavailable',
-            };
-        }
-        const unchanged = currentFindingIds.join('|') === previousFindingIds.join('|');
-        if (!unchanged) {
-            const currentFindingSignature = currentFindingIds.join('|');
-            for (const priorCompletion of completed.slice(0, -1)) {
-                const priorRecord = documentReviewLedgerRecord(priorCompletion);
-                const priorSnapshotRelative = String(priorCompletion.payload.resultSnapshotPath || priorRecord.resultSnapshotPath || '').trim();
-                const priorManifestHash = String(priorCompletion.payload.resultManifestHash || priorRecord.resultManifestHash || '').trim().toLowerCase();
-                if (!priorSnapshotRelative || !/^[a-f0-9]{64}$/.test(priorManifestHash))
-                    continue;
-                await this.validateDocumentReviewResultSnapshot(changePath, priorSnapshotRelative, priorManifestHash);
-                const priorFindings = await this.fileService.readJSON(path.join(path.resolve(changePath, priorSnapshotRelative), 'findings.json'));
-                if (!Array.isArray(priorFindings?.findings)) {
-                    throw new Error(`Document review ${priorCompletion.dispatchId} convergence history structured findings are invalid.`);
-                }
-                const priorFindingIds = this.validateStructuredFindingIds(priorFindings.findings, `Document review ${priorCompletion.dispatchId} convergence history`).sort();
-                if (priorFindingIds.join('|') === currentFindingSignature) {
-                    return {
-                        progressing: false,
-                        currentFindingIds,
-                        previousFindingIds,
-                        reason: 'findings_repeated',
-                    };
-                }
-            }
-        }
-        return {
-            progressing: !unchanged,
-            currentFindingIds,
-            previousFindingIds,
-            reason: unchanged ? 'findings_unchanged' : 'findings_changed',
-        };
-    }
-    async findDocumentReviewRoundOverrideDecisionUnlocked(changePath, stage, reviewContextHash, round, ledger) {
-        const consumed = new Set(ledger.events
-            .filter(event => event.type === 'dispatch_created')
-            .map(event => String(documentReviewLedgerRecord(event).roundOverrideDecisionId || ''))
-            .filter(Boolean));
-        const decisionsDir = this.getUserDecisionDir(changePath);
-        if (!(await this.fileService.exists(decisionsDir)))
-            return null;
-        const entries = (await this.fileService.readDir(decisionsDir))
-            .filter(entry => entry.endsWith('.json') && entry !== DECISIONS_INDEX_FILE)
-            .sort();
-        const grants = [];
-        for (const entry of entries) {
-            const raw = await this.fileService.readJSON(path.join(decisionsDir, entry));
-            const id = String(raw?.id || entry.replace(/\.json$/i, '')).trim();
-            const binding = raw?.documentReviewOverride || raw?.document_review_override || raw;
-            const approvalOptionId = String(binding?.approvalOptionId || binding?.approval_option_id || '').trim();
-            if (!id || consumed.has(id)
-                || raw?.required !== true
-                || String(raw?.status || '').toUpperCase() !== 'SELECTED'
-                || raw?.answeredBy !== 'user'
-                || !approvalOptionId
-                || String(raw?.selectedOptionId || raw?.selected_option_id || '').trim() !== approvalOptionId
-                || String(binding?.stage || '') !== stage
-                || String(binding?.reviewContextHash || binding?.review_context_hash || '') !== reviewContextHash
-                || Number(binding?.round) !== round
-                || Number(binding?.extraRounds ?? binding?.extra_rounds) !== 1)
-                continue;
-            const selectedAtMs = Date.parse(String(raw?.selectedAt || raw?.selected_at || ''));
-            if (!Number.isFinite(selectedAtMs))
-                continue;
-            grants.push({ decisionId: id, selectedAt: new Date(selectedAtMs).toISOString(), selectedAtMs });
-        }
-        grants.sort((left, right) => right.selectedAtMs - left.selectedAtMs || left.decisionId.localeCompare(right.decisionId));
-        return grants[0] || null;
-    }
-    positiveIntegerOrDefault(value, fallback) {
-        const parsed = Number(value);
-        return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-    }
-    async readDocumentReviewConvergenceContextUnlocked(changePath, stage, currentDocument) {
-        const ledger = await this.ensureDocumentReviewLedgerUnlocked(changePath);
-        const previous = [...ledger.events].reverse().find(event => event.stage === stage && event.type === 'review_completed');
-        if (!previous) {
-            return { priorDispatchId: null, priorFindings: [], priorFindingIds: [], diff: null, diffTruncated: false };
-        }
-        const snapshotRelative = String(previous.payload.resultSnapshotPath || '').trim();
-        const expectedManifestHash = String(previous.payload.resultManifestHash || '').trim().toLowerCase();
-        if (!snapshotRelative || !/^[a-f0-9]{64}$/.test(expectedManifestHash)) {
-            throw new Error(`Document review ${previous.dispatchId} convergence history is missing immutable snapshot metadata.`);
-        }
-        await this.validateDocumentReviewResultSnapshot(changePath, snapshotRelative, expectedManifestHash);
-        const snapshotPath = path.resolve(changePath, snapshotRelative);
-        const findingsPath = path.join(snapshotPath, 'findings.json');
-        const documentPath = path.join(snapshotPath, 'document.md');
-        const findings = await this.fileService.readJSON(findingsPath);
-        if (!Array.isArray(findings?.findings)) {
-            throw new Error(`Document review ${previous.dispatchId} convergence history structured findings are invalid.`);
-        }
-        const priorFindings = this.cloneJson(findings.findings);
-        const priorFindingIds = this.validateStructuredFindingIds(priorFindings, `Document review ${previous.dispatchId} convergence history`);
-        const priorDocument = await this.fileService.readFile(documentPath);
-        const bounded = this.buildBoundedDocumentDiff(priorDocument, currentDocument);
-        return {
-            priorDispatchId: previous.dispatchId,
-            priorFindings,
-            priorFindingIds,
-            diff: bounded.text,
-            diffTruncated: bounded.truncated,
-        };
-    }
-    buildBoundedDocumentDiff(previous, current) {
-        if (previous === current)
-            return { text: '(no meaningful document change)', truncated: false };
-        const before = previous.replace(/\r\n/g, '\n').split('\n');
-        const after = current.replace(/\r\n/g, '\n').split('\n');
-        let prefix = 0;
-        while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix])
-            prefix += 1;
-        let suffix = 0;
-        while (suffix < before.length - prefix
-            && suffix < after.length - prefix
-            && before[before.length - suffix - 1] === after[after.length - suffix - 1])
-            suffix += 1;
-        const removed = before.slice(prefix, before.length - suffix).map(line => `- ${line}`);
-        const added = after.slice(prefix, after.length - suffix).map(line => `+ ${line}`);
-        const raw = [`@@ lines ${prefix + 1} @@`, ...removed, ...added].join('\n');
-        if (raw.length <= MAX_DOCUMENT_REVIEW_DIFF_CHARS)
-            return { text: raw, truncated: false };
-        const marker = '\n... diff truncated at deterministic 12000-character boundary ...';
-        return {
-            text: `${raw.slice(0, MAX_DOCUMENT_REVIEW_DIFF_CHARS - marker.length)}${marker}`,
-            truncated: true,
-        };
-    }
-    async snapshotDocumentReviewResultUnlocked(changePath, record) {
-        const snapshotPath = path.join(changePath, 'artifacts', 'reviews', DOCUMENT_REVIEW_HISTORY_DIR, record.stage, record.id);
-        const relativeSnapshotPath = this.toChangeRelativePath(changePath, snapshotPath);
-        const documentContent = await this.fileService.readFile(path.resolve(changePath, record.documentPath));
-        const reviewContent = await this.fileService.readFile(path.resolve(changePath, record.reviewArtifactPath));
-        const findingsContent = await this.fileService.readFile(path.resolve(changePath, record.reviewArtifactPath).replace(/\.md$/i, '.findings.json'));
-        const review = (0, helpers_1.parseFrontmatterDocument)(reviewContent);
-        const files = {
-            'document.md': (0, crypto_1.createHash)('sha256').update(documentContent, 'utf8').digest('hex'),
-            'review.md': (0, crypto_1.createHash)('sha256').update(reviewContent, 'utf8').digest('hex'),
-            'findings.json': (0, crypto_1.createHash)('sha256').update(findingsContent, 'utf8').digest('hex'),
-        };
-        const manifest = {
-            version: '1.0',
-            contractVersion: DOCUMENT_REVIEW_CONTRACT_VERSION,
-            dispatchId: record.id,
-            stage: record.stage,
-            mode: record.mode,
-            round: record.round || 1,
-            documentHash: record.documentHash,
-            reviewContextHash: record.reviewContextHash || record.documentHash,
-            decision: this.normalizeReviewRunDecision(review.data?.decision),
-            capturedAt: record.reviewerCompletedAt || new Date().toISOString(),
-            priorDispatchId: record.priorDispatchId || null,
-            priorFindingIds: record.priorFindingIds || [],
-            files,
-        };
-        const manifestHash = (0, crypto_1.createHash)('sha256').update(this.canonicalJson(manifest), 'utf8').digest('hex');
-        const manifestPath = path.join(snapshotPath, 'manifest.json');
-        if (await this.fileService.exists(snapshotPath)) {
-            if (!(await this.fileService.exists(manifestPath))) {
-                throw new Error(`Document review result snapshot ${relativeSnapshotPath} is incomplete and cannot be overwritten.`);
-            }
-            const existing = await this.fileService.readJSON(manifestPath);
-            if (this.canonicalJson(existing) !== this.canonicalJson(manifest)) {
-                throw new Error(`Document review result snapshot ${relativeSnapshotPath} is immutable and does not match the current result.`);
-            }
-            await this.validateDocumentReviewResultSnapshot(changePath, relativeSnapshotPath, manifestHash);
-            return { path: relativeSnapshotPath, manifestHash };
-        }
-        const snapshotParent = path.dirname(snapshotPath);
-        const temporaryPath = path.join(snapshotParent, `.${path.basename(snapshotPath)}.tmp-${process.pid}-${(0, crypto_1.randomBytes)(8).toString('hex')}`);
-        const temporaryRelativePath = this.toChangeRelativePath(changePath, temporaryPath);
-        await fs_1.promises.mkdir(snapshotParent, { recursive: true });
-        try {
-            await fs_1.promises.mkdir(temporaryPath, { recursive: false });
-            await this.fileService.writeFile(path.join(temporaryPath, 'document.md'), documentContent);
-            await this.fileService.writeFile(path.join(temporaryPath, 'review.md'), reviewContent);
-            await this.fileService.writeFile(path.join(temporaryPath, 'findings.json'), findingsContent);
-            await this.fileService.writeJSON(path.join(temporaryPath, 'manifest.json'), manifest);
-            await this.validateDocumentReviewResultSnapshot(changePath, temporaryRelativePath, manifestHash);
-            await fs_1.promises.rename(temporaryPath, snapshotPath);
-        }
-        catch (error) {
-            await fs_1.promises.rm(temporaryPath, { recursive: true, force: true }).catch(() => undefined);
-            throw error;
-        }
-        return { path: relativeSnapshotPath, manifestHash };
-    }
-    async validateDocumentReviewResultSnapshot(changePath, snapshotRelativePath, expectedManifestHash) {
-        const snapshotPath = path.resolve(changePath, snapshotRelativePath);
-        const manifestPath = path.join(snapshotPath, 'manifest.json');
-        const manifest = await this.fileService.readJSON(manifestPath);
-        const manifestHash = (0, crypto_1.createHash)('sha256').update(this.canonicalJson(manifest), 'utf8').digest('hex');
-        if (expectedManifestHash && manifestHash !== expectedManifestHash) {
-            throw new Error(`Document review result snapshot ${snapshotRelativePath} failed immutable manifest hash validation.`);
-        }
-        for (const fileName of ['document.md', 'review.md', 'findings.json']) {
-            const filePath = path.join(snapshotPath, fileName);
-            if (!(await this.fileService.exists(filePath))) {
-                throw new Error(`Document review result snapshot ${snapshotRelativePath} is missing ${fileName}.`);
-            }
-            const hash = (0, crypto_1.createHash)('sha256').update(await this.fileService.readFile(filePath), 'utf8').digest('hex');
-            if (hash !== manifest?.files?.[fileName]) {
-                throw new Error(`Document review result snapshot ${snapshotRelativePath} failed immutable hash validation for ${fileName}.`);
-            }
-        }
     }
     async runDocumentReviewMechanicalPreflight(changePath, stage) {
         const checks = [];
@@ -5354,10 +4184,18 @@ class TaskGraphExecutionService {
             try {
                 const content = await this.fileService.readFile(filePath);
                 (0, helpers_1.parseFrontmatterDocument)(content);
-                if (!content.trim())
+                if (!content.trim()) {
                     errors.push(`empty authoritative input ${fileName}`);
-                else
-                    checks.push(`parsed ${fileName}`);
+                    continue;
+                }
+                const readiness = await this.readBootstrapDocumentStatus(changePath, fileName, {
+                    allowUncheckedChecklist: fileName === constants_1.FILE_NAMES.PROPOSAL,
+                });
+                if (readiness.readiness !== 'ready') {
+                    errors.push(`${fileName} is not ready (${readiness.readiness}); resolve TODO/TBD markers and required checklist items`);
+                    continue;
+                }
+                checks.push(`parsed ready ${fileName}`);
             }
             catch {
                 errors.push(`invalid frontmatter in ${fileName}`);
@@ -5378,147 +4216,9 @@ class TaskGraphExecutionService {
             }
             const graphPath = path.join(changePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
             if (await this.fileService.exists(graphPath)) {
-                let graph;
-                try {
-                    graph = await this.fileService.readJSON(graphPath);
-                }
-                catch {
-                    errors.push('task graph contains invalid JSON');
-                    graph = null;
-                }
-                if (graph) {
-                    const tasks = Array.isArray(graph.tasks) ? graph.tasks : [];
-                    const graphContract = String(graph?.contract_version || graph?.version || '').trim();
-                    const [graphMajor, graphMinor, graphPatch] = graphContract.split('.').map((part) => Number(part));
-                    const requiresSerialReason = Number.isFinite(graphMajor)
-                        && (graphMajor > 1 || (graphMajor === 1 && (graphMinor > 8 || (graphMinor === 8 && graphPatch >= 6))))
-                        || graphContract === DOCUMENT_REVIEW_CONTRACT_VERSION;
-                    const requiresScopeReason = Number.isFinite(graphMajor)
-                        && (graphMajor > 1 || (graphMajor === 1 && (graphMinor > 8 || (graphMinor === 8 && graphPatch >= 5))));
-                    if (tasks.length === 0)
-                        errors.push('task graph has no tasks');
-                    try {
-                        const report = await this.getReport(changePath);
-                        errors.push(...report.issues.map(issue => `invalid task graph: ${issue}`));
-                        for (const invalid of report.invalidTasks) {
-                            errors.push(`invalid task ${invalid.task.id}: ${invalid.reasons.join(', ')}`);
-                        }
-                    }
-                    catch (error) {
-                        errors.push(`task graph validation failed: ${error?.message || error}`);
-                    }
-                    const ids = tasks.map((task) => String(task?.id || '').trim());
-                    const idSet = new Set(ids);
-                    if (idSet.size !== ids.length)
-                        errors.push('task graph has duplicate task ids');
-                    for (const task of tasks) {
-                        const id = String(task?.id || '(missing)');
-                        if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/.test(id))
-                            errors.push(`task graph has invalid task id ${id}`);
-                        const targets = stringArray(task?.target_files);
-                        const docs = stringArray(task?.documentation_updates);
-                        const dependencies = stringArray(task?.depends_on);
-                        if (targets.length === 0)
-                            errors.push(`task ${id} has no target_files`);
-                        if (stringArray(task?.verification_commands).length === 0)
-                            errors.push(`task ${id} has no verification_commands`);
-                        for (const dependency of dependencies) {
-                            if (!idSet.has(dependency))
-                                errors.push(`task ${id} references unknown dependency ${dependency}`);
-                        }
-                        const missingDocs = docs.filter(document => !targets.includes(document));
-                        if (missingDocs.length > 0) {
-                            errors.push(`task ${id} documentation_updates must be a subset of target_files: ${missingDocs.join(', ')}`);
-                        }
-                        if (task?.parallelizable !== true
-                            && dependencies.length === 0
-                            && stringArray(task?.conflicts_with).length === 0
-                            && !String(task?.serial_reason || '').trim()) {
-                            const message = `task ${id} is serial without dependencies, conflicts, or serial_reason`;
-                            if (requiresSerialReason)
-                                errors.push(message);
-                            else
-                                warnings.push(message);
-                        }
-                        if (targets.length > MAX_UNEXPLAINED_TASK_TARGETS
-                            && !String(task?.scope_reason || '').trim()) {
-                            const message = `task ${id} has ${targets.length} target_files; split the task or add scope_reason explaining why one bounded worker owns the full scope`;
-                            if (requiresScopeReason)
-                                errors.push(message);
-                            else
-                                warnings.push(message);
-                        }
-                    }
-                    const edges = new Map(tasks.map((task) => [
-                        String(task?.id || ''),
-                        stringArray(task?.depends_on),
-                    ]));
-                    const visiting = new Set();
-                    const visited = new Set();
-                    const visit = (id) => {
-                        if (visiting.has(id))
-                            return true;
-                        if (visited.has(id))
-                            return false;
-                        visiting.add(id);
-                        for (const dependency of edges.get(id) || []) {
-                            if (edges.has(dependency) && visit(dependency))
-                                return true;
-                        }
-                        visiting.delete(id);
-                        visited.add(id);
-                        return false;
-                    };
-                    if ([...edges.keys()].some(visit))
-                        errors.push('task graph contains a dependency cycle');
-                    const loopConfigPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
-                    if (await this.fileService.exists(loopConfigPath)) {
-                        const loop = await this.fileService.readJSON(loopConfigPath);
-                        if (loop?.level === 'L3') {
-                            const allowedPaths = stringArray(loop?.allowlist?.paths).map(item => item.replace(/\\/g, '/').replace(/\/$/, ''));
-                            const allowedCommands = Array.isArray(loop?.allowlist?.commands) ? loop.allowlist.commands : [];
-                            if (allowedPaths.length === 0 || allowedCommands.length === 0) {
-                                errors.push('L3 allowlist must contain paths and commands');
-                            }
-                            for (const task of tasks) {
-                                for (const targetFile of stringArray(task?.target_files)) {
-                                    const normalized = targetFile.replace(/\\/g, '/').replace(/^\.\//, '');
-                                    if (!allowedPaths.some(allowed => normalized === allowed || normalized.startsWith(`${allowed}/`))) {
-                                        errors.push(`L3 path allowlist does not cover ${normalized}`);
-                                    }
-                                }
-                                for (const command of stringArray(task?.verification_commands)) {
-                                    const candidate = this.parseDocumentReviewCommand(command);
-                                    const normalizedCommand = command.trim().replace(/\s+/g, ' ');
-                                    const covered = Boolean(candidate) && allowedCommands.some((entry) => {
-                                        if (typeof entry === 'string') {
-                                            const allowed = this.parseDocumentReviewCommand(entry);
-                                            return allowed?.cwd === candidate?.cwd
-                                                && allowed.tokens.length === candidate.tokens.length
-                                                && allowed.tokens.every((token, index) => token === candidate.tokens[index]);
-                                        }
-                                        const policyCommand = String(entry?.command || '').trim();
-                                        const argsPrefix = Array.isArray(entry?.argsPrefix)
-                                            ? entry.argsPrefix.map((argument) => String(argument))
-                                            : [];
-                                        const cwd = entry?.cwd === null || entry?.cwd === undefined ? null : String(entry.cwd).trim();
-                                        return cwd === candidate?.cwd
-                                            && candidate?.tokens[0] === policyCommand
-                                            && candidate.tokens.length === argsPrefix.length + 1
-                                            && argsPrefix.every((argument, index) => candidate.tokens[index + 1] === argument);
-                                    });
-                                    if (!covered)
-                                        errors.push(`L3 command allowlist does not cover exact command ${normalizedCommand}`);
-                                }
-                            }
-                        }
-                    }
-                    checks.push(`validated task graph with ${tasks.length} task(s)`);
-                }
+                warnings.push('an existing task graph must be refreshed from the approved implementation plan before dispatch');
             }
-            else {
-                checks.push('task graph not present; plan-to-graph checks deferred');
-            }
+            checks.push('task graph derivation is sequenced after implementation plan preflight');
         }
         return {
             version: '1.0',
@@ -5529,44 +4229,16 @@ class TaskGraphExecutionService {
             errors: Array.from(new Set(errors)),
         };
     }
-    tokenizeDocumentReviewCommand(command) {
-        const raw = String(command || '').trim();
-        if (!raw || /[\r\n\0;|<>`]/.test(raw) || /\$\s*\(/.test(raw))
-            return null;
-        const tokens = raw.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g);
-        if (!tokens?.length)
-            return null;
-        return tokens.map(token => {
-            const quoted = (token.startsWith('"') && token.endsWith('"'))
-                || (token.startsWith("'") && token.endsWith("'"));
-            return quoted ? token.slice(1, -1) : token;
-        });
-    }
-    parseDocumentReviewCommand(value) {
-        const raw = String(value || '').trim();
-        if (!raw || /[\r\n\0;|<>`]/.test(raw) || /\$\s*\(/.test(raw))
-            return null;
-        const parts = raw.split(/\s*&&\s*/);
-        if (parts.length > 2)
-            return null;
-        let cwd = null;
-        let command = raw;
-        if (parts.length === 2) {
-            const match = /^cd\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))$/i.exec(parts[0].trim());
-            if (!match)
-                return null;
-            cwd = String(match[1] || match[2] || match[3] || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
-            if (!cwd || cwd === '..' || cwd.startsWith('../') || path.posix.isAbsolute(cwd))
-                return null;
-            command = parts[1].trim();
-        }
-        const tokens = this.tokenizeDocumentReviewCommand(command);
-        if (!tokens)
-            return null;
-        return { cwd, command: command.replace(/\s+/g, ' '), tokens };
-    }
     taskReviewScopeKey(taskId) {
         return taskId ? `task:${taskId}` : 'final';
+    }
+    planningReviewScopeKey() {
+        return 'planning';
+    }
+    reviewDispatchScopeKey(record) {
+        return record.stage === 'planning'
+            ? this.planningReviewScopeKey()
+            : this.taskReviewScopeKey(record.taskId || null);
     }
     documentReviewScopeKey(stage) {
         return `document:${stage}`;
@@ -5595,19 +4267,6 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(indexPath, index);
     }
     async assertCurrentReviewDispatch(changePath, scope, dispatchId) {
-        if (scope.startsWith('document:')) {
-            const ledgerPath = this.getDocumentReviewLedgerPath(changePath);
-            if (await this.fileService.exists(ledgerPath)) {
-                const ledger = await this.fileService.readJSON(ledgerPath);
-                this.validateDocumentReviewLedger(ledger);
-                const stage = scope.slice('document:'.length);
-                const authority = [...ledger.events].reverse().find(event => event.stage === stage
-                    && (event.type === 'dispatch_created' || event.type === 'cache_reused'));
-                if (authority && authority.dispatchId !== dispatchId) {
-                    throw new Error(`Review dispatch ${dispatchId} is stale; ledger authority for ${scope} is ${authority.dispatchId}.`);
-                }
-            }
-        }
         const indexPath = this.getCurrentReviewDispatchIndexPath(changePath);
         if (!(await this.fileService.exists(indexPath))) {
             throw new Error(`Review dispatch ${dispatchId} has no current-dispatch index provenance.`);
@@ -6205,125 +4864,69 @@ class TaskGraphExecutionService {
         };
     }
     async validateDocumentReviewEvidence(changePath, stage) {
+        return this.validatePlanningPreflightEvidence(changePath, stage);
+    }
+    async validatePlanningPreflightEvidence(changePath, stage) {
         const resolvedChangePath = path.resolve(changePath);
         const target = this.getDocumentReviewTarget(stage);
         const documentPath = path.join(resolvedChangePath, target.documentFile);
         const reviewArtifactPath = this.getDocumentReviewArtifactPath(resolvedChangePath, stage);
         if (!(await this.fileService.exists(documentPath)) || !(await this.fileService.exists(reviewArtifactPath))) {
-            return { ready: false, reason: `${target.label} evidence is missing.` };
+            return { ready: false, reason: `${target.label} preflight evidence is missing.` };
         }
         try {
-            const ledgerPath = this.getDocumentReviewLedgerPath(resolvedChangePath);
-            let ledger = null;
-            if (await this.fileService.exists(ledgerPath)) {
-                ledger = await this.fileService.readJSON(ledgerPath);
-                this.validateDocumentReviewLedger(ledger);
-            }
             const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
             const decision = this.normalizeReviewRunDecision(review.data?.decision);
-            if (!APPROVED_REVIEW_DECISIONS.has(decision)) {
-                return { ready: false, reason: `${target.label} review decision is ${decision || 'PENDING'}.` };
+            if (decision !== 'APPROVED') {
+                return { ready: false, reason: `${target.label} preflight decision is ${decision || 'PENDING'}.` };
             }
             const currentHash = this.hashMeaningfulDocumentation(await this.fileService.readFile(documentPath));
             const recordedHash = String(review.data?.document_hash || '').trim();
             if (!recordedHash || recordedHash !== currentHash) {
-                return { ready: false, reason: `${target.label} changed after its review; dispatch a fresh document review.` };
+                return { ready: false, reason: `${target.label} changed after preflight; rerun deterministic planning preflight.` };
             }
             const dispatchId = String(review.data?.review_dispatch_id || '').trim();
             if (!dispatchId || this.toFileSafeId(dispatchId) !== dispatchId) {
-                return { ready: false, reason: `${target.label} review has no valid dispatch provenance.` };
+                return { ready: false, reason: `${target.label} preflight has no valid provenance.` };
             }
-            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', DOCUMENT_REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_PREFLIGHTS_DIR, `${dispatchId}.json`);
             if (!(await this.fileService.exists(recordPath))) {
-                return { ready: false, reason: `${target.label} review dispatch record is missing.` };
+                return { ready: false, reason: `${target.label} preflight record is missing.` };
             }
             const record = await this.fileService.readJSON(recordPath);
-            if (record.id !== dispatchId || record.stage !== stage || record.documentHash !== currentHash || record.reviewerRole !== target.reviewerRole) {
-                return { ready: false, reason: `${target.label} review provenance does not match the current document.` };
-            }
-            if (ledger && !ledger.events.some(event => event.dispatchId === dispatchId)) {
-                return { ready: false, reason: `${target.label} review is missing from the document-review ledger.` };
-            }
-            if (ledger && record.reviewContextHash
-                && (record.requiresExecutorProvenance || record.requiresNativeExecutorProvenance)
-                && !ledger.events.some(event => event.dispatchId === dispatchId && (event.type === 'review_completed'
-                    || event.type === 'inline_completed'
-                    || (event.type === 'legacy_import' && Boolean(documentReviewLedgerRecord(event).reviewerCompletedAt))))) {
-                return { ready: false, reason: `${target.label} completion is missing from the document-review ledger.` };
-            }
-            if (record.reviewContextHash) {
-                const currentContextHash = await this.computeDocumentReviewContextHash(resolvedChangePath, stage);
-                if (currentContextHash !== record.reviewContextHash) {
-                    return { ready: false, reason: `${target.label} review context changed after its review; dispatch a fresh document review.` };
-                }
-                if (String(review.data?.review_context_hash || '') !== record.reviewContextHash
-                    || String(review.data?.review_contract_version || '') !== String(record.reviewContractVersion || DOCUMENT_REVIEW_CONTRACT_VERSION)) {
-                    return { ready: false, reason: `${target.label} review context provenance is invalid.` };
-                }
+            const currentContextHash = await this.computeDocumentReviewContextHash(resolvedChangePath, stage);
+            if (record.id !== dispatchId
+                || record.stage !== stage
+                || record.status !== 'COMPLETED_INLINE'
+                || record.mode !== 'inline_preflight'
+                || record.documentHash !== currentHash
+                || record.reviewContextHash !== currentContextHash
+                || record.reviewContractVersion !== PLANNING_CONTRACT_VERSION
+                || String(review.data?.review_context_hash || '') !== currentContextHash
+                || String(review.data?.planning_contract_version || '') !== PLANNING_CONTRACT_VERSION) {
+                return { ready: false, reason: `${target.label} preflight provenance does not match the current planning context.` };
             }
             await this.assertCurrentReviewDispatch(resolvedChangePath, this.documentReviewScopeKey(stage), dispatchId);
-            if (record.mode === 'specialist' && !String(review.data?.reviewed_at || '').trim()) {
-                return { ready: false, reason: `${target.label} specialist review is missing reviewed_at evidence.` };
-            }
-            if (record.requiresExecutorProvenance || record.requiresNativeExecutorProvenance) {
-                const reviewedAtValue = review.data?.reviewed_at;
-                const reviewedAtMs = reviewedAtValue instanceof Date
-                    ? reviewedAtValue.getTime()
-                    : Date.parse(String(reviewedAtValue || ''));
-                const claimedAtMs = Date.parse(String(record.reviewerClaimedAt || ''));
-                const completedAtMs = Date.parse(String(record.reviewerCompletedAt || ''));
-                const leaseExpiresAtMs = this.documentReviewExecutorLeaseExpiresAt(record);
-                const validExecutorProvenance = record.reviewerExecutorId
-                    && record.reviewerSucceeded === true
-                    && Number.isFinite(reviewedAtMs)
-                    && Number.isFinite(claimedAtMs)
-                    && Number.isFinite(completedAtMs)
-                    && Number.isFinite(leaseExpiresAtMs)
-                    && reviewedAtMs >= claimedAtMs
-                    && completedAtMs >= reviewedAtMs
-                    && completedAtMs <= leaseExpiresAtMs
-                    && (!record.requiresNativeExecutorProvenance
-                        || (record.controllerSessionReportedAt
-                            && String(review.data?.controller_session_reported_at || '') === record.controllerSessionReportedAt))
-                    && String(review.data?.runtime_adapter_id || '') === String(record.runtimeAdapter?.selectedAdapterId || '')
-                    && String(review.data?.reviewer_executor_id || '') === record.reviewerExecutorId
-                    && Date.parse(String(review.data?.reviewer_claimed_at || '')) === claimedAtMs
-                    && Date.parse(String(review.data?.reviewer_completed_at || '')) === completedAtMs
-                    && (!record.reviewerLeaseExpiresAt
-                        || Date.parse(String(review.data?.reviewer_lease_expires_at || '')) === leaseExpiresAtMs)
-                    && review.data?.reviewer_succeeded === true;
-                if (!validExecutorProvenance) {
-                    return { ready: false, reason: `${target.label} specialist review is not bound to its claimed runtime-adapter executor.` };
-                }
-            }
-            const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
-            if (!(await this.fileService.exists(findingsPath))) {
-                return { ready: false, reason: `${target.label} structured findings are missing.` };
-            }
-            const findings = await this.fileService.readJSON(findingsPath);
-            if (!Array.isArray(findings.findings)) {
-                return { ready: false, reason: `${target.label} structured findings are invalid.` };
-            }
-            if (record.resultSnapshotPath) {
-                await this.validateDocumentReviewResultSnapshot(resolvedChangePath, record.resultSnapshotPath, record.resultManifestHash || null);
-            }
-            else if (record.reviewContextHash
-                && record.mode !== 'inline_preflight'
-                && (record.requiresExecutorProvenance || record.requiresNativeExecutorProvenance)) {
-                return { ready: false, reason: `${target.label} immutable result snapshot is missing.` };
-            }
             return { ready: true, reason: null };
         }
         catch (error) {
-            return { ready: false, reason: `${target.label} review evidence could not be validated (${error?.message || error}).` };
+            return { ready: false, reason: `${target.label} preflight evidence could not be validated (${error?.message || error}).` };
         }
     }
     async validateTaskReviewEvidence(changePath, taskId) {
+        return this.validateReviewEvidence(changePath, taskId, false);
+    }
+    async validatePlanningReviewEvidence(changePath) {
+        return this.validateReviewEvidence(changePath, null, true);
+    }
+    async validateReviewEvidence(changePath, taskId, planning) {
         const resolvedChangePath = path.resolve(changePath);
-        const reviewArtifactPath = taskId
-            ? path.join(resolvedChangePath, this.getTaskCombinedReviewArtifactRelativePath(taskId))
-            : path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
-        const label = taskId ? `Task ${taskId} code review` : 'Final code review';
+        const reviewArtifactPath = planning
+            ? path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE)
+            : taskId
+                ? path.join(resolvedChangePath, this.getTaskCombinedReviewArtifactRelativePath(taskId))
+                : path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        const label = planning ? 'Combined planning review' : taskId ? `Task ${taskId} code review` : 'Final code review';
         if (!(await this.fileService.exists(reviewArtifactPath))) {
             return { ready: false, reason: `${label} evidence is missing.` };
         }
@@ -6345,11 +4948,12 @@ class TaskGraphExecutionService {
             const expectedArtifact = this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath);
             if (dispatch.id !== dispatchId
                 || (dispatch.taskId || null) !== taskId
-                || dispatch.reviewerRole !== 'code_reviewer'
+                || dispatch.stage !== (planning ? 'planning' : 'review')
+                || dispatch.reviewerRole !== (planning ? 'planning_reviewer' : 'code_reviewer')
                 || dispatch.reviewArtifactPath.replace(/\\/g, '/') !== expectedArtifact.replace(/\\/g, '/')) {
                 return { ready: false, reason: `${label} dispatch provenance does not match this artifact.` };
             }
-            await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(taskId), dispatchId);
+            await this.assertCurrentReviewDispatch(resolvedChangePath, planning ? this.planningReviewScopeKey() : this.taskReviewScopeKey(taskId), dispatchId);
             const reviewedAtValue = review.data?.reviewed_at;
             const reviewedAt = String(reviewedAtValue || '').trim();
             const reviewedAtMs = reviewedAtValue instanceof Date
@@ -6400,7 +5004,7 @@ class TaskGraphExecutionService {
             const targetSnapshotChanged = !this.targetSnapshotsMatchDispatch(currentSnapshots, dispatch.targetSnapshots, dispatch.targetSnapshotHash);
             let downstreamCarryForward = false;
             if (targetSnapshotChanged) {
-                const carryForward = taskId
+                const carryForward = taskId && !planning
                     ? await this.canCarryTaskReviewForwardAfterDownstreamWork(resolvedChangePath, taskId, dispatch, currentSnapshots, reviewedAtMs)
                     : { allowed: false, reason: 'final reviews cannot be carried forward' };
                 downstreamCarryForward = carryForward.allowed;
@@ -6432,6 +5036,17 @@ class TaskGraphExecutionService {
         if (decision === 'PENDING')
             return decision;
         const validation = await this.validateTaskReviewEvidence(changePath, null);
+        return validation.ready ? decision : 'PENDING';
+    }
+    async readValidatedPlanningReviewDecision(changePath) {
+        const reviewPath = path.join(path.resolve(changePath), 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
+        if (!(await this.fileService.exists(reviewPath)))
+            return 'PENDING';
+        const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+        const decision = this.normalizeReviewRunDecision(review.data?.decision);
+        if (decision === 'PENDING')
+            return decision;
+        const validation = await this.validatePlanningReviewEvidence(changePath);
         return validation.ready ? decision : 'PENDING';
     }
     async validateLatestVerificationEvidence(changePath) {
@@ -7845,30 +6460,10 @@ class TaskGraphExecutionService {
             updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString(),
             selectedAt: typeof raw?.selectedAt === 'string' && raw.selectedAt.trim() ? raw.selectedAt.trim() : null,
             answeredBy: raw?.answeredBy === 'user' ? 'user' : null,
-            documentReviewOverride: this.normalizeDocumentReviewOverrideBinding(raw?.documentReviewOverride || raw?.document_review_override),
             recordPath: typeof raw?.recordPath === 'string' ? raw.recordPath : recordPath,
             reportPath: typeof raw?.reportPath === 'string' ? raw.reportPath : recordPath.replace(/\.json$/u, '.md'),
             nextInstruction: typeof raw?.nextInstruction === 'string' ? raw.nextInstruction : '',
         };
-    }
-    normalizeDocumentReviewOverrideBinding(value) {
-        const binding = unknownRecord(value);
-        const stage = binding.stage === 'design' || binding.stage === 'plan'
-            ? binding.stage
-            : null;
-        const reviewContextHash = String(binding.reviewContextHash || binding.review_context_hash || '').trim().toLowerCase();
-        const round = Number(binding.round);
-        const extraRounds = Number(binding.extraRounds ?? binding.extra_rounds);
-        const approvalOptionId = String(binding.approvalOptionId || binding.approval_option_id || '').trim();
-        return stage
-            && /^[a-f0-9]{64}$/.test(reviewContextHash)
-            && Number.isInteger(round)
-            && round > 0
-            && extraRounds === 1
-            && approvalOptionId
-            && this.toFileSafeId(approvalOptionId) === approvalOptionId
-            ? { stage, reviewContextHash, round, extraRounds: 1, approvalOptionId }
-            : null;
     }
     validateStructuredFindingIds(findings, label) {
         const ids = [];
@@ -8475,89 +7070,16 @@ class TaskGraphExecutionService {
     getDocumentReviewTarget(stage) {
         if (stage === 'design') {
             return {
-                label: 'design document review',
+                label: 'design planning preflight',
                 documentFile: constants_1.FILE_NAMES.DESIGN,
                 reviewArtifactFile: DESIGN_DOCUMENT_REVIEW_FILE,
-                reviewerRole: 'design_reviewer',
             };
         }
         return {
-            label: 'implementation plan review',
+            label: 'implementation plan preflight',
             documentFile: constants_1.FILE_NAMES.IMPLEMENTATION_PLAN,
             reviewArtifactFile: IMPLEMENTATION_PLAN_DOCUMENT_REVIEW_FILE,
-            reviewerRole: 'implementation_plan_reviewer',
         };
-    }
-    async assessDocumentReviewRisk(changePath, stage) {
-        const target = this.getDocumentReviewTarget(stage);
-        const files = [constants_1.FILE_NAMES.PROPOSAL, target.documentFile];
-        if (stage === 'plan') {
-            files.splice(1, 0, constants_1.FILE_NAMES.DESIGN);
-        }
-        const signals = new Set();
-        const riskPatterns = [
-            [/\b(api|public contract|breaking|compatibility)\b|接口|破坏性|兼容性|公開api|互換性|破壊的|واجهة برمجة|عقد عام|تغيير جذري|توافق/iu, 'public API or compatibility'],
-            [/\b(security|auth|authorization|authentication|permission|secret|payment)\b|安全|鉴权|认证|权限|密钥|支付|セキュリティ|認証|認可|権限|秘密|決済|أمان|مصادقة|تفويض|صلاحية|سر|دفع/iu, 'security or authorization'],
-            [/\b(migration|schema|database|storage|data model|backfill)\b|迁移|数据库|数据模型|回填|移行|スキーマ|データベース|データモデル|バックフィル|ترحيل|مخطط|قاعدة بيانات|نموذج بيانات|تعبئة لاحقة/iu, 'data or migration'],
-            [/\b(architecture|cross[- ]module|protocol|concurrency|parallel|transaction)\b|架构|跨模块|协议|并发|事务|アーキテクチャ|モジュール横断|プロトコル|並行|トランザクション|معمارية|عبر الوحدات|بروتوكول|تزامن|معاملة/iu, 'architecture or concurrency'],
-            [/\b(external|third[- ]party|integration|plugin|provider)\b|外部|第三方|集成|插件|供应商|外部|サードパーティ|統合|プラグイン|プロバイダー|خارجي|طرف ثالث|تكامل|إضافة|مزود/iu, 'external integration'],
-            [/\b(high[- ]risk|irreversible|destructive|scope change)\b|高风险|不可逆|破坏性操作|范围变更|高リスク|不可逆|破壊的操作|スコープ変更|مخاطر عالية|غير قابل للعكس|مدمر|تغيير النطاق/iu, 'explicit high-risk scope'],
-        ];
-        let targetRiskDeclared = false;
-        for (const fileName of files) {
-            const filePath = path.join(changePath, fileName);
-            if (!(await this.fileService.exists(filePath))) {
-                signals.add(`missing required context: ${fileName}`);
-                continue;
-            }
-            const content = await this.fileService.readFile(filePath);
-            if (Buffer.byteLength(content, 'utf8') > 30000) {
-                signals.add(`large review document: ${fileName}`);
-            }
-            let document;
-            try {
-                document = (0, helpers_1.parseFrontmatterDocument)(content);
-            }
-            catch {
-                signals.add(`unparseable review context: ${fileName}`);
-                continue;
-            }
-            const data = (document.data || {});
-            const riskLevel = String(data.risk_level || data.review_risk || '').trim().toLowerCase();
-            if (fileName === target.documentFile) {
-                targetRiskDeclared = ['low', 'none'].includes(riskLevel);
-                if (!targetRiskDeclared) {
-                    signals.add(riskLevel
-                        ? `target document risk is not explicitly low: ${riskLevel}`
-                        : `missing structured low-risk declaration: ${fileName}`);
-                }
-            }
-            if (['medium', 'high', 'critical'].includes(riskLevel)) {
-                signals.add(`declared ${riskLevel} review risk`);
-            }
-            const structuredSignals = [
-                ...stringArray(data.risk_flags),
-                ...stringArray(data.flags),
-                ...stringArray(data.affects),
-                ...stringArray(data.boundaries),
-                ...stringArray(data.api_changes),
-                ...stringArray(data.data_changes),
-            ].join(' ');
-            const searchable = `${structuredSignals}\n${document.content}`;
-            for (const [pattern, label] of riskPatterns) {
-                if (pattern.test(searchable)) {
-                    signals.add(label);
-                }
-            }
-            const affects = Array.isArray(data.affects) ? data.affects : [];
-            if (affects.length >= 4) {
-                signals.add('broad affected surface');
-            }
-        }
-        if (!targetRiskDeclared) {
-            signals.add('adaptive review requires an explicit low-risk declaration');
-        }
-        return [...signals];
     }
     getDocumentReviewArtifactPath(changePath, stage) {
         return path.join(changePath, 'artifacts', 'reviews', this.getDocumentReviewTarget(stage).reviewArtifactFile);
@@ -8705,6 +7227,38 @@ class TaskGraphExecutionService {
             '## Decision',
             '',
             '- Review the whole change across both dimensions after all task-level reviews are approved and the task graph is completed, record concrete findings above, then set the single `decision` (APPROVED, APPROVED_WITH_CONCERNS, NEEDS_CHANGES, BLOCKED).',
+            '',
+        ].join('\n');
+    }
+    buildDefaultPlanningReviewArtifact(feature) {
+        return [
+            '---',
+            `feature: ${feature}`,
+            `created: ${new Date().toISOString().split('T')[0]}`,
+            'status: pending',
+            'reviewer_role: planning_reviewer',
+            'decision: PENDING',
+            `planning_contract_version: ${PLANNING_CONTRACT_VERSION}`,
+            'optional_steps: []',
+            '---',
+            '',
+            '# Combined Planning Review',
+            '',
+            '## Requirement And Design Integrity',
+            '',
+            '- [ ] Every acceptance criterion is represented by the design and implementation plan.',
+            '- [ ] API, data, security, migration, UI, and operational boundaries are coherent where applicable.',
+            '- TBD',
+            '',
+            '## Task Graph And Verification Coverage',
+            '',
+            '- [ ] Every requirement maps to bounded task ownership and verification evidence.',
+            '- [ ] Dependencies, conflicts, documentation updates, and external acceptance boundaries are complete.',
+            '- TBD',
+            '',
+            '## Decision',
+            '',
+            '- Review proposal, design, implementation plan, tasks, and task graph in one independent pass, then set `decision` to APPROVED, APPROVED_WITH_CONCERNS, NEEDS_CHANGES, or BLOCKED.',
             '',
         ].join('\n');
     }
@@ -8958,10 +7512,7 @@ class TaskGraphExecutionService {
         return rendered;
     }
     async ingestReviewUsageSidecars(changePath, feature) {
-        const descriptors = [
-            { directory: REVIEW_DISPATCHES_DIR, documentReview: false },
-            { directory: DOCUMENT_REVIEW_DISPATCHES_DIR, documentReview: true },
-        ];
+        const descriptors = [{ directory: REVIEW_DISPATCHES_DIR, documentReview: false }];
         const metrics = [];
         const metricsPath = path.join(changePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
         const existingUsage = new Map();
@@ -10073,7 +8624,6 @@ class TaskGraphExecutionService {
             }
         }
         return {
-            documentReviewPolicy: config?.workflow?.document_review_policy === 'adaptive' ? 'adaptive' : 'always',
             modelProfiles,
         };
     }
@@ -10276,7 +8826,7 @@ class TaskGraphExecutionService {
             : options.checklistRequired
                 ? false
                 : null;
-        const hasDraftMarker = /\b(TBD|TODO)\b/.test(content);
+        const hasDraftMarker = /\b(?:TBD|TODO)\b|待补充|未定|قيد التحديد/u.test(content);
         let readiness = 'ready';
         if (trimmedContent.length === 0) {
             readiness = 'empty';
@@ -10797,6 +9347,21 @@ class TaskGraphExecutionService {
             };
         })
             .filter(entry => entry.file.length > 0);
+    }
+    parseGitStatusV2ZPaths(output) {
+        const paths = output
+            .split('\0')
+            .filter(record => record.length > 0 && !record.startsWith('# '))
+            .flatMap(record => {
+            if (record.startsWith('? '))
+                return [record.slice(2)];
+            const ordinary = record.match(/^1 \S+ \S+ \S+ \S+ \S+ \S+ \S+ ([\s\S]+)$/);
+            if (ordinary)
+                return [ordinary[1]];
+            const unmerged = record.match(/^u \S+ \S+ \S+ \S+ \S+ \S+ \S+ \S+ \S+ ([\s\S]+)$/);
+            return unmerged ? [unmerged[1]] : [];
+        });
+        return this.normalizeTargetFiles(paths);
     }
     workspaceEntryPaths(entry) {
         return entry.file
@@ -13118,36 +11683,46 @@ class TaskGraphExecutionService {
         ].join('\n');
     }
     buildReviewDispatchPacket(report, record) {
+        const isPlanningReview = record.stage === 'planning';
         const isTaskReview = Boolean(record.taskId);
         const isCombinedReview = record.stage === 'review';
-        const reviewName = isCombinedReview
-            ? 'Code Review (Spec Compliance + Code Quality)'
-            : record.stage === 'spec' ? 'Spec Compliance Review' : 'Code Quality Review';
-        const priorReview = isCombinedReview
-            ? '- Review BOTH dimensions in one pass: (1) spec compliance — the implementation satisfies the task packet, accepted design, implementation plan, and expected result without under/over-building; (2) code quality — it is maintainable, minimal, tested, and safe. Record one combined decision.'
-            : record.stage === 'quality'
-                ? isTaskReview
-                    ? '- Confirm this task\'s spec review artifact is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
-                    : '- Confirm `artifacts/reviews/spec-compliance.md` is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
-                : isTaskReview
-                    ? '- Check this task implementation against the task packet, accepted design, implementation plan, and expected result.'
-                    : '- Check implementation against `proposal.md`, `design.md`, `implementation-plan.md`, and `tasks.md` before deciding whether it satisfies the spec.';
+        const reviewName = isPlanningReview
+            ? 'Combined Planning Review'
+            : isCombinedReview
+                ? 'Code Review (Spec Compliance + Code Quality)'
+                : record.stage === 'spec' ? 'Spec Compliance Review' : 'Code Quality Review';
+        const priorReview = isPlanningReview
+            ? '- Review planning semantics in two dimensions within this single pass: (1) requirement/design integrity and (2) task-graph/verification coverage. Do not edit the planning documents.'
+            : isCombinedReview
+                ? '- Review BOTH dimensions in one pass: (1) spec compliance — the implementation satisfies the task packet, accepted design, implementation plan, and expected result without under/over-building; (2) code quality — it is maintainable, minimal, tested, and safe. Record one combined decision.'
+                : record.stage === 'quality'
+                    ? isTaskReview
+                        ? '- Confirm this task\'s spec review artifact is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
+                        : '- Confirm `artifacts/reviews/spec-compliance.md` is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing quality.'
+                    : isTaskReview
+                        ? '- Check this task implementation against the task packet, accepted design, implementation plan, and expected result.'
+                        : '- Check implementation against `proposal.md`, `design.md`, `implementation-plan.md`, and `tasks.md` before deciding whether it satisfies the spec.';
         const reviewedTask = record.taskId ? this.flattenReportTasks(report).find(task => task.id === record.taskId) : null;
         const workerReportPath = record.taskId
             ? ['artifacts', 'agents', WORKER_REPORTS_DIR, `${this.toFileSafeId(record.taskId) || 'task'}.md`].join('/')
             : null;
-        const taskScope = isTaskReview
+        const taskScope = isPlanningReview
             ? [
-                `- Task ID: ${record.taskId}`,
-                `- Task title: ${record.taskTitle || 'not recorded'}`,
-                `- Target files: ${reviewedTask?.targetFiles.join(', ') || 'not recorded'}`,
-                `- Upstream regression obligations: ${record.regressionTaskIds?.join(', ') || 'none'}`,
-                `- Worker report: ${workerReportPath}`,
-                '- Review this task, its direct integration effects, and every listed upstream regression obligation; do not turn this into a whole-change final review.',
+                '- Scope: proposal.md, design.md, implementation-plan.md, tasks.md, and artifacts/agents/task-graph.json before implementation starts.',
+                '- Confirm acceptance-to-task-to-verification traceability, semantic feasibility, cross-cutting boundaries, dependencies, and external acceptance separation.',
             ]
-            : [
-                '- Scope: whole-change final review after all task-level reviews are approved and the task graph is completed.',
-            ];
+            : isTaskReview
+                ? [
+                    `- Task ID: ${record.taskId}`,
+                    `- Task title: ${record.taskTitle || 'not recorded'}`,
+                    `- Target files: ${reviewedTask?.targetFiles.join(', ') || 'not recorded'}`,
+                    `- Upstream regression obligations: ${record.regressionTaskIds?.join(', ') || 'none'}`,
+                    `- Worker report: ${workerReportPath}`,
+                    '- Review this task, its direct integration effects, and every listed upstream regression obligation; do not turn this into a whole-change final review.',
+                ]
+                : [
+                    '- Scope: whole-change final review after all task-level reviews are approved and the task graph is completed.',
+                ];
         return [
             `# Agent Review Dispatch: ${record.stage}`,
             '',
@@ -13171,19 +11746,27 @@ class TaskGraphExecutionService {
             '',
             '## Required Context',
             '',
-            ...(isTaskReview
+            ...(isPlanningReview
                 ? [
-                    `- Read the task's dispatch packet under \`artifacts/agents/dispatches/\` and \`${workerReportPath}\` first.`,
-                    `- Read \`${record.reviewPackagePath || 'the generated review package'}\` once for commit metadata, scoped status, stat, and diff evidence. Do not rerun broad Git discovery commands.`,
-                    '- Review the task target files, their direct integration effects, and the upstream contracts named in the package. Do not crawl the repository or reload every change document.',
-                    '- Open a core change document only to resolve a concrete requirement that the task packet does not contain; name that gap in the review.',
-                    '- Do not rerun broad test suites already recorded in the worker report. Run only a focused check for a specific unresolved doubt.',
+                    `- Read \`${record.reviewPackagePath || 'the generated review package'}\` first for the exact planning snapshot and bounded diff evidence.`,
+                    '- Read the five authoritative planning inputs once. Do not crawl implementation files or run broad tests.',
+                    '- Treat missing requirement coverage, unsafe architecture, invalid dependency ordering, and unverifiable acceptance criteria as actionable findings.',
+                    '- Require every finding to identify the affected planning file or task-graph path and a bounded repair scope.',
                 ]
-                : [
-                    `- Read \`${record.reviewPackagePath || 'the generated review package'}\` first for whole-change commit, status, stat, and diff evidence.`,
-                    '- Read `proposal.md`, `design.md`, `implementation-plan.md`, `tasks.md`, `artifacts/agents/task-graph.json`, worker reports, and task review artifacts.',
-                    '- This is the one broad whole-change review; check cross-task integration and regression risk here.',
-                ]),
+                : isTaskReview
+                    ? [
+                        `- Read the task's dispatch packet under \`artifacts/agents/dispatches/\` and \`${workerReportPath}\` first.`,
+                        `- Read \`${record.reviewPackagePath || 'the generated review package'}\` once for commit metadata, scoped status, stat, and diff evidence. Do not rerun broad Git discovery commands.`,
+                        '- Review the task target files, their direct integration effects, and the upstream contracts named in the package. Do not crawl the repository or reload every change document.',
+                        '- Open a core change document only to resolve a concrete requirement that the task packet does not contain; name that gap in the review.',
+                        '- Do not rerun broad test suites already recorded in the worker report. Run only a focused check for a specific unresolved doubt.',
+                    ]
+                    : [
+                        `- Read \`${record.reviewPackagePath || 'the generated review package'}\` first for whole-change commit, status, stat, and diff evidence.`,
+                        '- Use the approved combined planning review, proposal acceptance criteria, task graph, and task-review decisions as the verified baseline. Do not repeat each task review.',
+                        '- Inspect the whole-change diff for cross-task integration, shared-state behavior, missing acceptance coverage, and regression risk. Open a worker report or source file only when the package or a task-review concern identifies a concrete risk.',
+                        '- Re-run only a focused check needed to resolve a specific integration doubt; leave broad deterministic verification to the verification stage.',
+                    ]),
             priorReview,
             '- Do not accept implementer self-review as a substitute for independent review.',
             '- Review independently and read-only. The controller must not tell you to ignore a finding, pre-downgrade its severity, or skip it because the plan requested the behavior.',
@@ -13600,7 +12183,7 @@ class TaskGraphExecutionService {
     }
     buildDocumentReviewArtifact(feature, target) {
         const created = new Date().toISOString().split('T')[0];
-        const checklist = target.reviewerRole === 'design_reviewer'
+        const checklist = target.documentFile === constants_1.FILE_NAMES.DESIGN
             ? [
                 '- [ ] Checked `proposal.md` goals, scope, and acceptance criteria against `design.md`',
                 '- [ ] Checked affected boundaries, tradeoffs, risks, assumptions, and open questions',
@@ -13619,7 +12202,7 @@ class TaskGraphExecutionService {
             `feature: ${feature}`,
             `created: ${created}`,
             'status: pending_review',
-            `reviewer_role: ${target.reviewerRole}`,
+            'reviewer_role: deterministic_preflight',
             'decision: PENDING',
             'optional_steps: []',
             '---',
@@ -13643,119 +12226,6 @@ class TaskGraphExecutionService {
             '## Checklist',
             '',
             ...checklist,
-            '',
-        ].join('\n');
-    }
-    buildDocumentReviewDispatchPacket(feature, record, target) {
-        const stageContext = record.stage === 'design'
-            ? [
-                '- Read `proposal.md` before reviewing the design.',
-                '- Check whether `design.md` resolves scope, boundaries, assumptions, risks, and open questions before planning.',
-                '- Do not review code quality or task completion in this stage.',
-            ]
-            : [
-                '- Confirm `artifacts/reviews/design-review.md` is `APPROVED` or `APPROVED_WITH_CONCERNS` before reviewing the plan.',
-                '- Read `proposal.md`, `design.md`, and `implementation-plan.md` before deciding.',
-                '- Check task order, dependencies, target files, verification commands, parallel safety, and conflicts.',
-                '- Reject internal plan contradictions, missing cross-task interfaces or global constraints, and designs that would predictably fail a later code review.',
-                '- Check task right-sizing: each task should be the smallest unit worth its own focused verification and review gate; merge setup, config, or docs work into the task that consumes it when separate dispatch adds no independent value.',
-                '- Do not dispatch implementation workers from this packet.',
-            ];
-        return [
-            `# Document Review Dispatch: ${record.stage}`,
-            '',
-            `- Dispatch ID: ${record.id}`,
-            `- Change: ${feature}`,
-            `- Reviewer role: ${record.reviewerRole}`,
-            `- Review policy: ${record.policy}`,
-            `- Review mode: ${record.mode}`,
-            `- Risk signals: ${record.riskSignals.join(', ') || 'none'}`,
-            `- Model profile: ${record.workerProfile.modelProfile}`,
-            `- Model: ${record.workerProfile.model || 'harness default (not explicitly configured)'}`,
-            `- Model configuration source: ${record.workerProfile.modelConfigurationSource || (record.workerProfile.model ? 'target' : 'harness-default')}`,
-            `- Resolved target: ${record.workerProfile.resolvedTarget || record.runtimeAdapter?.target || 'unknown'}`,
-            `- Observed model: ${record.runtimeAdapter?.selected?.modelSelection?.observedModel || 'unknown (no provider/usage evidence)'}`,
-            `- Runtime adapter: ${record.runtimeAdapter?.selectedAdapterId || (record.mode === 'inline_preflight' ? 'inline' : 'manual independent reviewer')}`,
-            `- Parallel execution: ${record.runtimeAdapter?.selected?.supportsParallel ? 'supported' : 'no'}`,
-            `- Status: ${record.status}`,
-            `- Document: ${record.documentPath}`,
-            `- Document hash: ${record.documentHash}`,
-            `- Review context hash: ${record.reviewContextHash || record.documentHash}`,
-            `- Review contract: ${record.reviewContractVersion || 'legacy-target-document-v1'}`,
-            `- Completed-round ordinal: ${record.round || 1}`,
-            `- Token reservation: ${record.tokenReservation || 0}`,
-            `- Heartbeat due: ${record.heartbeatDueAt || 'set when claimed (lease midpoint)'}`,
-            `- Document readiness: ${record.documentReadiness}`,
-            `- Review artifact: ${record.reviewArtifactPath}`,
-            `- Usage sidecar: artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json (optional; automatically ingested on the next controller action)`,
-            `- Record: ${record.recordPath}`,
-            '',
-            ...this.buildProjectSessionBriefLines(record.projectSession),
-            '',
-            '## Required Context',
-            '',
-            ...stageContext,
-            '',
-            '## Mechanical Preflight',
-            '',
-            ...((record.mechanicalPreflight?.checks || []).map(check => `- PASS: ${check}`)),
-            ...((record.mechanicalPreflight?.warnings || []).map(warning => `- WARNING: ${warning}`)),
-            ...((record.mechanicalPreflight?.errors || []).map(error => `- ERROR: ${error}`)),
-            ...(!(record.mechanicalPreflight?.checks?.length
-                || record.mechanicalPreflight?.warnings?.length
-                || record.mechanicalPreflight?.errors?.length) ? ['- No recorded mechanical preflight (legacy dispatch).'] : []),
-            '',
-            '## Convergence Context',
-            '',
-            `- Prior completed review: ${record.priorDispatchId || 'none'}`,
-            `- Prior finding count: ${(record.priorFindings || []).length}`,
-            '',
-            '### Complete Prior Structured Findings',
-            '',
-            '```json',
-            JSON.stringify(record.priorFindings || [], null, 2),
-            '```',
-            '',
-            '### Bounded Document Diff',
-            '',
-            '```diff',
-            record.boundedDocumentDiff || '(no prior completed review)',
-            '```',
-            ...(record.boundedDocumentDiffTruncated ? ['- The diff was truncated at the deterministic packet bound; prior findings above remain complete.'] : []),
-            '',
-            '## Review Output',
-            '',
-            ...(record.mode === 'inline_preflight'
-                ? [
-                    `- Adaptive low-risk preflight recorded \`APPROVED\` in \`${record.reviewArtifactPath}\`.`,
-                    '- Redispatch to a specialist if later work reveals any risk signal listed by policy.',
-                ]
-                : [
-                    ...(record.requiresExecutorProvenance
-                        ? [
-                            `- Before review work, claim the real adapter executor with \`ospec execute doc-review [change-path] --stage ${record.stage} --claim-executor <executor-id>\`.`,
-                            `- After writing the review and findings, finish with \`ospec execute doc-review [change-path] --stage ${record.stage} --complete-executor <executor-id>\`.`,
-                        ]
-                        : []),
-                    `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
-                    '- Set frontmatter `reviewed_at` to the actual completion time. Preserve the controller-written dispatch, document hash, reviewer role, policy/mode, controller session, and reviewer executor provenance fields unchanged.',
-                    '- Record concrete findings and required corrections in the review artifact body.',
-                    `- Also write the same findings as structured JSON to \`${this.getReviewFindingsRelativePath(record.reviewArtifactPath)}\` using stable IDs, severity, category, message, file/line when applicable, evidence, requirement_refs, and repair_scope.`,
-                    ...((record.round || 1) > 1
-                        ? [`- This is convergence round ${record.round}. The structured sidecar must include top-level \`prior_finding_resolutions\` with one \`finding_id\`, status, and evidence entry for every prior finding ID: ${(record.priorFindingIds || []).join(', ') || '(none)'}.`]
-                        : []),
-                    '- Use `APPROVED_WITH_CONCERNS` only when execution may continue and the concern is explicit.',
-                ]),
-            '',
-            '## Completion',
-            '',
-            record.mode === 'inline_preflight'
-                ? record.stage === 'design'
-                    ? 'Continue with `ospec execute doc-review [change-path] --stage plan`.'
-                    : 'Derive or refresh `artifacts/agents/task-graph.json`, then continue with `ospec execute status`.'
-                : record.stage === 'design'
-                    ? 'After approving the design, run `ospec execute doc-review [change-path] --stage plan` before deriving or dispatching implementation tasks.'
-                    : 'After approving the implementation plan, derive or refresh `artifacts/agents/task-graph.json`, then continue with `ospec execute status` or `ospec execute next`.',
             '',
         ].join('\n');
     }
@@ -14127,7 +12597,6 @@ class TaskGraphExecutionService {
             `- Updated at: ${record.updatedAt}`,
             `- Selected at: ${record.selectedAt || 'not selected'}`,
             `- Answered by: ${record.answeredBy || 'legacy or not selected'}`,
-            `- Document review override: ${record.documentReviewOverride ? `${record.documentReviewOverride.stage} round ${record.documentReviewOverride.round} context ${record.documentReviewOverride.reviewContextHash}` : 'none'}`,
             `- Recommended option: ${record.recommendedOptionId || 'none'}`,
             `- Selected option: ${record.selectedOptionId || 'none'}`,
             '',

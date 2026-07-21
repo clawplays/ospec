@@ -2,6 +2,7 @@ import { BaseCommand } from './BaseCommand';
 export declare class LoopCommand extends BaseCommand {
     execute(action?: string, ...args: string[]): Promise<void>;
     private run;
+    private compactTickResult;
     private tickPlan;
     private watch;
     private parseOptionalPath;
@@ -10,7 +11,6 @@ export declare class LoopCommand extends BaseCommand {
     private status;
     private pause;
     private resume;
-    private level;
     private configure;
     private allowlist;
     private printAllowlistDiff;

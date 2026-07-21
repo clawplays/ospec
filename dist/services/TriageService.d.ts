@@ -13,8 +13,8 @@ export interface TriageItem {
     changePath: string | null;
 }
 /**
- * Manages the cross-change triage inbox (`<managed>/triage/inbox.jsonl`). Loop ticks (L1, or
- * out-of-allowlist findings at higher levels) append here; `ospec triage` lists/claims/promotes.
+ * Manages the cross-change triage inbox (`<managed>/triage/inbox.jsonl`). Workflow controllers
+ * append findings here; `ospec triage` lists, claims, and promotes them.
  * Paths always go through `resolveManagedPath` so classic and nested layouts both work (Contract 4).
  */
 export declare class TriageService {

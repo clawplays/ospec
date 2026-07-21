@@ -15,10 +15,15 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec change <change-name> [path]
-ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
+ospec goal <goal-name> [path] [--target ...] [--execution-model controller]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop run [changes/active/<change>] --once --json
+ospec loop tick [changes/active/<change>] --json
+ospec loop heartbeat [changes/active/<change>] --action-item <id> --executor <child-id>
+ospec loop finalize [changes/active/<change>] --action-item <id> --executor <child-id> --exit-code 0 --summary "..."
+ospec loop recover [changes/active/<change>] --force
 ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N --continue-while-progressing true|false
 ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
@@ -26,9 +31,7 @@ ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expecte
 ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
-ospec execute doc-review [changes/active/<change>] [--stage design|plan]
-ospec execute doc-review [changes/active/<change>] --stage design|plan --claim-executor <executor-id>
-ospec execute doc-review [changes/active/<change>] --stage design|plan --complete-executor <executor-id>
+ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
 ospec execute route [changes/active/<change>]
@@ -45,6 +48,7 @@ ospec execute complete <task-id> [changes/active/<change>] --status DONE --summa
 ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
+ospec execute repair [changes/active/<change>]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:影响 --option id:label:影响 [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user [--summary "..."]
 ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
@@ -71,31 +75,17 @@ ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
-`loop configure --allow-path`、`--allow-command` 和 `--allow-command-policy` 会替换所选的完整白名单分组并打印差异，不会静默追加。L3 优先使用基于任务图的 `derive -> check -> apply` 流程；apply 使用 CAS 哈希，权限扩大必须显式传入 `--approve-expansion`。
+`loop configure --allow-path`、`--allow-command` 和 `--allow-command-policy` 用于配置可选的额外边界，会替换所选的完整白名单分组并打印差异。优先使用基于任务图的 `derive -> check -> apply` 流程；apply 使用 CAS 哈希，权限扩大必须显式传入 `--approve-expansion`。
 
-1.8.21 增加了带审计的强制归档出口，仅用于用户明确接受未完成 Change 或 Goal 的情况。命令必须同时提供 `--force-archive`、与 change 名称完全一致的 `--confirm-force-archive`，以及非空原因。它不会把失败或 `NOT_VERIFIED` 证据改成通过；存在 pending Loop action 时会拒绝移动 Goal，并写入 `artifacts/agents/force-archive.json`。state、生成知识文档、`feature-index.md` 和 `SKILL.index.json` 都会持续标记为 `forced`、`incomplete`、`accepted-risk`；已经满足普通归档条件的 change 必须使用普通 finalize。
+## 当前工作流行为
 
-1.8.22 收敛了强制归档的 Loop 安全检查。当 pending Controller 指针至少包含一个 item，且全部 item 已持久化为终态 `completed`、`failed` 或 `expired` 时，即使过期的临时 repair task 已无法和当前 task graph 对账，也允许归档。item 状态缺失、`issued`、`running` 或其它非终态仍严格阻止归档；终态 action 会原样保留在归档 Loop evidence 中。
-
-1.8.3 为设计和计划的 specialist review 引入了边界默认值。1.8.9 连续模式把每阶段两轮和 30 分钟作为收敛阈值：新的结构化 finding-ID 集合可以继续，重复或循环集合会停止。缓存命中、复用待处理 dispatch、heartbeat 和同一 dispatch 的恢复不计轮次。`--force` 不能绕过 guard；严格模式保留精确用户授权的额外轮次窗口。
-
-1.8.4 引入了 task review-repair 和 grouped final-review repair 的两轮门禁；连续模式把它们作为收敛阈值。结构化 finding ID 变化时自动继续。从 1.8.11 起，同一 ID 只有在结构化 finding 指纹和上一轮授权 repair scope 内的代码快照同时变化时也可继续；只改措辞、只改代码、精确重复或循环仍会在下一次无效 repair 前停止。使用 `--continue-while-progressing false` 可保留旧版严格生命周期上限。只有当全部文件变化都能归因到已完成的传递下游任务时，上游已批准 review 才会继续有效；下游 reviewer 包会继承这些上游合同作为回归义务。final review 为 `BLOCKED` 时会停下解决 blocker，不会错误进入 grouped repair。
-
-1.8.12 为已有 durable `BLOCKED` task 增加显式外部验收延期。`ospec execute defer-blocker` 要求存在已记录的 external blocker、已完成 dispatch 证据和非空用户授权原因。它只允许依赖安全的实现继续，不改变 blocked task 或 checklist；final review、verify、finalize 和 archive 仍然阻断。新计划应把外部/人工验收与无关实现的关键路径拆开。
-
-1.8.13 修复真实 Goal 恢复后的下一层停滞。缺失的 prerequisite review 会在 retryable 下游 worker 之前派发。finding 只有在额外路径都属于 task graph 中已完成 owner 时才能跨任务；OSpec 会冻结完整 repair scope，并重新复审失效的 owner 批准。成功的有界 controller poll 会为已认领 child 续短租约，但不移动绝对期限。未指定服务的全量 Docker Compose rebuild 会在 dispatch packet 中给出范围警告，提醒按项目说明改成所需服务。
-
-1.8.14 修复 cross-task repair 后的多 reviewer 租约边界竞态。controller poll 最多可在短租约边界后的一个有界 60 秒等待窗口内续租同一已认领 child；直接提交过期 result、真正 orphan 和固定 absolute deadline 仍严格生效。任何已记录但尚未批准的 cross-task owner review 或 repair 都先于新的 implementation 和 retryable worker，其它无冲突 reviewer 仍可在同一批次并行。
-
-1.8.15 修复文档 repair 或删除后的 Goal finalize。已有 baseline 变为不存在会被记录为经过 review 的有效删除；多轮 repair 使用首个 baseline 到最终 completed dispatch 的完整证据链，而不是只读取最后一次 attempt；当前工作区还必须匹配该路径最后一个声明 owner 的 evidence。因此合法删除和后续未重复修改的 repair 可以归档，但旧 evidence、外部漂移或最终回退仍会失败。
-
-1.8.17 把用户选择的 Change 完整做成快速流程。首选命令是 `ospec change`，`ospec new` 继续作为兼容别名。Change 不会自动升级为 Goal，只读取分阶段精简协议，由当前 AI 做一次轻量 review；feature/docs 必须更新真实长期文档，closeout state 自动派生，finalize 只重建一次索引。批量 Change 在 queue 中串行执行，`APPROVED_WITH_CONCERNS` 也可以自动归档。
-
-1.8.16 修复已完成 Goal 更新 verification closeout metadata 后的最后一层阻塞。dispatch meaningful-change 证据链仍是硬门禁；只有在最后一次 owner dispatch 之后派发、executor provenance 有效且精确匹配当前 target snapshot 的 APPROVED task review，才能授权最终当前状态。`ospec execute sync` 现在也会识别并更新英文、中文、日文和阿拉伯文 worker-status 模板中的 Combined review 状态与 checklist。未知容量的 implementation 现在与默认并发 3 对齐；它不是全局上限，不限制 review 批次，并会被更大的 session-bound 正整数 harness 容量替代，因此资源和任务图安全时可显式配置 5-10 个并发。
-
-1.8.5 防止原生 child 的等待让 Goal controller 长时间卡死。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它所有 native adapter 的单次等待都必须在 60 秒内返回，在 `heartbeatDueAt` 前续租，完成一个结果就立即持久化一个，并重新 tick。只有 Git HEAD 变化但 task 目标快照未变时，不再重复 task review；final review 仍严格绑定快照和 HEAD。未知 native capacity 时 implementation 批次最多两个，但不会降低互不冲突的 review 并行度。新 task 超过六个目标时必须拆分，或填写 `scope_reason`。
-
-1.8.6 明确 60 秒只是 controller 的单次轮询上限，不是 child 的执行上限。implementation 的绝对期限默认 120 分钟，review 和 verification 默认 60 分钟；短 heartbeat 租约可续期，证据完成后另有默认 5 分钟的结果回传宽限。`ospec loop finalize` 会先校验持久证据再提交成功结果。递归目录快照、按完整上下文绑定的批准缓存和改进的无冲突批次选择，可减少陈旧或重复 review，同时不放宽来源校验。1.8.6 新图中的串行 task 必须填写 `serial_reason`，旧图继续可读。
+- **强制归档：**仅在用户明确接受未解决风险后使用。必须同时提供 `--force-archive`、与 change 名称完全一致的 `--confirm-force-archive` 和非空原因。失败及 `NOT_VERIFIED` 证据不会被改写。保留的 Controller 指针只有在至少包含一个 item，且全部 item 都已持久化为 `completed`、`failed` 或 `expired` 时才安全；缺失状态、`issued`、`running` 或其它非终态仍会阻断。归档会明确标记为 `forced`、`incomplete` 和 `accepted-risk`。
+- **Review 收敛：**规划文档统一使用确定性 inline preflight，不启动 reviewer child，也不预留 reviewer token。task/final repair 仍使用有界收敛阈值；同一 finding 只有在指纹和授权 repair scope 快照都发生有效变化时才能继续，重复、循环、只改措辞或只改代码都会停止。
+- **外部验收：**`ospec execute defer-blocker` 要求已有持久 external blocker、完成的 dispatch 证据和明确用户授权。它允许依赖安全的实现继续，但 task 仍保持 blocked，final review、verify、finalize 和 archive 仍受门禁约束。
+- **Repair 所有权：**prerequisite review 先于依赖它的 retry。跨任务 repair 路径必须属于已声明且完成的 owner，使用冻结 scope，并在批准失效时触发 fresh owner review。task review 会快照同一 task 的 canonical worker report；允许精确修复该 report，旧版或陈旧 evidence 必须先经过 fresh review，不能改写历史。
+- **文档 closeout：**经过 review 的创建和删除都是有效状态变化。证据从首个 baseline 聚合到最终 completed dispatch，workspace 必须匹配最新 declared-owner evidence。后续权威 APPROVED review 可以绑定精确最终快照，但不能替代 meaningful-change 证据链。`ospec execute sync` 会更新多语言 worker status 和 Combined review checklist。
+- **Classic Change：**`ospec change` 是首选快速流程，`ospec new` 继续作为别名。用户选择的 Change 不会自动升级为 Goal。它使用精简分阶段指导、当前 AI 的一次轻量 review、实用文档规则、自动派生 closeout、一次 finalize 索引重建和串行 queue。其它门禁全部通过时，`APPROVED` 和 `APPROVED_WITH_CONCERNS` 可以自动归档。
+- **Controller 与并发：**单次 native wait 必须在 60 秒内返回，但存活 child 会在持续续 heartbeat 时运行到绝对期限。未知 native capacity 的 implementation 默认并发是 3，不是 2；更大的 session-bound 正整数 capacity 可在依赖、文件冲突、共享资源、token 和 `maxParallel` 都允许时支持 5-10 等配置。新的串行 task 必须填写 `serial_reason`，超过六个 target 的 task 必须拆分或声明 `scope_reason`。
 
 ## 插件快速开始
 
@@ -148,7 +138,7 @@ ospec plugins enable checkpoint [path] --base-url <url>
 ospec init [path]
 ospec change <change-name> [path]
 # 全流程工作使用：
-ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
+ospec goal <goal-name> [path] [--target ...] [--execution-model controller]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
@@ -157,7 +147,7 @@ ospec finalize [changes/active/<change>]
 
 `ospec change <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`；`ospec new` 仍是兼容别名。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
 
-goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报告真实 harness，例如 `--target codex --execution-model controller --harness-interactive true --native-subagents supported`；target 名称本身不再授权子 agent。`ospec loop run --once` 输出有界 fresh-context action，IDE controller 逐个记录 child heartbeat 和 result；lease 过期或明确释放的 orphan 会重新排队，已完成 sibling 不会重复执行。provider usage sidecar 会进入 token budget，verification 失败会撤销旧 final approval 并先经过独立复审和 grouped repair。L1 只报告，L2 允许辅助执行，L3 还要求 canonical path 与 shell-safe command allowlist。详见 [loop-engineering.md](loop-engineering.md)。
+goal 以**会话内 task graph 循环**运行，并统一使用一条快速质量流程。IDE-native 执行必须显式报告真实 harness。依次运行 design/plan 确定性预检、派生 task graph，再在 workspace 和 worker 派发前完成一次独立 combined planning review；最多允许一次整体规划修复和一次 re-review。controller 使用 `ospec loop run --once --compact-json` 获取精简 action，逐个记录 heartbeat 和 result。可选白名单可增加精确 path/command 边界。详见 [loop-engineering.md](loop-engineering.md)。
 
 - 每个 goal 都遵守三条体验契约：`Announce-Before-Act`（AI 宣告当前 skill 与阶段、每条 `ospec execute …` 命令及产物、每次子 agent 派发）、`Brainstorm-First`（锁定设计前，把方向、架构、API、数据、UI、风险、范围等未决问题逐个用原生提问 UI——Claude Code 用 AskUserQuestion——询问）、`Zero-Setup`（每一条 `ospec` 命令都由 AI 自己执行，你只需起一个 goal 并描述需求）。
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
@@ -174,7 +164,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 - `ospec run start`、`run resume`、`run step` 和 `run status` 的下一步提示会参考 active task graph；如果有可分派任务，会提示 `ospec execute dispatch ...`。runner 仍然不会自动派发 worker，也不会编辑源码。
 - 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`。它会记录 project session brief snapshot、目标工具映射、命令序列、安全规则和缺失上下文警告。
-- 实现派发前，用 `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` 生成评审包。specialist packet 会记录模型原生 `runtimeAdapter`；启动 fresh native reviewer 后立即用真实 child id 执行 `--claim-executor`，完成 Markdown 与结构化 findings 后再 `--complete-executor`。review 会绑定 target 和 controller session；design review 通过后才能派发 plan review。
+- 派生 task graph 前，依次运行 `ospec execute preflight [changes/active/<change>] --stage design` 和 `--stage plan`。两步都执行确定性 inline 就绪检查并记录 approval evidence，不启动 reviewer child；两步通过后再派生或刷新 graph，并由 Loop 发出一次合并规划复审。
 - 用 `ospec execute status [changes/active/<change>]` 或 `ospec execute next [changes/active/<change>]` 查看控制器状态和下一批安全可分派任务。需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<change>]` 写入 `artifacts/agents/workflow-route.json` 和 `workflow-route.md`。
 - 当方向、架构、API、UI、风险或范围需要用户明确选择时，用 `ospec execute decision [changes/active/<change>] ...` 记录决策门。required pending decision 会出现在 `bootstrap`、`status` 和 `finish` 中，并阻止 worker dispatch，直到用 `--select <option-id> --answered-by user` 记录选择，或用相同来源标记明确 `--skip`。
 - 派发 worker 前，用 `ospec execute workspace [changes/active/<change>]` 写入 `artifacts/agents/workspace-status.json` 和 `artifacts/agents/workspace-status.md`；如果状态是 `needs_isolation`，先清理当前工作区或转到隔离 git worktree，再做并行派发。
@@ -201,7 +191,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 - 在 AI / `/ospec-change` 流程中，AI 只保持小流程所需的 `proposal.md`、`tasks.md`、实现、`verification.md` 和 `review.md` 对齐。
 - 在 AI / `/ospec-goal` 流程中，AI 会基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`、`implementation-plan.md` 与 `artifacts/agents/task-graph.json`；你只需要审阅假设，或修正关键决策。
 - Task graph 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；归档前顶层 `status` 必须为 `"completed"`，且所有 task 必须为 `DONE` 或 `DONE_WITH_CONCERNS`。
-- `ospec execute bootstrap`、`handoff`、`doc-review`、`status`、`next` 和 `route` 都不会编辑项目源码；各 artifact 命令只写其声明的状态。当前模型 controller 通过 `runtimeAdapter.selected.nativeSubagent` 启动 worker；OSpec 不执行 agent CLI。
+- `ospec execute bootstrap`、`handoff`、`preflight`、`status`、`next` 和 `route` 都不会编辑项目源码；各 artifact 命令只写其声明的状态。当前模型 controller 通过 `runtimeAdapter.selected.nativeSubagent` 启动 worker；OSpec 不执行 agent CLI。
 - Worker 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；完成前必须解决 worker 状态，且 `controller_status` 必须为 `DONE`。
 - 对 `change` profile，`ospec verify [changes/active/<change>]` 只强制经典快速流程文件。对 `goal` profile，它还会强制 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence 和 `artifacts/agents/worker-status.md`。
 - 保持 `design.md` 简洁；它的作用是提高任务拆解准确性，不是替代长期项目文档。
@@ -231,7 +221,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.23
+npm install -g @clawplays/ospec-cli@1.9.0
 ospec update [path]
 ```
 

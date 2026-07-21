@@ -15,10 +15,15 @@ ospec changes status [path]
 ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec change <change-name> [path]
-ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
+ospec goal <goal-name> [path] [--target ...] [--execution-model controller]
 ospec progress [changes/active/<change>]
 ospec run status [path]
 ospec loop status [changes/active/<change>] [--brief|--json]
+ospec loop run [changes/active/<change>] --once --json
+ospec loop tick [changes/active/<change>] --json
+ospec loop heartbeat [changes/active/<change>] --action-item <id> --executor <child-id>
+ospec loop finalize [changes/active/<change>] --action-item <id> --executor <child-id> --exit-code 0 --summary "..."
+ospec loop recover [changes/active/<change>] --force
 ospec loop configure [changes/active/<change>] --max-parallel N --max-parallel-reason "..." --max-task-repair-rounds N --max-final-repair-rounds N --continue-while-progressing true|false
 ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
@@ -26,9 +31,7 @@ ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expecte
 ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<change>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
-ospec execute doc-review [changes/active/<change>] [--stage design|plan]
-ospec execute doc-review [changes/active/<change>] --stage design|plan --claim-executor <executor-id>
-ospec execute doc-review [changes/active/<change>] --stage design|plan --complete-executor <executor-id>
+ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
 ospec execute route [changes/active/<change>]
@@ -45,6 +48,7 @@ ospec execute complete <task-id> [changes/active/<change>] --status DONE --summa
 ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."
 ospec execute review [changes/active/<change>] [--task task-id]
 ospec execute feedback [changes/active/<change>] [--summary "..."]
+ospec execute repair [changes/active/<change>]
 ospec execute decision [changes/active/<change>] --id <id> --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional]
 ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user [--summary "..."]
 ospec execute debug [changes/active/<change>] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." --status FIXED --command "npm test -- focused" --summary "..."
@@ -71,31 +75,17 @@ ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
-`loop configure --allow-path`, `--allow-command`, and `--allow-command-policy` replace the complete selected allowlist group and print a diff; they never append silently. Prefer the task-graph `derive -> check -> apply` flow for L3. Apply uses compare-and-swap hashes, and permission expansion requires explicit `--approve-expansion`.
+`loop configure --allow-path`, `--allow-command`, and `--allow-command-policy` configure an optional extra boundary, replace the complete selected allowlist group, and print a diff. Prefer the task-graph `derive -> check -> apply` flow. Apply uses compare-and-swap hashes, and permission expansion requires explicit `--approve-expansion`.
 
-1.8.21 adds an audited force-archive escape hatch for a user who explicitly accepts an incomplete Change or Goal. It requires `--force-archive`, exact-name `--confirm-force-archive`, and one non-empty reason. It never changes failed or `NOT_VERIFIED` evidence to pass, refuses to move a Goal while a Loop action is pending, and writes `artifacts/agents/force-archive.json`. State, generated knowledge, `feature-index.md`, and `SKILL.index.json` remain visibly `forced`, `incomplete`, and `accepted-risk`; a normally ready change must use ordinary finalize.
+## Current Workflow Behavior
 
-1.8.22 refines the force-archive Loop safety check. A retained pending Controller pointer may be archived when it has at least one item and every item is durably terminal (`completed`, `failed`, or `expired`), even if an obsolete temporary repair task can no longer be reconciled against the current graph. Missing item states and any `issued`, `running`, or otherwise nonterminal item still block. The terminal action remains unchanged in the archived Loop evidence.
-
-Specialist design and plan reviews gained bounded defaults in 1.8.3. In 1.8.9 continuous mode, two completed rounds and 30 minutes are convergence thresholds: a new structured finding-ID set can continue, while repeated or cycling sets stop. Cache hits, pending reuse, heartbeats, and recovery of the same dispatch do not consume rounds. `--force` cannot bypass a guard. Strict mode retains the exact user-authorized extra-round window.
-
-1.8.4 introduced two-round task-review and grouped final-review repair guards. In continuous mode, those values are convergence thresholds. Changed structured finding IDs continue automatically. From 1.8.11, a stable ID also continues when both its structured finding fingerprint and the code snapshot inside the prior authorized repair scope changed. Wording-only changes, code-only churn, exact repeats, and cycles still stop before another ineffective repair. `--continue-while-progressing false` preserves the earlier strict lifetime ceilings. Approved upstream reviews remain valid across shared-file edits only when every changed path is attributable to a completed transitive downstream task; that downstream review packet inherits the upstream contracts as regression obligations. A blocked final review stops for blocker resolution instead of entering grouped repair.
-
-1.8.12 adds explicit external-acceptance deferral for a durable `BLOCKED` task. `ospec execute defer-blocker` requires a recorded external blocker, completed dispatch evidence, and a non-empty user authorization reason. It lets dependency-safe implementation continue without changing the blocked task or checklist; final review, verification, finalization, and archive remain blocked. New plans should split external/manual acceptance from unrelated implementation critical paths.
-
-1.8.13 resolves the next continuation layer found in resumed real Goals. Missing prerequisite reviews are dispatched before retryable dependent workers. A finding may include paths from another task only when each path belongs to a declared completed owner; OSpec freezes the full repair scope and stale owner approvals are re-reviewed. Successful bounded controller polls renew claimed child leases without moving the absolute deadline. Dispatch packets warn before unscoped full Docker Compose rebuilds so scoped verification can name only the required services.
-
-1.8.14 closes the multi-review boundary race found after a cross-task repair. A controller poll may renew an already-claimed child for up to one bounded 60-second wait after its short lease boundary, while direct late results, true orphans, and fixed absolute deadlines remain strict. Any recorded cross-task owner review or repair now precedes new implementation and retryable worker work; other conflict-safe reviewers may still run in the same batch.
-
-1.8.15 fixes Goal finalization after documentation repair or deletion. Documentation evidence now treats an existing baseline becoming missing as a meaningful reviewed deletion, aggregates the first baseline through the final completed dispatch instead of reading only the last repair attempt, and verifies the workspace against the path's latest declared-owner evidence. This permits intentional deletion and unchanged later repair rounds without accepting stale evidence, external drift, or a final reversion.
-
-1.8.17 makes user-selected Changes a complete fast path. `ospec change` is the preferred command and `ospec new` remains an alias. Changes never auto-promote to Goals, read a compact stage-aware protocol, use one current-AI lightweight review, require real documentation for features and docs work, derive closeout state automatically, and finalize with one index rebuild. Batch Changes stay sequential in the queue and `APPROVED_WITH_CONCERNS` may auto-archive.
-
-1.8.16 fixes the remaining closeout layer after a completed Goal updates verification metadata. The dispatch meaningful-change chain remains mandatory, while a later APPROVED task review may authorize an exact current target snapshot only when its executor provenance is valid and the review was assigned after the last owner dispatch. `ospec execute sync` now also recognizes and updates Combined review sections and checklist lines in English, Chinese, Japanese, and Arabic worker-status templates. Unknown-capacity implementation now matches the default concurrency of three; it is not a global limit, does not cap review batches, and is replaced by a larger positive session-bound harness capacity so explicitly configured batches of 5-10 can run when resources and graph safety allow.
-
-1.8.5 prevents native child waits from freezing a Goal controller. Codex/GPT `wait_agent`, Claude Task polling, and every other native adapter must return within 60 seconds, refresh live heartbeats before `heartbeatDueAt`, persist each finished result immediately, and re-tick. Unrelated Git HEAD movement no longer invalidates an unchanged task review, while final review remains bound to both snapshot and HEAD. Unknown native capacity caps implementation batches at two without reducing conflict-safe review parallelism. New broad tasks with more than six targets must be split or include `scope_reason`.
-
-1.8.6 clarifies that 60 seconds limits one controller poll, not the child runtime. Implementation defaults to a 120-minute absolute deadline; review and verification default to 60 minutes, with renewable heartbeat leases and a five-minute evidence-to-result grace period. `ospec loop finalize` validates durable evidence before committing success. Recursive directory snapshots, context-bound approval reuse, and improved conflict-safe selection avoid stale or repeated review without weakening provenance. New 1.8.6 serial tasks require `serial_reason`; older graphs remain readable.
+- **Force archive:** use it only after the user explicitly accepts unresolved risk. It requires `--force-archive`, an exact-name `--confirm-force-archive`, and a non-empty reason. Failed and `NOT_VERIFIED` evidence stays unchanged. A retained Controller pointer is safe only when it contains at least one item and every item is durably `completed`, `failed`, or `expired`; missing, `issued`, `running`, or other nonterminal states still block. The archive remains visibly `forced`, `incomplete`, and `accepted-risk`.
+- **Review convergence:** planning documents use deterministic inline preflight with no reviewer child or token reservation. Task/final repair still uses bounded convergence thresholds: a stable finding continues only when both its fingerprint and authorized repair-scope snapshot materially changed, while repeats, cycles, wording-only changes, and code-only churn stop.
+- **External acceptance:** `ospec execute defer-blocker` requires an existing durable external blocker, completed dispatch evidence, and explicit user authorization. It permits dependency-safe implementation to continue but leaves the task blocked and keeps final review, verification, finalize, and archive gated.
+- **Repair ownership:** prerequisite reviews run before dependent retries. Cross-task repair paths must belong to declared completed owners, use a frozen scope, and trigger fresh owner review when approvals become stale. A task review snapshots its canonical worker report; exact same-task report repair is allowed, while stale or legacy evidence routes through a fresh review instead of history edits.
+- **Documentation closeout:** reviewed creation and deletion are meaningful state transitions. Evidence is aggregated from the first baseline through the final completed dispatch, and the workspace must match the latest declared-owner evidence. A later authoritative APPROVED review may bind the exact final snapshot without replacing the meaningful-change chain. `ospec execute sync` updates localized worker status and combined-review checklists.
+- **Classic Change:** `ospec change` is the preferred fast path and `ospec new` remains an alias. A user-selected Change never auto-promotes to a Goal. It uses compact stage-aware guidance, one lightweight current-AI review, practical documentation rules, derived closeout state, one finalize index rebuild, and sequential queue execution. `APPROVED` and `APPROVED_WITH_CONCERNS` may archive automatically when all other gates pass.
+- **Controller runtime and concurrency:** one native wait returns within 60 seconds, but a live child continues until its absolute deadline while heartbeats are renewed. Unknown native capacity uses an implementation concurrency fallback of three, not two; a larger positive session-bound capacity can support configured batches such as 5-10 when dependencies, file conflicts, shared resources, token funding, and `maxParallel` allow. New serial tasks require `serial_reason`, and tasks with more than six targets must be split or declare `scope_reason`.
 
 ## Plugin Quick Start
 
@@ -148,7 +138,7 @@ For a fresh directory:
 ospec init [path]
 ospec change <change-name> [path]
 # For full workflow:
-ospec goal <goal-name> [path] [--level L1|L2|L3] [--target ...] [--execution-model controller]
+ospec goal <goal-name> [path] [--target ...] [--execution-model controller]
 ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
@@ -157,7 +147,7 @@ ospec finalize [changes/active/<change>]
 
 `ospec change <change-name> [path]` creates the classic fast-flow files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`; `ospec new` remains a compatible alias. `ospec goal <goal-name> [path]` creates the full workflow with `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/final-review.md`, and `artifacts/agents/worker-status.md`.
 
-A goal runs as a **session-bound task-graph loop**. For IDE-native execution, report the real harness explicitly, for example `--target codex --execution-model controller --harness-interactive true --native-subagents supported`; target names alone do not authorize child agents. `ospec loop run --once` emits bounded fresh-context actions. The IDE controller records child heartbeats and per-item results, while expired or explicitly released orphan items are requeued without duplicating completed siblings. Provider usage sidecars feed the token budget, and failed verification invalidates the previous final approval before reviewed repair. L1 reports only, L2 permits assisted execution, and L3 additionally requires canonical path and shell-safe command allowlists. See [loop-engineering.md](loop-engineering.md).
+A goal runs as a **session-bound task-graph loop** with one fast quality workflow. For IDE-native execution, report the real harness explicitly, for example `--target codex --execution-model controller --harness-interactive true --native-subagents supported`; target names alone do not authorize child agents. Run deterministic design and plan preflights, derive the graph, then complete one independent combined planning review before workspace and worker dispatch. One grouped planning repair and one re-review are the maximum. Use `ospec loop run --once --compact-json` for token-lean action output. Optional allowlists add exact path and command boundaries. See [loop-engineering.md](loop-engineering.md).
 
 - Every goal runs with three experience contracts: `Announce-Before-Act` (the AI announces its skill and stage, each `ospec execute …` command and artifact, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, data, UI, risk, and scope decisions are asked one at a time through the native question UI — Claude Code: AskUserQuestion — before design is locked), and `Zero-Setup` (the AI runs every `ospec` command itself, so you only start a goal and describe the requirement).
 - Workflow flags can activate built-in agent quality policy steps: `tdd_cycle`, `root_cause_debug`, and `verification_evidence`. Activated steps are written into change frontmatter as `optional_steps` and must be covered in `tasks.md`, `verification.md`, and archive readiness.
@@ -174,7 +164,7 @@ A goal runs as a **session-bound task-graph loop**. For IDE-native execution, re
 - Queue runner next instructions from `ospec run start`, `run resume`, `run step`, and `run status` use the active task graph when available, so dispatchable work points to `ospec execute dispatch ...`; the runner still does not dispatch workers or edit source files.
 - Use `ospec execute bootstrap [changes/active/<change>]` when starting or resuming one active change to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md` with the project session brief snapshot, then follow the next safe action it reports. When an active dispatch already exists, bootstrap recommends the matching `ospec execute launch ... --task ...` command.
 - Use `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` when moving a change between agents, tools, worktrees, shells, or human operators. It writes `artifacts/agents/handoff.json` and `artifacts/agents/handoff.md` with the project session brief snapshot, target tool mapping, command sequence, safety rules, and missing-context warnings.
-- Use `ospec execute doc-review [changes/active/<change>] [--stage design|plan]` before implementation dispatch. Specialist packets include a model-native `runtimeAdapter`; dispatch a fresh native reviewer, claim its real child id immediately, then complete it after Markdown and structured findings are ready. Reviews bind the target and controller session; design review must pass before plan review.
+- Before deriving the task graph, run `ospec execute preflight [changes/active/<change>] --stage design`, then `--stage plan`. Both commands run deterministic inline readiness checks and record approval evidence under `artifacts/agents/planning-preflights/` without launching a reviewer child. Derive or refresh the graph only after both pass, then let Loop issue the combined planning review.
 - Use `ospec execute status [changes/active/<change>]` or `ospec execute next [changes/active/<change>]` to inspect controller state and the next safe task candidates before assigning work. Use `ospec execute route [changes/active/<change>]` when you want a persistent `artifacts/agents/workflow-route.json` and `workflow-route.md` recommendation for the next OSpec command.
 - Use `ospec execute decision [changes/active/<change>] ...` when direction, architecture, API, UI, risk, or scope needs an explicit user choice. A required pending decision is shown by `bootstrap`, `status`, and `finish`, and it blocks worker dispatch until you record `--select <option-id> --answered-by user` or intentionally `--skip` with the same provenance.
 - Use `ospec execute workspace [changes/active/<change>]` before worker handoff to write `artifacts/agents/workspace-status.json` and `artifacts/agents/workspace-status.md`; if the status is `needs_isolation`, defer parallel dispatch until the workspace is clean or moved into an isolated git worktree.
@@ -201,7 +191,7 @@ A goal runs as a **session-bound task-graph loop**. For IDE-native execution, re
 - In AI / `/ospec-change` flows, the AI keeps the small flow focused on `proposal.md`, `tasks.md`, implementation, `verification.md`, and `review.md`.
 - In AI / `/ospec-goal` flows, the AI drafts or updates `design.md`, `implementation-plan.md`, and `artifacts/agents/task-graph.json` from the requirement, `proposal.md`, and project context; you only need to review assumptions or correct important decisions.
 - Task graph status values are `DONE`, `DONE_WITH_CONCERNS`, `IN_PROGRESS`, `NEEDS_CONTEXT`, `BLOCKED`, and `PENDING`; archive readiness requires top-level `status: "completed"` and all tasks to be `DONE` or `DONE_WITH_CONCERNS`.
-- `ospec execute bootstrap`, `handoff`, `doc-review`, `status`, `next`, and `route` are read-only with respect to project source files; the artifact commands write only their documented state. The current model controller launches workers through `runtimeAdapter.selected.nativeSubagent`. OSpec does not execute agent CLIs.
+- `ospec execute bootstrap`, `handoff`, `preflight`, `status`, `next`, and `route` are read-only with respect to project source files; the artifact commands write only their documented state. The current model controller launches workers through `runtimeAdapter.selected.nativeSubagent`. OSpec does not execute agent CLIs.
 - Worker status values are `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`, and `PENDING`; completion requires the worker statuses to be resolved and `controller_status` to be `DONE`.
 - `ospec verify [changes/active/<change>]` requires only the classic files for `change` profile directories. For `goal` profile directories, it also fails when `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, document review artifacts, final review artifacts, verification evidence, or `artifacts/agents/worker-status.md` is missing or malformed, and warns when document checklists still have unchecked items.
 - Keep `design.md` concise; it should make task planning more accurate, not become long-lived project documentation.
@@ -231,7 +221,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.23
+npm install -g @clawplays/ospec-cli@1.9.0
 ospec update [path]
 ```
 

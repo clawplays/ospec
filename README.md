@@ -40,7 +40,7 @@ AI coding assistants are powerful, but requirements that live only in chat histo
 - **Spec-driven work, saved to your repo** — OSpec turns a request into files (proposal, design, plan, tasks, reviews, verification evidence) that live in your repo instead of in chat history, so any assistant (Codex/GPT, Claude Code, Gemini, OpenCode, or plain CLI) can pick up exactly where the last one stopped.
 - **`ospec change` — the everyday fast flow** — one requirement becomes one active change on a short `init -> change -> verify/finalize` path, kept lightweight and easy to review.
 - **`ospec goal` for larger or riskier work** — describe the result you need; the AI asks important questions, writes an inspectable plan, implements the work, runs tests, requests an independent review, updates project docs, and continues until the result is proven.
-- **You choose how much it may do automatically** — `L1` only checks, `L2` may edit but pauses for important choices, and `L3` may continue within limits you set. Progress is saved in the repository, so a later session can resume it.
+- **One predictable Goal workflow** — every Goal uses the same fast quality path, pauses for material user decisions, and saves progress in the repository so a later session can resume it.
 
 ## Install With npm
 
@@ -138,7 +138,7 @@ ospec session .
 ospec execute bootstrap changes/active/<goal-name>
 ospec execute workspace changes/active/<goal-name>
 ospec execute status changes/active/<goal-name>
-ospec execute dispatch changes/active/<goal-name> --limit 2
+ospec execute dispatch changes/active/<goal-name> --limit 3
 ospec execute launch changes/active/<goal-name> --task <task-id> --target codex
 ospec execute complete <task-id> changes/active/<goal-name> --status DONE --summary "..."
 ospec loop tick changes/active/<goal-name> # issues task/final reviews with executor provenance
@@ -194,10 +194,12 @@ Archive notes:
 
 Use a Goal only when you choose the full workflow. A user-selected Change remains a Change regardless of complexity, file count, risk, or batch size; create it with `ospec change` (`ospec new` remains an alias).
 
+A Change uses compact stage-aware guidance, one lightweight current-AI review, and derived closeout state. When verification, documentation, plugin, and review gates pass, `APPROVED` or `APPROVED_WITH_CONCERNS` may finalize and archive automatically; explicit batches stay sequential in the queue.
+
 Start from a terminal:
 
 ```bash
-ospec goal improve-checkout --level L2 --target codex --execution-model controller --harness-interactive true --native-subagents supported
+ospec goal improve-checkout --target codex --execution-model controller --harness-interactive true --native-subagents supported
 ```
 
 Then tell the AI what outcome you need in ordinary language. You can also skip the terminal command and say: "Use OSpec goal for this requirement and carry it through to completion."
@@ -205,24 +207,18 @@ Then tell the AI what outcome you need in ordinary language. You can also skip t
 That is all a normal user needs to operate. The AI will:
 
 1. Ask only the choices that materially change the result.
-2. Write down the agreed approach so you can inspect it before code changes begin.
-3. Split the work into safe pieces, mark independent tasks parallel, and record why any task or configured limit is intentionally serial.
-4. Test the implementation, ask a separate reviewer to check it, and fix the findings.
-5. Update the relevant project documentation and indexes before archiving the completed work.
+2. Write the proposal, design, and implementation plan, then run deterministic design and plan preflights without launching reviewer children.
+3. Derive the task graph and run one independent combined planning review across requirements, architecture, task boundaries, dependencies, and verification coverage.
+4. If that review finds issues, repair the planning set once as a group and run one fresh combined planning review. A repeated failure stops instead of looping.
+5. Run conflict-safe implementation workers, independent task reviews, an integration-focused final review, verification, documentation sync, and archive.
 
 You remain in control. The AI explains what it is about to do, pauses when it needs a decision, and records task, review, repair, verification, and loop progress in the repository so a fresh worker or later session can continue without replaying the conversation. You do not need to run the internal `ospec execute` commands yourself.
 
-Choose how much the goal may do on its own with `--level L1|L2|L3` (default L1):
+Every 1.9 Goal uses the same fast quality workflow. Required user decisions always block implementation. The integrated goal loop reads `task-graph.json`, emits a bounded conflict-safe parallel batch, and explains whether configured limits, graph conflicts, token funding, an optional configured allowlist, or known harness capacity reduced it. Unknown native capacity uses an implementation fallback of three; a larger positive session-bound capacity can support configured batches such as 5-10 when the graph, shared resources, token budget, and `maxParallel` allow. The current IDE AI launches one fresh native subagent per referenced packet, polls with bounded waits, refreshes heartbeats, persists each finished result immediately, and continues ticking without another user prompt. If the IDE lacks native subagents, controller dispatch fails clearly.
 
-- **L1** checks and reports, but does not change project files.
-- **L2** may make changes and pauses for important decisions.
-- **L3** may continue without waiting for routine steps, but only inside non-empty path and command allowlists.
+To see progress, child executor ids, heartbeat due times, leases, token sources, and concurrency reasons, run `ospec loop status --brief`; controller agents should use `ospec loop run --once --compact-json` to avoid repeating large runtime-adapter objects. Use `ospec loop configure` for concurrency, budgets, action runtime limits, evidence-result grace, and optional allowlists. IDE controllers persist child ownership with `ospec loop heartbeat` and atomically commit successful evidence plus executor outcome with `ospec loop finalize`. After a confirmed session or child loss, `ospec loop recover --force` expires only unfinished items. Task and final repair convergence guards prevent repeated finding sets from cycling indefinitely. Durable worker blockers are not redispatched, technical executor failures remain retryable, and independent ready tasks run first. Advanced loop and triage commands are documented in [docs/loop-engineering.md](docs/loop-engineering.md).
 
-Required user decisions block every level. The integrated goal loop reads `task-graph.json`, emits a bounded conflict-safe parallel batch, and explains whether configured limits, graph conflicts, token funding, or known harness capacity reduced it. When the `ospec-goal` skill is active and the IDE exposes a native subagent API, controller mode requires the current IDE AI to launch one fresh native subagent per referenced packet, poll with bounded native waits, refresh heartbeats, persist each finished result immediately, and continue ticking without another user prompt; it does not stop at Loop initialization or require `loop watch`. L1 remains report-only, so executable work requires the user to select L2 or L3. If the IDE lacks native subagents, controller auto-dispatch fails clearly instead of silently pretending the CLI started an IDE agent.
-
-To see progress, child executor ids, heartbeat due times, leases, review rounds, token sources, and concurrency/guard reasons, run `ospec loop status --brief` or `--json`. Use `ospec loop configure` for concurrency, budgets, action runtime limits, and evidence-result grace; allowlist flags replace the complete selected list and print a diff. For L3, prefer `ospec loop allowlist derive/check/apply --from-task-graph`, whose CAS-bound apply requires explicit approval for permission expansion. IDE controllers persist child ownership with `ospec loop heartbeat` and atomically commit successful evidence plus executor outcome with `ospec loop finalize`; legacy `ospec loop result` remains supported. After a confirmed session/child loss, `ospec loop recover --force` expires only unfinished items so they can be requeued without duplicating completed siblings. Task-review and grouped final-review repair use two rounds as convergence thresholds by default. Changed structured finding IDs continue automatically. A stable ID also continues when both its structured finding fingerprint and its authorized repair-scope code snapshot changed; wording-only or code-only churn still stops before another ineffective repair. Use `--continue-while-progressing false` for strict lifetime ceilings. Durable worker blockers are not redispatched, technical executor failures remain retryable, and independent ready tasks run first. Advanced loop and triage commands are documented in [docs/loop-engineering.md](docs/loop-engineering.md).
-
-Internally, OSpec keeps implementation and independent review separate, bounds specialist document review by round/time/no-progress guards, preserves immutable convergence history, feeds blocked work and review findings into transactional retry or grouped repair, and requires current test evidence before the goal is considered complete.
+Internally, OSpec validates design and implementation-plan readiness inline before task graph derivation, keeps implementation and code review separate, feeds blocked work and review findings into transactional retry or grouped repair, and requires current test evidence before the goal is considered complete.
 
 Claude Code hard enforcement (one-time; the AI runs this for you automatically in a Claude Code harness):
 
@@ -284,7 +280,7 @@ If you want to convert an older classic project to the new layout, run `ospec la
 │     ospec session                                              │
 │     ospec session hook                                         │
 │     ospec progress                                             │
-│     ospec execute bootstrap / handoff / doc-review / status    │
+│     ospec execute bootstrap / handoff / preflight / status     │
 │     ospec execute next                                         │
 │     ospec execute workspace / worktree / worktree --create     │
 │     ospec execute worktree --cleanup / finish                  │
@@ -330,9 +326,9 @@ If you want to convert an older classic project to the new layout, run `ospec la
 - **Goal experience contracts**: every goal runs with `Announce-Before-Act` (the AI announces its skill and stage, the `ospec execute …` command and the artifact it writes, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, UI, risk, and scope decisions are asked one at a time through the native question UI before design is locked), and `Zero-Setup` (you only start a goal and describe the requirement — the AI runs every `ospec` command itself). In Claude Code, `ospec session hook --target claude --apply` adds hooks that announce every dispatch and hard-block subagent dispatch while a required decision is still pending.
 - **Optional pre-change aids**: `ospec brainstorm` writes durable exploration artifacts under `.ospec/brainstorms/`, with an optional static visual companion; `ospec plan` writes plan drafts under `.ospec/plans/` and only updates `implementation-plan.md` when `--apply` is passed. The Change flow starts with `ospec change` (`ospec new` is an alias); the Goal flow starts with `ospec goal` only when selected by the user.
 - **Session brief and hooks**: `ospec session` writes `.ospec/session-brief.json` and `.ospec/session-brief.md` so agents or humans entering an existing project can see active changes, queued changes, queue-run state, indexed document and archived-feature counts, a cache fingerprint, and the next safe command before touching a change; `ospec session hook --target claude` writes opt-in harness startup artifacts plus a Claude Code hook bundle under `.ospec/hooks/`, and `--apply` idempotently merges it into `.claude/settings.json`.
-- **Integrated goal loop**: `ospec loop run --once` (or the single-iteration `ospec loop tick` alias) emits token-bounded task/review/verification action batches for fresh model-native subagents. It uses packet paths instead of duplicating the whole goal, persists pending actions and feedback, routes stalled review findings through one durable root-cause strategy escalation before stopping repeats, and enforces required decisions, L3 allowlists, budgets, no-progress stops, and comprehension-review pauses. The removed `loop watch` path now returns migration guidance without starting an agent process.
-- **Task graph controller**: `ospec execute bootstrap` writes a one-change startup/resume snapshot with the project session brief snapshot and next safe action; `handoff` writes a cross-tool worker handoff guide; `doc-review` creates design and implementation-plan reviewer packets; `status` and `next` report controller state; `workspace` records git workspace safety; `worktree` manages explicit git worktree plans/runs; `dispatch`, `launch`, `complete`, and `review` create and settle native-subagent packets; `retry` reopens blocked or needs-context work; `debug`, `tdd`, and `verify` record durable evidence; `sync` rebuilds `worker-status.md`. `orchestrate`, `launch --run --command`, and `review --run --command` are retained only as migration errors and never launch agent CLIs.
-- **Adaptive review and model routing**: `.skillrc.workflow.document_review_policy` keeps independent document review by default. With `adaptive`, inline preflight still requires an explicit `risk_level: low` (or `none`) declaration and no detected risk signal; `.skillrc.workflow.model_profiles` maps logical roles without provider model names in OSpec defaults.
+- **Integrated goal loop**: `ospec loop run --once` (or `ospec loop tick`) emits token-bounded planning, task, review, and verification actions for fresh model-native subagents. It uses packet paths instead of duplicating the whole goal, persists pending actions, and stops repeated repair findings instead of cycling. Optional configured allowlists add an explicit path and command boundary without creating another workflow level.
+- **Task graph controller**: `ospec execute bootstrap` writes a one-change startup/resume snapshot; `preflight` records deterministic design and implementation-plan evidence under `artifacts/agents/planning-preflights/`; `workspace` records git safety; `dispatch`, `launch`, `complete`, and `review` settle native-subagent packets; `debug`, `tdd`, and `verify` record durable evidence; `sync` rebuilds derived status.
+- **Fast planning quality**: deterministic preflights cost no model round trip, while one independent combined planning reviewer checks requirement, architecture, task-graph, dependency, and verification semantics. At most one grouped planning repair and one re-review are allowed before a stable blocker.
 - **Measured execution and grouped repair**: command runners can write authoritative usage to `OSPEC_USAGE_FILE` for automatic ingestion, while `--usage-file` remains a manual input. Metrics distinguish complete, partial, and missing coverage. `ospec execute repair` turns all structured `NEEDS_CHANGES` findings into one repair task.
 - **Verified durable documentation**: declared documentation targets capture before/after normalized content hashes, so an unchanged file cannot satisfy a new run. Feature indexes link completed work directly to the durable project documents it updated.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.

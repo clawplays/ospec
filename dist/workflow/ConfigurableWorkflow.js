@@ -33,7 +33,6 @@ exports.WORKFLOW_PRESETS = {
         feature_flags: {
             supported: ['high_risk', 'multi_file_change'],
         },
-        document_review_policy: 'always',
         model_profiles: {},
     },
     standard: {
@@ -63,7 +62,6 @@ exports.WORKFLOW_PRESETS = {
                 'bug_fix', 'regression', 'flaky_test',
             ],
         },
-        document_review_policy: 'always',
         model_profiles: {},
     },
     full: {
@@ -95,7 +93,6 @@ exports.WORKFLOW_PRESETS = {
                 'bug_fix', 'regression', 'flaky_test',
             ],
         },
-        document_review_policy: 'always',
         model_profiles: {},
     },
 };

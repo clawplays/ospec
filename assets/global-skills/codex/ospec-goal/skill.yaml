@@ -14,4 +14,4 @@ interface:
 
   short_description: "Full goal workflow"
 
-  default_prompt: "Use $ospec-goal to run a full IDE-controlled workflow: ask for L1/L2/L3, create work with ospec goal <goal-name> [path] and explicit controller capability flags, then dispatch every Loop action through spawn_agent + wait, persist heartbeat/result evidence, and keep ticking until done or genuinely blocked."
+  default_prompt: "Use $ospec-goal to run the fast quality workflow: create work with ospec goal <goal-name> [path] and explicit controller capability flags, run deterministic preflights and one combined planning review, then dispatch every Loop action through spawn_agent + bounded waits, persist evidence, and keep ticking until done or genuinely blocked."

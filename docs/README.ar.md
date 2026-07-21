@@ -41,7 +41,7 @@
 - **حوّل المتطلب إلى ملفات مواصفات داخل المستودع**: يحوّل OSpec المتطلب إلى ملفات proposal و design وخطة و tasks ومراجعات وأدلة تحقّق، ويحفظها في مستودعك بدلاً من سجل المحادثة——فيستطيع أي مساعد (Codex/GPT و Claude Code و Gemini و OpenCode أو CLI المباشر) أن يكمل من حيث توقّف السابق.
 - **`ospec change` —— التدفّق اليومي السريع**: متطلب واحد يصبح active change واحداً عبر مسار قصير `init -> change -> verify/finalize`، خفيف وسهل المراجعة.
 - **`ospec goal` —— انضباط بمستوى هندسي**: عصف ذهني وتثبيت التصميم قبل أي كود، وتقسيم العمل إلى رسم مهام (task graph)، وإرسال وكلاء فرعيين متوازين، وفرض TDD ومراجعة كود بمراجِع مستقل، وطلب أدلة اختبار/تحقّق قابلة للمراجعة قبل اعتبار أي شيء «منجزاً».
-- **`ospec goal` يعمل كحلقة**: يخطّط وينفّذ ويتحقّق على جولات حتى تثبت الاختبارات إنجاز العمل، بمستوى أمان تختاره (`--level L1|L2|L3`: تقارير فقط ← مساعَد ← بدون إشراف)؛ قُدها عبر `ospec loop …` واجمع النتائج في صندوق triage عبر `ospec triage …`.
+- **`ospec goal` يعمل كحلقة fast quality موحدة**: ينفّذ deterministic preflight وcombined planning review ثم tasks وreviews وverification ضمن مسار واحد متوقع.
 
 ## التثبيت باستخدام npm
 
@@ -141,11 +141,18 @@ ospec verify changes/active/<change-name>
 ospec finalize changes/active/<change-name>
 ```
 
+استخدم force archive فقط بعد أن يقبل المستخدم صراحة المخاطر غير المحلولة:
+
+```bash
+ospec finalize changes/active/<change-name> --force-archive --confirm-force-archive <اسم-change-الدقيق> --reason "قبول مخاطر تحقق غير محلولة"
+```
+
 ملاحظات الأرشفة:
 
 - نفّذ أولاً عملية النشر والاختبار وQA الخاصة بمشروعك
 - استخدم `ospec verify` للتأكد من أن التغيير الحالي جاهز للأرشفة
 - استخدم `ospec finalize` لإعادة بناء الفهارس وأرشفة التغيير المعتمد
+- لا يحول force archive evidence الفاشلة أو `NOT_VERIFIED` إلى pass. يتطلب force flag وتأكيد الاسم الدقيق وسبب audit. تظل Loop items ذات الحالة المفقودة أو `issued` أو `running` مانعة؛ ويمكن الاحتفاظ بـ pointer تاريخي عندما تكون كل items `completed` أو `failed` أو `expired`. يبقى archive موسوما `forced` و`incomplete` و`accepted-risk`
 - تُؤرشف المشاريع الجديدة ذات تخطيط nested تحت `.ospec/changes/archived/YYYY-MM/YYYY-MM-DD/<change-name>`، وما زالت الاختصارات من نوع `changes/archived/...` تعمل من CLI
 - تقوم `ospec update` بإعادة تنظيم الأرشيفات المسطحة القديمة
 
@@ -155,15 +162,11 @@ ospec finalize changes/active/<change-name>
 
 استخدم `ospec goal <goal-name>` فقط عندما تختار صراحة سير العمل الكامل. لا تتم ترقية Change الذي اخترته إلى Goal بسبب التعقيد أو عدد الملفات أو المخاطر أو حجم الدفعة.
 
+تستخدم Change إرشادا مختصرا حسب المرحلة ومراجعة خفيفة واحدة بواسطة AI الحالي وcloseout مشتقا. عندما تمر بوابات verification وdocumentation وplugin وreview، يمكن لـ `APPROVED` أو `APPROVED_WITH_CONCERNS` تنفيذ finalize وarchive تلقائيا. تبقى الدفعات الصريحة متسلسلة في queue.
+
 **أنت فقط تبدأ goal وتصف المتطلب.** ينفّذ الذكاء الاصطناعي كل أمر `ospec` بنفسه، وأنت تجيب فقط على الأسئلة في المحادثة (`Zero-Setup`).
 
-يعمل goal على شكل **حلقة مرتبطة بالجلسة**: يخطّط وينفّذ ويتحقّق على جولات حتى يثبت إنجاز العمل بالاختبارات. اختر مستوى أمان عند الإنشاء (`--level L1|L2|L3`، الافتراضي L1):
-
-- **L1** —— للتقارير فقط: يكتب النتائج في صندوق triage دون تغيير أي شيء.
-- **L2** —— يجري تغييرات لكنه يتوقّف عند القرارات المهمة لانتظار موافقتك.
-- **L3** —— يعمل بدون إشراف ضمن قائمة سماح تحدّدها.
-
-قُدها وراقِبها عبر `ospec loop run/watch/status/pause/resume/level`، وعالِج النتائج عبر `ospec triage list/claim/promote`، وأوقفها عبر pause أو ملف `STOP` أو إغلاق الجلسة. عندما يوفّر الـ harness أمر `/goal` أصلياً (Claude، Codex) تستخدمه الحلقة مباشرة، وإلا فإنها تتراجع تلقائياً. يبقى `ospec change` على التدفّق السريع الكلاسيكي دون تغيير. راجع [loop-engineering.md](loop-engineering.md).
+يعمل goal على شكل **حلقة fast quality مرتبطة بالجلسة**. بعد deterministic preflight للتصميم والخطة يشتق task graph وينفّذ combined planning review مستقلة واحدة قبل workspace أو worker dispatch. يسمح بإصلاح تخطيط مجمّع واحد وfresh re-review واحدة فقط. يستخدم controller الأمر `ospec loop run --once --compact-json` وnative subagent capability الحالية فقط. عند غياب capacity يكون fallback لتوازي implementation هو 3، ويمكن رفعه بأمان إلى 5-10 عندما تسمح dependencies وfile conflicts وtoken و`maxParallel`. تكون optional allowlist حدا إضافيا فقط عند ضبطها صراحة. راجع [loop-engineering.md](loop-engineering.md).
 
 عقود التجربة التي يلتزم بها الذكاء الاصطناعي في كل goal:
 

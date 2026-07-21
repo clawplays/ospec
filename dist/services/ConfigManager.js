@@ -67,7 +67,6 @@ function normalizeWorkflowConfig(workflow, mode) {
         : {};
     const withExecutionPolicy = (value) => ({
         ...value,
-        document_review_policy: workflow.document_review_policy === 'adaptive' ? 'adaptive' : 'always',
         model_profiles: modelProfiles,
     });
     if (!Array.isArray(workflow.core_required)) {
