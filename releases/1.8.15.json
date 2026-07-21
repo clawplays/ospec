@@ -16,6 +16,6 @@
     "Fixed stale historical evidence being able to mask a final reversion or post-dispatch workspace drift."
   ],
   "docs": [
-    "Documented the AIHub iteration 49 finalize incident, recovery path, deletion contract, multi-dispatch aggregation, and unchanged fail-closed archive guarantees."
+    "Documented a confirmed finalize incident, recovery path, deletion contract, multi-dispatch aggregation, and unchanged fail-closed archive guarantees."
   ]
 }

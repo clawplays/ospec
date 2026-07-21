@@ -1,19 +1,13 @@
 {
-  "title_suffix": "reviewed closeout and faster classic changes",
-  "summary": "OSpec 1.8.17 is the cumulative release of the previously unreleased 1.8.16 and 1.8.17 work since 1.8.15. Goal closeout can bind a later authoritative task-review snapshot and synchronizes visible worker status across all shipped languages. The classic Change profile is now a complete fast path: user-selected Changes never auto-promote to Goals, use compact stage-aware guidance and current-AI review, enforce practical documentation policy, derive closeout state automatically, and finalize queued work without manual skill or index steps.",
-  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.15...1.8.17",
+  "title_suffix": "faster classic changes and automatic closeout",
+  "summary": "OSpec 1.8.17 turns the classic Change profile into a complete fast path. User-selected Changes never auto-promote to Goals, use compact stage-aware guidance and current-AI review, enforce practical documentation policy, derive closeout state automatically, and finalize queued work without manual skill or index steps.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.16...1.8.17",
   "new": [
-    "Added path-specific final-state authorization through a later fully validated task-review snapshot.",
-    "Added localized visible status synchronization for worker-status closeout sections.",
     "Added ospec change as the preferred classic creation command while retaining ospec new as a compatible alias.",
     "Added localized compact change-protocol.md guidance for stage-aware Change execution.",
     "Added a canonical Classic Change closeout service for documentation, review, plugin, and derived-state gates."
   ],
   "improved": [
-    "Keeps dispatch documentation evidence immutable while allowing independently reviewed controller closeout metadata.",
-    "Recognizes Combined review checklist text in English, Chinese, Japanese, and Arabic.",
-    "Clarifies that the unknown-capacity implementation cap of two is a replaceable safety fallback rather than a global or review concurrency limit.",
-    "Skips per-commit file-history scans when local structured release metadata is already complete.",
     "Keeps every user-selected Change on the classic profile regardless of complexity, flags, file count, risk, or batch size.",
     "Lets the current AI perform one lightweight review and auto-close APPROVED or APPROVED_WITH_CONCERNS results.",
     "Runs batch Changes sequentially through the existing queue and archive-chain shared-worktree flow.",
@@ -21,9 +15,6 @@
     "Runs only Change-relevant verification and stops forcing manual SKILL or index checklist work."
   ],
   "fixed": [
-    "Fixed verification.md closeout metadata being rejected even when a fresh authoritative task review exactly covered the current file.",
-    "Fixed localized Combined review checkboxes remaining unchecked after ospec execute sync.",
-    "Fixed visible worker-status section states remaining PENDING after authoritative statuses reached terminal values.",
     "Fixed feature and docs Changes being able to close without a real durable documentation path.",
     "Fixed generated archive summaries, ordinary configuration files, and directories being accepted as feature documentation.",
     "Fixed ospec update omitting the compact Change protocol from update provenance.",
@@ -31,7 +22,6 @@
     "Fixed the ospec new compatibility alias displaying ospec change usage on errors."
   ],
   "docs": [
-    "Documented the AIHub post-1.8.15 closeout incident, strict review-snapshot fallback conditions, localized sync behavior, and no-replay recovery path.",
     "Documented compact Change creation, current-AI review, documentation contracts, queue execution, derived closeout, automatic archive, and upgrade behavior."
   ]
 }

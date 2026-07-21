@@ -9,15 +9,16 @@
   "improved": [
     "Keeps dispatch documentation evidence immutable while allowing independently reviewed controller closeout metadata.",
     "Recognizes Combined review checklist text in English, Chinese, Japanese, and Arabic.",
-    "Clarifies that the unknown-capacity implementation cap of two is a replaceable safety fallback rather than a global or review concurrency limit.",
+    "Aligns unknown-capacity implementation batches with the default concurrency of three while allowing session-bound reported capacities and configured limits of 5-10.",
     "Skips per-commit file-history scans when local structured release metadata is already complete."
   ],
   "fixed": [
     "Fixed verification.md closeout metadata being rejected even when a fresh authoritative task review exactly covered the current file.",
     "Fixed localized Combined review checkboxes remaining unchecked after ospec execute sync.",
-    "Fixed visible worker-status section states remaining PENDING after authoritative statuses reached terminal values."
+    "Fixed visible worker-status section states remaining PENDING after authoritative statuses reached terminal values.",
+    "Fixed four-way dependency-safe implementation plans being reduced to two workers solely because native capacity was unknown."
   ],
   "docs": [
-    "Documented the AIHub post-1.8.15 closeout incident, strict review-snapshot fallback conditions, localized sync behavior, and no-replay recovery path."
+    "Documented a confirmed post-1.8.15 closeout incident, strict review-snapshot fallback conditions, localized sync behavior, and no-replay recovery path."
   ]
 }

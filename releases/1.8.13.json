@@ -18,6 +18,6 @@
     "Fixed supervised long verification attempts expiring only because separate heartbeat calls were missed during repeated controller polls."
   ],
   "docs": [
-    "Documented the Web prerequisite-review incident, Mobile multi-owner repair contract, AIHub Docker scope failure, lease renewal behavior, and unchanged safety gates."
+    "Documented confirmed prerequisite-review, multi-owner repair, and Docker scope incidents, lease renewal behavior, and unchanged safety gates."
   ]
 }

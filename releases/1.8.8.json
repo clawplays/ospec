@@ -23,7 +23,7 @@
     "Fixed dedicated dirty Goal worktrees remaining blocked on package-local TypeScript build metadata produced by their own declared verification command."
   ],
   "docs": [
-    "Documented the confirmed stopped Mobile Dev and Web incidents, the Goal/task-generated workspace contract, update recovery procedure, blocked Loop semantics, and the remaining multi-child heartbeat fairness gap.",
-    "Documented the confirmed AIHub plan-review budget incident, one-time authorization window, expiry and reauthorization behavior, and preserved global safety guards."
+    "Documented confirmed device and browser workflow incidents, the Goal/task-generated workspace contract, update recovery procedure, blocked Loop semantics, and the remaining multi-child heartbeat fairness gap.",
+    "Documented a confirmed plan-review budget incident, one-time authorization window, expiry and reauthorization behavior, and preserved global safety guards."
   ]
 }

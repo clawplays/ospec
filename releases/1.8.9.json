@@ -14,14 +14,14 @@
     "Resets periodic comprehension debt in continuous mode instead of pausing an otherwise progressing Goal."
   ],
   "fixed": [
-    "Fixed Web repair dispatches omitting the prior task-review findings and artifact provenance.",
-    "Fixed durable Mobile Dev device blockers being redispatched without any external state change.",
-    "Fixed AIHub stopping at the repair lifetime ceiling even when a new remaining finding proved convergence.",
+    "Fixed repair dispatches omitting the prior task-review findings and artifact provenance.",
+    "Fixed durable device blockers being redispatched without any external state change.",
+    "Fixed a Goal stopping at the repair lifetime ceiling even when a new remaining finding proved convergence.",
     "Fixed old document review round and cumulative stage-time limits stopping progressing Goals.",
     "Fixed tasks remaining permanently IN_PROGRESS after their Loop pending action was lost.",
     "Fixed same or cycling finding-ID sets, including reworded descriptions, being misclassified as progress."
   ],
   "docs": [
-    "Documented continuous convergence, strict compatibility mode, blocker classification, orphan recovery, faster ready-work scheduling, and the confirmed Web, Mobile Dev, and AIHub incidents."
+    "Documented continuous convergence, strict compatibility mode, blocker classification, orphan recovery, faster ready-work scheduling, and the confirmed multi-project incidents."
   ]
 }

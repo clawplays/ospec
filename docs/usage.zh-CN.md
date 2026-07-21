@@ -231,7 +231,7 @@ goal 以**会话内 task graph 循环**运行。IDE-native 执行必须显式报
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.8.22
+npm install -g @clawplays/ospec-cli@1.8.23
 ospec update [path]
 ```
 

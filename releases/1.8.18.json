@@ -16,6 +16,6 @@
     "Fixed status guidance referring to a loop tick command that the CLI did not implement."
   ],
   "docs": [
-    "Documented verification freshness, bounded strategy escalation, loop tick compatibility, and recovery steps for the confirmed AIHub and Web Goals."
+    "Documented verification freshness, bounded strategy escalation, loop tick compatibility, and recovery steps for the confirmed resumed Goals."
   ]
 }

@@ -1,0 +1,20 @@
+{
+  "title_suffix": "release checkout consistency",
+  "summary": "OSpec 1.8.23 improves release checkout generation, metadata synchronization, and publication verification so the public repository and npm package stay aligned with the supported release surface.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.8.22...1.8.23",
+  "new": [
+    "Added an export-time validation pass for release-facing text assets."
+  ],
+  "improved": [
+    "Release checkout synchronization now refreshes source-managed release metadata while preserving target-only release files.",
+    "Tightened release inventory selection to the supported documentation, runtime assets, and publishing tools."
+  ],
+  "fixed": [
+    "Fixed release checkout drift caused by overly broad inventory selection.",
+    "Fixed stale matching release metadata surviving a synchronization pass.",
+    "Added regression coverage for release inventory and publication content consistency."
+  ],
+  "docs": [
+    "Updated the maintainer release workflow for deterministic checkout synchronization."
+  ]
+}

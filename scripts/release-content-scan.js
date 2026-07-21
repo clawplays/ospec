@@ -3,8 +3,16 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const { isPrivateSourceOnlyPath } = require('./release-publication-policy.js');
 
 const rootDir = path.resolve(__dirname, '..');
+const privatePolicyPath = path.join(
+  __dirname,
+  'release-private-identifier-policy.js',
+);
+const findBlockedPublicationIdentifiers = fs.existsSync(privatePolicyPath)
+  ? require(privatePolicyPath).findBlockedPublicationIdentifiers
+  : () => [];
 const blockedTerms = [
   {
     label: 'external reference label',
@@ -167,6 +175,11 @@ async function main() {
 
   const findings = [];
   for (const filePath of files) {
+    const relativePath = path.relative(rootDir, filePath).replace(/\\/g, '/');
+    if (isPrivateSourceOnlyPath(relativePath)) {
+      continue;
+    }
+
     const content = await fsp.readFile(filePath, 'utf8');
     const lower = content.toLowerCase();
     for (const term of blockedTerms) {
@@ -176,9 +189,18 @@ async function main() {
       }
       const line = content.slice(0, index).split(/\r?\n/).length;
       findings.push({
-        file: path.relative(rootDir, filePath).replace(/\\/g, '/'),
+        file: relativePath,
         line,
         label: term.label,
+      });
+    }
+
+    for (const identifier of findBlockedPublicationIdentifiers(content)) {
+      const line = content.slice(0, identifier.index).split(/\r?\n/).length;
+      findings.push({
+        file: relativePath,
+        line,
+        label: identifier.label,
       });
     }
   }
