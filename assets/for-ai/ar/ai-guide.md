@@ -93,7 +93,7 @@ tags: [ai, guide, ospec]
 
 ## سياسات كفاءة التنفيذ
 
-- شغّل deterministic preflight للتصميم والخطة، ثم اشتق task graph، ثم نفّذ combined planning review مستقلة واحدة. يسمح بإصلاح تخطيط مجمّع واحد وfresh re-review واحدة فقط، وتبقى task review وfinal combined review وverification مطلوبة.
+- شغّل deterministic preflight للتصميم والخطة، ثم اشتق task graph، ثم نفّذ combined planning review مستقلة واحدة. يسمح بإصلاح تخطيط مجمّع واحد وإعادة مراجعة تفاضلية واحدة كحد أقصى؛ يعيد فشل المنفّذ دون تعديل التخطيط تسليح الحصة، وتُقبل النتائج التي لا تتجاوز medium حتمياً كـ `APPROVED_WITH_CONCERNS` بعد الإصلاح، وتبقى task review وfinal combined review وverification مطلوبة.
 - يحل worker/reviewer logical model profile حسب dispatch target الفعلي، بما في ذلك launch override. افصل requested/configured model عن provider-observed model؛ بدون provider/usage evidence يبقى observed model غير معروف.
 - يتلقى command runner المسار `OSPEC_USAGE_FILE` ويجمع sidecar تلقائيا؛ ويبقى `ospec execute complete ... --usage-file usage.json` للإدخال اليدوي. تسجل metrics المصدر والحقول المرصودة وتغطية complete/partial/missing، ولا تعرض القيمة غير المبلّغ عنها كصفر مقاس.
 - يكتب reviewer ملف Markdown للبشر وملف `*.findings.json` مجاورا بمعرفات ثابتة وseverity وcategory وmessage ودليل file/line ومراجع المتطلبات ونطاق الإصلاح. يحوّل Markdown القديم إلى sidecar متوافق قبل repair.

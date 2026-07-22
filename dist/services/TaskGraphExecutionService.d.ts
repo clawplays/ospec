@@ -320,6 +320,13 @@ export interface TaskReviewDispatchRecord {
     runtimeAdapter?: RuntimeExecutionAdapterResolution | null;
     requiresExecutorProvenance?: boolean;
     requiresNativeExecutorProvenance?: boolean;
+    /**
+     * Snapshot semantics used for target invalidation. Planning reviews set
+     * 'planning-semantic-v1' so derived execution state (task status, review
+     * bookkeeping, checklist ticks) does not invalidate an approval. Absent on
+     * legacy records, which keep raw content hashing.
+     */
+    snapshotContract?: string | null;
 }
 export interface TaskExecutionUsage {
     inputTokens: number | null;
@@ -490,6 +497,14 @@ export interface TaskPlanningRepairRecord {
     workspaceBaselineSnapshots: TaskDocumentationSnapshot[] | null;
     recordPath: string;
     packetPath: string;
+    /** Pre-repair copies of the authorized planning files, kept for the delta re-review packet. */
+    baselineFiles?: Array<{
+        path: string;
+        baselinePath: string;
+        existed: boolean;
+    }> | null;
+    /** How the post-repair planning decision was settled; guards the one-shot deterministic acceptance. */
+    postRepairReviewMode?: 'deterministic' | 'delta_review' | null;
 }
 export interface TaskPlanningRepairResult {
     changePath: string;
@@ -1550,6 +1565,7 @@ export declare class TaskGraphExecutionService {
     review(changePath: string, options?: {
         stage?: TaskReviewStage;
         taskId?: string;
+        verificationFailureFocus?: string;
     }): Promise<TaskReviewDispatchResult>;
     reviewTasks(changePath: string, options: {
         taskIds: string[];
@@ -1565,6 +1581,20 @@ export declare class TaskGraphExecutionService {
         actionId: string;
         actionItemId: string;
     }): Promise<TaskPlanningRepairRecord>;
+    /**
+     * Post-repair planning gate without an AI re-review: when the single grouped
+     * repair resolved findings that were all medium severity or lower and every
+     * deterministic gate re-passes, record APPROVED_WITH_CONCERNS directly. Task
+     * reviews and the final review remain the semantic safety net downstream.
+     */
+    acceptPlanningRepairDeterministically(changePath: string): Promise<{
+        accepted: boolean;
+        reason: string;
+    }>;
+    private buildPostRepairReviewSections;
+    private buildPlanningRepairDiffSections;
+    private buildVerificationFailureFocusSections;
+    private truncateForPacket;
     private capturePlanningContext;
     private capturePlanningRepairWorkspaceBaseline;
     private validatePlanningRepairWorkspaceScope;
@@ -1833,6 +1863,16 @@ export declare class TaskGraphExecutionService {
     private captureTargetSnapshots;
     private captureTargetDirectoryTree;
     private isPathWithin;
+    /**
+     * Planning-review snapshots must only change when the planning *semantics*
+     * change. Execution bookkeeping — task status, review decisions, checklist
+     * ticks, governance-generated repair tasks — mutates tasks.md and
+     * task-graph.json on every loop step; hashing it raw invalidates the
+     * planning approval mid-goal and re-dispatches full planning reviews.
+     */
+    private capturePlanningSemanticSnapshots;
+    private hashPlanningSemanticContent;
+    private projectPlanningGraphSemantics;
     private hashTargetSnapshots;
     private targetSnapshotsMatchDispatch;
     private prepareReviewArtifactForDispatch;

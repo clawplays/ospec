@@ -166,7 +166,7 @@ ospec finalize changes/active/<change-name> --force-archive --confirm-force-arch
 
 **أنت فقط تبدأ goal وتصف المتطلب.** ينفّذ الذكاء الاصطناعي كل أمر `ospec` بنفسه، وأنت تجيب فقط على الأسئلة في المحادثة (`Zero-Setup`).
 
-يعمل goal على شكل **حلقة fast quality مرتبطة بالجلسة**. بعد deterministic preflight للتصميم والخطة يشتق task graph وينفّذ combined planning review مستقلة واحدة قبل workspace أو worker dispatch. يسمح بإصلاح تخطيط مجمّع واحد وfresh re-review واحدة فقط. يستخدم controller الأمر `ospec loop run --once --compact-json` وnative subagent capability الحالية فقط. عند غياب capacity يكون fallback لتوازي implementation هو 3، ويمكن رفعه بأمان إلى 5-10 عندما تسمح dependencies وfile conflicts وtoken و`maxParallel`. تكون optional allowlist حدا إضافيا فقط عند ضبطها صراحة. راجع [loop-engineering.md](loop-engineering.md).
+يعمل goal على شكل **حلقة fast quality مرتبطة بالجلسة**. بعد deterministic preflight للتصميم والخطة يشتق task graph وينفّذ combined planning review مستقلة واحدة قبل workspace أو worker dispatch. يسمح بإصلاح تخطيط مجمّع واحد وإعادة مراجعة تفاضلية واحدة كحد أقصى؛ يعيد فشل المنفّذ دون تعديل التخطيط تسليح الحصة، وتُقبل النتائج التي لا تتجاوز medium حتمياً كـ `APPROVED_WITH_CONCERNS` بعد الإصلاح. يستخدم controller الأمر `ospec loop run --once --compact-json` وnative subagent capability الحالية فقط. عند غياب capacity يكون fallback لتوازي implementation هو 3، ويمكن رفعه بأمان إلى 5-10 عندما تسمح dependencies وfile conflicts وtoken و`maxParallel`. تكون optional allowlist حدا إضافيا فقط عند ضبطها صراحة. راجع [loop-engineering.md](loop-engineering.md).
 
 عقود التجربة التي يلتزم بها الذكاء الاصطناعي في كل goal:
 

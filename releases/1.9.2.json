@@ -1,0 +1,19 @@
+{
+  "title_suffix": "durable Goal planning loop",
+  "summary": "OSpec 1.9.2 keeps an approved Goal planning review valid across implementation progress and makes the single grouped planning repair converge instead of dead-ending the Goal.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.1...1.9.2",
+  "improved": [
+    "The post-repair planning re-review is now a delta review: it receives the round-one findings, baseline-to-current diffs of the repaired files, and explicit finality guidance instead of re-auditing the whole planning set blind.",
+    "A completed grouped planning repair whose findings were all medium severity or lower settles deterministically as APPROVED_WITH_CONCERNS with no AI re-review; task reviews and the final review remain the semantic safety net.",
+    "The final review dispatched after a deterministic verification failure is scoped to diagnosing that failure instead of re-auditing areas the previous final review already approved.",
+    "ospec-change raises Brainstorm-First decision gates only for genuine forks such as mutually exclusive API, UI, data-model, or destructive-operation choices; routine unambiguous changes proceed with recorded assumptions in proposal.md."
+  ],
+  "fixed": [
+    "Approved combined planning reviews now bind to planning semantics, so task status updates, checklist ticks, review bookkeeping, generated repair tasks, and implementation commits no longer invalidate them mid-goal or re-dispatch full planning reviews.",
+    "A planning repair executor failure that changed no planning content re-arms the single grouped repair allowance instead of permanently blocking the Goal on an infrastructure error.",
+    "Planning review invalidation feedback no longer describes a planning review as a final review."
+  ],
+  "docs": [
+    "Synchronized the planning repair, delta re-review, and deterministic acceptance rules across README, usage, loop engineering, for-ai protocols, project conventions, and generated project templates in all four languages."
+  ]
+}

@@ -175,7 +175,7 @@ Change は compact な stage-aware guidance、現在の AI による 1 回の li
 
 **あなたは goal を起こして要件を説明するだけ。** 残りの `ospec` コマンドはすべて AI が自分で実行し、あなたはチャットで質問に答えるだけです（`Zero-Setup`）。
 
-goal は **セッションスコープの fast quality loop** として動作します。design/plan deterministic preflight の後に task graph を導出し、workspace/worker dispatch 前に独立 combined planning review を 1 回実行します。planning repair と fresh re-review は各 1 回までです。controller は `ospec loop run --once --compact-json` を使い、現在の harness が報告した native subagent capability だけで action を実行します。capacity 不明時の implementation 既定並列数は 3 で、より大きい session-bound capacity があれば安全な範囲で 5-10 などを設定できます。optional allowlist は明示設定時だけ追加境界になります。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
+goal は **セッションスコープの fast quality loop** として動作します。design/plan deterministic preflight の後に task graph を導出し、workspace/worker dispatch 前に独立 combined planning review を 1 回実行します。planning repair 1 回と delta re-review 最大 1 回までです。planning 内容を変更しない executor 失敗は許容量を再アームし、findings がすべて medium 以下なら repair 後に `APPROVED_WITH_CONCERNS` として決定論的に確定します。controller は `ospec loop run --once --compact-json` を使い、現在の harness が報告した native subagent capability だけで action を実行します。capacity 不明時の implementation 既定並列数は 3 で、より大きい session-bound capacity があれば安全な範囲で 5-10 などを設定できます。optional allowlist は明示設定時だけ追加境界になります。詳細は [loop-engineering.md](loop-engineering.md) を参照してください。
 
 各 goal で AI が守る体験契約：
 

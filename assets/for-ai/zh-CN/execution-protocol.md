@@ -39,7 +39,7 @@ tags: [ai, protocol, ospec]
 - 对 goal，必须从 `design.md` 起草或更新 `implementation-plan.md`，明确目标文件、预期结果、验证命令、依赖、可并行任务和冲突
 - 对 goal，必须从 `implementation-plan.md` 推导 `artifacts/agents/task-graph.json`；每个 task 必须包含 id、状态、依赖、并行安全性、冲突、目标文件、验证命令、预期结果和 worker 角色。凡是 `target_files` 与其它就绪 task 不重叠、且彼此无依赖的 task，都要标 `parallelizable: true`，这样 OSpec 会把它们作为一个并行批次派发、goal 更快；只有当 task 之间共享文件或确有依赖时才保留 `parallelizable: false`，并填写 `serial_reason` 与 `conflicts_with`。不要把所有 task 都默认设成 `parallelizable: false`；把安全任务显式限制为单 worker 时必须记录 `maxParallelReason`。超过六个 `target_files` 的 task 应拆分；确实属于同一原子验证边界时必须填写具体的 `scope_reason`
 - 可选白名单采用安全替换语义。需要额外边界时使用 `ospec loop allowlist derive/check/apply --from-task-graph`，检查 CAS 绑定的差异，并仅对预期的权限扩大显式确认。
-- design/plan 阶段使用确定性 inline preflight，随后执行一次独立的合并规划复审。只允许一次 grouped planning repair 和一次 fresh re-review；重复失败后稳定阻断。
+- design/plan 阶段使用确定性 inline preflight，随后执行一次独立的合并规划复审。只允许一次 grouped planning repair 和最多一次差量复审；执行器失败且未改动规划内容时重新武装修复而不消耗额度，修复完成后 findings 全部不高于 medium 时确定性通过为 `APPROVED_WITH_CONCERNS`；语义层面重复失败后稳定阻断。
 - review repair 必须收敛。共享文件的下游任务要继承传递上游的回归义务；默认两轮是收敛阈值。结构化 finding ID 变化时自动继续；同一 ID 只有在结构化 finding 指纹与上一轮授权 repair scope 内的代码快照同时变化时也可继续。连续模式下，停滞的 task 或 final finding 集合会按精确 scope 与 finding ID 获得一次持久化策略升级；只执行一次要求重新定位根因并加强聚焦回归的 packet，同一集合仍停滞时必须停止。严格模式继续遵守配置上限。final review 为 `BLOCKED` 时必须停下解决 blocker，不得进入 grouped repair。不得提高上限重复未变化的工作。
 - 所有 harness 的 native child 等待都必须有界。Codex/GPT 的 `wait_agent`、Claude Task 轮询以及其它原生等待必须在 60 秒内返回；60 秒只限制一次 controller poll，不是 child 的执行上限。每个 live child 都要在 `heartbeatDueAt` 前续租，完成后用 action 给出的 `loop finalize` 原子提交证据和结果，并在每轮 poll 后重新 tick。child 可跨多个 poll 运行到 action 的绝对期限，证据完成后还有有界的结果宽限期。capacity 未知时 implementation 使用默认并发 3，且不降低安全 review 的并行度。harness 能可靠获知当前更大的 child 容量时，可以把它绑定到当前 controller session 并相应提高 `maxParallel`；绝不能猜测或复用过期容量。
 - 每次成功的有界 controller poll 都会为已认领且仍存活的 child 续短租约，但绝不延长绝对期限。若 poll 只比短租约边界晚一个有界的 60 秒等待窗口，同一个已认领 item 仍可续租；直接提交过期 result 仍会拒绝，真正失联的 item 仍会过期，absolute deadline 永不移动。retryable 下游任务必须先完成缺失的 prerequisite review，再重试 worker。跨任务 finding 只有在额外路径全部属于 task graph 中已完成 owner 时才能自动路由；必须冻结完整 scope，并重新复审发生变化的 owner。只要任何已记录的 cross-task owner 尚未批准，它的 review 或 repair 必须先于新的 implementation 和 retryable worker，同时其它无冲突 reviewer 仍可并行。执行未指定服务的全量 Docker Compose rebuild 前，必须先读取项目发布说明；存在无关服务时改用显式服务名。
@@ -123,7 +123,7 @@ tags: [ai, protocol, ospec]
 
 ## 上下文与修复策略
 
-- 依次执行 design/plan 确定性预检，派生 task graph，再执行一次独立 combined planning review；最多允许一次整体规划修复和一次 fresh re-review。
+- 依次执行 design/plan 确定性预检，派生 task graph，再执行一次独立 combined planning review；最多允许一次整体规划修复和一次差量复审。未改动规划内容的执行器失败会重新武装修复额度，修复完成后 findings 全部不高于 medium 时确定性通过为 `APPROVED_WITH_CONCERNS`；规划批准只因规划语义变化失效，执行进度不会使其失效。
 - `.skillrc.workflow.model_profiles` 将 `mechanical`、`standard`、`strong_reasoning`、`review`、`final_review` 逻辑 profile 映射到各 target 模型；未配置时使用 harness 默认并在 packet 中警告。
 - 命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`--usage-file` 保留为手工覆盖入口。`execution-metrics.json` 按 capability tier、model profile 和 workflow stage 汇总，并报告 complete/partial/missing 覆盖率。
 - 每个可执行 review finding 还必须写入相邻的 `*.findings.json`，包含稳定 ID、严重度、类别、问题说明、文件/行证据、需求引用和修复范围。结构化 findings 损坏时应阻断处理，不能静默降级。

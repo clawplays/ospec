@@ -93,7 +93,7 @@ tags: [ai, guide, ospec]
 
 ## 実行効率ポリシー
 
-- design/plan deterministic preflight、task graph 導出、独立 combined planning review の順に実行する。grouped planning repair と fresh re-review は各 1 回までとし、task review、final combined review、verification は引き続き必須。
+- design/plan deterministic preflight、task graph 導出、独立 combined planning review の順に実行する。grouped planning repair 1 回と delta re-review 最大 1 回までとし、planning 内容を変更しない executor 失敗は許容量を再アームし、findings がすべて medium 以下なら repair 後に `APPROVED_WITH_CONCERNS` として決定論的に確定する。task review、final combined review、verification は引き続き必須。
 - worker/reviewer の logical model profile は launch override を含む実際の dispatch target に対して解決する。requested/configured model と provider-observed model を分離し、provider/usage evidence がなければ observed model は unknown とする。
 - command runner は `OSPEC_USAGE_FILE` を受け取り sidecar を自動集計する。`ospec execute complete ... --usage-file usage.json` は手動入力として残す。metrics は source、observed fields、complete/partial/missing coverage を記録し、未報告値を測定済み 0 として扱わない。
 - reviewer は人向け Markdown と、stable ID、severity、category、message、file/line evidence、requirement refs、repair scope を持つ隣接 `*.findings.json` を書く。旧 Markdown は repair 前に互換 sidecar へ変換する。

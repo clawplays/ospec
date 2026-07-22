@@ -149,7 +149,7 @@ ospec finalize [changes/active/<change>]
 
 `ospec change <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`；`ospec new` 仍是兼容别名。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
 
-goal 以**会话内 task graph 循环**运行，并统一使用一条快速质量流程。IDE-native 执行必须显式报告真实 harness。依次运行 design/plan 确定性预检、派生 task graph，再在 workspace 和 worker 派发前完成一次独立 combined planning review；最多允许一次整体规划修复和一次 re-review。controller 使用 `ospec loop run --once --compact-json` 获取精简 action，逐个记录 heartbeat 和 result。可选白名单可增加精确 path/command 边界。详见 [loop-engineering.md](loop-engineering.md)。
+goal 以**会话内 task graph 循环**运行，并统一使用一条快速质量流程。IDE-native 执行必须显式报告真实 harness。依次运行 design/plan 确定性预检、派生 task graph，再在 workspace 和 worker 派发前完成一次独立 combined planning review；最多允许一次整体规划修复和一次差量复审；未改动规划内容的执行器失败会重新武装修复额度，修复后 findings 全部不高于 medium 时确定性通过为 `APPROVED_WITH_CONCERNS`。controller 使用 `ospec loop run --once --compact-json` 获取精简 action，逐个记录 heartbeat 和 result。可选白名单可增加精确 path/command 边界。详见 [loop-engineering.md](loop-engineering.md)。
 
 - 每个 goal 都遵守三条体验契约：`Announce-Before-Act`（AI 宣告当前 skill 与阶段、每条 `ospec execute …` 命令及产物、每次子 agent 派发）、`Brainstorm-First`（锁定设计前，把方向、架构、API、数据、UI、风险、范围等未决问题逐个用原生提问 UI——Claude Code 用 AskUserQuestion——询问）、`Zero-Setup`（每一条 `ospec` 命令都由 AI 自己执行，你只需起一个 goal 并描述需求）。
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
@@ -223,7 +223,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.1
+npm install -g @clawplays/ospec-cli@1.9.2
 ospec update [path]
 ```
 

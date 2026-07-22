@@ -194,7 +194,7 @@ ospec goal improve-checkout
 
 整个过程中你仍然掌握决定权。AI 会提前说明下一步做什么，遇到需要你选择的地方会暂停，并把进度保存在项目里。即使更换会话，也可以从已有记录继续；你不需要自己运行内部的 `ospec execute` 命令。
 
-所有 Goal 统一执行：design/plan 确定性预检 -> task graph -> 一次独立 combined planning review -> worker/task review -> final review -> verification/finalize。规划 review 若为 `NEEDS_CHANGES`，最多允许一次整体修复和一次 fresh re-review，重复失败会稳定停止。查看进度使用 `ospec loop status --brief`；controller 使用 `ospec loop run --once --compact-json` 减少重复输出。未知容量时 implementation 默认并发为 3；更大的 session-bound capacity 可在依赖、文件冲突、共享资源、token 和 `maxParallel` 允许时支持 5-10 等配置。可选 allowlist 只在明确配置时增加边界。更多高级命令见 [loop-engineering.md](loop-engineering.md)。
+所有 Goal 统一执行：design/plan 确定性预检 -> task graph -> 一次独立 combined planning review -> worker/task review -> final review -> verification/finalize。规划 review 若为 `NEEDS_CHANGES`，最多允许一次整体修复和一次差量复审；未改动规划内容的执行器失败会重新武装修复额度，修复后 findings 全部不高于 medium 时确定性通过为 `APPROVED_WITH_CONCERNS`，语义层面重复失败会稳定停止。查看进度使用 `ospec loop status --brief`；controller 使用 `ospec loop run --once --compact-json` 减少重复输出。未知容量时 implementation 默认并发为 3；更大的 session-bound capacity 可在依赖、文件冲突、共享资源、token 和 `maxParallel` 允许时支持 5-10 等配置。可选 allowlist 只在明确配置时增加边界。更多高级命令见 [loop-engineering.md](loop-engineering.md)。
 
 在内部，OSpec 会阻止 AI 在重要问题尚未回答时开始实现，inline 检查 design/plan 就绪状态，让实现者和代码审查者彼此独立，并要求有测试证据后才把 goal 标记为完成。
 

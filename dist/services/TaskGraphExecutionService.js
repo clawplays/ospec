@@ -89,7 +89,10 @@ const IMPLEMENTATION_PLAN_DOCUMENT_REVIEW_FILE = 'implementation-plan-review.md'
 const PLANNING_REVIEW_FILE = 'planning-review.md';
 const PLANNING_REPAIR_FILE = 'planning-repair.json';
 const PLANNING_REPAIR_PACKET_FILE = 'planning-repair.md';
+const PLANNING_REPAIR_BASELINE_DIR = 'planning-repair-baseline';
 const PLANNING_CONTRACT_VERSION = '1.9.0-planning-review-v1';
+const PLANNING_SNAPSHOT_CONTRACT = 'planning-semantic-v1';
+const PLANNING_REVIEW_BLOCKING_SEVERITIES = new Set(['critical', 'high', 'unknown']);
 const MAX_UNEXPLAINED_TASK_TARGETS = 6;
 const VERIFICATION_EVIDENCE_DIR = 'verification-evidence';
 const VERIFICATION_ACTIONS_DIR = 'verification-actions';
@@ -2816,7 +2819,7 @@ class TaskGraphExecutionService {
                 path.join('artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
             ].map(file => path.relative(projectRoot, path.join(resolvedChangePath, file)).replace(/\\/g, '/'));
             const targetFiles = this.normalizeTargetFiles(planningFiles);
-            const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+            const targetSnapshots = await this.capturePlanningSemanticSnapshots(projectRoot, targetFiles);
             const targetSnapshotHash = this.hashTargetSnapshots(targetSnapshots);
             const reviewContextHash = (0, crypto_1.createHash)('sha256').update(this.canonicalJson({
                 contractVersion: PLANNING_CONTRACT_VERSION,
@@ -2898,11 +2901,13 @@ class TaskGraphExecutionService {
                 requiresExecutorProvenance: Boolean(runtimeAdapter?.selected),
                 requiresNativeExecutorProvenance: false,
                 controllerSessionReportedAt: null,
+                snapshotContract: PLANNING_SNAPSHOT_CONTRACT,
             };
+            const postRepairSections = await this.buildPostRepairReviewSections(resolvedChangePath, projectRoot);
             await this.fileService.writeJSON(recordPath, record);
             await this.setCurrentReviewDispatch(resolvedChangePath, this.planningReviewScopeKey(), reviewId);
             await this.prepareReviewArtifactForDispatch(resolvedChangePath, record);
-            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record, postRepairSections));
             await this.recordExecutionMetric(resolvedChangePath, report.feature, [{
                     kind: 'review_packet',
                     id: reviewId,
@@ -2933,23 +2938,37 @@ class TaskGraphExecutionService {
             const existingPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
             if (await this.fileService.exists(existingPath)) {
                 const existing = await this.fileService.readJSON(existingPath);
-                if (existing.status !== 'ready') {
+                if (existing.status === 'completed') {
                     throw new Error(`Automatic planning repair limit reached; ${existing.id} already consumed the single grouped repair attempt.`);
                 }
-                const reviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
-                const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
-                const context = await this.capturePlanningContext(resolvedChangePath);
-                if (this.normalizeReviewRunDecision(review.data?.decision) === 'NEEDS_CHANGES'
-                    && String(review.data?.review_dispatch_id || '') === existing.sourceReviewDispatchId
-                    && context.targetSnapshotHash === existing.beforeSnapshotHash) {
-                    return {
-                        changePath: resolvedChangePath,
-                        record: existing,
-                        nextInstruction: 'Reuse the prepared grouped planning repair; it has not yet consumed the single repair allowance.',
-                    };
+                if (existing.status === 'dispatched') {
+                    const dispatchedContext = await this.capturePlanningContext(resolvedChangePath);
+                    if (dispatchedContext.targetSnapshotHash !== existing.beforeSnapshotHash) {
+                        throw new Error(`Automatic planning repair limit reached; dispatched repair ${existing.id} modified planning content without completing its evidence.`);
+                    }
+                    // The dispatched executor failed or was lost before touching any
+                    // planning content. Only a completed repair consumes the single
+                    // allowance; re-arm instead of dead-ending the Goal on an
+                    // infrastructure failure.
+                    await this.fileService.remove(existingPath);
+                    await this.fileService.remove(path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_PACKET_FILE));
                 }
-                await this.fileService.remove(existingPath);
-                await this.fileService.remove(path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_PACKET_FILE));
+                else {
+                    const reviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
+                    const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath));
+                    const context = await this.capturePlanningContext(resolvedChangePath);
+                    if (this.normalizeReviewRunDecision(review.data?.decision) === 'NEEDS_CHANGES'
+                        && String(review.data?.review_dispatch_id || '') === existing.sourceReviewDispatchId
+                        && context.targetSnapshotHash === existing.beforeSnapshotHash) {
+                        return {
+                            changePath: resolvedChangePath,
+                            record: existing,
+                            nextInstruction: 'Reuse the prepared grouped planning repair; it has not yet consumed the single repair allowance.',
+                        };
+                    }
+                    await this.fileService.remove(existingPath);
+                    await this.fileService.remove(path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_PACKET_FILE));
+                }
             }
             const validation = await this.validatePlanningReviewEvidence(resolvedChangePath);
             if (!validation.ready)
@@ -3003,6 +3022,18 @@ class TaskGraphExecutionService {
             const id = `planning-repair-${this.toFileSafeTimestamp(now)}`;
             const packetPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_PACKET_FILE);
             const workspaceBaseline = await this.capturePlanningRepairWorkspaceBaseline(context.projectRoot);
+            const baselineDir = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_BASELINE_DIR);
+            await this.fileService.remove(baselineDir);
+            const baselineFiles = [];
+            for (const targetFile of targetFiles) {
+                const sourcePath = path.resolve(context.projectRoot, ...targetFile.split('/'));
+                const baselineRelative = ['artifacts', 'agents', PLANNING_REPAIR_BASELINE_DIR, targetFile.replace(/[\\/]/g, '__')].join('/');
+                const existed = await this.fileService.exists(sourcePath);
+                if (existed) {
+                    await this.fileService.copy(sourcePath, path.join(resolvedChangePath, ...baselineRelative.split('/')));
+                }
+                baselineFiles.push({ path: targetFile, baselinePath: baselineRelative, existed });
+            }
             const record = {
                 version: '1.0',
                 id,
@@ -3024,6 +3055,8 @@ class TaskGraphExecutionService {
                 workspaceBaselineSnapshots: workspaceBaseline?.snapshots || null,
                 recordPath: this.toChangeRelativePath(resolvedChangePath, existingPath),
                 packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
+                baselineFiles,
+                postRepairReviewMode: null,
             };
             await this.fileService.writeJSON(existingPath, record);
             await this.writeLocalizedReportFile(resolvedChangePath, packetPath, [
@@ -3130,6 +3163,207 @@ class TaskGraphExecutionService {
             return record;
         });
     }
+    /**
+     * Post-repair planning gate without an AI re-review: when the single grouped
+     * repair resolved findings that were all medium severity or lower and every
+     * deterministic gate re-passes, record APPROVED_WITH_CONCERNS directly. Task
+     * reviews and the final review remain the semantic safety net downstream.
+     */
+    async acceptPlanningRepairDeterministically(changePath) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const repairRecordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+            if (!(await this.fileService.exists(repairRecordPath))) {
+                return { accepted: false, reason: 'No grouped planning repair record exists.' };
+            }
+            let record;
+            try {
+                record = await this.fileService.readJSON(repairRecordPath);
+            }
+            catch (error) {
+                return { accepted: false, reason: `Grouped planning repair record is unreadable (${error?.message || error}).` };
+            }
+            if (record.status !== 'completed') {
+                return { accepted: false, reason: `Grouped planning repair is ${record.status}, not completed.` };
+            }
+            if (record.postRepairReviewMode) {
+                return { accepted: false, reason: 'The post-repair planning decision is already settled.' };
+            }
+            const blocking = (record.findings || []).filter(finding => PLANNING_REVIEW_BLOCKING_SEVERITIES.has(finding.severity));
+            if (blocking.length > 0) {
+                return {
+                    accepted: false,
+                    reason: `Findings ${blocking.map(finding => finding.id).join(', ')} require an independent delta re-review (severity high/critical).`,
+                };
+            }
+            const decision = await this.readValidatedPlanningReviewDecision(resolvedChangePath);
+            if (decision !== 'PENDING') {
+                return { accepted: false, reason: `Current planning review decision is ${decision}.` };
+            }
+            const context = await this.capturePlanningContext(resolvedChangePath);
+            if (!record.afterSnapshotHash || record.afterSnapshotHash !== context.targetSnapshotHash) {
+                return { accepted: false, reason: 'Planning content changed after the grouped repair completed; a fresh independent review is required.' };
+            }
+            for (const stage of ['design', 'plan']) {
+                const readiness = await this.validateDocumentReviewEvidence(resolvedChangePath, stage);
+                if (!readiness.ready) {
+                    return { accepted: false, reason: readiness.reason || `Planning ${stage} preflight is not ready.` };
+                }
+            }
+            await this.syncWorkerStatusUnlocked(resolvedChangePath);
+            const report = await this.getReport(resolvedChangePath);
+            if (report.issues.length > 0 || report.invalidTasks.length > 0 || report.taskCount === 0) {
+                return { accepted: false, reason: 'The task graph is not valid after the grouped repair.' };
+            }
+            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+            const now = new Date().toISOString();
+            const reviewId = `review-${this.toFileSafeTimestamp(now)}-planning-deterministic-${(0, crypto_1.randomBytes)(4).toString('hex')}`;
+            const dispatchRecordPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${reviewId}.json`);
+            const planningReviewPath = path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE);
+            const reviewContextHash = (0, crypto_1.createHash)('sha256').update(this.canonicalJson({
+                contractVersion: PLANNING_CONTRACT_VERSION,
+                targetSnapshotHash: context.targetSnapshotHash,
+            }), 'utf8').digest('hex');
+            const dispatch = {
+                id: reviewId,
+                stage: 'planning',
+                taskId: null,
+                taskTitle: 'Combined planning review (deterministic post-repair acceptance)',
+                reviewerRole: 'planning_reviewer',
+                projectSession: await this.readBootstrapProjectSessionSnapshot(projectRoot),
+                status: 'DISPATCHED',
+                assignedAt: now,
+                packetPath: this.toChangeRelativePath(resolvedChangePath, dispatchRecordPath),
+                recordPath: this.toChangeRelativePath(resolvedChangePath, dispatchRecordPath),
+                reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, planningReviewPath),
+                reviewPackagePath: null,
+                gitHead: null,
+                targetFiles: context.targetFiles,
+                targetSnapshots: context.targetSnapshots,
+                targetSnapshotHash: context.targetSnapshotHash,
+                reviewContextHash,
+                runtimeAdapter: null,
+                requiresExecutorProvenance: false,
+                requiresNativeExecutorProvenance: false,
+                controllerSessionReportedAt: null,
+                snapshotContract: PLANNING_SNAPSHOT_CONTRACT,
+            };
+            await this.fileService.writeJSON(dispatchRecordPath, dispatch);
+            await this.setCurrentReviewDispatch(resolvedChangePath, this.planningReviewScopeKey(), reviewId);
+            const body = [
+                `# Combined Planning Review: ${record.feature}`,
+                '',
+                '## Deterministic Post-Repair Acceptance',
+                '',
+                `- Grouped planning repair ${record.id} resolved every recorded finding (maximum severity medium).`,
+                '- Deterministic gates re-passed: design preflight, implementation plan preflight, and task graph validity.',
+                '- The AI re-review was skipped by policy because no high or critical finding was recorded. Task reviews and the final review remain the semantic safety net.',
+                '',
+                '## Carried Concerns',
+                '',
+                ...(record.findings || []).map(finding => `- [${finding.id}] [${finding.severity}] ${finding.message} — resolved by grouped repair ${record.id}; carried as a concern for downstream review.`),
+                '',
+            ].join('\n');
+            await this.fileService.writeFile(planningReviewPath, (0, helpers_1.stringifyFrontmatter)(body, {
+                status: 'approved_with_concerns',
+                decision: 'APPROVED_WITH_CONCERNS',
+                reviewer_role: 'planning_reviewer',
+                review_dispatch_id: reviewId,
+                target_snapshot_hash: context.targetSnapshotHash,
+                reviewed_at: now,
+            }));
+            await this.fileService.writeJSON(planningReviewPath.replace(/\.md$/i, '.findings.json'), {
+                version: '1.0',
+                findings: [],
+            });
+            record.postRepairReviewMode = 'deterministic';
+            await this.fileService.writeJSON(repairRecordPath, record);
+            return {
+                accepted: true,
+                reason: `Grouped planning repair ${record.id} accepted deterministically (all findings medium or lower); planning review recorded as APPROVED_WITH_CONCERNS without an AI re-review.`,
+            };
+        });
+    }
+    async buildPostRepairReviewSections(changePath, projectRoot) {
+        const recordPath = path.join(changePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+        if (!(await this.fileService.exists(recordPath)))
+            return [];
+        let record;
+        try {
+            record = await this.fileService.readJSON(recordPath);
+        }
+        catch {
+            return [];
+        }
+        if (record.status !== 'completed' || record.postRepairReviewMode === 'deterministic')
+            return [];
+        return [
+            '',
+            '## Post-Repair Delta Review (Final Round)',
+            '',
+            '- The single grouped planning repair allowance is consumed. This re-review is the final planning gate: NEEDS_CHANGES permanently blocks this Goal.',
+            '- Verify that each repaired finding below is resolved in the current planning files. Focus on the repaired files and the changed regions; do not re-audit the whole planning set.',
+            '- Raise a NEW finding only for a critical or high severity defect that makes implementation unsafe. Record residual improvement-level concerns via APPROVED_WITH_CONCERNS instead of NEEDS_CHANGES.',
+            '',
+            '### Repaired Findings To Verify',
+            '',
+            ...(record.findings || []).map(finding => `- ${this.renderReviewFinding(finding)}`),
+            ...this.buildPlanningRepairDiffSections(changePath, projectRoot, record),
+        ];
+    }
+    buildPlanningRepairDiffSections(changePath, projectRoot, record) {
+        if (!Array.isArray(record.baselineFiles) || record.baselineFiles.length === 0) {
+            return [
+                '',
+                '### Repair Diff',
+                '',
+                `- Baseline copies are unavailable; read the repaired files directly: ${record.targetFiles.join(', ')}.`,
+            ];
+        }
+        const sections = ['', '### Repair Diff (baseline -> current)', ''];
+        for (const item of record.baselineFiles) {
+            if (!item.existed) {
+                sections.push(`- ${item.path}: added by the repair; read the full file.`);
+                continue;
+            }
+            const baselineAbsolute = path.join(changePath, ...item.baselinePath.split('/'));
+            const currentAbsolute = path.resolve(projectRoot, ...item.path.split('/'));
+            const diff = this.runGit(projectRoot, ['diff', '--no-index', '--unified=3', '--', baselineAbsolute, currentAbsolute]);
+            if (diff.status === 0) {
+                sections.push(`- ${item.path}: unchanged by the repair.`);
+                continue;
+            }
+            if (diff.status !== 1 || !diff.stdout.trim()) {
+                sections.push(`- ${item.path}: diff unavailable; compare ${item.baselinePath} against the current file.`);
+                continue;
+            }
+            sections.push(`#### ${item.path}`, '', '```diff', this.truncateForPacket(diff.stdout, 250), '```', '');
+        }
+        return sections;
+    }
+    buildVerificationFailureFocusSections(feedback) {
+        const trimmed = String(feedback || '').trim();
+        if (!trimmed)
+            return [];
+        return [
+            '',
+            '## Verification-Failure Scoped Re-Review',
+            '',
+            `- Deterministic verification failed after a prior approval: ${trimmed}`,
+            '- Scope this review to diagnosing that failure: identify the responsible defect(s) and write findings with a bounded repair scope for them.',
+            '- Do not re-audit unrelated areas that the previous final review already approved unless the failure evidence implicates them.',
+            '- If the failure is environmental rather than a code defect, record decision BLOCKED with the blocking context instead of NEEDS_CHANGES.',
+        ];
+    }
+    truncateForPacket(text, maxLines) {
+        const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+        if (lines.length <= maxLines)
+            return lines.join('\n').trimEnd();
+        return [
+            ...lines.slice(0, maxLines),
+            `... (${lines.length - maxLines} more diff lines truncated; read the files directly if needed)`,
+        ].join('\n');
+    }
     async capturePlanningContext(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
@@ -3140,7 +3374,7 @@ class TaskGraphExecutionService {
             constants_1.FILE_NAMES.TASKS,
             path.join('artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH),
         ].map(file => path.relative(projectRoot, path.join(resolvedChangePath, file)).replace(/\\/g, '/')));
-        const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
+        const targetSnapshots = await this.capturePlanningSemanticSnapshots(projectRoot, targetFiles);
         return {
             projectRoot,
             targetFiles,
@@ -3434,7 +3668,7 @@ class TaskGraphExecutionService {
         await this.fileService.writeJSON(recordPath, record);
         await this.setCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(null), reviewId);
         await this.prepareReviewArtifactForDispatch(resolvedChangePath, record);
-        await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+        await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record, this.buildVerificationFailureFocusSections(options.verificationFailureFocus)));
         await this.recordExecutionMetric(resolvedChangePath, report.feature, [
             {
                 kind: 'review_packet',
@@ -5001,20 +5235,29 @@ class TaskGraphExecutionService {
                 return { ready: false, reason: `${label} target-file snapshot provenance is invalid.` };
             }
             const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
-            const currentSnapshots = await this.captureTargetSnapshots(projectRoot, dispatch.targetFiles);
+            const currentSnapshots = planning && dispatch.snapshotContract === PLANNING_SNAPSHOT_CONTRACT
+                ? await this.capturePlanningSemanticSnapshots(projectRoot, dispatch.targetFiles)
+                : await this.captureTargetSnapshots(projectRoot, dispatch.targetFiles);
             const targetSnapshotChanged = !this.targetSnapshotsMatchDispatch(currentSnapshots, dispatch.targetSnapshots, dispatch.targetSnapshotHash);
             let downstreamCarryForward = false;
             if (targetSnapshotChanged) {
                 const carryForward = taskId && !planning
                     ? await this.canCarryTaskReviewForwardAfterDownstreamWork(resolvedChangePath, taskId, dispatch, currentSnapshots, reviewedAtMs)
-                    : { allowed: false, reason: 'final reviews cannot be carried forward' };
+                    : {
+                        allowed: false,
+                        reason: planning
+                            ? 'planning reviews require a fresh dispatch after planning content changes'
+                            : 'final reviews cannot be carried forward',
+                    };
                 downstreamCarryForward = carryForward.allowed;
                 if (!downstreamCarryForward) {
                     return { ready: false, reason: `${label} target files changed after review dispatch; dispatch a fresh review (${carryForward.reason}).` };
                 }
             }
             const currentHead = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null;
-            if (dispatch.gitHead && currentHead !== dispatch.gitHead && !taskId && !downstreamCarryForward) {
+            // Planning approvals are anchored to planning semantics, not the commit
+            // graph: implementation-phase commits must not invalidate them.
+            if (dispatch.gitHead && currentHead !== dispatch.gitHead && !taskId && !planning && !downstreamCarryForward) {
                 return { ready: false, reason: `${label} Git HEAD changed after review dispatch; dispatch a fresh review.` };
             }
             const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
@@ -7785,6 +8028,67 @@ class TaskGraphExecutionService {
     isPathWithin(root, candidate) {
         const relative = path.relative(root, candidate);
         return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    }
+    /**
+     * Planning-review snapshots must only change when the planning *semantics*
+     * change. Execution bookkeeping — task status, review decisions, checklist
+     * ticks, governance-generated repair tasks — mutates tasks.md and
+     * task-graph.json on every loop step; hashing it raw invalidates the
+     * planning approval mid-goal and re-dispatches full planning reviews.
+     */
+    async capturePlanningSemanticSnapshots(projectRoot, targetFiles) {
+        const raw = await this.captureTargetSnapshots(projectRoot, targetFiles);
+        const snapshots = [];
+        for (const snapshot of raw) {
+            if (!snapshot.exists || snapshot.kind !== 'file') {
+                snapshots.push(snapshot);
+                continue;
+            }
+            const absolutePath = path.resolve(projectRoot, ...snapshot.path.split('/'));
+            const content = await this.fileService.readFile(absolutePath);
+            snapshots.push({
+                ...snapshot,
+                contentHash: this.hashPlanningSemanticContent(snapshot.path, content),
+            });
+        }
+        return snapshots;
+    }
+    hashPlanningSemanticContent(targetPath, content) {
+        const normalizedPath = targetPath.replace(/\\/g, '/').toLowerCase();
+        if (normalizedPath.endsWith('.json')) {
+            try {
+                const rawGraph = JSON.parse(content.replace(/^\uFEFF/, ''));
+                return (0, crypto_1.createHash)('sha256')
+                    .update(this.canonicalJson(this.projectPlanningGraphSemantics(rawGraph)), 'utf8')
+                    .digest('hex');
+            }
+            catch {
+                return this.hashMeaningfulDocumentation(content);
+            }
+        }
+        if (normalizedPath.endsWith(`/${constants_1.FILE_NAMES.TASKS}`.toLowerCase()) || normalizedPath === constants_1.FILE_NAMES.TASKS.toLowerCase()) {
+            // tasks.md is derived from task graph state; checklist ticks are execution
+            // progress, not planning content.
+            const checklistNeutral = content.replace(/^(\s*[-*+]\s+\[)[xX](\])/gm, '$1 $2');
+            return this.hashMeaningfulDocumentation(checklistNeutral);
+        }
+        return this.hashMeaningfulDocumentation(content);
+    }
+    projectPlanningGraphSemantics(rawGraph) {
+        if (!rawGraph || typeof rawGraph !== 'object' || Array.isArray(rawGraph))
+            return rawGraph;
+        const { status: _graphStatus, ...graphRest } = rawGraph;
+        const tasks = Array.isArray(rawGraph.tasks)
+            ? rawGraph.tasks
+                .filter((task) => !String(task?.id || '').startsWith('repair-final-'))
+                .map((task) => {
+                if (!task || typeof task !== 'object' || Array.isArray(task))
+                    return task;
+                const { status: _status, review: _review, ...taskRest } = task;
+                return taskRest;
+            })
+            : rawGraph.tasks;
+        return { ...graphRest, tasks };
     }
     hashTargetSnapshots(snapshots) {
         const versioned = snapshots.some(snapshot => Boolean(snapshot.kind));
@@ -11692,7 +11996,7 @@ class TaskGraphExecutionService {
             '',
         ].join('\n');
     }
-    buildReviewDispatchPacket(report, record) {
+    buildReviewDispatchPacket(report, record, extraSections = []) {
         const isPlanningReview = record.stage === 'planning';
         const isTaskReview = Boolean(record.taskId);
         const isCombinedReview = record.stage === 'review';
@@ -11791,6 +12095,7 @@ class TaskGraphExecutionService {
             '- Record concrete findings and evidence in the review artifact body.',
             `- Also write structured findings to \`${this.getReviewFindingsRelativePath(record.reviewArtifactPath)}\` as \`{"version":"1.0","findings":[{"id":"F-001","severity":"high|medium|low|info","category":"correctness","message":"...","file":"src/file.ts","line":42,"evidence":"...","requirement_refs":["REQ-1"],"repair_scope":["src/file.ts"]}]}\`. Use an empty findings array only when there are no findings.`,
             '- Use `APPROVED_WITH_CONCERNS` only when the change can continue and the controller can accept the concern.',
+            ...extraSections,
             '',
             '## Completion',
             '',

@@ -1324,12 +1324,17 @@ class LoopService {
             return issued;
         }
         if (!APPROVED_REVIEW_DECISIONS.has(planningDecision)) {
-            const prepared = await this.prepareLoopBatch(resolved, config, state, 1, true, now, 'planning-review');
-            if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
-                return this.preparedBatchGateResult(resolved, state, trigger, 'planning-review', prepared);
+            const deterministicAcceptance = await this.taskGraph.acceptPlanningRepairDeterministically(resolved);
+            if (!deterministicAcceptance.accepted) {
+                const prepared = await this.prepareLoopBatch(resolved, config, state, 1, true, now, 'planning-review');
+                if (prepared.runtimeAdapter.blocked || prepared.limit === 0) {
+                    return this.preparedBatchGateResult(resolved, state, trigger, 'planning-review', prepared);
+                }
+                const review = await this.taskGraph.reviewPlanning(resolved);
+                return this.issueAction(resolved, config, state, trigger, 'planning-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], 'One combined planning review is required before workspace inspection and implementation dispatch.', verifyPassed, prepared);
             }
-            const review = await this.taskGraph.reviewPlanning(resolved);
-            return this.issueAction(resolved, config, state, trigger, 'planning-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], 'One combined planning review is required before workspace inspection and implementation dispatch.', verifyPassed, prepared);
+            feedback = deterministicAcceptance.reason;
+            state.lastFeedback = feedback;
         }
         const allowedWorkspacePaths = this.allReportTasks(report)
             .filter(task => task.status !== 'PENDING')
@@ -1343,7 +1348,9 @@ class LoopService {
                 return this.preparedBatchGateResult(resolved, state, trigger, 'final-review', prepared);
             }
             await this.resetFinalReviewForVerificationFailure(resolved, feedback);
-            const review = await this.taskGraph.review(resolved);
+            const review = await this.taskGraph.review(resolved, {
+                verificationFailureFocus: feedback || 'Deterministic verification failed after the previous approval.',
+            });
             return this.issueAction(resolved, config, state, trigger, 'final-review', [this.reviewAction(resolved, config, review.dispatch, state.iteration + 1)], `${feedback || 'Verification failed.'} Independent final review is required before grouped repair.`, false, prepared);
         }
         const allTasks = this.allReportTasks(report);

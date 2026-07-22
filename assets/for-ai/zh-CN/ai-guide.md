@@ -145,7 +145,7 @@ X-Goog-Api-Key = "your-stitch-api-key"
 
 ## 执行效率策略
 
-- 依次执行 design/plan 确定性预检，派生 task graph，再执行一次独立 combined planning review；最多允许一次整体规划修复和一次 fresh re-review。task review、最终 combined review 和验证仍然保留。
+- 依次执行 design/plan 确定性预检，派生 task graph，再执行一次独立 combined planning review；最多允许一次整体规划修复和一次差量复审。未改动规划内容的执行器失败会重新武装修复额度，修复后 findings 全部不高于 medium 时确定性通过为 `APPROVED_WITH_CONCERNS`。task review、最终 combined review 和验证仍然保留。
 - worker/reviewer 使用逻辑 model profile，并按实际 dispatch target（包括 launch override）解析。requested/configured model 与 provider observed model 必须分开；没有 provider/usage 证据时 observed model 是未知，不能宣称已选择。
 - 命令执行器会收到 `OSPEC_USAGE_FILE` 并自动归集该 sidecar；`ospec execute complete ... --usage-file usage.json` 继续作为手工入口。指标必须记录来源、实际观测字段和 complete/partial/missing 覆盖率，未上报的计数不能显示成已测得的零。
 - reviewer 同时写人类可读 Markdown 和相邻的 `*.findings.json`，其中包含稳定 ID、严重度、类别、问题说明、文件/行证据、需求引用和修复范围。旧 Markdown 在 repair 前会生成兼容 sidecar。
