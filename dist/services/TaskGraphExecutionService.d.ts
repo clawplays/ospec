@@ -1,4 +1,5 @@
 import { AgentModelProfileId } from '../core/types';
+import { WorkflowProfileId } from '../utils/WorkflowProfile';
 import { FileService } from './FileService';
 import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
@@ -1059,6 +1060,7 @@ export interface TaskUserDecisionSnapshot {
     dirPath: string;
     indexPath: string;
     indexReportPath: string;
+    workflowProfile: WorkflowProfileId;
     total: number;
     pendingRequired: number;
     pendingOptional: number;
@@ -1082,6 +1084,7 @@ export interface TaskUserDecisionIndexArtifact {
     feature: string;
     generatedAt: string;
     changePath: string;
+    workflowProfile: WorkflowProfileId;
     total: number;
     pendingRequired: number;
     pendingOptional: number;

@@ -52,7 +52,7 @@ tags: [conventions, workflow, change, ospec]
 - 若状态文件与执行文件冲突，先修正状态再继续
 - 对 goal，`artifacts/agents/task-graph.json` 记录机器可读的 task 状态、依赖、冲突约束、目标文件和验证命令
 - 进入已有项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`；它只记录 active change、queued change、queue-run、cache fingerprint 和安全下一步命令上下文
-- 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `bootstrap.json` 和 `bootstrap.md`，然后按其中的下一步安全动作继续
+- 开始或恢复单个 active Goal 时，用 `ospec execute bootstrap [changes/active/<goal>]` 写入带 project session brief snapshot 的 `bootstrap.json` 和 `bootstrap.md`，然后按其中的下一步安全动作继续。经典 Change 改用 `ospec progress`、顶层 `ospec verify` 和 `ospec finalize`
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `handoff.json` 和 `handoff.md`；该命令只记录 project session brief snapshot、目标工具映射和安全规则
 - 派生 task graph 前，依次运行 `ospec execute preflight [changes/active/<change>] --stage design` 和 `--stage plan`，生成确定性 inline preflight packet 与 approval artifacts；两步通过后再派生或刷新 task graph，任何阶段都不启动 reviewer child。普通 red test、对应生产实现和 green/refactor 证据应放在同一个原子 task
 - task graph 派生后，Loop 必须在 workspace 或 worker 派发前执行一次独立 combined planning review。最多允许一次整体规划修复和一次 fresh re-review；重复失败必须稳定停止

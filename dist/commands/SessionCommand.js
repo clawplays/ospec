@@ -156,6 +156,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         const activeChanges = activeReport.changes.map(change => ({
             name: change.name,
             path: change.path,
+            workflowProfile: change.workflowProfile,
             status: change.status,
             progress: change.progress,
             currentStep: change.currentStep,
@@ -209,6 +210,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             changeReady,
             activeChanges: activeChanges.map(change => ({
                 name: change.name,
+                workflowProfile: change.workflowProfile,
                 status: change.status,
                 progress: change.progress,
                 currentStep: change.currentStep,
@@ -258,7 +260,11 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             recommendedCommands,
             safetyRules: [
                 'Use this brief as a project entrypoint only; it does not replace the active change documents.',
-                'When exactly one active change exists, run ospec execute bootstrap before dispatching workers.',
+                activeChanges.length === 1
+                    ? activeChanges[0].workflowProfile === 'goal'
+                        ? 'When exactly one active Goal exists, run ospec execute bootstrap before dispatching workers.'
+                        : 'A classic Change uses proposal.md, tasks.md, state.json, verification.md, and review.md directly; do not run Goal bootstrap, task graph, worker dispatch, or Loop commands.'
+                    : 'When active work is ambiguous, inspect the profile-aware status before selecting Change or Goal commands.',
                 'Do not launch workers, run tests, archive, merge, or edit source files from the session brief alone.',
                 'Use ospec status, ospec changes status, and ospec progress when the repository state is ambiguous.',
             ],
@@ -292,33 +298,47 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         const sessionCommand = (0, helpers_1.formatCliCommand)('ospec', 'session', targetPath);
         const activeReport = await services_1.services.projectService.getActiveChangeStatusReport(targetPath);
         const activeChange = activeReport.changes.length === 1 ? activeReport.changes[0] : null;
+        const activeGoal = activeChange?.workflowProfile === 'goal' ? activeChange : null;
+        const activeChangeRoot = activeChange
+            ? (path.isAbsolute(activeChange.path) ? activeChange.path : path.resolve(targetPath, activeChange.path))
+            : null;
+        const activeDecisionPath = activeChangeRoot
+            ? path.relative(targetPath, path.join(activeChangeRoot, 'artifacts', 'agents', 'decisions')).replace(/\\/g, '/')
+            : 'active-change artifacts/agents/decisions/ when decision gates exist';
+        const profileReads = activeChangeRoot
+            ? activeGoal
+                ? [path.relative(targetPath, path.join(activeChangeRoot, 'artifacts', 'agents', 'bootstrap.json')).replace(/\\/g, '/')]
+                : ['proposal.md', 'tasks.md', 'state.json', 'verification.md', 'review.md']
+                    .map(fileName => path.relative(targetPath, path.join(activeChangeRoot, fileName)).replace(/\\/g, '/'))
+            : [];
         const bootstrap = {
             projectEntryCommand: sessionCommand,
-            activeChangeBootstrapCommand: activeChange
-                ? (0, helpers_1.formatCliCommand)('ospec', 'execute', 'bootstrap', activeChange.path)
+            activeWorkflowProfile: activeChange?.workflowProfile || null,
+            activeChangeBootstrapCommand: activeGoal
+                ? (0, helpers_1.formatCliCommand)('ospec', 'execute', 'bootstrap', activeGoal.path)
                 : null,
             safeNextSource: '.ospec/session-brief.json recommendedCommands[0]',
-            decisionGateSource: 'active-change artifacts/agents/bootstrap.json execution.decisions and artifacts/agents/decisions/',
+            decisionGateSource: activeGoal
+                ? 'active Goal artifacts/agents/bootstrap.json execution.decisions and artifacts/agents/decisions/'
+                : 'active Change artifacts/agents/decisions/',
             pluginGateSource: 'project .skillrc plugin configuration and active-change plugin artifacts',
             requiredReads: [
                 '.ospec/session-brief.json',
                 '.ospec/session-brief.md',
-                activeChange
-                    ? path.relative(targetPath, path.join(activeChange.path, 'artifacts', 'agents', 'bootstrap.json')).replace(/\\/g, '/')
-                    : 'active-change artifacts/agents/bootstrap.json when exactly one active change exists',
-                activeChange
-                    ? path.relative(targetPath, path.join(activeChange.path, 'artifacts', 'agents', 'decisions')).replace(/\\/g, '/')
-                    : 'active-change artifacts/agents/decisions/ when decision gates exist',
+                ...profileReads,
+                activeDecisionPath,
             ],
         };
         const injection = {
             prompt: 'Use OSpec context before changing files: refresh the project session brief, follow the safe next command, and pause on required user decisions.',
             afterSessionStart: [
                 `Run ${sessionCommand} or read the freshly written .ospec/session-brief.json.`,
-                activeChange
+                activeGoal
                     ? `Run ${bootstrap.activeChangeBootstrapCommand} before dispatch, launch, review, verification, or finish.`
-                    : 'If one active change is present after the session brief, run ospec execute bootstrap for that change.',
-                'If bootstrap reports required pending user decisions, ask the user to choose and record the answer with ospec execute decision before dispatching work.',
+                    : activeChange
+                        ? `Continue the classic Change from ${activeChange.path}/proposal.md and tasks.md; do not run Goal bootstrap, task graph, worker dispatch, or Loop commands.`
+                        : 'Follow the profile-aware recommendedCommands in the refreshed session brief.',
+                'If active decision artifacts report required pending user decisions, ask the user to choose and record the answer with ospec execute decision before continuing.',
                 'Treat plugin gates as project/change artifacts; do not approve, reject, dispatch, or run plugin work implicitly.',
             ],
         };
@@ -444,8 +464,31 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             ];
         }
         const activeChange = activeChanges[0];
+        if (activeChange.workflowProfile === 'change') {
+            if (activeChange.archiveReady || activeChange.status === 'ready_to_archive') {
+                commands.push({
+                    label: 'Finalize ready classic change',
+                    command: formatCommand('finalize', activeChange.path),
+                });
+            }
+            commands.push({
+                label: 'Continue classic change',
+                command: formatCommand('progress', activeChange.path),
+            });
+            commands.push({
+                label: 'Verify classic change before closeout',
+                command: formatCommand('verify', activeChange.path),
+            });
+            if (queuedChanges.length > 0) {
+                commands.push({
+                    label: 'Continue explicit queue tracking after active change',
+                    command: formatCommand('run', runReport.currentRun ? 'step' : 'start', projectPath),
+                });
+            }
+            return commands;
+        }
         commands.push({
-            label: 'Refresh active change bootstrap',
+            label: 'Refresh active Goal bootstrap',
             command: formatCommand('execute', 'bootstrap', activeChange.path),
         });
         commands.push({
@@ -472,8 +515,8 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         return [
             {
                 target: 'codex',
-                startupUse: 'Read using-ospec.md, run ospec session, then run ospec execute bootstrap for the active change when present.',
-                nativeExecution: 'Use native subagents through the current Codex harness after ospec execute dispatch and launch-plan review.',
+                startupUse: 'Read using-ospec.md, run ospec session, and follow its profile-aware recommendedCommands; bootstrap only an active Goal.',
+                nativeExecution: 'Use native subagents through the current Codex harness only for a Goal after ospec execute dispatch and launch-plan review.',
             },
             {
                 target: 'claude',
@@ -482,7 +525,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             },
             {
                 target: 'gemini',
-                startupUse: 'Read using-ospec.md, refresh session context, and follow bootstrap nextInstruction.',
+                startupUse: 'Read using-ospec.md, refresh session context, and follow the profile-aware nextInstruction.',
                 nativeExecution: 'Use @generalist workers only for dispatch packets marked ready.',
             },
             {
@@ -502,7 +545,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             },
             {
                 target: 'generic',
-                startupUse: 'Run the session command, inspect recommendedCommands, then bootstrap the single active change if available.',
+                startupUse: 'Run the session command and follow recommendedCommands; bootstrap only when the single active item is a Goal.',
                 nativeExecution: 'Dispatch native agents only when the host harness has an equivalent safe worker mechanism.',
             },
         ];
@@ -510,7 +553,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
     renderSessionBrief(brief) {
         const activeChanges = brief.activeChanges.length > 0
             ? brief.activeChanges
-                .map(change => `- ${change.name}: ${change.status}, ${change.progress}%, ${change.summaryStatus} (${change.path})`)
+                .map(change => `- ${change.name} [${change.workflowProfile}]: ${change.status}, ${change.progress}%, ${change.summaryStatus} (${change.path})`)
                 .join('\n')
             : '- None';
         const queuedChanges = brief.queuedChanges.length > 0
@@ -606,6 +649,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             '## Bootstrap Context',
             '',
             `- Project entry command: \`${artifact.bootstrap.projectEntryCommand}\``,
+            `- Active workflow profile: ${artifact.bootstrap.activeWorkflowProfile || 'none'}`,
             `- Active change bootstrap command: ${artifact.bootstrap.activeChangeBootstrapCommand ? `\`${artifact.bootstrap.activeChangeBootstrapCommand}\`` : 'none'}`,
             `- Safe next source: ${artifact.bootstrap.safeNextSource}`,
             `- Decision gate source: ${artifact.bootstrap.decisionGateSource}`,
@@ -659,6 +703,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             '## Bootstrap',
             '',
             `- Project entry command: \`${artifact.bootstrap.projectEntryCommand}\``,
+            `- Active workflow profile: ${artifact.bootstrap.activeWorkflowProfile || 'none'}`,
             `- Active change bootstrap command: ${artifact.bootstrap.activeChangeBootstrapCommand ? `\`${artifact.bootstrap.activeChangeBootstrapCommand}\`` : 'none'}`,
             `- Safe next source: ${artifact.bootstrap.safeNextSource}`,
             `- Decision gate source: ${artifact.bootstrap.decisionGateSource}`,

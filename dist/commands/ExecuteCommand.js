@@ -35,9 +35,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExecuteCommand = void 0;
 const path = __importStar(require("path"));
+const fs_1 = require("fs");
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
+const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
 const BaseCommand_1 = require("./BaseCommand");
 const SessionCommand_1 = require("./SessionCommand");
@@ -144,19 +146,19 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
     }
     async status(inputPath) {
-        const changePath = await this.resolveChangePath(inputPath);
+        const changePath = await this.resolveGoalChangePath(inputPath, 'status');
         const progressProjection = await services_1.services.taskGraphExecutionService.reconcileGoalProgress(changePath);
         const report = await services_1.services.taskGraphExecutionService.getReport(changePath);
         this.printStatus(report, progressProjection);
     }
     async bootstrap(inputPath) {
-        const changePath = await this.resolveChangePath(inputPath);
+        const changePath = await this.resolveGoalChangePath(inputPath, 'bootstrap');
         const result = await services_1.services.taskGraphExecutionService.bootstrap(changePath);
         this.printBootstrap(result);
     }
     async handoff(args) {
         const parsed = this.parseHandoffArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'handoff');
         const result = await services_1.services.taskGraphExecutionService.handoff(changePath, {
             target: parsed.target,
         });
@@ -164,7 +166,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async preflight(args) {
         const parsed = this.parseDocumentReviewArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'preflight');
         const result = await services_1.services.taskGraphExecutionService.reviewDocument(changePath, {
             stage: parsed.stage,
             force: parsed.force,
@@ -172,23 +174,23 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         this.printDocumentReview(result);
     }
     async next(inputPath) {
-        const changePath = await this.resolveChangePath(inputPath);
+        const changePath = await this.resolveGoalChangePath(inputPath, 'next');
         const report = await services_1.services.taskGraphExecutionService.getReport(changePath);
         this.printNext(report);
     }
     async route(inputPath) {
-        const changePath = await this.resolveChangePath(inputPath);
+        const changePath = await this.resolveGoalChangePath(inputPath, 'route');
         const result = await services_1.services.taskGraphExecutionService.routeWorkflow(changePath);
         this.printWorkflowRoute(result);
     }
     async workspace(inputPath) {
-        const changePath = await this.resolveChangePath(inputPath);
+        const changePath = await this.resolveGoalChangePath(inputPath, 'workspace');
         const result = await services_1.services.taskGraphExecutionService.inspectWorkspace(changePath);
         this.printWorkspace(result);
     }
     async worktree(args) {
         const parsed = this.parseWorktreeArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'worktree');
         if (parsed.action) {
             const result = await services_1.services.taskGraphExecutionService.runWorktree(changePath, {
                 action: parsed.action,
@@ -208,7 +210,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async finish(args) {
         const parsed = this.parseFinishArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'finish');
         const result = await services_1.services.taskGraphExecutionService.planFinish(changePath, {
             targetBranch: parsed.targetBranch,
             remote: parsed.remote,
@@ -217,7 +219,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async dispatch(args) {
         const parsed = this.parseDispatchArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'dispatch');
         const result = await services_1.services.taskGraphExecutionService.dispatch(changePath, {
             taskId: parsed.taskId,
             limit: parsed.limit,
@@ -229,7 +231,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (parsed.run) {
             throw new Error('Execute launch --run was removed. Use the launch artifact nativeSubagent contract with the current model harness.');
         }
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'launch');
         const result = await services_1.services.taskGraphExecutionService.planLaunch(changePath, {
             taskId: parsed.taskId,
             target: parsed.target,
@@ -250,7 +252,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async collect(args) {
         const parsed = this.parseCollectArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'collect');
         const result = await services_1.services.taskGraphExecutionService.collectWorkerRun(changePath, {
             taskId: parsed.taskId,
             runId: parsed.runId,
@@ -261,7 +263,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async retry(args) {
         const parsed = this.parseRetryArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'retry');
         const result = await services_1.services.taskGraphExecutionService.retryWorkerRun(changePath, {
             taskId: parsed.taskId,
             runId: parsed.runId,
@@ -272,7 +274,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async complete(args) {
         const parsed = this.parseCompleteArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'complete');
         const result = await services_1.services.taskGraphExecutionService.complete(changePath, parsed.taskId, {
             status: parsed.status,
             summary: parsed.summary,
@@ -282,7 +284,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         this.printCompletion(result);
     }
     async sync(inputPath) {
-        const changePath = await this.resolveChangePath(inputPath);
+        const changePath = await this.resolveGoalChangePath(inputPath, 'sync');
         const result = await services_1.services.taskGraphExecutionService.syncWorkerStatus(changePath);
         const bootstrap = await services_1.services.taskGraphExecutionService.bootstrap(changePath);
         let sessionBriefPath = null;
@@ -301,7 +303,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (parsed.run) {
             throw new Error('Execute review --run was removed. Dispatch the review packet through a fresh model-native subagent.');
         }
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'review');
         if (await services_1.services.loopService.exists(changePath)) {
             const loopConfig = await services_1.services.loopService.readConfig(changePath);
             if (loopConfig.executionModel === 'controller') {
@@ -316,7 +318,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async feedback(args) {
         const parsed = this.parseReviewFeedbackArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'feedback');
         const result = await services_1.services.taskGraphExecutionService.planReviewFeedback(changePath, {
             stage: parsed.stage,
             summary: parsed.summary,
@@ -327,7 +329,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (args.length > 1 || args[0]?.startsWith('--')) {
             throw new Error(`Unexpected execute repair argument: ${args.find(arg => arg.startsWith('--')) || args[1]}`);
         }
-        const changePath = await this.resolveChangePath(args[0]);
+        const changePath = await this.resolveGoalChangePath(args[0], 'repair');
         const result = await services_1.services.taskGraphExecutionService.createRepairWave(changePath);
         this.printRepairWave(result);
     }
@@ -349,7 +351,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async verify(args) {
         const parsed = this.parseVerificationArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'verify');
         const result = await services_1.services.taskGraphExecutionService.recordVerification(changePath, {
             command: parsed.command,
             status: parsed.status,
@@ -364,13 +366,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async requireVerification(args) {
         const parsed = this.parseVerificationRequirementArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'require-verification');
         const result = await services_1.services.taskGraphExecutionService.requireVerification(changePath, parsed);
         this.printVerificationRequirement(result);
     }
     async tdd(args) {
         const parsed = this.parseTddArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'tdd');
         const result = await services_1.services.taskGraphExecutionService.recordTddEvidence(changePath, {
             phase: parsed.phase,
             command: parsed.command,
@@ -383,7 +385,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async debug(args) {
         const parsed = this.parseDebugArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'debug');
         const result = await services_1.services.taskGraphExecutionService.recordDebugEvidence(changePath, {
             phase: parsed.phase,
             symptom: parsed.symptom,
@@ -397,13 +399,30 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async deferBlocker(args) {
         const parsed = this.parseDeferBlockerArgs(args);
-        const changePath = await this.resolveChangePath(parsed.inputPath);
+        const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'defer-blocker');
         const result = await services_1.services.taskGraphExecutionService.deferExternalBlocker(changePath, parsed.taskId, {
             reason: parsed.reason,
         });
         this.success(`Deferred external acceptance for ${result.taskId} to final review.`);
         this.info(`  blocker: ${result.recordPath}`);
         this.info('  task remains BLOCKED and final verification/archive remain gated');
+    }
+    async resolveGoalChangePath(inputPath, action) {
+        const changePath = await this.resolveChangePath(inputPath);
+        const statePath = path.join(changePath, constants_1.FILE_NAMES.STATE);
+        if (!(0, fs_1.existsSync)(statePath)) {
+            return changePath;
+        }
+        const state = await services_1.services.fileService.readJSON(statePath);
+        const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(changePath, state);
+        if (workflowProfile === WorkflowProfile_1.CHANGE_WORKFLOW_PROFILE) {
+            const relativePath = inputPath || changePath;
+            throw new Error(`ospec execute ${action} is Goal-only and cannot run for workflow_profile_id=change. `
+                + `Continue the classic Change with "ospec progress ${relativePath}", `
+                + `top-level "ospec verify ${relativePath}", and "ospec finalize ${relativePath}". `
+                + 'Use "ospec execute decision" only when this Change needs a durable user choice.');
+        }
+        return changePath;
     }
     async resolveChangePath(inputPath) {
         const cwd = process.cwd();
@@ -517,7 +536,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             console.log(`next: ${result.nextInstruction}`);
             return;
         }
-        console.log('\nChange Bootstrap Snapshot');
+        console.log('\nGoal Bootstrap Snapshot');
         console.log('=========================\n');
         console.log(`Change path: ${result.changePath}`);
         console.log(`Project root: ${result.projectRoot}`);

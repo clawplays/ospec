@@ -128,33 +128,34 @@ Run Commands:
 function getExecuteHelpText() {
     return `
 Execute Commands:
-  ospec execute bootstrap [change-path|project-path] - write a one-change startup/resume snapshot with project session brief context and next safe action
-  ospec execute handoff [change-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
-  ospec execute preflight [change-path|project-path] [--stage design|plan] [--force] - run or reuse a zero-token deterministic planning preflight
-  ospec execute status [change-path|project-path] [--brief] - show task graph controller state; prefer --brief and the emitted packet path for controller loops
-  ospec execute next [change-path|project-path]   - show dispatchable next task(s)
-  ospec execute route [change-path|project-path]  - write a workflow-route artifact with the next recommended OSpec command
-  ospec execute workspace [change-path|project-path] - inspect git workspace safety and write workspace-status artifacts
-  ospec execute worktree [change-path|project-path] [--branch name] [--path path] [--base ref] - write an isolated worktree preparation plan without creating it
-  ospec execute worktree [change-path|project-path] --create [--branch name] [--path path] [--base ref] - explicitly run git worktree add and record the result
-  ospec execute worktree [change-path|project-path] --cleanup [--path path] - explicitly run git worktree remove for the planned or provided worktree path
-  ospec execute finish [change-path|project-path] [--target main] [--remote origin] - write a closeout readiness plan without finalizing, merging, pushing, or deleting worktrees
-  ospec execute dispatch [change-path|project-path] [--task task-id] [--limit N] - create parallel-safe worker dispatch packet(s) with session context, worker profiles, and target tool mapping
-  ospec execute launch [change-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json] - write the capability-based runtime adapter launch plan without starting workers; --json prints the machine-readable artifact
-  ospec execute collect [change-path|project-path] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - collect a worker run into task completion state
-  ospec execute retry [change-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
-  ospec execute complete <task-id> [change-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] [--usage-file usage.json] - record a worker result and ingest the dispatch usage sidecar automatically when present; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
-  ospec execute defer-blocker <task-id> [change-path|project-path] --reason "..." - explicitly defer a durable external acceptance blocker to final review so dependency-safe implementation can continue; the task stays BLOCKED and finalization/archive remain gated
-  ospec execute sync [change-path|project-path]   - sync worker status, bootstrap/state.json, and the project session brief
-  ospec execute review [change-path|project-path] [--task task-id] [--stage spec|quality] - create a non-controller task-level or final review packet; controller Goals use ospec loop tick
-  ospec execute feedback [change-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files
-  ospec execute repair [change-path|project-path] - convert all NEEDS_CHANGES final-review findings into one grouped repair task and dispatch
+  Goal-only unless noted; classic Changes use ospec progress, top-level ospec verify, and ospec finalize.
+  ospec execute bootstrap [goal-path|project-path] - write a one-Goal startup/resume snapshot with project session brief context and next safe action
+  ospec execute handoff [goal-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
+  ospec execute preflight [goal-path|project-path] [--stage design|plan] [--force] - run or reuse a zero-token deterministic planning preflight
+  ospec execute status [goal-path|project-path] [--brief] - show task graph controller state; prefer --brief and the emitted packet path for controller loops
+  ospec execute next [goal-path|project-path]   - show dispatchable next task(s)
+  ospec execute route [goal-path|project-path]  - write a workflow-route artifact with the next recommended OSpec command
+  ospec execute workspace [goal-path|project-path] - inspect git workspace safety and write workspace-status artifacts
+  ospec execute worktree [goal-path|project-path] [--branch name] [--path path] [--base ref] - write an isolated worktree preparation plan without creating it
+  ospec execute worktree [goal-path|project-path] --create [--branch name] [--path path] [--base ref] - explicitly run git worktree add and record the result
+  ospec execute worktree [goal-path|project-path] --cleanup [--path path] - explicitly run git worktree remove for the planned or provided worktree path
+  ospec execute finish [goal-path|project-path] [--target main] [--remote origin] - write a closeout readiness plan without finalizing, merging, pushing, or deleting worktrees
+  ospec execute dispatch [goal-path|project-path] [--task task-id] [--limit N] - create parallel-safe worker dispatch packet(s) with session context, worker profiles, and target tool mapping
+  ospec execute launch [goal-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json] - write the capability-based runtime adapter launch plan without starting workers; --json prints the machine-readable artifact
+  ospec execute collect [goal-path|project-path] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - collect a worker run into task completion state
+  ospec execute retry [goal-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
+  ospec execute complete <task-id> [goal-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] [--usage-file usage.json] - record a worker result and ingest the dispatch usage sidecar automatically when present; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts
+  ospec execute defer-blocker <task-id> [goal-path|project-path] --reason "..." - explicitly defer a durable external acceptance blocker to final review so dependency-safe implementation can continue; the task stays BLOCKED and finalization/archive remain gated
+  ospec execute sync [goal-path|project-path]   - sync worker status, bootstrap/state.json, and the project session brief
+  ospec execute review [goal-path|project-path] [--task task-id] [--stage spec|quality] - create a non-controller task-level or final review packet; controller Goals use ospec loop tick
+  ospec execute feedback [goal-path|project-path] [--stage spec|quality] [--summary "..."] - write a review feedback handling plan without editing source files
+  ospec execute repair [goal-path|project-path] - convert all NEEDS_CHANGES final-review findings into one grouped repair task and dispatch
   ospec execute decision [change-path|project-path] --id id --question "..." --option id:label:impact --option id:label:impact [--recommended id] [--required|--optional] - record a durable user choice gate that can block dispatch until selected
   ospec execute decision [change-path|project-path] --id id --select option-id --answered-by user [--summary "..."] - record the user's selected option with explicit provenance and unblock required decision gates
-  ospec execute debug [change-path|project-path] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." [--status CONFIRMED|FIXED|BLOCKED|SKIPPED] [--hypothesis "..."] [--command "..."] [--summary "..."] - record staged debugging evidence
-  ospec execute tdd [change-path|project-path] --phase red|green|refactor --command "npm test -- focused" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--exit-code 1] [--test "..."] [--summary "..."] - record TDD cycle evidence
-  ospec execute require-verification [change-path|project-path] --id id --kind browser|e2e|test|lint|build|manual|other --description "..." [--required|--optional] - persist a verification surface that final verification and archive must enforce
-  ospec execute verify [change-path|project-path] --command "npm test" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--satisfies requirement-id] [--exit-code N] [--summary "..."] - record verification evidence; PASSED requires --exit-code 0
+  ospec execute debug [goal-path|project-path] --phase reproduce|isolate|hypothesize|fix|verify --symptom "..." --root-cause "..." [--status CONFIRMED|FIXED|BLOCKED|SKIPPED] [--hypothesis "..."] [--command "..."] [--summary "..."] - record staged debugging evidence
+  ospec execute tdd [goal-path|project-path] --phase red|green|refactor --command "npm test -- focused" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--exit-code 1] [--test "..."] [--summary "..."] - record TDD cycle evidence
+  ospec execute require-verification [goal-path|project-path] --id id --kind browser|e2e|test|lint|build|manual|other --description "..." [--required|--optional] - persist a verification surface that final verification and archive must enforce
+  ospec execute verify [goal-path|project-path] --command "npm test" [--status PASSED|FAILED|BLOCKED|SKIPPED] [--satisfies requirement-id] [--exit-code N] [--summary "..."] - record verification evidence; PASSED requires --exit-code 0
   ospec execute help                              - show execute command help
 `;
 }

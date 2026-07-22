@@ -29,7 +29,7 @@ ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
 ospec loop allowlist clear [changes/active/<change>] --confirm
-ospec execute bootstrap [changes/active/<change>]
+ospec execute bootstrap [changes/active/<goal>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
@@ -143,6 +143,8 @@ ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
+All `ospec execute` task-graph/controller commands above are Goal-only except `ospec execute decision`, which is shared for durable user choices. A classic Change uses `ospec progress`, direct implementation, top-level `ospec verify`, lightweight `review.md`, and `ospec finalize`; it must not create Goal bootstrap, task graph, worker dispatch, or Loop artifacts.
+
 ## Change And Goal Documents
 
 `ospec change <change-name> [path]` creates the classic fast-flow files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`; `ospec new` remains a compatible alias. `ospec goal <goal-name> [path]` creates the full workflow with `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, `artifacts/reviews/final-review.md`, and `artifacts/agents/worker-status.md`.
@@ -152,8 +154,8 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - Every goal runs with three experience contracts: `Announce-Before-Act` (the AI announces its skill and stage, each `ospec execute …` command and artifact, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, data, UI, risk, and scope decisions are asked one at a time through the native question UI — Claude Code: AskUserQuestion — before design is locked), and `Zero-Setup` (the AI runs every `ospec` command itself, so you only start a goal and describe the requirement).
 - Workflow flags can activate built-in agent quality policy steps: `tdd_cycle`, `root_cause_debug`, and `verification_evidence`. Activated steps are written into change frontmatter as `optional_steps` and must be covered in `tasks.md`, `verification.md`, and archive readiness.
 - Use `proposal.md` to capture why the change exists, scope, and acceptance criteria.
-- Use `ospec session [path]` when entering an existing OSpec project to write `.ospec/session-brief.json` and `.ospec/session-brief.md` with active change, queue, cache fingerprint, and safe next command context. It is a project entry brief and does not replace `ospec execute bootstrap` for the active change.
-- Use `ospec session hook [path]` to write `.ospec/hooks/session-start.json`, `.ospec/hooks/session-start.md`, `.ospec/hooks/using-ospec.json`, and `.ospec/hooks/using-ospec.md` for opt-in harness startup integration. These artifacts tell Codex, Claude, Gemini, OpenCode, Cursor, Copilot, and generic harnesses what to inject at session start: refresh the session brief, run active-change bootstrap when exactly one active change exists, read decision/plugin gate sources, and follow the safe next command. The hook must not launch workers, run tests, inspect git, archive, or edit source files. Add `--target claude --apply` to also write a Claude Code hook bundle under `.ospec/hooks/claude/` and idempotently merge it into `.claude/settings.json`; those hooks announce every subagent dispatch and `ospec` command at the tool level, hard-block subagent dispatch while a required decision is pending, and re-affirm the `Announce-Before-Act` / `Brainstorm-First` contract every turn (they take effect from the next Claude Code session).
+- Use `ospec session [path]` when entering an existing OSpec project to write `.ospec/session-brief.json` and `.ospec/session-brief.md` with active work, its `change` or `goal` profile, queue state, cache fingerprint, and profile-aware next commands. A Change continues directly from its five classic files; only a Goal uses `ospec execute bootstrap`.
+- Use `ospec session hook [path]` to write `.ospec/hooks/session-start.json`, `.ospec/hooks/session-start.md`, `.ospec/hooks/using-ospec.json`, and `.ospec/hooks/using-ospec.md` for opt-in harness startup integration. These artifacts tell Codex, Claude, Gemini, OpenCode, Cursor, Copilot, and generic harnesses to refresh the session brief, follow its profile-aware commands, bootstrap only an active Goal, and read decision/plugin gate sources. The hook must not launch workers, run tests, inspect git, archive, or edit source files. Add `--target claude --apply` to also write a Claude Code hook bundle under `.ospec/hooks/claude/` and idempotently merge it into `.claude/settings.json`; those hooks announce every subagent dispatch and `ospec` command at the tool level, hard-block subagent dispatch while a required decision is pending, and re-affirm the `Announce-Before-Act` / `Brainstorm-First` contract every turn (they take effect from the next Claude Code session).
 - Use `ospec brainstorm [path] --topic "..."` only when you want a durable pre-change exploration artifact under `.ospec/brainstorms/`; `--visual` also writes a local static HTML companion, and `--decision-gates` turns direction, scope, and verification-risk choices into durable user decision gates when an active change can be resolved. This command does not create a change.
 - Use `ospec plan [path] --change changes/active/<change>` to draft `.ospec/plans/<id>/plan-draft.md`; add `--apply` only when you want to replace that change's `implementation-plan.md`.
 - For `ospec-goal`, use `design.md` to record the chosen approach, tradeoffs, affected boundaries, risks, and open questions before implementation starts.
@@ -162,10 +164,10 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - Treat each loop action's dispatch, review, or verification packet path as authoritative context. Do not embed the full goal in every worker. Durable task status and review/verification evidence feed fresh retries, grouped final-review repair, and the next loop tick. In continuous mode, a stalled finding set receives one durable root-cause strategy escalation before the Loop stops repeated work.
 - Use `ospec run status [path]` when using the explicit queue runner to see the current queue run plus the active change task graph snapshot, including completed, running, dispatchable, blocked, invalid, and next-action counts.
 - Queue runner next instructions from `ospec run start`, `run resume`, `run step`, and `run status` use the active task graph when available, so dispatchable work points to `ospec execute dispatch ...`; the runner still does not dispatch workers or edit source files.
-- Use `ospec execute bootstrap [changes/active/<change>]` when starting or resuming one active change to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md` with the project session brief snapshot, then follow the next safe action it reports. When an active dispatch already exists, bootstrap recommends the matching `ospec execute launch ... --task ...` command.
+- Use `ospec execute bootstrap [changes/active/<goal>]` when starting or resuming one active Goal to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md` with the project session brief snapshot, then follow the next safe action it reports. When an active dispatch already exists, bootstrap recommends the matching `ospec execute launch ... --task ...` command.
 - Use `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` when moving a change between agents, tools, worktrees, shells, or human operators. It writes `artifacts/agents/handoff.json` and `artifacts/agents/handoff.md` with the project session brief snapshot, target tool mapping, command sequence, safety rules, and missing-context warnings.
 - Before deriving the task graph, run `ospec execute preflight [changes/active/<change>] --stage design`, then `--stage plan`. Both commands run deterministic inline readiness checks and record approval evidence under `artifacts/agents/planning-preflights/` without launching a reviewer child. Derive or refresh the graph only after both pass, then let Loop issue the combined planning review.
-- Use `ospec execute status [changes/active/<change>]` or `ospec execute next [changes/active/<change>]` to inspect controller state and the next safe task candidates before assigning work. Use `ospec execute route [changes/active/<change>]` when you want a persistent `artifacts/agents/workflow-route.json` and `workflow-route.md` recommendation for the next OSpec command.
+- Use `ospec execute status [changes/active/<goal>]` or `ospec execute next [changes/active/<goal>]` to inspect Goal controller state and the next safe task candidates before assigning work. Use `ospec execute route [changes/active/<goal>]` when you want a persistent `artifacts/agents/workflow-route.json` and `workflow-route.md` recommendation for the next OSpec command.
 - Use `ospec execute decision [changes/active/<change>] ...` when direction, architecture, API, UI, risk, or scope needs an explicit user choice. A required pending decision is shown by `bootstrap`, `status`, and `finish`, and it blocks worker dispatch until you record `--select <option-id> --answered-by user` or intentionally `--skip` with the same provenance.
 - Use `ospec execute workspace [changes/active/<change>]` before worker handoff to write `artifacts/agents/workspace-status.json` and `artifacts/agents/workspace-status.md`; if the status is `needs_isolation`, defer parallel dispatch until the workspace is clean or moved into an isolated git worktree.
 - Use `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` before creating an isolated worktree to write `artifacts/agents/worktree-plan.json` and `artifacts/agents/worktree-plan.md`. Plan mode records the recommended branch, path, base ref, lifecycle steps, cleanup guidance, branch-retention guidance, and command text only; it does not run git.
@@ -191,7 +193,7 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - In AI / `/ospec-change` flows, the AI keeps the small flow focused on `proposal.md`, `tasks.md`, implementation, `verification.md`, and `review.md`.
 - In AI / `/ospec-goal` flows, the AI drafts or updates `design.md`, `implementation-plan.md`, and `artifacts/agents/task-graph.json` from the requirement, `proposal.md`, and project context; you only need to review assumptions or correct important decisions.
 - Task graph status values are `DONE`, `DONE_WITH_CONCERNS`, `IN_PROGRESS`, `NEEDS_CONTEXT`, `BLOCKED`, and `PENDING`; archive readiness requires top-level `status: "completed"` and all tasks to be `DONE` or `DONE_WITH_CONCERNS`.
-- `ospec execute bootstrap`, `handoff`, `preflight`, `status`, `next`, and `route` are read-only with respect to project source files; the artifact commands write only their documented state. The current model controller launches workers through `runtimeAdapter.selected.nativeSubagent`. OSpec does not execute agent CLIs.
+- Goal-only `ospec execute bootstrap`, `handoff`, `preflight`, `status`, `next`, and `route` are read-only with respect to project source files; the artifact commands write only their documented state. The current model controller launches workers through `runtimeAdapter.selected.nativeSubagent`. OSpec does not execute agent CLIs.
 - Worker status values are `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`, and `PENDING`; completion requires the worker statuses to be resolved and `controller_status` to be `DONE`.
 - `ospec verify [changes/active/<change>]` requires only the classic files for `change` profile directories. For `goal` profile directories, it also fails when `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, document review artifacts, final review artifacts, verification evidence, or `artifacts/agents/worker-status.md` is missing or malformed, and warns when document checklists still have unchecked items.
 - Keep `design.md` concise; it should make task planning more accurate, not become long-lived project documentation.
@@ -201,12 +203,12 @@ Plain init does not create optional knowledge maps such as `.ospec/knowledge/src
 CLI commands still accept shorthand such as `changes/active/<change>`, but the physical path in nested projects is `.ospec/changes/active/<change>`.
 If you want to convert an older classic project to the new layout, run `ospec layout migrate --to nested`.
 
-## Session Hook To Finish Flow
+## Goal Session Hook To Finish Flow
 
-Use this flow when an AI harness should drive one active change with durable user choices and runtime evidence:
+Use this flow when an AI harness should drive one active Goal with durable user choices and runtime evidence. A classic Change does not enter this controller flow:
 
 1. Run `ospec session hook [path]` once per project refresh, then let the harness inject `.ospec/hooks/using-ospec.md` at session start.
-2. Run `ospec execute bootstrap [changes/active/<change>]` when resuming the change. Follow its next instruction before dispatching work.
+2. Run `ospec execute bootstrap [changes/active/<goal>]` when resuming the Goal. Follow its next instruction before dispatching work.
 3. If bootstrap or status reports a pending decision, open `artifacts/agents/decisions/index.md`, present the decision report's `Chat Prompt` to the user, and record the answer with `ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user`.
 4. Run `ospec execute workspace [changes/active/<change>]`, then `ospec execute dispatch [changes/active/<change>]`. Use `ospec execute launch ... --json` for the machine-readable native subagent contract, dispatch it with the current model harness, and record the real child result.
 5. For Checkpoint-enabled changes, run `ospec plugins doctor checkpoint [path]` and repair `routes.yaml`, `flows.yaml`, baselines, screenshots, traces, console/network evidence, accessibility evidence, and assertions before closeout.
@@ -221,7 +223,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.0
+npm install -g @clawplays/ospec-cli@1.9.1
 ospec update [path]
 ```
 

@@ -361,6 +361,7 @@ export interface ChangeStatusCheck {
 }
 export interface ActiveChangeStatusItem extends ExecutionFeatureSummary {
     path: string;
+    workflowProfile: WorkflowProfileId;
     activatedSteps: string[];
     summaryStatus: ChangeSummaryStatus;
     failCount: number;

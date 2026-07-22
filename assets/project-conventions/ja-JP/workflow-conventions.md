@@ -52,7 +52,7 @@ tags: [conventions, workflow, change, ospec]
 - 状態ファイルと実行ファイルが矛盾する場合は、まず状態を直す
 - goal では `artifacts/agents/task-graph.json` が機械可読な task 状態、依存関係、競合制約、対象ファイル、検証コマンドを記録する
 - 既存 project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書く。active change、queued change、queue-run、cache fingerprint、次の安全な command context のみを記録する
-- one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `bootstrap.json` と `bootstrap.md` を書き、そこにある次の安全な action に従う
+- one active Goal を開始または再開するときは、`ospec execute bootstrap [changes/active/<goal>]` で project session brief snapshot を含む `bootstrap.json` と `bootstrap.md` を書き、そこにある次の安全な action に従う。classic Change は `ospec progress`、top-level `ospec verify`、`ospec finalize` を使う
 - change を agent、tool、worktree、shell、human operator の間で引き渡すときは、`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` で `handoff.json` と `handoff.md` を書く。このコマンドは project session brief snapshot、target tool mapping、safety rules のみを記録する
 - task graph 導出前に `ospec execute preflight [changes/active/<change>] --stage design`、続いて `--stage plan` を実行し、deterministic inline preflight packet と approval artifact を作成する。両方の通過後に task graph を導出または更新し、どちらの stage も reviewer child を起動しない。通常の red test、production implementation、green/refactor evidence は 1 つの atomic task にまとめる
 - task graph 導出後、workspace または worker dispatch より前に Loop が独立 combined planning review を 1 回発行する。grouped planning repair と fresh re-review は各 1 回までで、再失敗は安定して停止する

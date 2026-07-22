@@ -1,0 +1,18 @@
+{
+  "title_suffix": "profile-aware workflow routing",
+  "summary": "OSpec 1.9.1 keeps classic Changes on their direct fast path while preserving the full Goal controller workflow.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.0...1.9.1",
+  "improved": [
+    "Session briefs and session hooks now report the active workflow profile and recommend commands that match it.",
+    "Classic Change guidance consistently uses progress, top-level verification, lightweight review, and direct finalize.",
+    "Managed project guidance and multilingual usage documentation now describe the same Change and Goal command boundary."
+  ],
+  "fixed": [
+    "Creating an active Change now refreshes stale project session context immediately.",
+    "Resolved brainstorm decisions no longer recommend Goal bootstrap, workspace, dispatch, or Loop commands for a classic Change.",
+    "Goal task-graph controller commands now reject an explicit Change profile before writing controller artifacts, while durable decision commands remain available to both workflows."
+  ],
+  "docs": [
+    "Updated Change and Goal routing, session startup, execute help, and controller flow guidance."
+  ]
+}

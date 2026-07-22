@@ -43,7 +43,7 @@ In Claude Code, install the managed hook once with `ospec session hook --target 
 
 ## Goal Controller Invariants
 
-Use the full `ospec execute ...` layer only for goal work or when the user explicitly requests agent/worker execution for a change.
+Use the full `ospec execute ...` task-graph/controller layer only for Goal work. A classic Change may use the shared `ospec execute decision` command for durable user choices, but it must not enter Goal bootstrap, workspace, dispatch, review, evidence, or Loop commands.
 
 - Start or resume with `ospec session` and `ospec execute bootstrap`.
 - Run `ospec execute preflight ... --stage design`, then `--stage plan`, before deriving the task graph. These zero-token checks validate document readiness, required decisions, ordering, and provenance inline and never launch reviewer children.

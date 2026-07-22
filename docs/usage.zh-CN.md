@@ -29,7 +29,7 @@ ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
 ospec loop allowlist clear [changes/active/<change>] --confirm
-ospec execute bootstrap [changes/active/<change>]
+ospec execute bootstrap [changes/active/<goal>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
@@ -143,6 +143,8 @@ ospec verify [changes/active/<change>]
 ospec finalize [changes/active/<change>]
 ```
 
+以上 `ospec execute` task-graph/controller 命令除 `ospec execute decision` 外都只用于 Goal；`decision` 由 Change 与 Goal 共用来记录持久用户选择。经典 Change 直接使用 `ospec progress`、当前 AI 实现、顶层 `ospec verify`、轻量 `review.md` 和 `ospec finalize`，不得生成 Goal bootstrap、task graph、worker dispatch 或 Loop artifacts。
+
 ## Change 与 Goal 文档
 
 `ospec change <change-name> [path]` 创建经典快速流程文件：`proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`；`ospec new` 仍是兼容别名。`ospec goal <goal-name> [path]` 才创建全流程的 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、`artifacts/reviews/final-review.md` 和 `artifacts/agents/worker-status.md`。
@@ -152,8 +154,8 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - 每个 goal 都遵守三条体验契约：`Announce-Before-Act`（AI 宣告当前 skill 与阶段、每条 `ospec execute …` 命令及产物、每次子 agent 派发）、`Brainstorm-First`（锁定设计前，把方向、架构、API、数据、UI、风险、范围等未决问题逐个用原生提问 UI——Claude Code 用 AskUserQuestion——询问）、`Zero-Setup`（每一条 `ospec` 命令都由 AI 自己执行，你只需起一个 goal 并描述需求）。
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
 - 用 `proposal.md` 记录为什么要做、范围和验收标准。
-- 进入已有 OSpec 项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`，快速记录 active change、队列、cache fingerprint 和下一条安全命令。它只是项目入口简报，不替代 active change 的 `ospec execute bootstrap`。
-- 用 `ospec session hook [path]` 写入 `.ospec/hooks/session-start.json`、`.ospec/hooks/session-start.md`、`.ospec/hooks/using-ospec.json` 和 `.ospec/hooks/using-ospec.md`，供不同 harness 按需接入 session-start。这些 artifacts 会告诉 Codex、Claude、Gemini、OpenCode、Cursor、Copilot 和 generic harness 启动时应该注入什么：刷新 session brief、在只有一个 active change 时运行 active-change bootstrap、读取 decision/plugin gate 来源，并按安全下一步命令继续。这个 hook 不启动 worker、不运行测试、不检查 git、不归档、不编辑源码。加上 `--target claude --apply` 还会在 `.ospec/hooks/claude/` 写入 Claude Code hook bundle 并幂等合并进 `.claude/settings.json`；这些 hook 在工具层宣告每次子 agent 派发和每条 `ospec` 命令，存在未决 required 决策时硬阻断子 agent 派发，并每轮重申 `Announce-Before-Act` / `Brainstorm-First` 契约（从下一次 Claude Code 会话开始生效）。
+- 进入已有 OSpec 项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`，记录 active work、`change` 或 `goal` profile、队列、cache fingerprint 和按 profile 生成的下一步命令。Change 直接从五个经典文件继续，只有 Goal 才运行 `ospec execute bootstrap`。
+- 用 `ospec session hook [path]` 写入 `.ospec/hooks/session-start.json`、`.ospec/hooks/session-start.md`、`.ospec/hooks/using-ospec.json` 和 `.ospec/hooks/using-ospec.md`，供不同 harness 按需接入 session-start。这些 artifacts 会告诉 Codex、Claude、Gemini、OpenCode、Cursor、Copilot 和 generic harness：刷新 session brief、按 profile 选择命令、只为 active Goal 运行 bootstrap，并读取 decision/plugin gate 来源。这个 hook 不启动 worker、不运行测试、不检查 git、不归档、不编辑源码。加上 `--target claude --apply` 还会在 `.ospec/hooks/claude/` 写入 Claude Code hook bundle 并幂等合并进 `.claude/settings.json`；这些 hook 在工具层宣告每次子 agent 派发和每条 `ospec` 命令，存在未决 required 决策时硬阻断子 agent 派发，并每轮重申 `Announce-Before-Act` / `Brainstorm-First` 契约（从下一次 Claude Code 会话开始生效）。
 - 只有需要在创建 change 前保留探索过程时，才用 `ospec brainstorm [path] --topic "..."` 写入 `.ospec/brainstorms/`；加 `--visual` 会额外生成本地静态 HTML companion，加 `--decision-gates` 会在能解析 active change 时，把方向、范围和验证风险选择写成 durable user decision gates。这个命令不会创建 change。
 - 用 `ospec plan [path] --change changes/active/<change>` 在 `.ospec/plans/<id>/plan-draft.md` 生成计划草稿；只有确认要覆盖该 change 的 `implementation-plan.md` 时才加 `--apply`。
 - 在 `ospec-goal` 中，用 `design.md` 在实现前记录选定方案、关键取舍、影响边界、风险和未决问题。
@@ -162,10 +164,10 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - 把每个 loop action 引用的 dispatch、review 或 verification packet path 当作权威上下文，不要把整个 goal 内嵌到每个 worker。持久化 task 状态与 review/verification evidence 会驱动 fresh retry、合并的最终 review repair 和下一次 tick。连续模式下，停滞的 finding 集合会获得一次持久化根因策略升级，之后才停止重复工作。
 - 使用显式队列 runner 时，可用 `ospec run status [path]` 同时查看当前 queue run 和 active change task graph 快照，包括已完成、运行中、可分派、阻塞、无效任务数量和下一步动作。
 - `ospec run start`、`run resume`、`run step` 和 `run status` 的下一步提示会参考 active task graph；如果有可分派任务，会提示 `ospec execute dispatch ...`。runner 仍然不会自动派发 worker，也不会编辑源码。
-- 开始或恢复单个 active change 时，用 `ospec execute bootstrap [changes/active/<change>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
+- 开始或恢复单个 active Goal 时，用 `ospec execute bootstrap [changes/active/<goal>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
 - change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`。它会记录 project session brief snapshot、目标工具映射、命令序列、安全规则和缺失上下文警告。
 - 派生 task graph 前，依次运行 `ospec execute preflight [changes/active/<change>] --stage design` 和 `--stage plan`。两步都执行确定性 inline 就绪检查并记录 approval evidence，不启动 reviewer child；两步通过后再派生或刷新 graph，并由 Loop 发出一次合并规划复审。
-- 用 `ospec execute status [changes/active/<change>]` 或 `ospec execute next [changes/active/<change>]` 查看控制器状态和下一批安全可分派任务。需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<change>]` 写入 `artifacts/agents/workflow-route.json` 和 `workflow-route.md`。
+- 用 `ospec execute status [changes/active/<goal>]` 或 `ospec execute next [changes/active/<goal>]` 查看 Goal 控制器状态和下一批安全可分派任务。需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<goal>]` 写入 `artifacts/agents/workflow-route.json` 和 `workflow-route.md`。
 - 当方向、架构、API、UI、风险或范围需要用户明确选择时，用 `ospec execute decision [changes/active/<change>] ...` 记录决策门。required pending decision 会出现在 `bootstrap`、`status` 和 `finish` 中，并阻止 worker dispatch，直到用 `--select <option-id> --answered-by user` 记录选择，或用相同来源标记明确 `--skip`。
 - 派发 worker 前，用 `ospec execute workspace [changes/active/<change>]` 写入 `artifacts/agents/workspace-status.json` 和 `artifacts/agents/workspace-status.md`；如果状态是 `needs_isolation`，先清理当前工作区或转到隔离 git worktree，再做并行派发。
 - 创建隔离 worktree 前，用 `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` 写入 `artifacts/agents/worktree-plan.json` 和 `artifacts/agents/worktree-plan.md`。plan 模式只记录推荐 branch、path、base ref、生命周期步骤、cleanup 指南、branch retention 指南和命令文本，不会运行 git。
@@ -191,7 +193,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - 在 AI / `/ospec-change` 流程中，AI 只保持小流程所需的 `proposal.md`、`tasks.md`、实现、`verification.md` 和 `review.md` 对齐。
 - 在 AI / `/ospec-goal` 流程中，AI 会基于需求、`proposal.md` 和项目上下文起草或更新 `design.md`、`implementation-plan.md` 与 `artifacts/agents/task-graph.json`；你只需要审阅假设，或修正关键决策。
 - Task graph 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`IN_PROGRESS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；归档前顶层 `status` 必须为 `"completed"`，且所有 task 必须为 `DONE` 或 `DONE_WITH_CONCERNS`。
-- `ospec execute bootstrap`、`handoff`、`preflight`、`status`、`next` 和 `route` 都不会编辑项目源码；各 artifact 命令只写其声明的状态。当前模型 controller 通过 `runtimeAdapter.selected.nativeSubagent` 启动 worker；OSpec 不执行 agent CLI。
+- Goal-only 的 `ospec execute bootstrap`、`handoff`、`preflight`、`status`、`next` 和 `route` 都不会编辑项目源码；各 artifact 命令只写其声明的状态。当前模型 controller 通过 `runtimeAdapter.selected.nativeSubagent` 启动 worker；OSpec 不执行 agent CLI。
 - Worker 状态值为 `DONE`、`DONE_WITH_CONCERNS`、`NEEDS_CONTEXT`、`BLOCKED`、`PENDING`；完成前必须解决 worker 状态，且 `controller_status` 必须为 `DONE`。
 - 对 `change` profile，`ospec verify [changes/active/<change>]` 只强制经典快速流程文件。对 `goal` profile，它还会强制 `design.md`、`implementation-plan.md`、`artifacts/agents/task-graph.json`、document review artifacts、final review artifacts、verification evidence 和 `artifacts/agents/worker-status.md`。
 - 保持 `design.md` 简洁；它的作用是提高任务拆解准确性，不是替代长期项目文档。
@@ -201,12 +203,12 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 命令行仍然接受 `changes/active/<change>` 这类简写；在 nested 项目里，对应的实际目录是 `.ospec/changes/active/<change>`。
 如果你要把旧的 classic 项目迁移到新布局，请显式运行 `ospec layout migrate --to nested`。
 
-## 从 Session Hook 到 Finish 的流程
+## Goal 从 Session Hook 到 Finish 的流程
 
-当一个 AI harness 要围绕单个 active change 执行，并且需要保留用户选择和运行时证据时，推荐使用这条流程：
+当一个 AI harness 要围绕单个 active Goal 执行，并且需要保留用户选择和运行时证据时，推荐使用这条流程；经典 Change 不进入 controller 流程：
 
 1. 每次项目刷新后运行 `ospec session hook [path]`，让 harness 在 session start 注入 `.ospec/hooks/using-ospec.md`。
-2. 恢复 change 时运行 `ospec execute bootstrap [changes/active/<change>]`，先按它给出的 next instruction 继续，不要直接派发任务。
+2. 恢复 Goal 时运行 `ospec execute bootstrap [changes/active/<goal>]`，先按它给出的 next instruction 继续，不要直接派发任务。
 3. 如果 bootstrap 或 status 显示 pending decision，打开 `artifacts/agents/decisions/index.md`，把对应 decision report 里的 `Chat Prompt` 展示给用户，再用 `ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user` 记录选择。
 4. 先运行 `ospec execute workspace [changes/active/<change>]`，再运行 `ospec execute dispatch [changes/active/<change>]`。使用 `ospec execute launch ... --json` 读取机器可读的 native subagent contract，由当前模型 harness 派发并记录真实 child result。
 5. 对启用 Checkpoint 的 change，运行 `ospec plugins doctor checkpoint [path]`，并在 closeout 前修复 `routes.yaml`、`flows.yaml`、baseline、screenshots、traces、console/network evidence、accessibility evidence 和 assertions。
@@ -221,7 +223,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.0
+npm install -g @clawplays/ospec-cli@1.9.1
 ospec update [path]
 ```
 

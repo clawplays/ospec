@@ -29,6 +29,7 @@ export declare class ExecuteCommand extends BaseCommand {
     private tdd;
     private debug;
     private deferBlocker;
+    private resolveGoalChangePath;
     private resolveChangePath;
     private printStatus;
     private printCheckpointEvidenceSummary;

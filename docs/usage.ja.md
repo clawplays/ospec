@@ -29,7 +29,7 @@ ospec loop allowlist derive [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
 ospec loop allowlist clear [changes/active/<change>] --confirm
-ospec execute bootstrap [changes/active/<change>]
+ospec execute bootstrap [changes/active/<goal>]
 ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
 ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
@@ -73,6 +73,8 @@ ospec plugins status [path]
 ospec plugins enable stitch [path]
 ospec plugins enable checkpoint [path] --base-url <url>
 ```
+
+上記の task-graph/controller 用 `ospec execute` command は、`ospec execute decision` を除いて Goal 専用です。`decision` は durable なユーザー選択のため Change と Goal で共有されます。classic Change は `ospec progress`、直接実装、top-level `ospec verify`、軽量 `review.md`、`ospec finalize` を使い、Goal の bootstrap、task graph、worker dispatch、Loop artifact を作成しません。
 
 `loop configure --allow-path`、`--allow-command`、`--allow-command-policy` は optional extra boundary を設定し、選択した allowlist グループ全体を置換して差分を表示します。task graph の `derive -> check -> apply` を優先し、権限拡張には明示的な `--approve-expansion` が必要です。
 
@@ -151,7 +153,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - 各 goal は 3 つの体験契約で動きます：`Announce-Before-Act`（AI が skill・段階、各 `ospec execute …` コマンドと生成物、各 subagent 派遣を宣言）、`Brainstorm-First`（設計確定前に、方向・アーキテクチャ・API・データ・UI・リスク・スコープの未決事項をネイティブの質問 UI——Claude Code は AskUserQuestion——で 1 つずつ尋ねる）、`Zero-Setup`（すべての `ospec` コマンドを AI 自身が実行するので、あなたは goal を起こして要件を説明するだけ）。
 - workflow flags は built-in agent quality policy steps として `tdd_cycle`、`root_cause_debug`、`verification_evidence` を有効化できます。有効化された steps は change frontmatter の `optional_steps` に書かれ、`tasks.md`、`verification.md`、archive readiness で coverage が必要です。
 - `proposal.md` には、変更理由、範囲、受け入れ条件を記録します。
-- 既存の OSpec project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書き、active change、queue、cache fingerprint、次の安全な command context を記録します。これは project entry brief であり、active change の `ospec execute bootstrap` を置き換えません。
+- 既存の OSpec project に入るときは `ospec session [path]` で `.ospec/session-brief.json` と `.ospec/session-brief.md` を書き、active work の `change` / `goal` profile、queue、cache fingerprint、profile-aware な次の command を記録します。classic Change は 5 つの core file を直接読み、Goal だけが `ospec execute bootstrap` を使います。
 - `ospec session hook [path]` は `.ospec/hooks/session-start.json` と `.ospec/hooks/session-start.md` を書き、harness の session-start 統合を opt-in にします。この hook は session brief の更新だけを行い、worker 起動、test 実行、git inspect、archive、source file 編集は行いません。`--target claude --apply` を付けると `.ospec/hooks/claude/` に Claude Code hook バンドルを書き込み、`.claude/settings.json` に冪等にマージします。これらの hook はツールレベルで各 subagent 派遣と `ospec` コマンドを宣告し、required な決定が未解決の間は subagent 派遣をハードブロックし、毎ターン `Announce-Before-Act` / `Brainstorm-First` 契約を再確認します（次の Claude Code セッションから有効）。
 - `ospec brainstorm [path] --topic "..."` は、change 作成前の探索 artifact を `.ospec/brainstorms/` に残したい場合だけ使います。`--visual` を付けると local static HTML companion も作成します。この command は change を作成しません。
 - `ospec plan [path] --change changes/active/<change>` は `.ospec/plans/<id>/plan-draft.md` に plan draft を作成します。その goal の `implementation-plan.md` を更新するときだけ `--apply` を付けます。
@@ -161,10 +163,10 @@ goal は **セッションスコープの task graph ループ** として動作
 - 各 loop action が参照する dispatch/review/verification packet path を authoritative context として扱い、goal 全体を各 worker に埋め込まないでください。永続化された task status と review/verification evidence が fresh retry、grouped final-review repair、次の tick を駆動します。continuous mode では停滞した finding 集合に durable root-cause strategy escalation を 1 回発行してから、反復作業を停止します。
 - explicit queue runner を使う場合は、`ospec run status [path]` で現在の queue run と active change task graph snapshot を確認できます。completed、running、dispatchable、blocked、invalid の件数と next action を表示します。
 - `ospec run start`、`run resume`、`run step`、`run status` の next instruction は active task graph を参照します。dispatchable work がある場合は `ospec execute dispatch ...` を示しますが、runner は worker dispatch や source file 編集を行いません。
-- one active change を開始または再開するときは、`ospec execute bootstrap [changes/active/<change>]` で project session brief snapshot を含む `artifacts/agents/bootstrap.json` と `artifacts/agents/bootstrap.md` を書き、出力された次の安全な action に従います。active dispatch が既にある場合、bootstrap は対応する `ospec execute launch ... --task ...` command を推奨します。
+- one active Goal を開始または再開するときは、`ospec execute bootstrap [changes/active/<goal>]` で project session brief snapshot を含む `artifacts/agents/bootstrap.json` と `artifacts/agents/bootstrap.md` を書き、出力された次の安全な action に従います。active dispatch が既にある場合、bootstrap は対応する `ospec execute launch ... --task ...` command を推奨します。
 - change を agent、tool、worktree、shell、human operator の間で引き渡すときは、`ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` で `artifacts/agents/handoff.json` と `artifacts/agents/handoff.md` を書きます。project session brief snapshot、target tool mapping、command sequence、safety rules、missing-context warnings を記録します。
 - task graph 導出前に `ospec execute preflight [changes/active/<change>] --stage design`、続いて `--stage plan` を実行します。両方とも reviewer child を起動せず deterministic inline readiness check と approval evidence を記録し、通過後に graph を導出または更新して、Loop が combined planning review を 1 回発行します。
-- `ospec execute status [changes/active/<change>]` または `ospec execute next [changes/active/<change>]` で、controller 状態と次に安全に割り当てられる task 候補を確認します。次に推奨される OSpec command を handoff 用に永続化したい場合は、`ospec execute route [changes/active/<change>]` で `artifacts/agents/workflow-route.json` と `workflow-route.md` を書きます。
+- `ospec execute status [changes/active/<goal>]` または `ospec execute next [changes/active/<goal>]` で、Goal controller 状態と次に安全に割り当てられる task 候補を確認します。次に推奨される OSpec command を handoff 用に永続化したい場合は、`ospec execute route [changes/active/<goal>]` で `artifacts/agents/workflow-route.json` と `workflow-route.md` を書きます。
 - 方向、architecture、API、UI、risk、scope に明示的な user choice が必要な場合は `ospec execute decision [changes/active/<change>] ...` を使います。required pending decision は `bootstrap`、`status`、`finish` に表示され、`--select <option-id> --answered-by user` または同じ provenance を持つ意図的な `--skip` が記録されるまで worker dispatch を block します。
 - worker handoff の前に `ospec execute workspace [changes/active/<change>]` で `artifacts/agents/workspace-status.json` と `artifacts/agents/workspace-status.md` を記録します。status が `needs_isolation` の場合は、workspace を clean にするか isolated git worktree に移してから parallel dispatch します。
 - isolated worktree を作成する前に `ospec execute worktree [changes/active/<change>] [--branch name] [--path path] [--base ref]` で `artifacts/agents/worktree-plan.json` と `artifacts/agents/worktree-plan.md` を記録します。plan mode は recommended branch、path、base ref、command text のみを記録し、git は実行しません。
@@ -200,12 +202,12 @@ goal は **セッションスコープの task graph ループ** として動作
 CLI は `changes/active/<change>` のような短縮パスも受け付けますが、nested プロジェクトでの実体パスは `.ospec/changes/active/<change>` です。
 古い classic プロジェクトを新しいレイアウトへ移行したい場合は、明示的に `ospec layout migrate --to nested` を実行してください。
 
-## Session Hook から Finish まで
+## Goal の Session Hook から Finish まで
 
-AI harness が 1 つの active change を進め、ユーザー判断と runtime evidence を残す場合は次の流れを使います。
+AI harness が 1 つの active Goal を進め、ユーザー判断と runtime evidence を残す場合は次の流れを使います。classic Change はこの controller flow に入りません。
 
 1. プロジェクト更新後に `ospec session hook [path]` を実行し、harness が session start で `.ospec/hooks/using-ospec.md` を注入できるようにします。
-2. change を再開するときは `ospec execute bootstrap [changes/active/<change>]` を実行し、表示された next instruction に従ってから dispatch します。
+2. Goal を再開するときは `ospec execute bootstrap [changes/active/<goal>]` を実行し、表示された next instruction に従ってから dispatch します。
 3. bootstrap または status が pending decision を示した場合は、`artifacts/agents/decisions/index.md` を開き、該当 decision report の `Chat Prompt` をユーザーに提示し、`ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user` で回答を記録します。
 4. `ospec execute workspace [changes/active/<change>]` の後に `ospec execute dispatch [changes/active/<change>]` を実行します。`ospec execute launch ... --json` で machine-readable native subagent contract を読み、current model harness で dispatch して real child result を記録します。
 5. Checkpoint を有効化した change では `ospec plugins doctor checkpoint [path]` を実行し、closeout 前に `routes.yaml`、`flows.yaml`、baseline、screenshots、traces、console/network evidence、accessibility evidence、assertions を修復します。
@@ -220,7 +222,7 @@ AI harness が 1 つの active change を進め、ユーザー判断と runtime 
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.0
+npm install -g @clawplays/ospec-cli@1.9.1
 ospec update [path]
 ```
 

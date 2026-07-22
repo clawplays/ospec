@@ -2882,6 +2882,7 @@ ${formatSuggestion()}
             && (isGoalWorkflow ? (taskGraphAnalysis?.archiveReady ?? false) : true);
         return {
             name: closeoutState.feature,
+            workflowProfile,
             path: this.toRelativePath(rootDir, featureDir),
             status: closeoutState.status,
             progress: this.calculateProgress(closeoutState),

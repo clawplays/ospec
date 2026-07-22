@@ -41,6 +41,7 @@ const crypto_1 = require("crypto");
 const childProcess = require("child_process");
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
+const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const CapabilityProbeService_1 = require("./CapabilityProbeService");
 const RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
 const EXECUTION_SESSION_FILE = 'execution-session.json';
@@ -6350,6 +6351,11 @@ class TaskGraphExecutionService {
         const decisions = [];
         const blockers = [];
         const warnings = [];
+        const statePath = path.join(changePath, constants_1.FILE_NAMES.STATE);
+        const state = await this.fileService.exists(statePath)
+            ? await this.fileService.readJSON(statePath)
+            : null;
+        const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(changePath, state);
         if (exists) {
             const entries = await this.fileService.readDir(dirPath);
             for (const entry of entries.filter(item => item.endsWith('.json') && item !== DECISIONS_INDEX_FILE).sort()) {
@@ -6396,13 +6402,16 @@ class TaskGraphExecutionService {
         const nextInstruction = pendingRequired > 0
             ? `Ask the user to choose required decision(s): ${pendingIds.join(', ')}. Record the answer with ospec execute decision [change-path] --id <id> --select <option-id> --answered-by user.`
             : decisions.length > 0
-                ? 'No required user decisions are pending. Continue with bootstrap, workspace, dispatch, review, or verification as appropriate.'
+                ? workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE
+                    ? 'No required user decisions are pending. Continue with bootstrap, workspace, dispatch, review, or verification as appropriate.'
+                    : 'No required user decisions are pending. Continue the classic Change through proposal, tasks, implementation, top-level ospec verify, lightweight review, and ospec finalize. Do not run Goal bootstrap, workspace, dispatch, or Loop commands.'
                 : 'No user decisions are recorded for this change.';
         return {
             exists,
             dirPath,
             indexPath: this.toChangeRelativePath(changePath, indexPath),
             indexReportPath: this.toChangeRelativePath(changePath, indexReportPath),
+            workflowProfile,
             total: decisions.length,
             pendingRequired,
             pendingOptional,
@@ -6420,6 +6429,7 @@ class TaskGraphExecutionService {
             feature,
             generatedAt: new Date().toISOString(),
             changePath,
+            workflowProfile: snapshot.workflowProfile,
             total: snapshot.total,
             pendingRequired: snapshot.pendingRequired,
             pendingOptional: snapshot.pendingOptional,
@@ -8332,7 +8342,7 @@ class TaskGraphExecutionService {
     localizeZhReportLine(line) {
         let localized = line;
         const replacements = [
-            [/^# Change Bootstrap: /u, '# 变更启动快照：'],
+            [/^# Goal Bootstrap: /u, '# Goal 启动快照：'],
             [/^# Worker Handoff: /u, '# Worker 交接：'],
             [/^# Runtime Adapter Launch Plan: /u, '# 运行时适配器启动计划：'],
             [/^# Workspace Safety: /u, '# 工作区安全检查：'],
@@ -8572,9 +8582,9 @@ class TaskGraphExecutionService {
     }
     localizeZhBoundarySentence(line) {
         const sentences = {
-            '- This command writes a bootstrap snapshot and synchronizes the active change `state.json` control file.': '- 此命令会写入启动快照，并同步活跃变更的 `state.json` 控制文件。',
+            '- This command writes a bootstrap snapshot and synchronizes the active Goal `state.json` control file.': '- 此命令会写入启动快照，并同步活跃 Goal 的 `state.json` 控制文件。',
             '- It does not launch workers, sync worker status, run tests, inspect git, finalize, archive, push, merge, or edit project source files.': '- 它不会启动 worker、同步 worker 状态、运行测试、检查 git、finalize、archive、push、merge 或编辑项目源码。',
-            '- Use it when starting or resuming one active change so the next safe action is explicit.': '- 在开始或恢复一个活跃变更时使用它，让下一步安全动作保持明确。',
+            '- Use it when starting or resuming one active Goal so the next safe action is explicit.': '- 在开始或恢复一个活跃 Goal 时使用它，让下一步安全动作保持明确。',
             '- This route writes workflow recommendation artifacts only.': '- 此路由只写入工作流建议 artifacts。',
             '- It does not edit project source files, dispatch workers, run tests, merge branches, or delete worktrees.': '- 它不会编辑项目源码、派发 worker、运行测试、合并分支或删除 worktree。',
             '- If the top recommendation is a user decision, present the decision prompt before continuing.': '- 如果首要建议是用户决策，继续前先展示决策提示。',
@@ -12651,6 +12661,7 @@ class TaskGraphExecutionService {
             '',
             `- Generated at: ${artifact.generatedAt}`,
             `- Change path: ${artifact.changePath}`,
+            `- Workflow profile: ${artifact.workflowProfile}`,
             `- Total decisions: ${artifact.total}`,
             `- Pending required: ${artifact.pendingRequired}`,
             `- Pending optional: ${artifact.pendingOptional}`,
@@ -13214,7 +13225,7 @@ class TaskGraphExecutionService {
             : '- None';
         const checkpointEvidence = this.buildCheckpointEvidenceReportLines(artifact.execution.evidence.checkpoint).join('\n');
         return [
-            `# Change Bootstrap: ${artifact.feature}`,
+            `# Goal Bootstrap: ${artifact.feature}`,
             '',
             `- Status: ${artifact.status}`,
             `- Generated at: ${artifact.generatedAt}`,
@@ -13311,9 +13322,9 @@ class TaskGraphExecutionService {
             '',
             '## Safety Notes',
             '',
-            '- This command writes a bootstrap snapshot and synchronizes the active change `state.json` control file.',
+            '- This command writes a bootstrap snapshot and synchronizes the active Goal `state.json` control file.',
             '- It does not launch workers, sync worker status, run tests, inspect git, finalize, archive, push, merge, or edit project source files.',
-            '- Use it when starting or resuming one active change so the next safe action is explicit.',
+            '- Use it when starting or resuming one active Goal so the next safe action is explicit.',
             '',
         ].join('\n');
     }
