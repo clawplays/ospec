@@ -1336,6 +1336,9 @@ class LoopService {
             feedback = deterministicAcceptance.reason;
             state.lastFeedback = feedback;
         }
+        else {
+            await this.taskGraph.closeOutSupersededPlanningRepair(resolved);
+        }
         const allowedWorkspacePaths = this.allReportTasks(report)
             .filter(task => task.status !== 'PENDING')
             .flatMap(task => task.targetFiles);

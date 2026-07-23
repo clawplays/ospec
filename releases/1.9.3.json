@@ -1,0 +1,11 @@
+{
+  "title_suffix": "resilient planning gate",
+  "summary": "OSpec 1.9.3 fixes two field-discovered planning-gate dead ends so an approved Goal can no longer be re-blocked by derived execution state or by a repair whose completion evidence never settled.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.2...1.9.3",
+  "fixed": [
+    "tasks.md now contributes a constant to the planning semantic snapshot: repair-wave checklist lines, closeout checklists, and other derived churn can no longer invalidate an approved combined planning review mid-goal.",
+    "A dispatched grouped planning repair whose completion evidence never settled is closed out automatically when a later combined planning review approves the planning content, instead of being misread later as a partial edit that permanently blocks the Goal after its work was approved.",
+    "Post-repair review context sections now also cover dispatched-but-unsettled repairs, so a fresh planning reviewer always sees which findings the repair was resolving."
+  ],
+  "docs": []
+}

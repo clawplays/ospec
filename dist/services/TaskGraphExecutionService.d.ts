@@ -1591,6 +1591,14 @@ export declare class TaskGraphExecutionService {
         accepted: boolean;
         reason: string;
     }>;
+    /**
+     * A dispatched grouped repair whose completion evidence never settled leaves
+     * its record in 'dispatched' with planning edits already applied. When a later
+     * combined planning review approves that content, accept the repair as done:
+     * otherwise a later planning cycle misreads the record as a partial edit and
+     * dead-ends the Goal even though its planning was approved.
+     */
+    closeOutSupersededPlanningRepair(changePath: string): Promise<boolean>;
     private buildPostRepairReviewSections;
     private buildPlanningRepairDiffSections;
     private buildVerificationFailureFocusSections;

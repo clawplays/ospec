@@ -3284,6 +3284,36 @@ class TaskGraphExecutionService {
             };
         });
     }
+    /**
+     * A dispatched grouped repair whose completion evidence never settled leaves
+     * its record in 'dispatched' with planning edits already applied. When a later
+     * combined planning review approves that content, accept the repair as done:
+     * otherwise a later planning cycle misreads the record as a partial edit and
+     * dead-ends the Goal even though its planning was approved.
+     */
+    async closeOutSupersededPlanningRepair(changePath) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const recordPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+            if (!(await this.fileService.exists(recordPath)))
+                return false;
+            let record;
+            try {
+                record = await this.fileService.readJSON(recordPath);
+            }
+            catch {
+                return false;
+            }
+            if (record.status !== 'dispatched')
+                return false;
+            const context = await this.capturePlanningContext(resolvedChangePath);
+            record.status = 'completed';
+            record.completedAt = new Date().toISOString();
+            record.afterSnapshotHash = context.targetSnapshotHash;
+            await this.fileService.writeJSON(recordPath, record);
+            return true;
+        });
+    }
     async buildPostRepairReviewSections(changePath, projectRoot) {
         const recordPath = path.join(changePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
         if (!(await this.fileService.exists(recordPath)))
@@ -3295,7 +3325,11 @@ class TaskGraphExecutionService {
         catch {
             return [];
         }
-        if (record.status !== 'completed' || record.postRepairReviewMode === 'deterministic')
+        // Include repair context for a dispatched-but-unsettled repair too: its
+        // edits are already in the planning files, and the fresh reviewer must
+        // know which findings that repair was resolving.
+        if ((record.status !== 'completed' && record.status !== 'dispatched')
+            || record.postRepairReviewMode === 'deterministic')
             return [];
         return [
             '',
@@ -8067,10 +8101,12 @@ class TaskGraphExecutionService {
             }
         }
         if (normalizedPath.endsWith(`/${constants_1.FILE_NAMES.TASKS}`.toLowerCase()) || normalizedPath === constants_1.FILE_NAMES.TASKS.toLowerCase()) {
-            // tasks.md is derived from task graph state; checklist ticks are execution
-            // progress, not planning content.
-            const checklistNeutral = content.replace(/^(\s*[-*+]\s+\[)[xX](\])/gm, '$1 $2');
-            return this.hashMeaningfulDocumentation(checklistNeutral);
+            // tasks.md is fully derived from task graph state. Its churn — checklist
+            // ticks, repair-wave lines, closeout checklists — is execution progress,
+            // not planning content, so it contributes a constant to the snapshot and
+            // can never invalidate a planning approval. It remains a valid
+            // repair-scope target; semantic task changes surface via the task graph.
+            return (0, crypto_1.createHash)('sha256').update('ospec:planning:derived:tasks.md', 'utf8').digest('hex');
         }
         return this.hashMeaningfulDocumentation(content);
     }
