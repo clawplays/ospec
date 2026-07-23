@@ -98,6 +98,7 @@ tags: [ai, protocol, ospec]
 ## コンテキストと修復ポリシー
 
 - design/plan deterministic preflight、task graph 導出、独立 combined planning review の順に実行し、grouped planning repair 1 回と delta re-review 最大 1 回までとする。planning 内容を変更しない executor 失敗は許容量を再アームし、repair 完了後に findings がすべて medium 以下なら `APPROVED_WITH_CONCERNS` として決定論的に確定する。planning 承認は planning の意味的変更のみで無効化され、実行進捗では無効化されない。
+- 進捗チェックリストは実態を反映する。proposal.md の各受け入れ基準は検証エビデンス通過時にチェックし、`[verify:<id>]` 付きの項目は対応する `--satisfies <id>` エビデンス通過後に `ospec execute sync` が自動でチェックする。proposal.md に未チェック項目がある間は archive がブロックされる。Goal の review.md は `ospec execute sync` が final review から派生して書き直すため、手動編集は禁止。
 - `.skillrc.workflow.model_profiles` は `mechanical`、`standard`、`strong_reasoning`、`review`、`final_review` logical profile を target-specific model に対応付ける。未設定時は harness default と packet warning を使う。
 - command runner は `OSPEC_USAGE_FILE` で normalized usage を自動集計し、`--usage-file` は手動 override として残る。`execution-metrics.json` は capability tier、model profile、workflow stage 別に集計し、complete/partial/missing coverage を報告する。
 - actionable な review finding は stable ID、severity、category、message、file/line evidence、requirement refs、repair scope を持つ隣接 `*.findings.json` にも記録する。壊れた structured findings は暗黙に fallback せず blocking とする。

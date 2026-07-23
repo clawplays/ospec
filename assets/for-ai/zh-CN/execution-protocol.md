@@ -124,6 +124,7 @@ tags: [ai, protocol, ospec]
 ## 上下文与修复策略
 
 - 依次执行 design/plan 确定性预检，派生 task graph，再执行一次独立 combined planning review；最多允许一次整体规划修复和一次差量复审。未改动规划内容的执行器失败会重新武装修复额度，修复完成后 findings 全部不高于 medium 时确定性通过为 `APPROVED_WITH_CONCERNS`；规划批准只因规划语义变化失效，执行进度不会使其失效。
+- 进度清单必须反映事实：每条 proposal.md 验收标准在其验证证据通过后立即勾选；带 `[verify:<id>]` 标记的验收项由 `ospec execute sync` 在对应 `--satisfies <id>` 证据通过后自动勾选，proposal.md 存在未勾项时归档阻塞。Goal 的 review.md 由 `ospec execute sync` 从 final review 派生重写，禁止手工编辑。
 - `.skillrc.workflow.model_profiles` 将 `mechanical`、`standard`、`strong_reasoning`、`review`、`final_review` 逻辑 profile 映射到各 target 模型；未配置时使用 harness 默认并在 packet 中警告。
 - 命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`--usage-file` 保留为手工覆盖入口。`execution-metrics.json` 按 capability tier、model profile 和 workflow stage 汇总，并报告 complete/partial/missing 覆盖率。
 - 每个可执行 review finding 还必须写入相邻的 `*.findings.json`，包含稳定 ID、严重度、类别、问题说明、文件/行证据、需求引用和修复范围。结构化 findings 损坏时应阻断处理，不能静默降级。

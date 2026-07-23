@@ -76,6 +76,7 @@ ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive
 
 ## Guardrails
 
+- Progress checklists track reality: tick each proposal.md acceptance criterion as it is actually verified — archiving blocks while proposal.md has unchecked items. review.md stays your one lightweight review; record its decision and complete its checklist before closeout. Never tick an item whose work was not done.
 - Do not assume dashboard workflows exist.
 - Do not confuse repository initialization with change execution.
 - Do not enter queue mode unless the user explicitly asks for queue behavior.

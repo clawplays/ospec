@@ -22,6 +22,11 @@ export interface ArchiveProtocolState {
     passedOptionalSteps: string[];
     tasksComplete: boolean;
     verificationComplete: boolean;
+    /** proposal.md acceptance checklist has no unchecked items. */
+    proposalAcceptanceComplete: boolean;
+    /** Goal-only: review.md is derived from and matches the final review; null/undefined when not applicable. */
+    goalReviewSummaryAligned?: boolean | null;
+    goalReviewSummaryMessage?: string | null;
 }
 export declare class ArchiveGate {
     checkArchiveReadiness(featureState: FeatureState, config: ArchiveGateConfig, protocolState?: ArchiveProtocolState): Promise<ArchiveCheckResult>;

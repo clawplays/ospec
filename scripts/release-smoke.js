@@ -768,10 +768,21 @@ async function main() {
       'archived verification link',
     );
 
+    const archivedReviewContent = await fs.readFile(
+      path.join(archivedFeatureDir, 'review.md'),
+      'utf8',
+    );
+
     assertContains(
-      await fs.readFile(path.join(archivedFeatureDir, 'review.md'), 'utf8'),
-      archivedOverviewLink,
-      'archived review link',
+      archivedReviewContent,
+      'review_source: artifacts/reviews/final-review.md',
+      'archived review derivation marker',
+    );
+
+    assertContains(
+      archivedReviewContent,
+      'decision: APPROVED',
+      'archived review decision',
     );
 
     output = run('node', [cliPath, 'queue', 'next', projectDir]);

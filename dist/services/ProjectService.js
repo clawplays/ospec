@@ -2853,6 +2853,12 @@ ${formatSuggestion()}
                 require_skill_update: false,
                 require_index_regenerated: false,
             };
+        const proposalAcceptanceComplete = proposalExists
+            ? !/^\s*[-*+]\s+\[ \]\s+/m.test((0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath)).content)
+            : false;
+        const goalReviewSummary = isGoalWorkflow
+            ? await (0, ReviewArtifacts_1.analyzeGoalReviewSummary)(this.fileService, featureDir)
+            : null;
         const archiveResult = await ArchiveGate_1.archiveGate.checkArchiveReadiness(closeoutState, archiveConfig, {
             activatedSteps,
             tasksOptionalSteps: tasksAnalysis?.optionalSteps ?? [],
@@ -2860,6 +2866,9 @@ ${formatSuggestion()}
             passedOptionalSteps: verificationAnalysis?.passedOptionalSteps ?? [],
             tasksComplete: tasksAnalysis?.checklistComplete ?? false,
             verificationComplete: verificationAnalysis?.checklistComplete ?? false,
+            proposalAcceptanceComplete,
+            goalReviewSummaryAligned: goalReviewSummary ? goalReviewSummary.aligned : null,
+            goalReviewSummaryMessage: goalReviewSummary?.message ?? null,
         });
         if (closeoutState.status === 'archived') {
             checks.push({

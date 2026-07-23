@@ -1562,6 +1562,16 @@ export declare class TaskGraphExecutionService {
     private completeUnlocked;
     syncWorkerStatus(changePath: string): Promise<TaskWorkerStatusSyncResult>;
     private syncWorkerStatusUnlocked;
+    /**
+     * Goal progress documents that are fully derivable must track reality on
+     * every sync: proposal.md acceptance lines tagged `[verify:<id>]` tick when
+     * matching verification evidence passes, and review.md is rewritten as a
+     * derived summary of the final review. Classic changes keep manual
+     * ownership of both documents.
+     */
+    private syncDerivedProgressDocuments;
+    private syncProposalAcceptanceTicks;
+    private syncDerivedReviewSummary;
     review(changePath: string, options?: {
         stage?: TaskReviewStage;
         taskId?: string;

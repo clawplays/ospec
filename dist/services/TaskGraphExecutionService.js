@@ -2684,6 +2684,7 @@ class TaskGraphExecutionService {
             latestBlockerEscalation,
         });
         await this.writeLocalizedReportFile(resolvedChangePath, workerStatusPath, (0, helpers_1.stringifyFrontmatter)(nextBody, nextData));
+        await this.syncDerivedProgressDocuments(resolvedChangePath, report, verificationEvidence);
         return {
             changePath: resolvedChangePath,
             sessionPath,
@@ -2705,6 +2706,108 @@ class TaskGraphExecutionService {
                         ? 'Worker status is synchronized and archive-ready for the worker gate.'
                         : 'Worker status is synchronized. Complete remaining review or verification evidence before archive.',
         };
+    }
+    /**
+     * Goal progress documents that are fully derivable must track reality on
+     * every sync: proposal.md acceptance lines tagged `[verify:<id>]` tick when
+     * matching verification evidence passes, and review.md is rewritten as a
+     * derived summary of the final review. Classic changes keep manual
+     * ownership of both documents.
+     */
+    async syncDerivedProgressDocuments(changePath, report, verificationEvidence) {
+        const statePath = path.join(changePath, constants_1.FILE_NAMES.STATE);
+        let state = null;
+        if (await this.fileService.exists(statePath)) {
+            try {
+                state = await this.fileService.readJSON(statePath);
+            }
+            catch {
+                state = null;
+            }
+        }
+        const profile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(changePath, state);
+        if (profile !== WorkflowProfile_1.GOAL_WORKFLOW_PROFILE)
+            return;
+        await this.syncProposalAcceptanceTicks(changePath, verificationEvidence);
+        await this.syncDerivedReviewSummary(changePath, report);
+    }
+    async syncProposalAcceptanceTicks(changePath, verificationEvidence) {
+        const proposalPath = path.join(changePath, constants_1.FILE_NAMES.PROPOSAL);
+        if (!(await this.fileService.exists(proposalPath)))
+            return;
+        const satisfied = new Set();
+        for (const record of verificationEvidence.records || []) {
+            if (record.status !== 'PASSED')
+                continue;
+            for (const id of record.satisfies || []) {
+                const trimmed = String(id || '').trim().toLowerCase();
+                if (trimmed)
+                    satisfied.add(trimmed);
+            }
+        }
+        if (satisfied.size === 0)
+            return;
+        const content = await this.fileService.readFile(proposalPath);
+        const updated = content.replace(/^(\s*[-*+]\s+\[) (\]\s+.*\[verify:([A-Za-z0-9._:-]+)\].*)$/gm, (match, prefix, rest, id) => satisfied.has(String(id).toLowerCase()) ? `${prefix}x${rest}` : match);
+        if (updated !== content) {
+            await this.fileService.writeFile(proposalPath, updated);
+        }
+    }
+    async syncDerivedReviewSummary(changePath, report) {
+        const finalReviewPath = path.join(changePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
+        if (!(await this.fileService.exists(finalReviewPath)))
+            return;
+        let decision;
+        try {
+            decision = this.normalizeReviewRunDecision((0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(finalReviewPath)).data?.decision);
+        }
+        catch {
+            return;
+        }
+        if (decision === 'PENDING')
+            return;
+        const reviewPath = path.join(changePath, constants_1.FILE_NAMES.REVIEW);
+        let existingData = {};
+        if (await this.fileService.exists(reviewPath)) {
+            try {
+                existingData = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewPath)).data || {};
+            }
+            catch {
+                existingData = {};
+            }
+        }
+        const approved = APPROVED_REVIEW_DECISIONS.has(decision);
+        const tasks = this.flattenReportTasks(report);
+        const allTaskReviewsApproved = tasks.length > 0 && tasks.every(task => task.review && APPROVED_REVIEW_DECISIONS.has(task.review.decision));
+        const tick = (on) => (on ? 'x' : ' ');
+        const body = [
+            '## Derived Review Summary',
+            '',
+            '- This document is derived from the Goal review artifacts by `ospec execute sync`. Do not edit it by hand.',
+            `- Final combined code review decision: ${decision} ([artifacts/reviews/final-review.md](artifacts/reviews/final-review.md))`,
+            '',
+            '## Task Review Decisions',
+            '',
+            ...tasks.map(task => `- ${task.id}: ${task.review?.decision || 'PENDING'}`),
+            '',
+            '## Review Checklist',
+            '',
+            `- [${tick(true)}] Final combined code review decision recorded`,
+            `- [${tick(approved)}] Final combined code review approved`,
+            `- [${tick(allTaskReviewsApproved)}] All task reviews approved`,
+            '',
+        ].join('\n');
+        await this.writeLocalizedReportFile(changePath, reviewPath, (0, helpers_1.stringifyFrontmatter)(body, {
+            ...existingData,
+            feature: typeof existingData.feature === 'string' && existingData.feature.trim()
+                ? existingData.feature
+                : report.feature,
+            created: existingData.created || new Date().toISOString().split('T')[0],
+            status: approved ? 'approved' : String(decision).toLowerCase(),
+            decision,
+            review_source: 'artifacts/reviews/final-review.md',
+            review_synced_at: new Date().toISOString(),
+        }));
     }
     async review(changePath, options = {}) {
         if (options.taskId) {

@@ -34,8 +34,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveGoalReviewArtifacts = resolveGoalReviewArtifacts;
+exports.analyzeGoalReviewSummary = analyzeGoalReviewSummary;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
+const helpers_1 = require("./helpers");
 async function resolveGoalReviewArtifacts(fileService, changePath) {
     const reviewsDir = path.join(changePath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS);
     const combined = {
@@ -65,5 +67,66 @@ async function resolveGoalReviewArtifacts(fileService, changePath) {
         mode: artifacts.length > 0 ? 'legacy' : 'missing',
         artifacts,
         missing: artifacts.length > 0 ? missing : [combined.name],
+    };
+}
+/**
+ * For Goals, review.md is a derived summary that `ospec execute sync` rewrites
+ * from artifacts/reviews/final-review.md. Archive readiness requires the
+ * summary to carry the derivation marker, the same decision, and a complete
+ * checklist so an untouched scaffold template can no longer be archived.
+ */
+async function analyzeGoalReviewSummary(fileService, changePath) {
+    const finalPath = path.join(changePath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS, constants_1.FILE_NAMES.FINAL_REVIEW);
+    const summaryPath = path.join(changePath, constants_1.FILE_NAMES.REVIEW);
+    const readDecision = async (filePath) => {
+        try {
+            const document = (0, helpers_1.parseFrontmatterDocument)(await fileService.readFile(filePath));
+            const decision = String(document.data?.decision || '').trim().toUpperCase();
+            return decision || 'PENDING';
+        }
+        catch {
+            return 'PENDING';
+        }
+    };
+    if (!(await fileService.exists(finalPath))) {
+        return {
+            aligned: false,
+            finalDecision: 'PENDING',
+            summaryDecision: 'PENDING',
+            message: 'artifacts/reviews/final-review.md is missing, so the derived review.md summary cannot be aligned',
+        };
+    }
+    const finalDecision = await readDecision(finalPath);
+    if (!(await fileService.exists(summaryPath))) {
+        return {
+            aligned: false,
+            finalDecision,
+            summaryDecision: 'PENDING',
+            message: 'review.md is missing; run ospec execute sync to derive it from the final review',
+        };
+    }
+    let summaryDecision = 'PENDING';
+    let sourceMarked = false;
+    let hasUnchecked = true;
+    try {
+        const summary = (0, helpers_1.parseFrontmatterDocument)(await fileService.readFile(summaryPath));
+        summaryDecision = String(summary.data?.decision || '').trim().toUpperCase() || 'PENDING';
+        sourceMarked = String(summary.data?.review_source || '').trim() === 'artifacts/reviews/final-review.md';
+        hasUnchecked = /^\s*[-*+]\s+\[ \]\s+/m.test(summary.content);
+    }
+    catch {
+        // Fall through with the not-aligned defaults.
+    }
+    const aligned = sourceMarked
+        && finalDecision !== 'PENDING'
+        && summaryDecision === finalDecision
+        && !hasUnchecked;
+    return {
+        aligned,
+        finalDecision,
+        summaryDecision,
+        message: aligned
+            ? 'review.md is synced to the final review decision'
+            : 'review.md is not synced to artifacts/reviews/final-review.md; run ospec execute sync before archiving',
     };
 }

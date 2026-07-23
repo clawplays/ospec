@@ -11,3 +11,16 @@ export interface GoalReviewArtifactSet {
     missing: string[];
 }
 export declare function resolveGoalReviewArtifacts(fileService: FileService, changePath: string): Promise<GoalReviewArtifactSet>;
+export interface GoalReviewSummaryAnalysis {
+    aligned: boolean;
+    finalDecision: string;
+    summaryDecision: string;
+    message: string;
+}
+/**
+ * For Goals, review.md is a derived summary that `ospec execute sync` rewrites
+ * from artifacts/reviews/final-review.md. Archive readiness requires the
+ * summary to carry the derivation marker, the same decision, and a complete
+ * checklist so an untouched scaffold template can no longer be archived.
+ */
+export declare function analyzeGoalReviewSummary(fileService: FileService, changePath: string): Promise<GoalReviewSummaryAnalysis>;

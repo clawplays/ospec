@@ -98,6 +98,7 @@ tags: [ai, protocol, ospec]
 ## سياسات السياق والإصلاح
 
 - شغّل deterministic preflight للتصميم والخطة، ثم اشتق task graph، ثم نفّذ combined planning review مستقلة واحدة؛ يسمح بإصلاح تخطيط مجمّع واحد وإعادة مراجعة تفاضلية واحدة كحد أقصى. يعيد فشل المنفّذ دون تعديل التخطيط تسليح الحصة، وتُقبل النتائج التي لا تتجاوز medium حتمياً كـ `APPROVED_WITH_CONCERNS` بعد الإصلاح؛ لا يبطل اعتماد التخطيط إلا تغيير دلالي في محتواه، ولا يبطله تقدم التنفيذ.
+- يجب أن تعكس قوائم التقدم الواقع: علّم كل معيار قبول في proposal.md فور نجاح دليل التحقق الخاص به؛ البنود الموسومة بـ `[verify:<id>]` يعلّمها `ospec execute sync` تلقائياً بعد نجاح دليل `--satisfies <id>` المطابق، وتُحظر الأرشفة ما دامت في proposal.md بنود غير معلّمة. ملف review.md في Goal ملخص مشتق يعيد `ospec execute sync` كتابته من final review؛ لا تحرره يدوياً.
 - تربط `.skillrc.workflow.model_profiles` ملفات `mechanical` و`standard` و`strong_reasoning` و`review` و`final_review` المنطقية بنماذج target؛ وعند غياب الربط يستخدم harness default مع warning في packet.
 - يستخدم command runner المتغير `OSPEC_USAGE_FILE` لجمع normalized usage تلقائيا، ويبقى `--usage-file` كتجاوز يدوي. يجمع `execution-metrics.json` حسب capability tier وmodel profile وworkflow stage ويعرض تغطية complete/partial/missing.
 - يجب تسجيل كل review finding قابل للتنفيذ أيضا في `*.findings.json` المجاور بمعرف ثابت وseverity وcategory وmessage ودليل file/line ومراجع المتطلبات ونطاق الإصلاح. تعد structured findings التالفة حالة blocking ولا يسمح بالتراجع الصامت.

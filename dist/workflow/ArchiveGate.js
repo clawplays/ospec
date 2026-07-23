@@ -79,6 +79,31 @@ class ArchiveGate {
             if (!protocolState.verificationComplete) {
                 blockers.push('verification.md still has unchecked items');
             }
+            checks.push({
+                name: 'Proposal Acceptance Checklist',
+                passed: protocolState.proposalAcceptanceComplete,
+                message: protocolState.proposalAcceptanceComplete
+                    ? 'proposal.md acceptance checklist is complete'
+                    : 'proposal.md acceptance checklist still has unchecked items',
+            });
+            if (!protocolState.proposalAcceptanceComplete) {
+                blockers.push('proposal.md acceptance checklist still has unchecked items');
+            }
+            if (protocolState.goalReviewSummaryAligned !== null
+                && protocolState.goalReviewSummaryAligned !== undefined) {
+                checks.push({
+                    name: 'Derived Review Summary',
+                    passed: protocolState.goalReviewSummaryAligned,
+                    message: protocolState.goalReviewSummaryMessage
+                        || (protocolState.goalReviewSummaryAligned
+                            ? 'review.md is synced to the final review decision'
+                            : 'review.md is not synced to the final review; run ospec execute sync'),
+                });
+                if (!protocolState.goalReviewSummaryAligned) {
+                    blockers.push(protocolState.goalReviewSummaryMessage
+                        || 'review.md is not synced to the final review; run ospec execute sync before archiving');
+                }
+            }
         }
         return {
             canArchive: blockers.length === 0,

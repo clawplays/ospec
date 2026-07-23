@@ -114,6 +114,9 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                     require_skill_update: false,
                     require_index_regenerated: false,
                 };
+            const goalReviewSummary = isGoalWorkflow
+                ? await (0, ReviewArtifacts_1.analyzeGoalReviewSummary)(services_1.services.fileService, targetPath)
+                : null;
             const result = await ArchiveGate_1.archiveGate.checkArchiveReadiness(featureState, archiveConfig, {
                 activatedSteps,
                 tasksOptionalSteps,
@@ -121,6 +124,9 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 passedOptionalSteps,
                 tasksComplete: !/- \[ \]/.test(tasks.content),
                 verificationComplete: !/- \[ \]/.test(verification.content),
+                proposalAcceptanceComplete: !/- \[ \]/.test(proposal.content),
+                goalReviewSummaryAligned: goalReviewSummary ? goalReviewSummary.aligned : null,
+                goalReviewSummaryMessage: goalReviewSummary?.message ?? null,
             });
             if (classicStatus) {
                 for (const check of classicStatus.checks) {

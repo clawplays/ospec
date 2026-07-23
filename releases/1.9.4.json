@@ -1,0 +1,16 @@
+{
+  "title_suffix": "progress checklists that track reality",
+  "summary": "OSpec 1.9.4 keeps every progress checklist aligned with what actually happened: proposal acceptance criteria now gate archiving in both workflows, verify-tagged acceptance items tick automatically, and the Goal review.md becomes a derived summary of the final review instead of an untouched template.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.3...1.9.4",
+  "new": [
+    "Goal acceptance criteria tagged `[verify:<id>]` in proposal.md are auto-ticked by `ospec execute sync` once matching `ospec execute verify ... --satisfies <id>` evidence passes.",
+    "Goal review.md is now a derived summary that `ospec execute sync` rewrites from the final review: decision, per-task review decisions, and a fact-based checklist with a `review_source` provenance marker."
+  ],
+  "improved": [
+    "Archiving now blocks in both the classic change and Goal workflows while proposal.md still has unchecked acceptance items, so acceptance criteria can no longer be silently left behind.",
+    "Goal archiving blocks until review.md is aligned with the approved final review, so an untouched scaffold template can no longer be archived as the change review."
+  ],
+  "docs": [
+    "Protocol documents, project conventions, and the packaged skills describe the progress-tracking contract in all four languages, including the rule that unfinished items must never be ticked and derived documents must never be edited by hand."
+  ]
+}
