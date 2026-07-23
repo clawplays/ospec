@@ -77,6 +77,7 @@ ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive
 ## Guardrails
 
 - Progress checklists track reality: tick each proposal.md acceptance criterion as it is actually verified — archiving blocks while proposal.md has unchecked items. review.md stays your one lightweight review; record its decision and complete its checklist before closeout. Never tick an item whose work was not done.
+- The worktree is serial: closeout blocks on uncommitted files outside the proposal `affects` and documentation scopes. Declare `affects` honestly, and when unattributed dirty files appear (for example another session's edits), commit, stash, or isolate them instead of archiving over them.
 - Do not assume dashboard workflows exist.
 - Do not confuse repository initialization with change execution.
 - Do not enter queue mode unless the user explicitly asks for queue behavior.

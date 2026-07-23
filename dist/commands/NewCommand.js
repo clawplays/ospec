@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.NewCommand = void 0;
 const path = __importStar(require("path"));
 const crypto_1 = require("crypto");
+const child_process_1 = require("child_process");
 const fs_1 = require("fs");
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
@@ -68,6 +69,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             const featureDir = PathUtils_1.PathUtils.getChangeDir(targetDir, placement, featureName, config);
             this.logger.info(`Creating ${placement === constants_1.DIR_NAMES.QUEUED ? 'queued change' : 'change'}: ${featureName}`);
             creationLease = await this.acquireChangeCreationLease(targetDir, config);
+            this.warnOnDirtyWorkspace(targetDir);
             if (placement === constants_1.DIR_NAMES.ACTIVE) {
                 const sessionDir = path.join(targetDir, '.ospec');
                 const jsonPath = path.join(sessionDir, 'session-brief.json');
@@ -211,6 +213,31 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         finally {
             if (creationLease)
                 await this.releaseChangeCreationLease(creationLease);
+        }
+    }
+    /**
+     * Classic changes assume serial execution in a shared worktree; closeout
+     * blocks on uncommitted files outside the change's declared scope. Surface
+     * pre-existing dirt at creation time so unrelated concurrent work is
+     * committed, stashed, or isolated before implementation starts.
+     */
+    warnOnDirtyWorkspace(targetDir) {
+        try {
+            const status = (0, child_process_1.spawnSync)('git', ['status', '--porcelain', '--untracked-files=all', '--no-renames'], { cwd: targetDir, encoding: 'utf8', windowsHide: true });
+            if (status.error || status.status !== 0)
+                return;
+            const dirty = status.stdout
+                .split(/\r?\n/)
+                .map(line => line.trimEnd())
+                .filter(line => line.length > 0)
+                .map(line => line.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/'))
+                .filter(filePath => filePath !== '.skillrc' && !filePath.startsWith('.ospec/'));
+            if (dirty.length === 0)
+                return;
+            this.warn(`Workspace already has ${dirty.length} uncommitted file change(s) (e.g. ${dirty.slice(0, 3).join(', ')}). A classic change assumes serial execution in this worktree, and closeout blocks on files outside the change's declared affects scope. Commit, stash, or isolate unrelated work first.`);
+        }
+        catch {
+            // The workspace warning is best-effort and must never block creation.
         }
     }
     async acquireChangeCreationLease(targetDir, config) {

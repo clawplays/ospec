@@ -10,7 +10,7 @@
 
 1. أنشئ العمل الجديد عبر `ospec change <change-name> [path]`، ويبقى `ospec new` alias للتوافق.
 2. إذا وُجد active change مطابق فتابعه ولا تنشئ نسخة مكررة.
-3. تدخل تغييرات batch إلى queue وتُنفذ بالتتابع في worktree المشترك.
+3. تدخل تغييرات batch إلى queue وتُنفذ بالتتابع في worktree المشترك. يجب استخدام worktree تسلسلياً: يُحظر الإغلاق (verify/finalize/archive) عند وجود ملفات غير مودعة خارج نطاق `affects` وعقد التوثيق في proposal، لذا أودع أو خزّن أو اعزل التغييرات غير المنسوبة، وصرّح بـ `affects` بصدق، ولا تدع تعديلات جلسة متزامنة تنزلق إلى الأرشيف.
 4. حافظ فقط على `proposal.md` و`tasks.md` و`state.json` و`verification.md` و`review.md`، ولا تنشئ design أو plan أو task graph أو worker أو review provenance artifacts الخاصة بـ Goal.
 5. شغّل فحوص المشروع المرتبطة فعلاً بالتغيير وسجّل الأوامر والنتائج في `verification.md`، ولا تفرض build أو lint أو test أو TDD أو debug غير ذي صلة.
 6. ينفذ AI الحالي مراجعة خفيفة واحدة. يمكن إغلاق `APPROVED` و`APPROVED_WITH_CONCERNS` تلقائياً، بينما توقف `PENDING` و`NEEDS_CHANGES` و`BLOCKED` الإغلاق.

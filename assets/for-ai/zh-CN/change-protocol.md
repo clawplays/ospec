@@ -10,7 +10,7 @@
 
 1. 新工作使用 `ospec change <change-name> [path]`；`ospec new` 保留为兼容别名。
 2. 已有匹配的 active change 时继续它，不要重复创建。
-3. 批量 change 进入 queue，在共享工作区依次执行。
+3. 批量 change 进入 queue，在共享工作区依次执行。工作区必须串行使用：闭环（verify/finalize/archive）会阻塞在超出 proposal `affects` 与文档契约范围的未提交文件上；发现无主脏文件时先提交、暂存或隔离，并如实声明 `affects`，不得把并发会话的改动卷入归档。
 4. 只维护 `proposal.md`、`tasks.md`、`state.json`、`verification.md` 和 `review.md`；不要创建 Goal 的设计、计划、task graph、worker 或 review provenance artifacts。
 5. 只运行与实际改动有关的项目检查，并把命令和结果记录到 `verification.md`；不得强制执行无关的 build、lint、test、TDD 或 debug 命令。
 6. 当前 AI 完成一次轻量 review。`APPROVED` 和 `APPROVED_WITH_CONCERNS` 可以自动收口；`PENDING`、`NEEDS_CHANGES` 和 `BLOCKED` 必须停止。

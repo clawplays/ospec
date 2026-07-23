@@ -1,0 +1,16 @@
+{
+  "title_suffix": "workspace scope gate for classic changes",
+  "summary": "OSpec 1.9.5 brings the Goal-style workspace protection to the classic change workflow: closeout now blocks on uncommitted files that do not belong to the change, so a concurrent session's edits can no longer ride along into an archive.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.4...1.9.5",
+  "new": [
+    "Classic closeout (verify, finalize, and archive --check) runs a workspace scope check: every uncommitted file must belong to the change container, managed OSpec bookkeeping, or the proposal-declared affects/documentation scopes, and unattributed dirty files block closeout with the offending paths listed.",
+    "ospec change warns at creation time when the worktree already carries unrelated uncommitted changes, surfacing another session's leftovers before implementation starts."
+  ],
+  "improved": [
+    "An empty affects declaration combined with unattributed dirty files blocks closeout with a declare-affects hint instead of passing silently, so the scope contract cannot be skipped by leaving affects empty.",
+    "Non-Git directories skip the workspace scope check, keeping non-Git projects and test fixtures unaffected."
+  ],
+  "docs": [
+    "The change protocol in all four languages and the ospec-change skill now state the serial-worktree contract: commit, stash, or isolate unattributed work instead of archiving over it."
+  ]
+}

@@ -2819,12 +2819,17 @@ ${formatSuggestion()}
         const classicPluginAnalysis = classicCloseout
             ? await classicCloseout.analyzePluginGates(featureDir, activatedSteps, workflow)
             : null;
+        const classicWorkspaceAnalysis = classicCloseout
+            ? await classicCloseout.analyzeWorkspaceScope(rootDir, featureDir, proposalPath)
+            : null;
         if (classicDocumentationAnalysis)
             checks.push(...classicDocumentationAnalysis.checks);
         if (classicReviewAnalysis)
             checks.push(...classicReviewAnalysis.checks);
         if (classicPluginAnalysis)
             checks.push(...classicPluginAnalysis.checks);
+        if (classicWorkspaceAnalysis)
+            checks.push(...classicWorkspaceAnalysis.checks);
         const closeoutState = classicCloseout
             ? classicCloseout.deriveCloseoutState(state, {
                 proposalReady: proposalExists,

@@ -10,7 +10,7 @@
 
 1. 新規作業は `ospec change <change-name> [path]` で作成し、`ospec new` は互換 alias として残します。
 2. 一致する active change が既にあれば重複作成せず継続します。
-3. batch change は queue に入れ、共有 worktree で順番に実行します。
+3. batch change は queue に入れ、共有 worktree で順番に実行します。worktree は直列で使用します。closeout（verify/finalize/archive）は proposal の `affects` と文書契約の範囲外にある未コミットファイルでブロックされるため、帰属不明の変更は先にコミット・stash・隔離し、`affects` を正しく宣言し、並行セッションの編集をアーカイブに紛れ込ませないでください。
 4. `proposal.md`、`tasks.md`、`state.json`、`verification.md`、`review.md` だけを同期し、Goal の design、plan、task graph、worker、review provenance artifacts は作りません。
 5. 実際の change に関連する project check だけを実行して command と結果を `verification.md` に記録します。無関係な build、lint、test、TDD、debug は要求しません。
 6. 現在の AI が軽量 review を 1 回行います。`APPROVED` と `APPROVED_WITH_CONCERNS` は自動 closeout 可能で、`PENDING`、`NEEDS_CHANGES`、`BLOCKED` は停止します。

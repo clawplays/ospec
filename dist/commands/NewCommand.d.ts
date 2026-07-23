@@ -21,6 +21,13 @@ export interface NewCommandOptions {
 }
 export declare class NewCommand extends BaseCommand {
     execute(featureName: string, rootDir?: string, options?: NewCommandOptions): Promise<void>;
+    /**
+     * Classic changes assume serial execution in a shared worktree; closeout
+     * blocks on uncommitted files outside the change's declared scope. Surface
+     * pre-existing dirt at creation time so unrelated concurrent work is
+     * committed, stashed, or isolated before implementation starts.
+     */
+    private warnOnDirtyWorkspace;
     private acquireChangeCreationLease;
     private releaseChangeCreationLease;
     private readChangeCreationLockOwner;

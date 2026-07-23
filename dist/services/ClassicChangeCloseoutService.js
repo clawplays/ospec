@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ClassicChangeCloseoutService = void 0;
 const path = __importStar(require("path"));
 const fs_1 = require("fs");
+const child_process_1 = require("child_process");
 const helpers_1 = require("../utils/helpers");
 const CHANGE_TYPES = new Set(['bugfix', 'feature', 'maintenance', 'docs']);
 const DOCUMENTATION_IMPACTS = new Set(['none', 'required']);
@@ -53,6 +54,92 @@ const APPROVED_REVIEW_DECISIONS = new Set([
 class ClassicChangeCloseoutService {
     constructor(fileService) {
         this.fileService = fileService;
+    }
+    /**
+     * Classic changes assume serial execution in a shared worktree. This guard is
+     * the classic counterpart of the Goal workspace gate: every uncommitted file
+     * must belong to the change (its container, managed OSpec bookkeeping, or the
+     * proposal's declared affects/documentation scopes). Unattributed dirty files
+     * block closeout so another session's concurrent edits cannot be silently
+     * archived with this change. Non-Git directories skip the check.
+     */
+    async analyzeWorkspaceScope(projectRoot, featureDir, proposalPath) {
+        const skipped = (message) => ({
+            archiveReady: true,
+            outOfScopePaths: [],
+            checks: [
+                {
+                    name: 'change.workspace_scope',
+                    status: 'pass',
+                    message,
+                },
+            ],
+        });
+        const status = (0, child_process_1.spawnSync)('git', ['status', '--porcelain', '--untracked-files=all', '--no-renames'], { cwd: projectRoot, encoding: 'utf8', windowsHide: true });
+        if (status.error || status.status !== 0) {
+            return skipped('Workspace scope check skipped (not a Git repository)');
+        }
+        let affects = [];
+        let documentationUpdates = [];
+        try {
+            const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath));
+            const normalizeScope = (item) => String(item || '')
+                .trim()
+                .replace(/\\/g, '/')
+                .replace(/^\.\//, '')
+                .replace(/\/+$/, '');
+            affects = Array.isArray(proposal.data?.affects)
+                ? proposal.data.affects.map(normalizeScope).filter(Boolean)
+                : [];
+            documentationUpdates = Array.isArray(proposal.data?.documentation_updates)
+                ? proposal.data.documentation_updates.map(normalizeScope).filter(Boolean)
+                : [];
+        }
+        catch {
+            // Proposal readiness is reported by the documentation contract checks.
+        }
+        const changePrefix = path
+            .relative(projectRoot, featureDir)
+            .replace(/\\/g, '/')
+            .replace(/\/+$/, '');
+        const managedPrefixes = ['.ospec', 'changes', 'for-ai', 'docs/project'];
+        const managedFiles = new Set(['.skillrc', 'SKILL.md', 'SKILL.index.json']);
+        const scopes = [...affects, ...documentationUpdates];
+        const withinScope = (filePath, scope) => filePath === scope || filePath.startsWith(`${scope}/`);
+        const dirtyPaths = status.stdout
+            .split(/\r?\n/)
+            .map(line => line.trimEnd())
+            .filter(line => line.length > 0)
+            .map(line => line.slice(3).trim().replace(/^"|"$/g, '').replace(/\\/g, '/'));
+        const outOfScopePaths = dirtyPaths.filter(filePath => {
+            if (managedFiles.has(filePath))
+                return false;
+            if (changePrefix && withinScope(filePath, changePrefix))
+                return false;
+            if (managedPrefixes.some(prefix => withinScope(filePath, prefix)))
+                return false;
+            return !scopes.some(scope => withinScope(filePath, scope));
+        });
+        if (outOfScopePaths.length === 0) {
+            return skipped(dirtyPaths.length === 0
+                ? 'Workspace is clean'
+                : 'All uncommitted changes belong to this change scope');
+        }
+        const preview = outOfScopePaths.slice(0, 6).join(', ');
+        const suffix = outOfScopePaths.length > 6 ? `, ... +${outOfScopePaths.length - 6} more` : '';
+        return {
+            archiveReady: false,
+            outOfScopePaths,
+            checks: [
+                {
+                    name: 'change.workspace_scope',
+                    status: 'fail',
+                    message: scopes.length === 0
+                        ? `proposal.md declares no affects scope, so ${outOfScopePaths.length} uncommitted file change(s) cannot be attributed to this change: ${preview}${suffix}. Declare affects in proposal.md, or commit/stash/isolate unrelated work before closeout.`
+                        : `Workspace has ${outOfScopePaths.length} uncommitted file change(s) outside this change's declared scope: ${preview}${suffix}. Commit, stash, or isolate unrelated work (or extend proposal.md affects) before closeout.`,
+                },
+            ],
+        };
     }
     async analyzeDocumentationContract(projectRoot, proposalPath) {
         if (!(await this.fileService.exists(proposalPath))) {

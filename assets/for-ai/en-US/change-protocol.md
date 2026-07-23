@@ -10,7 +10,7 @@ At start, read `.skillrc`, the relevant `SKILL.index.json` entries, `proposal.md
 
 1. Create new work with `ospec change <change-name> [path]`; `ospec new` remains a compatibility alias.
 2. Continue an existing matching active change instead of duplicating it.
-3. Batch changes go through the queue and run sequentially in the shared worktree.
+3. Batch changes go through the queue and run sequentially in the shared worktree. The worktree must be used serially: closeout (verify/finalize/archive) blocks on uncommitted files outside the proposal `affects` and documentation scopes, so commit, stash, or isolate unattributed dirty files, declare `affects` honestly, and never let a concurrent session's edits ride along into the archive.
 4. Keep only `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md` aligned. Do not create Goal design, plan, task graph, worker, or review-provenance artifacts.
 5. Run project checks relevant to the actual change and record commands and results in `verification.md`; do not require unrelated build, lint, test, TDD, or debug commands.
 6. The current AI performs one lightweight review. `APPROVED` and `APPROVED_WITH_CONCERNS` may close automatically; `PENDING`, `NEEDS_CHANGES`, and `BLOCKED` stop closeout.
