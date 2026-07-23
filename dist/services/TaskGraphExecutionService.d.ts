@@ -4,7 +4,7 @@ import { FileService } from './FileService';
 import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
 export type TaskWorkerCapabilityTier = 'mechanical' | 'standard' | 'strong-reasoning' | 'review';
-export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
+export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'grok' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
 export type TaskReviewRunDecision = 'APPROVED' | 'APPROVED_WITH_CONCERNS' | 'NEEDS_CHANGES' | 'BLOCKED' | 'PENDING';
 export type TaskUserDecisionStatus = 'PENDING' | 'SELECTED' | 'SKIPPED';

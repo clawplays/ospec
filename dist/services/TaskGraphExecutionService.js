@@ -234,6 +234,15 @@ function buildWorkerTargetToolMapping(target) {
             dispatchWorkers: 'Use @generalist when runtimeAdapter confirms a current native capability; stop instead of starting an external Gemini process.',
             recordCompletion: 'Record each @generalist result with ospec execute complete, using NEEDS_CONTEXT or BLOCKED when the subagent escalates.',
         },
+        grok: {
+            target,
+            readContext: 'Use Grok Build file reads and search to inspect proposal.md, design.md, implementation-plan.md, tasks.md, bootstrap.md, and the dispatch packet before spawning a subagent.',
+            editFiles: 'Spawn a worker subagent for scoped edits; keep the worker write scope limited to the dispatch packet target files unless the packet evidence proves the scope is wrong.',
+            runCommands: 'Let the subagent run only the verification commands required for the task or change, then record evidence with ospec execute tdd/debug/verify as appropriate.',
+            trackPlan: 'Use the active task graph as durable state; keep OSpec artifacts synchronized with ospec execute sync after manual artifact edits.',
+            dispatchWorkers: 'Use runtimeAdapter.selected.nativeSubagent from the launch artifact. Dispatch one spawn_subagent child per parallel-safe packet and collect results with get_command_or_subagent_output; never start a grok CLI process as a fallback.',
+            recordCompletion: 'Record each subagent outcome with ospec execute complete <task-id> and one of DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
+        },
         opencode: {
             target,
             readContext: 'Read OSpec change files and packet contents before using OpenCode native agents.',
@@ -10342,14 +10351,14 @@ class TaskGraphExecutionService {
     }
     normalizeHandoffTarget(target) {
         const normalized = (target || 'generic').trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'grok' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported handoff target: ${target}`);
     }
     normalizeWorkerToolTarget(target) {
         const normalized = (target || 'generic').trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'grok' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported worker tool target: ${target}`);
@@ -10897,6 +10906,39 @@ class TaskGraphExecutionService {
                 completionInstructions: [
                     `Record the result with: ${completionCommand}`,
                     'Use ospec execute sync after recording multiple Gemini subagent results.',
+                ],
+                fallbackInstructions,
+                adapterPacket,
+            };
+        }
+        if (input.target === 'grok') {
+            return {
+                target: input.target,
+                supported: true,
+                adapterId: 'grok-build-native-subagent',
+                agentPrimitive: 'spawn_subagent + get_command_or_subagent_output',
+                dispatchMode: 'native-subagent',
+                requiresControllerAction: true,
+                promptTransport: 'Controller passes launchPrompt as the spawn_subagent prompt and includes the dispatch packet path.',
+                resultCollection: 'Controller collects worker output with get_command_or_subagent_output using the returned subagent ids and a bounded timeout_ms, then records ospec execute complete.',
+                fallbackOnly: false,
+                mechanism: 'Grok Build native subagents: spawn_subagent plus get_command_or_subagent_output polling',
+                defaultPath: true,
+                instructions: [
+                    `Spawn a worker subagent for task ${task} with spawn_subagent.`,
+                    `Pass the launch prompt as the subagent prompt and include the dispatch packet path: ${packet}.`,
+                    'Give the worker disjoint ownership of the packet target files and tell it other workers may be editing different files.',
+                    'Do not make the worker read unrelated chat history; provide only the packet, core change paths, and explicit context from the launch prompt.',
+                ],
+                parallelInstructions: [
+                    'For multiple parallel-safe packets, call spawn_subagent once per packet in the same controller turn.',
+                    'Poll all outstanding subagent ids with get_command_or_subagent_output using a bounded timeout_ms, and integrate completed results as they arrive.',
+                    'Do not spawn workers for conflicting target files in the same round.',
+                ],
+                completionInstructions: [
+                    'Read each subagent final status and map it to DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.',
+                    `Record the task result with: ${completionCommand}`,
+                    'Run ospec execute sync after manual artifact edits or after collecting multiple worker results.',
                 ],
                 fallbackInstructions,
                 adapterPacket,

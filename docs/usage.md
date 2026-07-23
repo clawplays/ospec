@@ -30,7 +30,7 @@ ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
 ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<goal>]
-ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
+ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic]
 ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
@@ -41,7 +41,7 @@ ospec execute worktree [changes/active/<change>] --create [--branch name] [--pat
 ospec execute worktree [changes/active/<change>] --cleanup [--path path]
 ospec execute finish [changes/active/<change>] [--target main] [--remote origin]
 ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]
-ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]
+ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic] [--dry-run]
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--summary "..."] [--force]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
@@ -165,7 +165,7 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - Use `ospec run status [path]` when using the explicit queue runner to see the current queue run plus the active change task graph snapshot, including completed, running, dispatchable, blocked, invalid, and next-action counts.
 - Queue runner next instructions from `ospec run start`, `run resume`, `run step`, and `run status` use the active task graph when available, so dispatchable work points to `ospec execute dispatch ...`; the runner still does not dispatch workers or edit source files.
 - Use `ospec execute bootstrap [changes/active/<goal>]` when starting or resuming one active Goal to write `artifacts/agents/bootstrap.json` and `artifacts/agents/bootstrap.md` with the project session brief snapshot, then follow the next safe action it reports. When an active dispatch already exists, bootstrap recommends the matching `ospec execute launch ... --task ...` command.
-- Use `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` when moving a change between agents, tools, worktrees, shells, or human operators. It writes `artifacts/agents/handoff.json` and `artifacts/agents/handoff.md` with the project session brief snapshot, target tool mapping, command sequence, safety rules, and missing-context warnings.
+- Use `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic]` when moving a change between agents, tools, worktrees, shells, or human operators. It writes `artifacts/agents/handoff.json` and `artifacts/agents/handoff.md` with the project session brief snapshot, target tool mapping, command sequence, safety rules, and missing-context warnings.
 - Before deriving the task graph, run `ospec execute preflight [changes/active/<change>] --stage design`, then `--stage plan`. Both commands run deterministic inline readiness checks and record approval evidence under `artifacts/agents/planning-preflights/` without launching a reviewer child. Derive or refresh the graph only after both pass, then let Loop issue the combined planning review.
 - Use `ospec execute status [changes/active/<goal>]` or `ospec execute next [changes/active/<goal>]` to inspect Goal controller state and the next safe task candidates before assigning work. Use `ospec execute route [changes/active/<goal>]` when you want a persistent `artifacts/agents/workflow-route.json` and `workflow-route.md` recommendation for the next OSpec command.
 - Use `ospec execute decision [changes/active/<change>] ...` when direction, architecture, API, UI, risk, or scope needs an explicit user choice. A required pending decision is shown by `bootstrap`, `status`, and `finish`, and it blocks worker dispatch until you record `--select <option-id> --answered-by user` or intentionally `--skip` with the same provenance.
@@ -175,7 +175,7 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - Use `ospec execute worktree [changes/active/<change>] --cleanup [--path path]` only when you explicitly want OSpec to run `git worktree remove` for the planned or provided worktree path. Cleanup does not delete branches, push, merge, archive, or run tests.
 - Use `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` before final closeout to write `artifacts/agents/finish-plan.json` and `artifacts/agents/finish-plan.md`. It checks task graph, reviews, verification evidence, worker status, and git cleanliness, then records suggested commands plus PR, merge, branch-retention, and worktree-cleanup decision prompts without running them. When the finish plan is ready and no required decision is pending, continue with `ospec finalize [changes/active/<change>]`; `ospec archive ... --check` is only an optional dry-run preview.
 - Use `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` to create a parallel-safe batch of `artifacts/agents/dispatches/*` worker packets and `artifacts/agents/execution-session.json`. Each packet includes the project session brief snapshot and a worker profile with capability tier, recommended target, target tool mapping, rationale, and required behavior so complex tasks can be routed to stronger workers and simple tasks can stay lightweight without guessing how each target should read context, edit files, run checks, or record completion. Then use `ospec execute complete <task-id> ...` to record worker results. Use `--task` for one explicit task and `--limit` to cap the batch size. Required pending user decisions block dispatch. Both commands also sync `artifacts/agents/worker-status.md`; when completion records `NEEDS_CONTEXT` or `BLOCKED`, OSpec writes `artifacts/agents/blockers/` escalation files for controller follow-up.
-- Use `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run]` after dispatch to write the agent launch plan. Its `runtimeAdapter` accepts only a current, target-bound native-subagent capability and exposes the model's native primitive. OSpec writes `artifacts/agents/launch-plan.json` and `artifacts/agents/launch-plan.md`, requires one active dispatch and ready workspace status, and never starts a worker process itself.
+- Use `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--dry-run]` after dispatch to write the agent launch plan. Its `runtimeAdapter` accepts only a current, target-bound native-subagent capability and exposes the model's native primitive. OSpec writes `artifacts/agents/launch-plan.json` and `artifacts/agents/launch-plan.md`, requires one active dispatch and ready workspace status, and never starts a worker process itself.
 - Multi-worker execution follows `runtimeAdapter.selected.nativeSubagent`: create a parallel-safe batch with `ospec execute dispatch`, inspect `launch-plan.md`, then start one model-native subagent per safe packet when the selected adapter supports parallel execution. Missing, expired, or target-mismatched capability blocks execution; there is no agent CLI or current-controller fallback. Record each result with `ospec execute complete`.
 - `ospec execute orchestrate`, `ospec execute launch ... --run --command "..."`, and `ospec execute review ... --run --command "..."` are removed agent-execution paths. They return migration errors before launching a process or creating run artifacts.
 - Use `ospec execute retry [changes/active/<change>] --task task-id` after a blocked, needs-context, or failed worker run has been fixed. It writes `artifacts/agents/retries/`, reopens the task, and creates a fresh dispatch packet. Completed tasks are not retried by default; pass `--force` only for an intentional override.
@@ -223,7 +223,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.5
+npm install -g @clawplays/ospec-cli@1.9.6
 ospec update [path]
 ```
 

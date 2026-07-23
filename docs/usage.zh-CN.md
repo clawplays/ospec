@@ -30,7 +30,7 @@ ospec loop allowlist check [changes/active/<change>] --from-task-graph [--json]
 ospec loop allowlist apply [changes/active/<change>] --from-task-graph --expected-current-hash H --expected-candidate-hash H [--expected-task-graph-hash H] [--approve-expansion]
 ospec loop allowlist clear [changes/active/<change>] --confirm
 ospec execute bootstrap [changes/active/<goal>]
-ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]
+ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic]
 ospec execute preflight [changes/active/<change>] [--stage design|plan]
 ospec execute status [changes/active/<change>]
 ospec execute next [changes/active/<change>]
@@ -41,7 +41,7 @@ ospec execute worktree [changes/active/<change>] --create [--branch name] [--pat
 ospec execute worktree [changes/active/<change>] --cleanup [--path path]
 ospec execute finish [changes/active/<change>] [--target main] [--remote origin]
 ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]
-ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run]
+ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic] [--dry-run]
 ospec execute collect [changes/active/<change>] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."]
 ospec execute retry [changes/active/<change>] --task task-id [--run run-id] [--summary "..."] [--force]
 ospec execute complete <task-id> [changes/active/<change>] --status DONE --summary "..."
@@ -165,7 +165,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - 使用显式队列 runner 时，可用 `ospec run status [path]` 同时查看当前 queue run 和 active change task graph 快照，包括已完成、运行中、可分派、阻塞、无效任务数量和下一步动作。
 - `ospec run start`、`run resume`、`run step` 和 `run status` 的下一步提示会参考 active task graph；如果有可分派任务，会提示 `ospec execute dispatch ...`。runner 仍然不会自动派发 worker，也不会编辑源码。
 - 开始或恢复单个 active Goal 时，用 `ospec execute bootstrap [changes/active/<goal>]` 写入带 project session brief snapshot 的 `artifacts/agents/bootstrap.json` 和 `artifacts/agents/bootstrap.md`，然后按它输出的下一步安全动作继续。已有 active dispatch 时，bootstrap 会推荐对应的 `ospec execute launch ... --task ...` 命令。
-- change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`。它会记录 project session brief snapshot、目标工具映射、命令序列、安全规则和缺失上下文警告。
+- change 需要在 agent、工具、worktree、shell 或人工操作者之间交接时，用 `ospec execute handoff [changes/active/<change>] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic]` 写入 `artifacts/agents/handoff.json` 和 `artifacts/agents/handoff.md`。它会记录 project session brief snapshot、目标工具映射、命令序列、安全规则和缺失上下文警告。
 - 派生 task graph 前，依次运行 `ospec execute preflight [changes/active/<change>] --stage design` 和 `--stage plan`。两步都执行确定性 inline 就绪检查并记录 approval evidence，不启动 reviewer child；两步通过后再派生或刷新 graph，并由 Loop 发出一次合并规划复审。
 - 用 `ospec execute status [changes/active/<goal>]` 或 `ospec execute next [changes/active/<goal>]` 查看 Goal 控制器状态和下一批安全可分派任务。需要把下一条 OSpec 命令持久化给人或 AI 接手时，用 `ospec execute route [changes/active/<goal>]` 写入 `artifacts/agents/workflow-route.json` 和 `workflow-route.md`。
 - 当方向、架构、API、UI、风险或范围需要用户明确选择时，用 `ospec execute decision [changes/active/<change>] ...` 记录决策门。required pending decision 会出现在 `bootstrap`、`status` 和 `finish` 中，并阻止 worker dispatch，直到用 `--select <option-id> --answered-by user` 记录选择，或用相同来源标记明确 `--skip`。
@@ -175,7 +175,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - 只有明确希望 OSpec 执行 `git worktree remove` 时，才用 `ospec execute worktree [changes/active/<change>] --cleanup [--path path]`；cleanup 只移除 worktree，不删除分支、不 push、不 merge、不归档、不运行测试。
 - 最终收尾前，用 `ospec execute finish [changes/active/<change>] [--target main] [--remote origin]` 写入 `artifacts/agents/finish-plan.json` 和 `artifacts/agents/finish-plan.md`。它会检查 task graph、review、verification evidence、worker status 和 git 清洁度，只记录建议命令，以及 PR、merge、branch retention、worktree cleanup 的决策提示，不会执行。当 finish plan 已 ready 且没有 required pending decision 时，继续执行 `ospec finalize [changes/active/<change>]`；`ospec archive ... --check` 只是可选 dry-run 预览。
 - 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成一批并行安全的 `artifacts/agents/dispatches/*` worker 任务包和 `artifacts/agents/execution-session.json`。每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior，方便把复杂任务交给更强的 worker，把简单任务保持轻量，并明确不同目标工具如何读取上下文、编辑文件、运行验证和记录完成。再用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制批次大小。required pending user decision 会阻止 dispatch。这两个命令也会同步 `artifacts/agents/worker-status.md`；当 completion 记录 `NEEDS_CONTEXT` 或 `BLOCKED` 时，OSpec 会写入 `artifacts/agents/blockers/` 升级记录，供 controller 跟进。
-- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--dry-run]` 写入 agent 启动计划。`runtimeAdapter` 只接受当前、target 匹配的模型原生 subagent capability，并给出该模型的 native primitive。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在 active dispatch 且 workspace 为 ready，但不会自行启动 worker 进程。
+- dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--dry-run]` 写入 agent 启动计划。`runtimeAdapter` 只接受当前、target 匹配的模型原生 subagent capability，并给出该模型的 native primitive。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在 active dispatch 且 workspace 为 ready，但不会自行启动 worker 进程。
 - 多 worker 执行服从 `runtimeAdapter.selected.nativeSubagent`：先生成并行安全 batch；所选 adapter 支持并行时，每个安全 packet 启动一个 worker。capability 缺失、过期或 target 不匹配时必须阻断，不得降级到 agent CLI 或当前 controller。所有 native wait 单次最多 60 秒，每个完成结果都立即持久化并重新 tick。
 - `ospec execute orchestrate`、`ospec execute launch ... --run --command "..."` 和 `ospec execute review ... --run --command "..."` 已移除 agent 执行能力；它们会在启动进程或创建 run artifact 之前返回迁移错误。
 - blocked、needs-context 或 failed worker run 的问题修复后，用 `ospec execute retry [changes/active/<change>] --task task-id` 写入 `artifacts/agents/retries/`，把 task 重新打开，并生成新的 dispatch packet。已完成任务不会被默认重试；确需覆盖时必须显式传 `--force`。
@@ -223,7 +223,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.5
+npm install -g @clawplays/ospec-cli@1.9.6
 ospec update [path]
 ```
 

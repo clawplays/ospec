@@ -130,7 +130,7 @@ function getExecuteHelpText() {
 Execute Commands:
   Goal-only unless noted; classic Changes use ospec progress, top-level ospec verify, and ospec finalize.
   ospec execute bootstrap [goal-path|project-path] - write a one-Goal startup/resume snapshot with project session brief context and next safe action
-  ospec execute handoff [goal-path|project-path] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
+  ospec execute handoff [goal-path|project-path] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic] - write a cross-harness worker handoff guide with native agent mapping and project session context
   ospec execute preflight [goal-path|project-path] [--stage design|plan] [--force] - run or reuse a zero-token deterministic planning preflight
   ospec execute status [goal-path|project-path] [--brief] - show task graph controller state; prefer --brief and the emitted packet path for controller loops
   ospec execute next [goal-path|project-path]   - show dispatchable next task(s)
@@ -141,7 +141,7 @@ Execute Commands:
   ospec execute worktree [goal-path|project-path] --cleanup [--path path] - explicitly run git worktree remove for the planned or provided worktree path
   ospec execute finish [goal-path|project-path] [--target main] [--remote origin] - write a closeout readiness plan without finalizing, merging, pushing, or deleting worktrees
   ospec execute dispatch [goal-path|project-path] [--task task-id] [--limit N] - create parallel-safe worker dispatch packet(s) with session context, worker profiles, and target tool mapping
-  ospec execute launch [goal-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|opencode|cursor|copilot|shell|generic] [--dry-run] [--json] - write the capability-based runtime adapter launch plan without starting workers; --json prints the machine-readable artifact
+  ospec execute launch [goal-path|project-path] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot|shell|generic] [--dry-run] [--json] - write the capability-based runtime adapter launch plan without starting workers; --json prints the machine-readable artifact
   ospec execute collect [goal-path|project-path] [--task task-id] [--run run-id] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] - collect a worker run into task completion state
   ospec execute retry [goal-path|project-path] --task task-id [--run run-id] [--summary "..."] [--force] - reopen a blocked or failed task and create a fresh dispatch packet
   ospec execute complete <task-id> [goal-path|project-path] [--status DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED] [--summary "..."] [--usage-file usage.json] - record a worker result and ingest the dispatch usage sidecar automatically when present; NEEDS_CONTEXT/BLOCKED writes blocker escalation artifacts

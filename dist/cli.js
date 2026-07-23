@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.9.5';
+const CLI_VERSION = '1.9.6';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -226,7 +226,7 @@ function parseFinalizeCommandArgs(commandArgs) {
 }
 function getNewLikeUsage(commandName) {
     return commandName === 'goal'
-        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--target codex|gpt|claude|gemini|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
+        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
         : `Usage: ospec ${commandName} <change-name> [root-dir] [--flags flag1,flag2]`;
 }
 function parseNewCommandArgs(commandArgs, commandName = 'new') {

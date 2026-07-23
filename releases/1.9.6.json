@@ -1,0 +1,16 @@
+{
+  "title_suffix": "Grok Build native goal support",
+  "summary": "OSpec 1.9.6 adds xAI's Grok Build CLI (Grok 4.5) as a first-class goal controller target with native subagent dispatch and bounded-wait collection, verified against the real CLI.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.5...1.9.6",
+  "new": [
+    "`--target grok` is accepted everywhere a worker tool target is used: goal creation, handoff, launch plans, worker profiles, and the runtime adapter registry.",
+    "The Grok Build native contract dispatches one `spawn_subagent` child per parallel-safe action packet and collects results with `get_command_or_subagent_output` using the returned subagent ids and a bounded `timeout_ms`, following the same 30s poll / 60s max-wait heartbeat contract as the other native targets."
+  ],
+  "improved": [
+    "Launch handoff plans include a dedicated grok-build-native-subagent adapter with dispatch, parallelism, and completion instructions, and never fall back to starting a grok CLI process.",
+    "Bounded-wait guidance across the protocol documents and the ospec-goal skill now names the Grok Build primitives alongside Codex/GPT wait_agent and Claude Task polling."
+  ],
+  "docs": [
+    "Target enumerations and native-wait rules updated across protocol documents, project conventions, usage documentation in four languages, and generated project templates."
+  ]
+}

@@ -33,6 +33,13 @@ const NATIVE_TARGETS = Object.freeze({
         result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
         supportsParallel: true,
     },
+    grok: {
+        primitive: 'spawn_subagent',
+        dispatch: 'Call spawn_subagent once per action packet in the current Grok Build session.',
+        wait: 'Use get_command_or_subagent_output with the returned subagent ids and a timeout_ms no greater than maxWaitMs. Never make one indefinite wait; return after each bounded poll.',
+        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        supportsParallel: true,
+    },
     opencode: {
         primitive: '@mention',
         dispatch: 'Dispatch one OpenCode @mention subagent per action packet.',
