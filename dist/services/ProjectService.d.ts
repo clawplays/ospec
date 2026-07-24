@@ -187,6 +187,19 @@ export declare class ProjectService {
     scanSkillHierarchy(rootDir: string): Promise<SkillsStatus>;
     getExecutionStatus(rootDir: string): Promise<ExecutionStatus>;
     getActiveChangeStatusReport(rootDir: string): Promise<ActiveChangeStatusReport>;
+    /**
+     * Guards against silent evidence loss through Git: when the change's
+     * documents are tracked but its artifacts directory is caught by a
+     * .gitignore rule (a global "artifacts/" pattern is a common footgun),
+     * every review, verification, and loop artifact would vanish from any
+     * clone or merge while the archive looks complete on this disk. Blocks
+     * only that inconsistent state; wholly-untracked changes (deliberate
+     * local-only projects) and non-Git directories pass.
+     */
+    assessArchiveEvidenceTracking(featureDir: string): {
+        level: 'ok' | 'block';
+        message: string | null;
+    };
     getActiveChangeStatusItem(featurePath: string): Promise<ActiveChangeStatusItem>;
     listActiveChangeNames(rootDir: string): Promise<string[]>;
     finalizeChange(featurePath: string, options?: FinalizeChangeOptions): Promise<{

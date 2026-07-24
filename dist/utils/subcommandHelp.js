@@ -52,6 +52,7 @@ function getIndexHelpText() {
 Index Commands:
   ospec index check [path]  - inspect index presence, freshness, and stats
   ospec index build [path]  - rebuild SKILL.index.json
+  ospec index query <keyword...> [--path <dir>] [--limit N] [--json] - return only the index entries matching the keywords; use this instead of reading the whole SKILL.index.json
   ospec index help          - show index command help
 `;
 }

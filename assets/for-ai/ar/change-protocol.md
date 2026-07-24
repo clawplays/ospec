@@ -4,7 +4,7 @@
 
 ## السياق
 
-في البداية اقرأ `.skillrc` والعناصر ذات الصلة من `SKILL.index.json` و`proposal.md` و`tasks.md` و`state.json` فقط. اقرأ `verification.md` عند التحقق و`review.md` عند closeout. اقرأ `ai-guide.md` أو `execution-protocol.md` الكامل فقط عند غياب هذا الملف أو تفعيل plugin حاجب أو وجود قاعدة محددة غامضة.
+في البداية اقرأ `.skillrc` و`proposal.md` و`tasks.md` و`state.json` فقط؛ واسترجع عناصر الفهرس ذات الصلة عبر `ospec index query <كلمات...>` بدلاً من قراءة `SKILL.index.json` كاملاً. اقرأ `verification.md` عند التحقق و`review.md` عند closeout. اقرأ `ai-guide.md` أو `execution-protocol.md` الكامل فقط عند غياب هذا الملف أو تفعيل plugin حاجب أو وجود قاعدة محددة غامضة.
 
 ## دورة الحياة
 

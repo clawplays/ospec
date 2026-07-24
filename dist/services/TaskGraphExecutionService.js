@@ -9143,6 +9143,10 @@ class TaskGraphExecutionService {
         }
         return candidates.some(candidate => candidate === '.ospec/session-brief.json'
             || candidate === '.ospec/session-brief.md'
+            || candidate === '.ospec/cache/SKILL.index.cache.json'
+            || candidate === 'cache/SKILL.index.cache.json'
+            || candidate === '.ospec/cache/.gitignore'
+            || candidate === 'cache/.gitignore'
             || candidate === `.ospec/${constants_1.FILE_NAMES.UPDATE_PROVENANCE}`
             || candidate.startsWith('.ospec/brainstorms/'));
     }

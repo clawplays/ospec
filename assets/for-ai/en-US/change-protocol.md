@@ -4,7 +4,7 @@ Use this compact protocol when the user selected an OSpec change. Profile select
 
 ## Context
 
-At start, read `.skillrc`, the relevant `SKILL.index.json` entries, `proposal.md`, `tasks.md`, and `state.json`. Read `verification.md` when entering verification and `review.md` during closeout. Read the full `ai-guide.md` or `execution-protocol.md` only when this compact file is missing, a blocking plugin is active, or a specific ambiguous rule requires it.
+At start, read `.skillrc`, `proposal.md`, `tasks.md`, and `state.json`, and use `ospec index query <keyword...>` for relevant index entries instead of reading the whole `SKILL.index.json`. Read `verification.md` when entering verification and `review.md` during closeout. Read the full `ai-guide.md` or `execution-protocol.md` only when this compact file is missing, a blocking plugin is active, or a specific ambiguous rule requires it.
 
 ## Lifecycle
 

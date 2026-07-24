@@ -25,7 +25,7 @@ The user owns profile selection. Once the user chooses a change, keep it on the 
 ## Read Order
 
 1. `.skillrc`
-2. Relevant entries from `.ospec/SKILL.index.json` for nested projects, or root `SKILL.index.json` for legacy classic projects
+2. `ospec index query <keyword...>` for the relevant `.ospec/SKILL.index.json` entries (root `SKILL.index.json` for legacy classic projects); never read the whole index file — it grows without bound as changes archive
 3. `.ospec/for-ai/change-protocol.md` for nested projects, or legacy `for-ai/change-protocol.md`
 4. `.ospec/changes/active/<change>/proposal.md`, `tasks.md`, and `state.json` for nested projects, or their legacy classic paths
 5. Read `verification.md` only when entering verification

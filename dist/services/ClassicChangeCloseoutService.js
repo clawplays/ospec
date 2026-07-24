@@ -103,7 +103,13 @@ class ClassicChangeCloseoutService {
             .replace(/\\/g, '/')
             .replace(/\/+$/, '');
         const managedPrefixes = ['.ospec', 'changes', 'for-ai', 'docs/project'];
-        const managedFiles = new Set(['.skillrc', 'SKILL.md', 'SKILL.index.json']);
+        const managedFiles = new Set([
+            '.skillrc',
+            'SKILL.md',
+            'SKILL.index.json',
+            'cache/SKILL.index.cache.json',
+            'cache/.gitignore',
+        ]);
         const scopes = [...affects, ...documentationUpdates];
         const withinScope = (filePath, scope) => filePath === scope || filePath.startsWith(`${scope}/`);
         const dirtyPaths = status.stdout

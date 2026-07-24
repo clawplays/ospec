@@ -26,7 +26,7 @@ Do not hand-write an approximation of `ospec init`. Do not assume a web stack, a
 For an initialized project, read in this order:
 
 1. `.skillrc` for layout, language, workflow policy, plugins, and model profiles.
-2. `SKILL.index.json` and `docs/project/feature-index.md` as routers.
+2. `ospec index query <keyword...>` as the router into `SKILL.index.json` and `docs/project/feature-index.md`; never read the whole index file — it grows without bound as changes archive.
 3. The current session brief, bootstrap, dispatch, review, or repair packet.
 4. Only the indexed project documents, change files, and target files named by that packet.
 

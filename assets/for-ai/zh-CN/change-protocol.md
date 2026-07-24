@@ -4,7 +4,7 @@
 
 ## 上下文
 
-开始时只读 `.skillrc`、`SKILL.index.json` 的相关条目、`proposal.md`、`tasks.md` 和 `state.json`。进入验证时再读 `verification.md`，收口时再读 `review.md`。只有缺少本文件、启用了阻塞插件或某条规则确实有歧义时，才读取完整 `ai-guide.md` 或 `execution-protocol.md`。
+开始时只读 `.skillrc`、`proposal.md`、`tasks.md` 和 `state.json`；索引条目用 `ospec index query <关键词...>` 按需检索，不要通读整个 `SKILL.index.json`。进入验证时再读 `verification.md`，收口时再读 `review.md`。只有缺少本文件、启用了阻塞插件或某条规则确实有歧义时，才读取完整 `ai-guide.md` 或 `execution-protocol.md`。
 
 ## 生命周期
 

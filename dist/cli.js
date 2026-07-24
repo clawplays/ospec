@@ -62,7 +62,7 @@ const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
 const services_1 = require("./services");
-const CLI_VERSION = '1.9.6';
+const CLI_VERSION = '1.9.7';
 function showInitUsage() {
     console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
 }
@@ -497,7 +497,7 @@ async function main() {
             }
             case 'index': {
                 const indexCmd = new IndexCommand_1.IndexCommand();
-                await indexCmd.execute(commandArgs[0] || 'check', commandArgs[1]);
+                await indexCmd.execute(commandArgs[0] || 'check', commandArgs[0] === 'query' ? undefined : commandArgs[1], commandArgs.slice(1));
                 break;
             }
             case 'plugins': {

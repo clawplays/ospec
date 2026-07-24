@@ -50,7 +50,7 @@ Use `ospec-change` for small routine changes that only need the classic fast flo
 ## Read Order
 
 1. `.skillrc`
-2. `.ospec/SKILL.index.json` for nested projects, or root `SKILL.index.json`
+2. `ospec index query <keyword...>` for the relevant `.ospec/SKILL.index.json` entries (root `SKILL.index.json` for legacy classic projects); never read the whole index file — it grows without bound as changes archive
 3. `.ospec/session-brief.md` and `ospec execute status [goal] --brief`
 4. the current dispatch, review, decision, or verification packet for the next action
 5. target files and only the project or archived-feature docs routed by `SKILL.index.json` and `docs/project/feature-index.md`

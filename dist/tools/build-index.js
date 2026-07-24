@@ -14,6 +14,7 @@ const ARCHIVED_DOCUMENTS = [
     'verification.md',
     'review.md',
     'artifacts/reviews/final-review.md',
+    'artifacts/agents/force-archive.json',
 ];
 async function main() {
     try {
@@ -109,11 +110,13 @@ async function runHookCheck(rootDir, event) {
 }
 async function writeIndex(rootDir, options) {
     const layout = await getProjectLayout(rootDir);
-    const archivedChanges = await scanArchivedChanges(rootDir, layout);
+    await loadRunCache(rootDir, layout);
+    const archivedChanges = await scanArchivedChangesWithHistory(rootDir, layout);
     await writeArchivedChangeKnowledgeDocuments(rootDir, layout, archivedChanges);
     await writeFeatureIndex(rootDir, layout, archivedChanges);
     const indexPath = resolveManagedPath(rootDir, INDEX_FILE, layout);
     const nextIndex = await buildIndex(rootDir, { layout, archivedChanges });
+    await saveRunCache(rootDir, layout);
     const currentIndex = await readJsonIfExists(indexPath);
     if (currentIndex && isSameIndex(currentIndex, nextIndex)) {
         if (!options.silent) {
@@ -135,8 +138,10 @@ async function writeIndex(rootDir, options) {
 }
 async function computeIndexStatus(rootDir) {
     const layout = await getProjectLayout(rootDir);
+    await loadRunCache(rootDir, layout);
     const currentIndex = await readJsonIfExists(resolveManagedPath(rootDir, INDEX_FILE, layout));
     const nextIndex = await buildIndex(rootDir);
+    await saveRunCache(rootDir, layout);
     return {
         stale: !currentIndex || !isSameIndex(currentIndex, nextIndex),
         currentIndex,
@@ -180,7 +185,7 @@ async function buildIndex(rootDir, snapshot) {
     if (await exists(docsRoot)) {
         await walkMarkdownDocuments(rootDir, docsRoot, documents);
     }
-    const archivedChanges = snapshot?.archivedChanges || await scanArchivedChanges(rootDir, layout);
+    const archivedChanges = snapshot?.archivedChanges || await scanArchivedChangesWithHistory(rootDir, layout);
     for (const change of archivedChanges) {
         for (const documentPath of change.project_documents || []) {
             const document = documents[documentPath];
@@ -218,6 +223,23 @@ async function walkMarkdownDocuments(rootDir, currentDir, documents) {
         if (!entry.name.toLowerCase().endsWith('.md') || entry.name === SKILL_FILE)
             continue;
         const relativePath = normalizePath(path.relative(rootDir, fullPath));
+        let fingerprint = null;
+        try {
+            const stat = await fsp.stat(fullPath);
+            fingerprint = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+        }
+        catch {
+            fingerprint = null;
+        }
+        if (fingerprint && runCache) {
+            const cached = runCache.documents[relativePath];
+            if (cached && cached.fp === fingerprint && cached.doc) {
+                const doc = JSON.parse(JSON.stringify(cached.doc));
+                documents[relativePath] = doc;
+                runCache.nextDocuments[relativePath] = { fp: fingerprint, doc: cached.doc };
+                continue;
+            }
+        }
         const content = await fsp.readFile(fullPath, 'utf8');
         const parsed = parseSkillFile(content);
         let metadata = {};
@@ -239,6 +261,12 @@ async function walkMarkdownDocuments(rootDir, currentDir, documents) {
             modules: optionalMetadataList(metadata.modules),
             aliases: optionalMetadataList(metadata.aliases),
         };
+        if (fingerprint && runCache) {
+            runCache.nextDocuments[relativePath] = {
+                fp: fingerprint,
+                doc: JSON.parse(JSON.stringify(documents[relativePath])),
+            };
+        }
     }
 }
 function optionalMetadataList(value) {
@@ -258,18 +286,175 @@ function inferDocumentKind(relativePath) {
         return 'planning';
     return 'other';
 }
+// The cache lives in a self-gitignored cache/ directory: its fingerprints are
+// machine-local mtimes, so committing it would only produce repo churn.
+const ARCHIVE_SCAN_CACHE_FILE = 'cache/SKILL.index.cache.json';
+const FEATURE_INDEX_RECENT_LIMIT = 30;
+const KNOWLEDGE_DOC_FORMAT = 2;
+// One immutable-input cache per run: archived changes never mutate after they
+// are written and markdown documents change rarely, so fingerprinting them
+// turns every rebuild and hook check into O(changed inputs). Deleting the
+// cache file forces a full rescan.
+let runCache = null;
+async function loadRunCache(rootDir, layout) {
+    const config = await readJsonIfExists(path.join(rootDir, '.skillrc'));
+    const documentLanguage = String(config?.documentLanguage || 'en-US');
+    const state = {
+        docMetaOk: false,
+        indexLoaded: false,
+        fingerprints: {},
+        nextFingerprints: {},
+        documents: {},
+        nextDocuments: {},
+        cachedEntries: new Map(),
+        nextEntries: {},
+        docFps: {},
+        nextDocFps: {},
+        verifiedDocs: new Map(),
+        indexArchivedChanges: null,
+        hits: new Set(),
+        misses: 0,
+        missDirs: new Map(),
+        documentLanguage,
+    };
+    try {
+        const cache = await readJsonIfExists(resolveManagedPath(rootDir, ARCHIVE_SCAN_CACHE_FILE, layout));
+        if (cache?.version === '1.0') {
+            if (cache.fingerprints && typeof cache.fingerprints === 'object')
+                state.fingerprints = cache.fingerprints;
+            if (cache.documents && typeof cache.documents === 'object')
+                state.documents = cache.documents;
+            if (cache.docFps && typeof cache.docFps === 'object')
+                state.docFps = cache.docFps;
+            // Reused entries come from the cache's own post-merge snapshots, never
+            // from the on-disk index, so a damaged index cannot poison hits.
+            if (cache.entries && typeof cache.entries === 'object') {
+                for (const [archive, entry] of Object.entries(cache.entries)) {
+                    if (archive && entry && typeof entry === 'object')
+                        state.cachedEntries.set(archive, entry);
+                }
+            }
+            state.docMetaOk = cache.documentLanguage === documentLanguage
+                && cache.knowledgeDocFormat === KNOWLEDGE_DOC_FORMAT;
+        }
+    }
+    catch {
+        // A damaged cache degrades to a full rescan, never to a failed build.
+    }
+    try {
+        const currentIndex = await readJsonIfExists(resolveManagedPath(rootDir, INDEX_FILE, layout));
+        if (currentIndex) {
+            state.indexLoaded = true;
+            state.indexArchivedChanges = Array.isArray(currentIndex.archived_changes) ? currentIndex.archived_changes : [];
+        }
+    }
+    catch {
+        state.indexLoaded = false;
+    }
+    runCache = state;
+}
+async function saveRunCache(rootDir, layout) {
+    if (!runCache)
+        return;
+    // Re-fingerprint freshly extracted archives after their knowledge documents
+    // were written, so a new archive settles into cache hits on the very next run.
+    for (const [archive, archiveDir] of runCache.missDirs) {
+        try {
+            runCache.nextFingerprints[archive] = await computeArchiveFingerprint(rootDir, archiveDir);
+        }
+        catch {
+            delete runCache.nextFingerprints[archive];
+        }
+    }
+    // A doc fingerprint blesses the writer skip only after this run's writer
+    // composed and verified that document; hit archives carry theirs forward.
+    for (const [archive, docPath] of runCache.verifiedDocs) {
+        try {
+            const stat = await fsp.stat(docPath);
+            runCache.nextDocFps[archive] = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+        }
+        catch {
+            delete runCache.nextDocFps[archive];
+        }
+    }
+    for (const archive of runCache.hits) {
+        if (!(archive in runCache.nextDocFps) && runCache.docFps[archive]) {
+            runCache.nextDocFps[archive] = runCache.docFps[archive];
+        }
+    }
+    const cachePath = resolveManagedPath(rootDir, ARCHIVE_SCAN_CACHE_FILE, layout);
+    const next = `${JSON.stringify({
+        version: '1.0',
+        documentLanguage: runCache.documentLanguage,
+        knowledgeDocFormat: KNOWLEDGE_DOC_FORMAT,
+        fingerprints: runCache.nextFingerprints,
+        entries: runCache.nextEntries,
+        docFps: runCache.nextDocFps,
+        documents: runCache.nextDocuments,
+    }, null, 2)}\n`;
+    try {
+        await fsp.mkdir(path.dirname(cachePath), { recursive: true });
+        const ignorePath = path.join(path.dirname(cachePath), '.gitignore');
+        if (!(await exists(ignorePath)))
+            await fsp.writeFile(ignorePath, '*\n', 'utf8');
+        const previous = await exists(cachePath) ? await fsp.readFile(cachePath, 'utf8') : null;
+        if (previous !== next)
+            await fsp.writeFile(cachePath, next, 'utf8');
+    }
+    catch {
+        // The fingerprint cache is a best-effort accelerator; failing to write it
+        // must never fail an index build.
+    }
+}
+async function computeArchiveFingerprint(rootDir, archiveDir) {
+    const statOf = async filePath => {
+        try {
+            const stat = await fsp.stat(filePath);
+            return `${Math.round(stat.mtimeMs)}:${stat.size}`;
+        }
+        catch {
+            return '-';
+        }
+    };
+    const archive = normalizePath(path.relative(rootDir, archiveDir));
+    const knowledgeDocument = getKnowledgeDocumentRelativePath(archive);
+    return [
+        await statOf(path.join(archiveDir, 'state.json')),
+        await statOf(path.join(archiveDir, 'proposal.md')),
+        await statOf(path.join(archiveDir, 'artifacts', 'agents', 'task-graph.json')),
+        knowledgeDocument ? await statOf(path.join(rootDir, ...knowledgeDocument.split('/'))) : '-',
+    ].join('|');
+}
 async function scanArchivedChanges(rootDir, layout) {
     const archivedRoot = resolveManagedPath(rootDir, 'changes/archived', layout);
     if (!(await exists(archivedRoot)))
         return [];
+    if (!runCache)
+        await loadRunCache(rootDir, layout);
+    const cacheState = runCache;
     const changes = [];
     const visit = async currentDir => {
         const entries = (await fsp.readdir(currentDir, { withFileTypes: true }))
             .sort((left, right) => left.name.localeCompare(right.name));
         if (entries.some((entry) => entry.isFile() && entry.name === 'state.json')) {
+            const archive = normalizePath(path.relative(rootDir, currentDir));
+            const fingerprint = await computeArchiveFingerprint(rootDir, currentDir);
+            const cachedEntry = cacheState.fingerprints[archive] === fingerprint
+                ? cacheState.cachedEntries.get(archive)
+                : undefined;
+            if (cachedEntry) {
+                cacheState.nextFingerprints[archive] = fingerprint;
+                cacheState.hits.add(archive);
+                changes.push(JSON.parse(JSON.stringify(cachedEntry)));
+                return;
+            }
+            cacheState.misses += 1;
             const change = await readArchivedChange(rootDir, currentDir);
-            if (change)
+            if (change) {
+                cacheState.nextFingerprints[archive] = fingerprint;
+                cacheState.missDirs.set(archive, currentDir);
                 changes.push(change);
+            }
             return;
         }
         for (const entry of entries) {
@@ -279,6 +464,123 @@ async function scanArchivedChanges(rootDir, layout) {
     };
     await visit(archivedRoot);
     return changes.sort((left, right) => right.archive.localeCompare(left.archive));
+}
+async function scanArchivedChangesWithHistory(rootDir, layout) {
+    const current = await scanArchivedChanges(rootDir, layout);
+    // When every archive was a cache hit AND the cache's post-merge entries
+    // still match the on-disk index byte for byte, re-merging with that index
+    // and its committed copy is a no-op, so skip the git spawn entirely. Any
+    // divergence (damaged or externally updated index) falls through to the
+    // full history merge, which repairs from the index and HEAD.
+    if (runCache && runCache.misses === 0 && runCache.indexLoaded
+        && JSON.stringify(current) === JSON.stringify(runCache.indexArchivedChanges || [])) {
+        for (const entry of current)
+            runCache.nextEntries[entry.archive] = entry;
+        return current;
+    }
+    const historical = await readArchivedChangeHistory(rootDir, layout);
+    const historicalByArchive = new Map();
+    for (const entry of historical) {
+        const archive = normalizePath(String(entry?.archive || ''));
+        if (!archive)
+            continue;
+        const entries = historicalByArchive.get(archive) || [];
+        entries.push(entry);
+        historicalByArchive.set(archive, entries);
+    }
+    const merged = current.map(entry => {
+        const history = historicalByArchive.get(normalizePath(entry.archive)) || [];
+        return {
+            ...entry,
+            target_files: mergeHistoricalStringLists(history, entry.target_files),
+            verification_commands: mergeHistoricalStringLists(history, entry.verification_commands, 'verification_commands'),
+            project_documents: mergeHistoricalStringLists(history, entry.project_documents, 'project_documents'),
+            documents: mergeHistoricalOrderedLists(history, entry.documents),
+        };
+    });
+    if (runCache) {
+        for (const entry of merged)
+            runCache.nextEntries[entry.archive] = entry;
+    }
+    return merged;
+}
+function mergeHistoricalStringLists(historical, current, key = 'target_files') {
+    return Array.from(new Set([
+        ...historical.flatMap(entry => Array.isArray(entry?.[key]) ? entry[key] || [] : []),
+        ...(current || []),
+    ].map(value => String(value || '').trim()).filter(Boolean))).sort();
+}
+function mergeHistoricalOrderedLists(historical, current) {
+    return Array.from(new Set([
+        ...historical.flatMap(entry => Array.isArray(entry?.documents) ? entry.documents || [] : []),
+        ...(current || []),
+    ].map(value => String(value || '').trim()).filter(Boolean)));
+}
+async function readArchivedChangeHistory(rootDir, layout) {
+    const indexPath = resolveManagedPath(rootDir, INDEX_FILE, layout);
+    const candidates = [];
+    if (await exists(indexPath)) {
+        candidates.push(await fsp.readFile(indexPath, 'utf8'));
+    }
+    const relativeIndexPath = normalizePath(path.relative(rootDir, indexPath));
+    const gitShow = spawnSync('git', ['-C', rootDir, 'show', `HEAD:${relativeIndexPath}`], {
+        encoding: 'utf8',
+        windowsHide: true,
+    });
+    if (!gitShow.error && gitShow.status === 0 && gitShow.stdout) {
+        candidates.push(gitShow.stdout);
+    }
+    const entries = [];
+    for (const candidate of candidates) {
+        try {
+            const cleaned = candidate.charCodeAt(0) === 0xfeff ? candidate.slice(1) : candidate;
+            const parsed = JSON.parse(cleaned);
+            if (Array.isArray(parsed?.archived_changes))
+                entries.push(...parsed.archived_changes);
+        }
+        catch {
+            // A damaged historical index must not prevent a fresh index build.
+        }
+    }
+    return entries;
+}
+function readKnowledgeDocumentFallback(content) {
+    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!frontmatter)
+        return null;
+    const block = frontmatter[1];
+    const readList = (key) => {
+        const match = block.match(new RegExp(`^${key}: (\\[.*\\])$`, 'm'));
+        if (!match)
+            return undefined;
+        try {
+            const parsed = JSON.parse(match[1]);
+            return Array.isArray(parsed) ? parsed.map(item => String(item ?? '').trim()).filter(Boolean) : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const readString = (key) => {
+        const match = block.match(new RegExp(`^${key}: ("(?:[^"\\\\]|\\\\.)*")$`, 'm'));
+        if (!match)
+            return undefined;
+        try {
+            const parsed = JSON.parse(match[1]);
+            return typeof parsed === 'string' && parsed.trim() ? parsed : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const fallback = {
+        affects: readList('affects'),
+        target_files: readList('target_files'),
+        verification_commands: readList('verification_commands'),
+        project_documents: readList('project_documents'),
+        summary: readString('summary'),
+    };
+    return Object.values(fallback).some(value => value !== undefined) ? fallback : null;
 }
 async function readArchivedChange(rootDir, archiveDir) {
     try {
@@ -330,22 +632,72 @@ async function readArchivedChange(rootDir, archiveDir) {
             && await exists(path.join(rootDir, ...expectedKnowledgeDocument.split('/')))
             ? expectedKnowledgeDocument
             : undefined;
+        // Baked-in fallback: the knowledge document carries the extracted fields in
+        // its frontmatter, so evidence lost from the archive (for example artifacts
+        // dropped by a gitignore rule during a merge) does not silently degrade the
+        // index or regenerate the document as empty.
+        if (knowledgeDocument
+            && (targetFiles.size === 0 || verificationCommands.size === 0 || projectDocuments.size === 0 || !summary || affects.length === 0)) {
+            try {
+                const fallback = readKnowledgeDocumentFallback(await fsp.readFile(path.join(rootDir, ...knowledgeDocument.split('/')), 'utf8'));
+                if (fallback) {
+                    if (targetFiles.size === 0)
+                        for (const value of fallback.target_files || [])
+                            targetFiles.add(value);
+                    if (verificationCommands.size === 0)
+                        for (const value of fallback.verification_commands || [])
+                            verificationCommands.add(value);
+                    if (projectDocuments.size === 0)
+                        for (const value of fallback.project_documents || [])
+                            projectDocuments.add(value);
+                    if (!summary && fallback.summary)
+                        summary = fallback.summary;
+                    if (affects.length === 0 && Array.isArray(fallback.affects))
+                        affects = [...fallback.affects].sort();
+                }
+            }
+            catch {
+                // A damaged knowledge document must not hide the archived change.
+            }
+        }
+        const disposition = state.archive_disposition === 'forced' ? 'forced' : undefined;
+        let forceArchiveRecord = null;
+        if (disposition === 'forced') {
+            forceArchiveRecord = await readJsonIfExists(path.join(archiveDir, 'artifacts', 'agents', 'force-archive.json'));
+        }
         return {
             feature: typeof state.feature === 'string' && state.feature.trim() ? state.feature.trim() : path.basename(archiveDir),
             summary,
             affects,
             archive,
-            completed_at: typeof state.completed_at === 'string'
-                ? state.completed_at
-                : typeof state.last_updated === 'string'
-                    ? state.last_updated
-                    : null,
+            completed_at: disposition === 'forced'
+                ? null
+                : typeof state.completed_at === 'string'
+                    ? state.completed_at
+                    : typeof state.last_updated === 'string'
+                        ? state.last_updated
+                        : null,
             documents,
             project_documents: [...projectDocuments].sort(),
             knowledge_document: knowledgeDocument,
             target_files: [...targetFiles].sort(),
             verification_commands: [...verificationCommands].sort(),
             workflow_profile: typeof state.workflow_profile_id === 'string' ? state.workflow_profile_id : undefined,
+            ...(disposition === 'forced' ? {
+                disposition,
+                completion_status: 'incomplete',
+                accepted_risk: true,
+                force_archive_reason: typeof forceArchiveRecord?.reason === 'string'
+                    ? forceArchiveRecord.reason
+                    : '',
+                failing_checks: Array.from(new Set([
+                    ...(Array.isArray(forceArchiveRecord?.failingChecks) ? forceArchiveRecord.failingChecks : [])
+                        .map((check) => String(check?.name || '').trim()),
+                    ...(Array.isArray(forceArchiveRecord?.progressIssues) ? forceArchiveRecord.progressIssues : [])
+                        .map((issue) => `goal.progress: ${String(issue || '').trim()}`),
+                ].filter(Boolean))),
+                archived_at: typeof state.archived_at === 'string' ? state.archived_at : undefined,
+            } : {}),
         };
     }
     catch {
@@ -379,27 +731,71 @@ async function writeArchivedChangeKnowledgeDocuments(rootDir, layout, archivedCh
         if (!relativeToKnowledge || relativeToKnowledge === '..' || relativeToKnowledge.startsWith(`..${path.sep}`) || path.isAbsolute(relativeToKnowledge))
             continue;
         expectedPaths.add(targetPath.toLowerCase());
-        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
         change.knowledge_document = normalizePath(path.relative(rootDir, targetPath));
+        // A fingerprint-hit archive whose merged entry still equals the cached
+        // entry regenerates byte-identical content, so skip the compose/compare
+        // round-trip when the on-disk document still matches the stat fingerprint
+        // recorded after the last verified write (metaOk guards language and
+        // format changes; any drift falls through and rewrites the document).
+        if (runCache && runCache.docMetaOk && runCache.hits.has(change.archive)) {
+            const blessedDocFp = runCache.docFps[change.archive];
+            let currentDocFp = null;
+            try {
+                const stat = await fsp.stat(targetPath);
+                currentDocFp = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+            }
+            catch {
+                currentDocFp = null;
+            }
+            if (blessedDocFp && currentDocFp === blessedDocFp
+                && JSON.stringify(change) === JSON.stringify(runCache.cachedEntries.get(change.archive))) {
+                continue;
+            }
+        }
+        await fsp.mkdir(path.dirname(targetPath), { recursive: true });
         await assertGeneratedKnowledgeDocumentReplaceable(targetPath, change.archive);
         const archiveLink = normalizePath(path.relative(path.dirname(targetPath), archiveAbsolute));
+        const forced = change.disposition === 'forced';
         const lines = [
             '---',
             `name: ${JSON.stringify(`archived-change-${change.feature}`)}`,
             `title: ${JSON.stringify(change.feature)}`,
-            'tags: [project, feature, completed, archive, ai-index]',
+            forced
+                ? 'tags: [project, feature, archive, incomplete, accepted-risk, ai-index]'
+                : 'tags: [project, feature, completed, archive, ai-index]',
             `features: [${JSON.stringify(change.feature)}]`,
             `archive: ${JSON.stringify(change.archive)}`,
             `workflow_profile: ${JSON.stringify(change.workflow_profile || 'change')}`,
             `completed_at: ${JSON.stringify(change.completed_at || '')}`,
+            `affects: ${JSON.stringify(change.affects || [])}`,
+            `target_files: ${JSON.stringify(change.target_files || [])}`,
+            `verification_commands: ${JSON.stringify(change.verification_commands || [])}`,
+            `project_documents: ${JSON.stringify(change.project_documents || [])}`,
+            `summary: ${JSON.stringify(change.summary || '')}`,
+            ...(forced ? [
+                'disposition: forced',
+                'completion_status: incomplete',
+                'accepted_risk: true',
+                `force_archive_reason: ${JSON.stringify(change.force_archive_reason || '')}`,
+            ] : []),
             'generated: true',
             'generator: ospec-archive-knowledge',
             '---',
             '',
             `# ${change.feature}`,
             '',
-            `> ${copy.guidance}`,
+            forced ? `> **${copy.forceWarning}**` : `> ${copy.guidance}`,
             '',
+            ...(forced ? [
+                `## ${copy.archiveDisposition}`,
+                '',
+                `- ${copy.disposition}: forced`,
+                `- ${copy.completionStatus}: incomplete`,
+                `- ${copy.acceptedRisk}: true`,
+                `- ${copy.forceReason}: ${change.force_archive_reason || copy.notRecorded}`,
+                `- ${copy.failingGates}: ${(change.failing_checks || []).length > 0 ? (change.failing_checks || []).join(', ') : copy.none.replace(/^- /, '')}`,
+                '',
+            ] : []),
             `## ${copy.summary}`,
             '',
             change.summary || copy.notRecorded,
@@ -440,6 +836,8 @@ async function writeArchivedChangeKnowledgeDocuments(rootDir, layout, archivedCh
         const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
         if (previous !== content)
             await fsp.writeFile(targetPath, content, 'utf8');
+        if (runCache)
+            runCache.verifiedDocs.set(change.archive, targetPath);
     }
     await removeStaleArchivedKnowledgeDocuments(knowledgeRoot, expectedPaths);
 }
@@ -505,6 +903,13 @@ function getArchivedKnowledgeCopy(documentLanguage) {
             archive: '完整归档',
             none: '- 无',
             notRecorded: '未记录摘要，请打开归档 proposal 查看。',
+            forceWarning: '此 change 已在未完成状态下被强制归档，不能视为已验证完成。',
+            archiveDisposition: '强制归档状态',
+            disposition: '归档方式',
+            completionStatus: '完成状态',
+            acceptedRisk: '已接受风险',
+            forceReason: '强制归档原因',
+            failingGates: '未通过门禁',
         };
     if (documentLanguage === 'ja-JP')
         return {
@@ -518,6 +923,13 @@ function getArchivedKnowledgeCopy(documentLanguage) {
             archive: '完全なアーカイブ',
             none: '- なし',
             notRecorded: '概要は記録されていません。archive の proposal を開いてください。',
+            forceWarning: 'この change は未完了のまま強制 archive されており、検証済み完了として扱えません。',
+            archiveDisposition: '強制 archive 状態',
+            disposition: 'archive 方法',
+            completionStatus: '完了状態',
+            acceptedRisk: '受容済みリスク',
+            forceReason: '強制 archive 理由',
+            failingGates: '未通過 gate',
         };
     if (documentLanguage === 'ar')
         return {
@@ -531,6 +943,13 @@ function getArchivedKnowledgeCopy(documentLanguage) {
             archive: 'الأرشيف الكامل',
             none: '- لا يوجد',
             notRecorded: 'لم يسجل ملخص؛ افتح proposal المؤرشف.',
+            forceWarning: 'تمت أرشفة هذا التغيير قسريا وهو غير مكتمل، ولم يتم التحقق من اكتماله.',
+            archiveDisposition: 'حالة الأرشفة القسرية',
+            disposition: 'طريقة الأرشفة',
+            completionStatus: 'حالة الاكتمال',
+            acceptedRisk: 'المخاطر المقبولة',
+            forceReason: 'سبب الأرشفة القسرية',
+            failingGates: 'البوابات غير المجتازة',
         };
     return {
         guidance: 'Generated by OSpec at archive time so humans and AI can quickly see what this change delivered and where its evidence lives.',
@@ -543,6 +962,13 @@ function getArchivedKnowledgeCopy(documentLanguage) {
         archive: 'Full archive',
         none: '- None',
         notRecorded: 'No summary was recorded; open the archived proposal.',
+        forceWarning: 'This change was force-archived incomplete. It was not verified as complete.',
+        archiveDisposition: 'Force Archive Status',
+        disposition: 'Disposition',
+        completionStatus: 'Completion status',
+        acceptedRisk: 'Accepted risk',
+        forceReason: 'Force archive reason',
+        failingGates: 'Failing gates',
     };
 }
 async function writeFeatureIndex(rootDir, layout, archivedChanges) {
@@ -568,8 +994,18 @@ async function writeFeatureIndex(rootDir, layout, archivedChanges) {
     ];
     if (archivedChanges.length === 0)
         lines.push(copy.empty, '');
-    for (const change of archivedChanges) {
+    // Full detail is bounded to the most recent entries so this router document
+    // stays token-cheap as archives accumulate; older entries keep one link line
+    // and full data remains in the knowledge documents and `ospec index query`.
+    const recentChanges = archivedChanges.slice(0, FEATURE_INDEX_RECENT_LIMIT);
+    const olderChanges = archivedChanges.slice(FEATURE_INDEX_RECENT_LIMIT);
+    for (const change of recentChanges) {
         lines.push(`## ${change.feature}`, '');
+        if (change.disposition === 'forced') {
+            lines.push(`- ${copy.archiveStatus}: FORCED / INCOMPLETE / ACCEPTED RISK`);
+            lines.push(`- ${copy.forceReason}: ${change.force_archive_reason || copy.notRecorded}`);
+            lines.push(`- ${copy.failingGates}: ${(change.failing_checks || []).length > 0 ? (change.failing_checks || []).join(', ') : copy.none}`);
+        }
         if (change.summary)
             lines.push(`- ${copy.summary}: ${change.summary}`);
         if (change.affects.length > 0)
@@ -590,6 +1026,23 @@ async function writeFeatureIndex(rootDir, layout, archivedChanges) {
         }
         lines.push('');
     }
+    if (olderChanges.length > 0) {
+        lines.push(`## ${copy.olderHeading} (${olderChanges.length})`, '');
+        lines.push(`> ${copy.olderGuidance}`, '');
+        for (const change of olderChanges) {
+            const label = change.disposition === 'forced'
+                ? `${change.feature} — FORCED/INCOMPLETE`
+                : change.feature;
+            if (change.knowledge_document) {
+                const knowledgeLink = normalizePath(path.relative(docsProjectRoot, path.join(rootDir, ...change.knowledge_document.split('/'))));
+                lines.push(`- [${label}](${knowledgeLink})`);
+            }
+            else {
+                lines.push(`- ${label}`);
+            }
+        }
+        lines.push('');
+    }
     const content = `${lines.join('\n').trimEnd()}\n`;
     const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
     if (previous !== content)
@@ -599,7 +1052,7 @@ function getFeatureIndexCopy(documentLanguage) {
     if (documentLanguage === 'zh-CN') {
         return {
             title: '项目功能索引',
-            guidance: '由 OSpec 自动生成。使用本文件定位已完成功能，并只打开当前任务需要的归档证据或长期项目文档。',
+            guidance: '由 OSpec 自动生成。使用本文件定位归档记录；强制归档的未完成项会明确标记，不能视为已完成功能。',
             empty: '暂无已归档 change。',
             summary: '摘要',
             affects: '影响范围',
@@ -607,12 +1060,19 @@ function getFeatureIndexCopy(documentLanguage) {
             open: '打开',
             projectDocument: '长期项目文档',
             knowledgeDocument: 'change 功能文档',
+            archiveStatus: '归档状态',
+            forceReason: '强制归档原因',
+            failingGates: '未通过门禁',
+            notRecorded: '未记录',
+            none: '无',
+            olderHeading: '更早的归档 change',
+            olderGuidance: '以下条目仅列出名称与功能文档链接；详情用 `ospec index query <关键词>` 检索。',
         };
     }
     if (documentLanguage === 'ja-JP') {
         return {
             title: 'プロジェクト機能索引',
-            guidance: 'OSpec により自動生成されます。完了済み機能を特定し、現在のタスクに必要な archive evidence または永続 project document だけを開いてください。',
+            guidance: 'OSpec により自動生成されます。archive 記録を特定し、強制 archive された未完了項目を完了済み機能として扱わないでください。',
             empty: 'archive 済みの change はまだありません。',
             summary: '概要',
             affects: '影響範囲',
@@ -620,12 +1080,19 @@ function getFeatureIndexCopy(documentLanguage) {
             open: '開く',
             projectDocument: '長期プロジェクト文書',
             knowledgeDocument: 'change 機能文書',
+            archiveStatus: 'archive 状態',
+            forceReason: '強制 archive 理由',
+            failingGates: '未通過 gate',
+            notRecorded: '記録なし',
+            none: 'なし',
+            olderHeading: '過去の archive 済み change',
+            olderGuidance: '以下は名称と機能文書リンクのみです。詳細は `ospec index query <キーワード>` で取得してください。',
         };
     }
     if (documentLanguage === 'ar') {
         return {
             title: 'فهرس ميزات المشروع',
-            guidance: 'يُنشأ تلقائياً بواسطة OSpec. استخدمه لتحديد السلوك المكتمل، وافتح فقط دليل archive أو وثيقة المشروع الدائمة اللازمة للمهمة الحالية.',
+            guidance: 'يُنشأ تلقائياً بواسطة OSpec لتحديد سجلات الأرشيف؛ العناصر غير المكتملة المؤرشفة قسرياً ليست ميزات مكتملة.',
             empty: 'لا توجد تغييرات مؤرشفة بعد.',
             summary: 'الملخص',
             affects: 'النطاق المتأثر',
@@ -633,11 +1100,18 @@ function getFeatureIndexCopy(documentLanguage) {
             open: 'فتح',
             projectDocument: 'وثيقة المشروع الدائمة',
             knowledgeDocument: 'وثيقة change',
+            archiveStatus: 'حالة الأرشفة',
+            forceReason: 'سبب الأرشفة القسرية',
+            failingGates: 'البوابات غير المجتازة',
+            notRecorded: 'غير مسجل',
+            none: 'لا يوجد',
+            olderHeading: 'تغييرات مؤرشفة أقدم',
+            olderGuidance: 'تسرد البنود أدناه الاسم ووثيقة المعرفة فقط؛ استرجع التفاصيل عبر `ospec index query <كلمة>`.',
         };
     }
     return {
         title: 'Project Feature Index',
-        guidance: 'Generated by OSpec. Use this file to locate completed behavior; open only the archived evidence or durable project documents needed for the current task.',
+        guidance: 'Generated by OSpec. Use this file to locate archived records; force-archived incomplete entries are marked and are not completed behavior.',
         empty: 'No archived changes yet.',
         summary: 'Summary',
         affects: 'Affects',
@@ -645,6 +1119,13 @@ function getFeatureIndexCopy(documentLanguage) {
         open: 'open',
         projectDocument: 'Durable project document',
         knowledgeDocument: 'Change knowledge document',
+        archiveStatus: 'Archive status',
+        forceReason: 'Force archive reason',
+        failingGates: 'Failing gates',
+        notRecorded: 'Not recorded',
+        none: 'None',
+        olderHeading: 'Older Archived Changes',
+        olderGuidance: 'Entries below list the change name and knowledge document only; retrieve details with `ospec index query <keyword>`.',
     };
 }
 async function walk(currentDir, onSkillFile) {

@@ -1,0 +1,19 @@
+{
+  "title_suffix": "durable, token-lean archive knowledge",
+  "summary": "OSpec 1.9.7 makes archived-change knowledge durable against evidence loss, retrievable in a few kilobytes instead of the whole index, and cheap to rebuild: `ospec index query` answers from the index without reading it whole, feature-index.md stays bounded as archives accumulate, and warm index rebuilds reuse cached extraction so per-commit hooks stop paying a full rescan.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.6...1.9.7",
+  "new": [
+    "`ospec index query <keyword...> [--limit N] [--json] [--path <project>]` returns the top-matching archived changes, documents, and modules with weighted scoring, so an AI session retrieves what it needs in ~3KB instead of loading a multi-hundred-KB SKILL.index.json.",
+    "Generated change knowledge documents now bake the extracted facts into frontmatter (`affects`, `target_files`, `verification_commands`, `project_documents`, `summary`), and index rebuilds fall back to that frontmatter and to index history (working tree + committed copy) when archive artifacts are lost, so evidence loss no longer degrades entries to empty lists.",
+    "Archiving is blocked with a clear fix when the change's documents are git-tracked but its artifacts directory is gitignored (for example a global `artifacts/` rule), because that combination silently destroys archive evidence on the next clone or merge; force-archive with an explicit accepted risk remains available.",
+    "A machine-local run cache (`.ospec/cache/SKILL.index.cache.json`, in a self-gitignored directory) fingerprints every archive, knowledge document, and markdown document, so warm rebuilds reuse prior extraction and parsing instead of rescanning every archive."
+  ],
+  "improved": [
+    "docs/project/feature-index.md now keeps full detail for the 30 most recent archives and lists older entries as one knowledge-document link each with an `ospec index query` pointer, so the router document stays token-cheap no matter how many changes archive.",
+    "Warm index rebuilds skip re-parsing unchanged markdown documents, skip recomposing unchanged knowledge documents, and skip the per-rebuild git spawn when the cached post-merge entries still match the on-disk index byte for byte; at 166 archives a rebuild drops from ~858ms to ~340ms and any divergence still falls through to the full history-merge repair path.",
+    "The project-local git-hook index tool now renders force-archived entries (FORCED / INCOMPLETE / ACCEPTED RISK markers, failing gates, force reason) identically to the CLI builder and lists the preserved force-archive record, so the two writers can no longer flip each other's generated files in projects with forced archives."
+  ],
+  "docs": [
+    "The packaged change and goal skills, protocol documents, and project conventions now teach query-first index access in all four languages: resolve archived knowledge with `ospec index query` instead of reading the whole index file."
+  ]
+}

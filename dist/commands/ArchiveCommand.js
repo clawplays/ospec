@@ -117,6 +117,7 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
             const goalReviewSummary = isGoalWorkflow
                 ? await (0, ReviewArtifacts_1.analyzeGoalReviewSummary)(services_1.services.fileService, targetPath)
                 : null;
+            const evidenceTracking = services_1.services.projectService.assessArchiveEvidenceTracking(targetPath);
             const result = await ArchiveGate_1.archiveGate.checkArchiveReadiness(featureState, archiveConfig, {
                 activatedSteps,
                 tasksOptionalSteps,
@@ -128,6 +129,14 @@ class ArchiveCommand extends BaseCommand_1.BaseCommand {
                 goalReviewSummaryAligned: goalReviewSummary ? goalReviewSummary.aligned : null,
                 goalReviewSummaryMessage: goalReviewSummary?.message ?? null,
             });
+            if (evidenceTracking.level === 'block' && evidenceTracking.message) {
+                result.blockers.push(evidenceTracking.message);
+                result.checks.push({
+                    name: 'Archive Evidence Tracking',
+                    passed: false,
+                    message: evidenceTracking.message,
+                });
+            }
             if (classicStatus) {
                 for (const check of classicStatus.checks) {
                     if (check.name === 'archive.pending')

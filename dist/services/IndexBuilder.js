@@ -33,14 +33,142 @@ async function pathExists(targetPath) {
 async function readJson(filePath) {
     return JSON.parse((await fs_1.promises.readFile(filePath, 'utf8')).replace(/^\uFEFF/, ''));
 }
+// The cache lives in a self-gitignored cache/ directory: its fingerprints are
+// machine-local mtimes, so committing it would only produce repo churn.
+const ARCHIVE_SCAN_CACHE_FILE = 'cache/SKILL.index.cache.json';
+const FEATURE_INDEX_RECENT_LIMIT = 30;
+const KNOWLEDGE_DOC_FORMAT = 2;
 class IndexBuilder {
     constructor(skillParser) {
+        /**
+         * One immutable-input cache per run: archived changes never mutate after
+         * they are written and markdown documents change rarely, so fingerprinting
+         * them turns every rebuild and status check into O(changed inputs).
+         * Deleting SKILL.index.cache.json forces a full rescan.
+         */
+        this.runCache = null;
         this.skillParser = skillParser;
     }
     async build(rootDir) {
         const config = await this.readProjectConfig(rootDir);
+        await this.loadRunCache(rootDir, config);
         const archivedChanges = await this.scanArchivedChangesWithHistory(rootDir, config);
-        return this.buildSnapshot(rootDir, config, archivedChanges);
+        const snapshot = await this.buildSnapshot(rootDir, config, archivedChanges);
+        await this.saveRunCache(rootDir, config);
+        return snapshot;
+    }
+    async loadRunCache(rootDir, config) {
+        const documentLanguage = String(config?.documentLanguage || 'en-US');
+        const state = {
+            docMetaOk: false,
+            indexLoaded: false,
+            fingerprints: {},
+            nextFingerprints: {},
+            documents: {},
+            nextDocuments: {},
+            cachedEntries: new Map(),
+            nextEntries: {},
+            docFps: {},
+            nextDocFps: {},
+            verifiedDocs: new Map(),
+            indexArchivedChanges: null,
+            hits: new Set(),
+            misses: 0,
+            missDirs: new Map(),
+            documentLanguage,
+        };
+        try {
+            const cachePath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, ARCHIVE_SCAN_CACHE_FILE, config);
+            const cache = await pathExists(cachePath) ? await readJson(cachePath) : null;
+            if (cache?.version === '1.0') {
+                if (cache.fingerprints && typeof cache.fingerprints === 'object')
+                    state.fingerprints = cache.fingerprints;
+                if (cache.documents && typeof cache.documents === 'object')
+                    state.documents = cache.documents;
+                if (cache.docFps && typeof cache.docFps === 'object')
+                    state.docFps = cache.docFps;
+                // Reused entries come from the cache's own post-merge snapshots, never
+                // from the on-disk index, so a damaged index cannot poison hits.
+                if (cache.entries && typeof cache.entries === 'object') {
+                    for (const [archive, entry] of Object.entries(cache.entries)) {
+                        if (archive && entry && typeof entry === 'object')
+                            state.cachedEntries.set(archive, entry);
+                    }
+                }
+                state.docMetaOk = cache.documentLanguage === documentLanguage
+                    && cache.knowledgeDocFormat === KNOWLEDGE_DOC_FORMAT;
+            }
+        }
+        catch {
+            // A damaged cache degrades to a full rescan, never to a failed build.
+        }
+        try {
+            const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
+            const currentIndex = await pathExists(indexPath) ? await readJson(indexPath) : null;
+            if (currentIndex) {
+                state.indexLoaded = true;
+                state.indexArchivedChanges = Array.isArray(currentIndex.archived_changes) ? currentIndex.archived_changes : [];
+            }
+        }
+        catch {
+            state.indexLoaded = false;
+        }
+        this.runCache = state;
+    }
+    async saveRunCache(rootDir, config) {
+        const state = this.runCache;
+        this.runCache = null;
+        if (!state)
+            return;
+        // Re-fingerprint freshly extracted archives after their knowledge documents
+        // were written, so a new archive settles into cache hits on the next run.
+        for (const [archive, archiveDir] of state.missDirs) {
+            try {
+                state.nextFingerprints[archive] = await this.computeArchiveFingerprint(rootDir, archiveDir);
+            }
+            catch {
+                delete state.nextFingerprints[archive];
+            }
+        }
+        // A doc fingerprint blesses the writer skip only after this run's writer
+        // composed and verified that document; hit archives carry theirs forward.
+        for (const [archive, docPath] of state.verifiedDocs) {
+            try {
+                const stat = await fs_1.promises.stat(docPath);
+                state.nextDocFps[archive] = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+            }
+            catch {
+                delete state.nextDocFps[archive];
+            }
+        }
+        for (const archive of state.hits) {
+            if (!(archive in state.nextDocFps) && state.docFps[archive]) {
+                state.nextDocFps[archive] = state.docFps[archive];
+            }
+        }
+        try {
+            const cachePath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, ARCHIVE_SCAN_CACHE_FILE, config);
+            const next = `${JSON.stringify({
+                version: '1.0',
+                documentLanguage: state.documentLanguage,
+                knowledgeDocFormat: KNOWLEDGE_DOC_FORMAT,
+                fingerprints: state.nextFingerprints,
+                entries: state.nextEntries,
+                docFps: state.nextDocFps,
+                documents: state.nextDocuments,
+            }, null, 2)}\n`;
+            await fs_1.promises.mkdir(path_1.default.dirname(cachePath), { recursive: true });
+            const ignorePath = path_1.default.join(path_1.default.dirname(cachePath), '.gitignore');
+            if (!(await pathExists(ignorePath)))
+                await fs_1.promises.writeFile(ignorePath, '*\n', 'utf8');
+            const previous = await pathExists(cachePath) ? await fs_1.promises.readFile(cachePath, 'utf8') : null;
+            if (previous !== next)
+                await fs_1.promises.writeFile(cachePath, next, 'utf8');
+        }
+        catch {
+            // The fingerprint cache is a best-effort accelerator; failing to write it
+            // must never fail an index build.
+        }
     }
     async buildSnapshot(rootDir, config, archivedChanges) {
         const projectLayout = (0, ProjectLayout_1.getProjectLayout)(config);
@@ -129,6 +257,7 @@ class IndexBuilder {
     }
     async writeWithSummary(rootDir) {
         const config = await this.readProjectConfig(rootDir);
+        await this.loadRunCache(rootDir, config);
         const archivedChanges = await this.scanArchivedChangesWithHistory(rootDir, config);
         const knowledgeWrite = await this.writeArchivedChangeKnowledgeDocuments(rootDir, config, archivedChanges);
         const featureIndexPath = await this.writeFeatureIndex(rootDir, config, archivedChanges);
@@ -150,6 +279,7 @@ class IndexBuilder {
             };
             await fs_1.promises.writeFile(indexPath, JSON.stringify(writtenIndex, null, 2), 'utf-8');
         }
+        await this.saveRunCache(rootDir, config);
         const managedPaths = Array.from(new Set([
             ...knowledgeWrite.managedPaths,
             ...knowledgeWrite.removedPaths,
@@ -217,6 +347,23 @@ class IndexBuilder {
             if (!entry.name.toLowerCase().endsWith('.md') || entry.name === constants_1.FILE_NAMES.SKILL_MD) {
                 continue;
             }
+            const relativePathForCache = path_1.default.relative(rootDir, fullPath).replace(/\\/g, '/');
+            let fingerprint = null;
+            try {
+                const stat = await fs_1.promises.stat(fullPath);
+                fingerprint = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+            }
+            catch {
+                fingerprint = null;
+            }
+            if (fingerprint && this.runCache) {
+                const cached = this.runCache.documents[relativePathForCache];
+                if (cached && cached.fp === fingerprint && cached.doc) {
+                    documents[relativePathForCache] = JSON.parse(JSON.stringify(cached.doc));
+                    this.runCache.nextDocuments[relativePathForCache] = { fp: fingerprint, doc: cached.doc };
+                    continue;
+                }
+            }
             const content = await fs_1.promises.readFile(fullPath, 'utf8');
             let documentFrontmatter = {};
             try {
@@ -257,6 +404,12 @@ class IndexBuilder {
                 modules: this.readMetadataList(documentFrontmatter.modules),
                 aliases: this.readMetadataList(documentFrontmatter.aliases),
             };
+            if (fingerprint && this.runCache) {
+                this.runCache.nextDocuments[relativePath] = {
+                    fp: fingerprint,
+                    doc: JSON.parse(JSON.stringify(documents[relativePath])),
+                };
+            }
         }
     }
     readMetadataList(value) {
@@ -284,14 +437,32 @@ class IndexBuilder {
         const archivedRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'changes/archived', config);
         if (!(await pathExists(archivedRoot)))
             return [];
+        if (!this.runCache)
+            await this.loadRunCache(rootDir, config);
+        const cacheState = this.runCache;
         const entries = [];
         const visit = async (currentDir) => {
             const children = (await fs_1.promises.readdir(currentDir, { withFileTypes: true }))
                 .sort((left, right) => left.name.localeCompare(right.name));
             if (children.some(entry => entry.isFile() && entry.name === constants_1.FILE_NAMES.STATE)) {
+                const archive = path_1.default.relative(rootDir, currentDir).replace(/\\/g, '/');
+                const fingerprint = await this.computeArchiveFingerprint(rootDir, currentDir);
+                const cachedEntry = cacheState.fingerprints[archive] === fingerprint
+                    ? cacheState.cachedEntries.get(archive)
+                    : undefined;
+                if (cachedEntry) {
+                    cacheState.nextFingerprints[archive] = fingerprint;
+                    cacheState.hits.add(archive);
+                    entries.push(JSON.parse(JSON.stringify(cachedEntry)));
+                    return;
+                }
+                cacheState.misses += 1;
                 const item = await this.readArchivedChange(rootDir, currentDir);
-                if (item)
+                if (item) {
+                    cacheState.nextFingerprints[archive] = fingerprint;
+                    cacheState.missDirs.set(archive, currentDir);
                     entries.push(item);
+                }
                 return;
             }
             for (const child of children) {
@@ -302,8 +473,76 @@ class IndexBuilder {
         await visit(archivedRoot);
         return entries.sort((left, right) => right.archive.localeCompare(left.archive));
     }
+    async computeArchiveFingerprint(rootDir, archiveDir) {
+        const statOf = async (filePath) => {
+            try {
+                const stat = await fs_1.promises.stat(filePath);
+                return `${Math.round(stat.mtimeMs)}:${stat.size}`;
+            }
+            catch {
+                return '-';
+            }
+        };
+        const archive = path_1.default.relative(rootDir, archiveDir).replace(/\\/g, '/');
+        const knowledgeDocument = this.getKnowledgeDocumentRelativePath(archive);
+        return [
+            await statOf(path_1.default.join(archiveDir, constants_1.FILE_NAMES.STATE)),
+            await statOf(path_1.default.join(archiveDir, constants_1.FILE_NAMES.PROPOSAL)),
+            await statOf(path_1.default.join(archiveDir, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH)),
+            knowledgeDocument ? await statOf(path_1.default.join(rootDir, ...knowledgeDocument.split('/'))) : '-',
+        ].join('|');
+    }
+    readKnowledgeDocumentFallback(content) {
+        const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+        if (!frontmatter)
+            return null;
+        const block = frontmatter[1];
+        const readList = (key) => {
+            const match = block.match(new RegExp(`^${key}: (\\[.*\\])$`, 'm'));
+            if (!match)
+                return undefined;
+            try {
+                const parsed = JSON.parse(match[1]);
+                return Array.isArray(parsed) ? parsed.map(item => String(item ?? '').trim()).filter(Boolean) : undefined;
+            }
+            catch {
+                return undefined;
+            }
+        };
+        const readString = (key) => {
+            const match = block.match(new RegExp(`^${key}: ("(?:[^"\\\\]|\\\\.)*")$`, 'm'));
+            if (!match)
+                return undefined;
+            try {
+                const parsed = JSON.parse(match[1]);
+                return typeof parsed === 'string' && parsed.trim() ? parsed : undefined;
+            }
+            catch {
+                return undefined;
+            }
+        };
+        const fallback = {
+            affects: readList('affects'),
+            target_files: readList('target_files'),
+            verification_commands: readList('verification_commands'),
+            project_documents: readList('project_documents'),
+            summary: readString('summary'),
+        };
+        return Object.values(fallback).some(value => value !== undefined) ? fallback : null;
+    }
     async scanArchivedChangesWithHistory(rootDir, config) {
         const current = await this.scanArchivedChanges(rootDir, config);
+        // When every archive was a cache hit AND the cache's post-merge entries
+        // still match the on-disk index byte for byte, re-merging with that index
+        // and its committed copy is a no-op, so skip the git spawn entirely. Any
+        // divergence (damaged or externally updated index) falls through to the
+        // full history merge, which repairs from the index and HEAD.
+        if (this.runCache && this.runCache.misses === 0 && this.runCache.indexLoaded
+            && JSON.stringify(current) === JSON.stringify(this.runCache.indexArchivedChanges || [])) {
+            for (const entry of current)
+                this.runCache.nextEntries[entry.archive] = entry;
+            return current;
+        }
         const historical = await this.readArchivedChangeHistory(rootDir, config);
         const historicalByArchive = new Map();
         for (const entry of historical) {
@@ -314,7 +553,7 @@ class IndexBuilder {
             entries.push(entry);
             historicalByArchive.set(archive, entries);
         }
-        return current.map(entry => {
+        const merged = current.map(entry => {
             const history = historicalByArchive.get(entry.archive.replace(/\\/g, '/')) || [];
             return {
                 ...entry,
@@ -324,6 +563,11 @@ class IndexBuilder {
                 documents: this.mergeHistoricalOrderedLists(history, entry.documents, 'documents'),
             };
         });
+        if (this.runCache) {
+            for (const entry of merged)
+                this.runCache.nextEntries[entry.archive] = entry;
+        }
+        return merged;
     }
     mergeHistoricalStringLists(historical, current, key) {
         return Array.from(new Set([
@@ -443,6 +687,34 @@ class IndexBuilder {
                 && await pathExists(path_1.default.join(rootDir, ...expectedKnowledgeDocument.split('/')))
                 ? expectedKnowledgeDocument
                 : undefined;
+            // Baked-in fallback: the knowledge document carries the extracted fields
+            // in its frontmatter, so evidence lost from the archive (for example
+            // artifacts dropped by a gitignore rule during a merge) does not silently
+            // degrade the index or regenerate the document as empty.
+            if (knowledgeDocument
+                && (targetFiles.size === 0 || verificationCommands.size === 0 || projectDocuments.size === 0 || !summary || affects.length === 0)) {
+                try {
+                    const fallback = this.readKnowledgeDocumentFallback(await fs_1.promises.readFile(path_1.default.join(rootDir, ...knowledgeDocument.split('/')), 'utf8'));
+                    if (fallback) {
+                        if (targetFiles.size === 0)
+                            for (const value of fallback.target_files || [])
+                                targetFiles.add(value);
+                        if (verificationCommands.size === 0)
+                            for (const value of fallback.verification_commands || [])
+                                verificationCommands.add(value);
+                        if (projectDocuments.size === 0)
+                            for (const value of fallback.project_documents || [])
+                                projectDocuments.add(value);
+                        if (!summary && fallback.summary)
+                            summary = fallback.summary;
+                        if (affects.length === 0 && Array.isArray(fallback.affects))
+                            affects = [...fallback.affects];
+                    }
+                }
+                catch {
+                    // A damaged knowledge document must not hide the archived change.
+                }
+            }
             return {
                 feature: typeof state.feature === 'string' && state.feature.trim() ? state.feature.trim() : path_1.default.basename(archiveDir),
                 summary,
@@ -502,10 +774,30 @@ class IndexBuilder {
                 continue;
             }
             expectedPaths.add(resolvedTarget.toLowerCase());
-            await fs_1.promises.mkdir(path_1.default.dirname(resolvedTarget), { recursive: true });
             const knowledgeDocument = path_1.default.relative(rootDir, resolvedTarget).replace(/\\/g, '/');
             managedPaths.push(knowledgeDocument);
             change.knowledge_document = knowledgeDocument;
+            // A fingerprint-hit archive whose merged entry still equals the cached
+            // entry regenerates byte-identical content, so skip the compose/compare
+            // round-trip when the on-disk document still matches the stat fingerprint
+            // recorded after the last verified write (metaOk guards language and
+            // format changes; any drift falls through and rewrites the document).
+            if (this.runCache && this.runCache.docMetaOk && this.runCache.hits.has(change.archive)) {
+                const blessedDocFp = this.runCache.docFps[change.archive];
+                let currentDocFp = null;
+                try {
+                    const stat = await fs_1.promises.stat(resolvedTarget);
+                    currentDocFp = `${Math.round(stat.mtimeMs)}:${stat.size}`;
+                }
+                catch {
+                    currentDocFp = null;
+                }
+                if (blessedDocFp && currentDocFp === blessedDocFp
+                    && JSON.stringify(change) === JSON.stringify(this.runCache.cachedEntries.get(change.archive))) {
+                    continue;
+                }
+            }
+            await fs_1.promises.mkdir(path_1.default.dirname(resolvedTarget), { recursive: true });
             await this.assertGeneratedKnowledgeDocumentReplaceable(resolvedTarget, change.archive);
             const archiveLink = path_1.default.relative(path_1.default.dirname(resolvedTarget), archiveAbsolute).replace(/\\/g, '/');
             const forced = change.disposition === 'forced';
@@ -520,6 +812,11 @@ class IndexBuilder {
                 `archive: ${JSON.stringify(change.archive)}`,
                 `workflow_profile: ${JSON.stringify(change.workflow_profile || 'change')}`,
                 `completed_at: ${JSON.stringify(change.completed_at || '')}`,
+                `affects: ${JSON.stringify(change.affects || [])}`,
+                `target_files: ${JSON.stringify(change.target_files || [])}`,
+                `verification_commands: ${JSON.stringify(change.verification_commands || [])}`,
+                `project_documents: ${JSON.stringify(change.project_documents || [])}`,
+                `summary: ${JSON.stringify(change.summary || '')}`,
                 ...(forced ? [
                     'disposition: forced',
                     'completion_status: incomplete',
@@ -584,6 +881,8 @@ class IndexBuilder {
             const previous = await pathExists(resolvedTarget) ? await fs_1.promises.readFile(resolvedTarget, 'utf8') : null;
             if (previous !== content)
                 await fs_1.promises.writeFile(resolvedTarget, content, 'utf8');
+            if (this.runCache)
+                this.runCache.verifiedDocs.set(change.archive, resolvedTarget);
         }
         const removedPaths = await this.removeStaleArchivedKnowledgeDocuments(rootDir, knowledgeRoot, expectedPaths);
         return {
@@ -761,7 +1060,12 @@ class IndexBuilder {
         if (archivedChanges.length === 0) {
             lines.push(copy.empty, '');
         }
-        for (const change of archivedChanges) {
+        // Full detail is bounded to the most recent entries so this router document
+        // stays token-cheap as archives accumulate; older entries keep one link line
+        // and full data remains in the knowledge documents and `ospec index query`.
+        const recentChanges = archivedChanges.slice(0, FEATURE_INDEX_RECENT_LIMIT);
+        const olderChanges = archivedChanges.slice(FEATURE_INDEX_RECENT_LIMIT);
+        for (const change of recentChanges) {
             lines.push(`## ${change.feature}`, '');
             if (change.disposition === 'forced') {
                 lines.push(`- ${copy.archiveStatus}: FORCED / INCOMPLETE / ACCEPTED RISK`);
@@ -788,6 +1092,23 @@ class IndexBuilder {
             }
             lines.push('');
         }
+        if (olderChanges.length > 0) {
+            lines.push(`## ${copy.olderHeading} (${olderChanges.length})`, '');
+            lines.push(`> ${copy.olderGuidance}`, '');
+            for (const change of olderChanges) {
+                const label = change.disposition === 'forced'
+                    ? `${change.feature} — FORCED/INCOMPLETE`
+                    : change.feature;
+                if (change.knowledge_document) {
+                    const knowledgeLink = path_1.default.relative(docsProjectRoot, path_1.default.join(rootDir, ...change.knowledge_document.split('/'))).replace(/\\/g, '/');
+                    lines.push(`- [${label}](${knowledgeLink})`);
+                }
+                else {
+                    lines.push(`- ${label}`);
+                }
+            }
+            lines.push('');
+        }
         const content = `${lines.join('\n').trimEnd()}\n`;
         const previous = await pathExists(targetPath) ? await fs_1.promises.readFile(targetPath, 'utf8') : null;
         if (previous !== content)
@@ -811,6 +1132,8 @@ class IndexBuilder {
                 failingGates: '未通过门禁',
                 notRecorded: '未记录',
                 none: '无',
+                olderHeading: '更早的归档 change',
+                olderGuidance: '以下条目仅列出名称与功能文档链接；详情用 `ospec index query <关键词>` 检索。',
             };
         }
         if (documentLanguage === 'ja-JP') {
@@ -829,6 +1152,8 @@ class IndexBuilder {
                 failingGates: '未通過 gate',
                 notRecorded: '記録なし',
                 none: 'なし',
+                olderHeading: '過去の archive 済み change',
+                olderGuidance: '以下は名称と機能文書リンクのみです。詳細は `ospec index query <キーワード>` で取得してください。',
             };
         }
         if (documentLanguage === 'ar') {
@@ -847,6 +1172,8 @@ class IndexBuilder {
                 failingGates: 'البوابات غير المجتازة',
                 notRecorded: 'غير مسجل',
                 none: 'لا يوجد',
+                olderHeading: 'تغييرات مؤرشفة أقدم',
+                olderGuidance: 'تسرد البنود أدناه الاسم ووثيقة المعرفة فقط؛ استرجع التفاصيل عبر `ospec index query <كلمة>`.',
             };
         }
         return {
@@ -864,6 +1191,8 @@ class IndexBuilder {
             failingGates: 'Failing gates',
             notRecorded: 'Not recorded',
             none: 'None',
+            olderHeading: 'Older Archived Changes',
+            olderGuidance: 'Entries below list the change name and knowledge document only; retrieve details with `ospec index query <keyword>`.',
         };
     }
 }

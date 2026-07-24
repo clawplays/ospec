@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createProjectService = exports.ProjectService = void 0;
 const fs_1 = require("fs");
+const child_process_1 = require("child_process");
 const crypto_1 = require("crypto");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
@@ -651,6 +652,45 @@ class ProjectService {
             changes: activeChanges.sort((left, right) => left.name.localeCompare(right.name)),
         };
     }
+    /**
+     * Guards against silent evidence loss through Git: when the change's
+     * documents are tracked but its artifacts directory is caught by a
+     * .gitignore rule (a global "artifacts/" pattern is a common footgun),
+     * every review, verification, and loop artifact would vanish from any
+     * clone or merge while the archive looks complete on this disk. Blocks
+     * only that inconsistent state; wholly-untracked changes (deliberate
+     * local-only projects) and non-Git directories pass.
+     */
+    assessArchiveEvidenceTracking(featureDir) {
+        try {
+            const artifactsDir = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS);
+            if (!(0, fs_1.existsSync)(artifactsDir))
+                return { level: 'ok', message: null };
+            const git = (args) => (0, child_process_1.spawnSync)('git', args, {
+                cwd: featureDir,
+                encoding: 'utf8',
+                windowsHide: true,
+            });
+            const repoCheck = git(['rev-parse', '--is-inside-work-tree']);
+            if (repoCheck.error || repoCheck.status !== 0)
+                return { level: 'ok', message: null };
+            const ignore = git(['check-ignore', '-v', '--', artifactsDir]);
+            if (ignore.error || ignore.status !== 0)
+                return { level: 'ok', message: null };
+            const rule = ignore.stdout.trim().split(/\r?\n/)[0]?.split('\t')[0]?.trim() || 'a .gitignore rule';
+            const tracked = git(['ls-files', '--', featureDir]);
+            const hasTrackedDocuments = !tracked.error && tracked.status === 0 && tracked.stdout.trim().length > 0;
+            if (!hasTrackedDocuments)
+                return { level: 'ok', message: null };
+            return {
+                level: 'block',
+                message: `Archive evidence would be silently lost in Git: this change's documents are tracked, but its artifacts directory is gitignored (${rule}). Fix .gitignore (for example add "!.ospec/**" after the ignoring rule) so reviews, verification evidence, and the task graph survive clones and merges, or force-archive with an explicit accepted-risk reason.`,
+            };
+        }
+        catch {
+            return { level: 'ok', message: null };
+        }
+    }
     async getActiveChangeStatusItem(featurePath) {
         const resolvedFeaturePath = path_1.default.resolve(featurePath);
         const rootDir = await this.findProjectRootFromPath(resolvedFeaturePath);
@@ -705,6 +745,14 @@ class ProjectService {
             await this.assertForceArchiveHasNoPendingLoopAction(resolvedFeaturePath);
         }
         const progressIssues = [];
+        const evidenceTracking = this.assessArchiveEvidenceTracking(resolvedFeaturePath);
+        if (evidenceTracking.level === 'block') {
+            if (!forceArchive) {
+                throw new Error(evidenceTracking.message || 'Archive evidence is gitignored; fix .gitignore before finalizing.');
+            }
+            if (evidenceTracking.message)
+                progressIssues.push(evidenceTracking.message);
+        }
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(resolvedFeaturePath, progressState);
         if (workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE) {
             try {

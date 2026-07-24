@@ -4,7 +4,7 @@
 
 ## コンテキスト
 
-開始時は `.skillrc`、`SKILL.index.json` の関連項目、`proposal.md`、`tasks.md`、`state.json` だけを読みます。検証時に `verification.md`、closeout 時に `review.md` を読みます。本ファイルがない、blocking plugin が有効、または特定ルールが曖昧な場合だけ完全な `ai-guide.md` や `execution-protocol.md` を読みます。
+開始時は `.skillrc`、`proposal.md`、`tasks.md`、`state.json` だけを読みます。index の関連項目は `ospec index query <キーワード...>` で必要な分だけ取得し、`SKILL.index.json` 全体を読まないでください。検証時に `verification.md`、closeout 時に `review.md` を読みます。本ファイルがない、blocking plugin が有効、または特定ルールが曖昧な場合だけ完全な `ai-guide.md` や `execution-protocol.md` を読みます。
 
 ## ライフサイクル
 
