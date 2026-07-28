@@ -554,6 +554,25 @@ class TaskGraphExecutionService {
         this.runtimeAdapterService = runtimeAdapterService;
         this.reportDocumentLanguageCache = new Map();
     }
+    /**
+     * Optimistic review gating lets dependents dispatch while an upstream
+     * task review is still pending; the task's own review requirement and the
+     * final-review gate still require every task review to be approved.
+     * Strict remains the default and is unchanged for classic changes, which
+     * have no loop configuration.
+     */
+    async readLoopReviewGating(changePath) {
+        try {
+            const configPath = path.join(changePath, 'artifacts', 'loop', 'loop.json');
+            if (!(await this.fileService.exists(configPath)))
+                return 'strict';
+            const config = await this.fileService.readJSON(configPath);
+            return config?.efficiency?.reviewGating === 'optimistic' ? 'optimistic' : 'strict';
+        }
+        catch {
+            return 'strict';
+        }
+    }
     async getReport(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
@@ -562,6 +581,7 @@ class TaskGraphExecutionService {
         }
         const graph = await this.fileService.readJSON(graphPath);
         const executionPolicy = await this.readWorkflowExecutionPolicy(resolvedChangePath);
+        const reviewGating = await this.readLoopReviewGating(resolvedChangePath);
         const tasks = Array.isArray(graph.tasks)
             ? graph.tasks.map((task, index) => normalizeTask(task, index, executionPolicy.modelProfiles))
             : [];
@@ -647,7 +667,9 @@ class TaskGraphExecutionService {
                     reasons.push(`waiting_for:${dependencyId}`);
                     continue;
                 }
-                if (!deferredExternalBlocker && this.isTaskReviewRequired(dependency)) {
+                if (!deferredExternalBlocker
+                    && reviewGating !== 'optimistic'
+                    && this.isTaskReviewRequired(dependency)) {
                     reasons.push(`waiting_for_task_review:${dependencyId}`);
                 }
             }
@@ -3233,7 +3255,7 @@ class TaskGraphExecutionService {
             }
             const context = await this.capturePlanningContext(resolvedChangePath);
             if (context.targetSnapshotHash === record.beforeSnapshotHash) {
-                return { ready: false, reason: 'Grouped planning repair made no planning snapshot change.' };
+                return { ready: false, reason: 'Grouped planning repair is dispatched and has not written repaired planning documents yet; keep waiting for the repair executor.' };
             }
             const workspaceScopeError = await this.validatePlanningRepairWorkspaceScope(resolvedChangePath, record, context);
             if (workspaceScopeError)
@@ -3455,6 +3477,40 @@ class TaskGraphExecutionService {
             '',
             ...(record.findings || []).map(finding => `- ${this.renderReviewFinding(finding)}`),
             ...this.buildPlanningRepairDiffSections(changePath, projectRoot, record),
+        ];
+    }
+    /**
+     * When a task review is re-dispatched after a NEEDS_CHANGES round, scope
+     * the fresh reviewer to verifying the repaired findings plus their direct
+     * regression surface instead of re-reviewing the whole task from scratch.
+     * Read before prepareReviewArtifactForDispatch removes the prior findings.
+     */
+    async buildTaskPostRepairReviewSections(taskReview) {
+        if (taskReview.decision !== 'NEEDS_CHANGES')
+            return [];
+        if (!(await this.fileService.exists(taskReview.reviewArtifactPath)))
+            return [];
+        let findings = [];
+        try {
+            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(taskReview.reviewArtifactPath));
+            findings = (await this.readReviewFindings(taskReview.reviewArtifactPath, review.content)).structured;
+        }
+        catch {
+            return [];
+        }
+        if (findings.length === 0)
+            return [];
+        return [
+            '',
+            '## Post-Repair Delta Review',
+            '',
+            '- A grouped repair addressed the previous NEEDS_CHANGES findings below. Verify each repaired finding is resolved and check its immediate regression surface; do not re-review the whole task from scratch.',
+            '- The review package diff carries the current scoped evidence; focus on the repaired regions and their direct callers.',
+            '- Raise a NEW finding only for a defect introduced by the repair or a critical/high defect in the repaired regions that the previous round missed.',
+            '',
+            '### Repaired Findings To Verify',
+            '',
+            ...findings.map(finding => `- ${this.renderReviewFinding(finding)}`),
         ];
     }
     buildPlanningRepairDiffSections(changePath, projectRoot, record) {
@@ -3702,10 +3758,11 @@ class TaskGraphExecutionService {
             if (record.workerProfile.modelSelectionSource === 'harness-default') {
                 warnings.push(`Review model profile ${record.workerProfile.modelProfile} has no configured model; the harness default will be used.`);
             }
+            const taskDeltaSections = await this.buildTaskPostRepairReviewSections(taskReview);
             await this.fileService.writeJSON(recordPath, record);
             await this.setCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(taskReview.task.id), reviewId);
             await this.prepareReviewArtifactForDispatch(resolvedChangePath, record);
-            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record));
+            await this.writeLocalizedReportFile(resolvedChangePath, packetPath, this.buildReviewDispatchPacket(report, record, taskDeltaSections));
             await this.recordExecutionMetric(resolvedChangePath, report.feature, [
                 {
                     kind: 'review_packet',
@@ -6126,6 +6183,12 @@ class TaskGraphExecutionService {
                 completed: report?.completedTasks.length || 0,
                 blocked: report?.blockedTasks.length || 0,
                 invalid: report?.invalidTasks.length || 0,
+                waitingOnly: Boolean(report
+                    && report.blockedTasks.length > 0
+                    && report.blockedTasks.every(entry => entry.reasons.length > 0
+                        && entry.reasons.every(reason => reason.startsWith('waiting_for:')
+                            || reason.startsWith('waiting_for_task_review:')
+                            || reason.startsWith('conflicts_with_running:')))),
                 issues: report ? report.issues : graphIssues,
                 nextInstruction: report?.nextInstruction || (graphExists
                     ? 'Fix task graph readability before continuing.'
@@ -9632,6 +9695,14 @@ class TaskGraphExecutionService {
                     nextInstruction: 'Continue in-progress worker task(s), then record results with ospec execute complete <task-id>.',
                 };
             }
+            if (input.execution.taskGraph.blocked > 0 && input.execution.taskGraph.waitingOnly) {
+                return {
+                    status: 'needs_worker_completion',
+                    blockers,
+                    warnings,
+                    nextInstruction: 'All blocked tasks are only waiting on running work or pending task review decisions; no repair action is needed. Complete the in-flight reviews/dependencies and re-check.',
+                };
+            }
             if (input.execution.taskGraph.blocked > 0) {
                 blockers.push(`Task graph has ${input.execution.taskGraph.blocked} blocked task(s).`);
                 return {
@@ -11937,37 +12008,20 @@ class TaskGraphExecutionService {
     toChangeRelativePath(changePath, targetPath) {
         return path.relative(changePath, targetPath).replace(/\\/g, '/');
     }
+    /** Token-lean pointer block: workers read the referenced brief only when they need project context. */
     buildProjectSessionBriefLines(projectSession) {
-        const projectSessionCommands = projectSession && projectSession.recommendedCommands.length > 0
-            ? projectSession.recommendedCommands.map(command => `- \`${command}\``).join('\n')
-            : '- None';
         const projectSessionWarnings = projectSession && projectSession.warnings.length > 0
-            ? projectSession.warnings.map(warning => `- ${warning}`).join('\n')
-            : '- None';
+            ? projectSession.warnings.map(warning => `- ${warning}`)
+            : [];
         return [
             '## Project Session Brief',
             '',
-            `- Exists: ${projectSession?.exists ? 'yes' : 'no'}`,
-            `- JSON: ${projectSession?.jsonPath || 'not recorded'}`,
-            `- Markdown: ${projectSession?.reportPath || 'not recorded'}`,
-            `- Generated at: ${projectSession?.generatedAt || 'not recorded'}`,
-            `- Cache status: ${projectSession?.cacheStatus || 'not recorded'}`,
-            `- Cache key: ${projectSession?.cacheKey || 'not recorded'}`,
-            `- Active changes: ${projectSession?.activeChangeCount ?? 0}`,
-            `- Queued changes: ${projectSession?.queuedChangeCount ?? 0}`,
-            `- Knowledge index: ${projectSession?.knowledgeIndexPath || 'not recorded'}`,
-            `- Feature index: ${projectSession?.featureIndexPath || 'not recorded'}`,
-            `- Indexed docs: ${projectSession?.indexedDocumentCount ?? 0}`,
-            `- Archived features: ${projectSession?.archivedChangeCount ?? 0}`,
-            `- Next: ${projectSession?.nextInstruction || 'not recorded'}`,
-            '',
-            '### Recommended Commands',
-            '',
-            projectSessionCommands,
-            '',
-            '### Session Warnings',
-            '',
-            projectSessionWarnings,
+            `- Brief: ${projectSession?.reportPath || 'not recorded'} (read only when project-level context is needed)`,
+            `- Active/queued changes: ${projectSession?.activeChangeCount ?? 0}/${projectSession?.queuedChangeCount ?? 0}; archived features: ${projectSession?.archivedChangeCount ?? 0}`,
+            `- Knowledge lookup: use \`ospec index query <keyword...>\` instead of reading index files whole`,
+            ...(projectSessionWarnings.length > 0
+                ? ['', '### Session Warnings', '', ...projectSessionWarnings]
+                : []),
         ];
     }
     buildTaskReviewRepairContextLines(context) {
@@ -12209,6 +12263,7 @@ class TaskGraphExecutionService {
             ? [
                 '- Scope: proposal.md, design.md, implementation-plan.md, tasks.md, and artifacts/agents/task-graph.json before implementation starts.',
                 '- Confirm acceptance-to-task-to-verification traceability, semantic feasibility, cross-cutting boundaries, dependencies, and external acceptance separation.',
+                '- Treat unjustified serialization as a finding: every depends_on must be semantically necessary, and a fully serial chain (each task depending on the previous one) requires an explicit justification or a widened graph so independent tasks can dispatch in parallel.',
             ]
             : isTaskReview
                 ? [

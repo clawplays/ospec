@@ -80,6 +80,8 @@ export interface LoopEfficiency {
     reviewMaxRuntimeMinutes: number;
     verificationMaxRuntimeMinutes: number;
     evidenceResultGraceMinutes: number;
+    /** strict (default): dependents wait for upstream task reviews; optimistic: dependents dispatch while reviews run, final review still gates. Additive in 1.9.8. */
+    reviewGating?: 'strict' | 'optimistic';
 }
 export interface LoopActionItem {
     id: string;
@@ -215,6 +217,8 @@ export interface LoopBatchDiagnostics {
     adapterCapacityKnown: boolean;
     effectiveEmitted: number;
     deferredReasons: string[];
+    /** True when every remaining pending task waits on the single dispatched task, so controller-inline execution is allowed. Additive in 1.9.8. */
+    serialBottleneck?: boolean;
 }
 export interface LoopTickResult {
     changePath: string;
@@ -230,6 +234,21 @@ export interface LoopTickResult {
     feedback: string | null;
     metrics: LoopMetrics;
     batchDiagnostics: LoopBatchDiagnostics | null;
+}
+export interface LoopPollItemSnapshot {
+    id: string;
+    status: PendingControllerActionItemStatus;
+    evidenceReady: boolean;
+}
+export interface LoopPollResult {
+    changePath: string;
+    status: LoopStatus;
+    actionId: string | null;
+    items: LoopPollItemSnapshot[];
+    settled: boolean;
+    tickNow: boolean;
+    reason: string;
+    nextInstruction: string;
 }
 export interface LoopExecutionResult {
     actionItemId: string;
@@ -272,6 +291,7 @@ export interface LoopConfigureOptions {
     reviewMaxRuntimeMinutes?: number;
     verificationMaxRuntimeMinutes?: number;
     evidenceResultGraceMinutes?: number;
+    reviewGating?: 'strict' | 'optimistic';
     nativeHarnessMetadata?: RuntimeNativeHarnessExecutionMetadata | null;
 }
 export interface LoopServiceDependencies {
@@ -340,6 +360,15 @@ export declare class LoopService {
     private isReviewActionKind;
     private extendControllerCapabilitySession;
     private isTerminalItemStatus;
+    private applyItemCompletionSideEffects;
+    /**
+     * Settles claimed pending items whose authoritative durable evidence is
+     * already complete, so a settled observation advances in the same tick
+     * instead of waiting one extra controller round-trip for a separate
+     * `ospec loop result` call. Token usage stays 0 until (and unless) the
+     * controller records the executor result afterwards.
+     */
+    private settleEvidenceCompleteItems;
     private executionResultMatches;
     private appendRunLog;
     private withControllerLease;
@@ -353,10 +382,26 @@ export declare class LoopService {
         projectRoot?: string;
         layoutConfig?: LayoutConfigInput;
     }): Promise<LoopTickResult>;
+    /**
+     * Lightweight controller liveness poll between full ticks. Refreshes
+     * claimed leases (an explicit poll is a controller heartbeat, so separate
+     * per-item heartbeat commands are unnecessary while polling), checks
+     * whether durable evidence arrived, and tells the controller whether a
+     * full `loop run --once` is worth running now. It never advances the
+     * loop state machine, never dispatches, and never appends run-log noise.
+     */
+    poll(changePath: string): Promise<LoopPollResult>;
     private runOnceUnlocked;
     private observePending;
     private refreshPendingEvidenceReadiness;
     private readLatestVerificationEvidence;
+    /**
+     * A single implementation dispatch is a serial bottleneck when every other
+     * pending task waits only on it (dependency, its review, or a conflict).
+     * Controller-inline execution is then allowed: spawning a subagent buys
+     * no parallelism and only adds context-rebuild and wait overhead.
+     */
+    private isSerialBottleneck;
     private issueAction;
     private workerAction;
     private reviewAction;

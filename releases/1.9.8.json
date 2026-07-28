@@ -1,0 +1,20 @@
+{
+  "title_suffix": "faster, cheaper goal loops",
+  "summary": "OSpec 1.9.8 removes the goal controller's cadence and token overhead: a lease-refreshing `ospec loop poll` replaces tick-after-every-wait and periodic heartbeats, evidence-complete work settles in the same tick, re-reviews verify only the repaired findings, and the execution shape now matches the task-graph shape (serial bottlenecks may run controller-inline; optimistic review gating keeps dependents flowing while reviews run).",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.7...1.9.8",
+  "new": [
+    "`ospec loop poll [goal] [--json]` is a lightweight liveness poll between full ticks: it refreshes every claimed lease (an explicit poll renews even after a long idle wait, so no periodic heartbeat command is needed) and reports `tickNow`, so the controller runs a full `loop run --once` only when something actually changed. The native wait contract adds `idleMaxWaitMs` (10 minutes) for the case where the pending batch is the only outstanding work.",
+    "`ospec loop configure --review-gating strict|optimistic` (default strict): optimistic lets dependent tasks dispatch while an upstream task review is still running; the task's own review requirement and the final-review gate still require every approval. Classic changes have no loop configuration and are unaffected.",
+    "Serial-bottleneck detection: when a single implementation dispatch is the only ready work and every remaining task waits on it, the batch reports `serialBottleneck` and the controller may implement that task directly in the current session (executor id `controller-inline`) instead of paying subagent spawn, wait, and context-rebuild overhead for zero parallel payoff; task and final reviews remain independent subagents."
+  ],
+  "improved": [
+    "Claimed pending work whose authoritative durable evidence is already complete now auto-settles in the same tick instead of waiting an extra claim/result round-trip; a later `loop result` only tops up token usage, and the pathological expire-and-requeue path for evidence-complete work is gone.",
+    "Task re-reviews after a NEEDS_CHANGES round carry a Post-Repair Delta Review section (the prior findings plus a verify-the-repair scope) so the fresh reviewer stops re-auditing the whole task, matching the existing planning delta re-review.",
+    "`loop run --once --compact-json` is token-lean: lease-lean itemStates, capped feedback strings, and an embedded `graph` summary (task counts, pending reviews) that replaces extra `ospec execute status` calls; dispatch and review packets shrink their embedded project session brief to a three-line pointer block.",
+    "Waiting is no longer reported as blocked: planning-repair polling names the in-flight repair instead of a misleading \"no snapshot change\", and bootstrap classifies tasks that are only waiting on running work or pending task reviews as needs_worker_completion instead of bootstrap_blocked.",
+    "The combined planning review treats an unjustified fully serial depends_on chain as a finding, steering planners toward wider graphs that can actually use parallel dispatch."
+  ],
+  "docs": [
+    "The codex goal skill and the four-language execution-protocol and ai-guide documents teach the poll protocol, idle waits, evidence auto-settlement, review gating, width maximization, and controller-inline execution."
+  ]
+}

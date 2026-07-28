@@ -52,6 +52,8 @@ const LOOP_CONTROLLER_LOCK_FILE = 'controller.lock';
 const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
 const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
+/** Upper bound for a single idle native wait while exactly one pending batch runs and nothing else is dispatchable. */
+const IDLE_MAX_WAIT_MS = 10 * 60 * 1000;
 const CONTROLLER_POLL_LEASE_TOLERANCE_MS = 60 * 1000;
 const INITIAL_ACTION_HEARTBEAT_BUFFER_MS = 60 * 1000;
 const MAX_ACTION_LEASE_MS = 30 * 60 * 1000;
@@ -312,6 +314,12 @@ class LoopService {
             config.efficiency.verificationMaxRuntimeMinutes = this.positiveInteger(options.verificationMaxRuntimeMinutes, 'verificationMaxRuntimeMinutes');
         if (options.evidenceResultGraceMinutes !== undefined)
             config.efficiency.evidenceResultGraceMinutes = this.positiveInteger(options.evidenceResultGraceMinutes, 'evidenceResultGraceMinutes');
+        if (options.reviewGating !== undefined) {
+            if (options.reviewGating !== 'strict' && options.reviewGating !== 'optimistic') {
+                throw new Error('reviewGating must be strict or optimistic.');
+            }
+            config.efficiency.reviewGating = options.reviewGating;
+        }
         config.version = CURRENT_LOOP_CONFIG_VERSION;
         await this.fileService.writeJSON(this.configPath(changePath), config);
         return config;
@@ -694,6 +702,15 @@ class LoopService {
             if (!itemState.executorId)
                 itemState.executorId = executorId;
             if (this.isTerminalItemStatus(itemState.status)) {
+                const autoSettled = itemState.status === 'completed'
+                    && (itemState.summary || '').startsWith('Auto-settled from durable evidence');
+                if (autoSettled && result.timedOut !== true && result.exitCode === 0) {
+                    itemState.tokensUsed = Math.max(0, Number(result.tokensUsed) || 0);
+                    if (result.summary)
+                        itemState.summary = result.summary;
+                    state.executorUsageByKey[actionItem?.usageKey || result.actionItemId] = itemState.tokensUsed;
+                    continue;
+                }
                 if (!this.executionResultMatches(itemState, result)) {
                     throw new Error(`Conflicting executor result for already-settled action item ${result.actionItemId}.`);
                 }
@@ -709,26 +726,7 @@ class LoopService {
             itemState.timedOut = result.timedOut === true;
             itemState.tokensUsed = Math.max(0, Number(result.tokensUsed) || 0);
             itemState.summary = result.summary || null;
-            if (actionItem?.usageKey && this.isReviewActionKind(actionItem.kind)) {
-                await this.taskGraph.completeReviewLoopExecutor(changePath, {
-                    dispatchId: actionItem.usageKey,
-                    actionId: pending.actionId,
-                    actionItemId: actionItem.id,
-                    executorId,
-                    completedAt: now,
-                    succeeded: !failed,
-                });
-            }
-            else if (actionItem?.kind === 'planning-repair' && !failed) {
-                await this.taskGraph.bindPlanningRepairLoopAction(changePath, {
-                    actionId: pending.actionId,
-                    actionItemId: actionItem.id,
-                });
-                await this.taskGraph.completePlanningRepair(changePath, {
-                    actionId: pending.actionId,
-                    actionItemId: actionItem.id,
-                });
-            }
+            await this.applyItemCompletionSideEffects(changePath, pending, actionItem, executorId, now, !failed);
             const usageKey = actionItem?.usageKey || result.actionItemId;
             state.executorUsageByKey[usageKey] = itemState.tokensUsed;
             newlyRecorded.push(result);
@@ -919,7 +917,7 @@ class LoopService {
             };
         });
     }
-    refreshClaimedLeasesFromControllerPoll(pending, now) {
+    refreshClaimedLeasesFromControllerPoll(pending, now, options = {}) {
         if (!pending || pending.status !== 'awaiting-evidence')
             return;
         this.ensurePendingItemStates(pending);
@@ -928,8 +926,9 @@ class LoopService {
                 continue;
             const leaseExpiresAt = Date.parse(item.leaseExpiresAt);
             const absoluteExpiresAt = Date.parse(item.absoluteExpiresAt || '');
-            if (!Number.isFinite(leaseExpiresAt)
-                || now.getTime() - leaseExpiresAt > CONTROLLER_POLL_LEASE_TOLERANCE_MS)
+            if (!options.ignoreLapsedTolerance
+                && (!Number.isFinite(leaseExpiresAt)
+                    || now.getTime() - leaseExpiresAt > CONTROLLER_POLL_LEASE_TOLERANCE_MS))
                 continue;
             if (Number.isFinite(absoluteExpiresAt) && absoluteExpiresAt <= now.getTime())
                 continue;
@@ -981,6 +980,60 @@ class LoopService {
     }
     isTerminalItemStatus(status) {
         return status === 'completed' || status === 'failed' || status === 'expired';
+    }
+    async applyItemCompletionSideEffects(changePath, pending, actionItem, executorId, completedAtIso, succeeded) {
+        if (actionItem?.usageKey && this.isReviewActionKind(actionItem.kind)) {
+            await this.taskGraph.completeReviewLoopExecutor(changePath, {
+                dispatchId: actionItem.usageKey,
+                actionId: pending.actionId,
+                actionItemId: actionItem.id,
+                executorId,
+                completedAt: completedAtIso,
+                succeeded,
+            });
+        }
+        else if (actionItem?.kind === 'planning-repair' && succeeded) {
+            await this.taskGraph.bindPlanningRepairLoopAction(changePath, {
+                actionId: pending.actionId,
+                actionItemId: actionItem.id,
+            });
+            await this.taskGraph.completePlanningRepair(changePath, {
+                actionId: pending.actionId,
+                actionItemId: actionItem.id,
+            });
+        }
+    }
+    /**
+     * Settles claimed pending items whose authoritative durable evidence is
+     * already complete, so a settled observation advances in the same tick
+     * instead of waiting one extra controller round-trip for a separate
+     * `ospec loop result` call. Token usage stays 0 until (and unless) the
+     * controller records the executor result afterwards.
+     */
+    async settleEvidenceCompleteItems(changePath, state, pending, nowIso) {
+        let settled = 0;
+        for (const itemState of pending.itemStates || []) {
+            if (this.isTerminalItemStatus(itemState.status))
+                continue;
+            if (!itemState.executorId || !itemState.evidenceReadyAt)
+                continue;
+            const actionItem = (pending.items || []).find(item => item.id === itemState.actionItemId);
+            itemState.status = 'completed';
+            itemState.completedAt = nowIso;
+            itemState.exitCode = 0;
+            itemState.timedOut = false;
+            itemState.summary = itemState.summary
+                || `Auto-settled from durable evidence (${itemState.actionItemId}); executor result was not separately recorded.`;
+            await this.applyItemCompletionSideEffects(changePath, pending, actionItem, itemState.executorId, nowIso, true);
+            const usageKey = actionItem?.usageKey || itemState.actionItemId;
+            state.executorUsageByKey[usageKey] = itemState.tokensUsed;
+            settled += 1;
+        }
+        if (settled > 0 && (pending.itemStates || []).every(item => this.isTerminalItemStatus(item.status))) {
+            pending.executorCompletedAt = nowIso;
+            pending.executorSucceeded = (pending.itemStates || []).every(item => item.status === 'completed');
+        }
+        return settled;
     }
     executionResultMatches(item, result) {
         const expectedStatus = result.timedOut === true || result.exitCode !== 0 ? 'failed' : 'completed';
@@ -1136,6 +1189,85 @@ class LoopService {
             return result;
         });
     }
+    /**
+     * Lightweight controller liveness poll between full ticks. Refreshes
+     * claimed leases (an explicit poll is a controller heartbeat, so separate
+     * per-item heartbeat commands are unnecessary while polling), checks
+     * whether durable evidence arrived, and tells the controller whether a
+     * full `loop run --once` is worth running now. It never advances the
+     * loop state machine, never dispatches, and never appends run-log noise.
+     */
+    async poll(changePath) {
+        await this.assertExists(changePath);
+        return this.withControllerLease(changePath, async () => {
+            const resolved = path.resolve(changePath);
+            const config = await this.readConfig(resolved);
+            const state = await this.readState(resolved);
+            const now = this.now();
+            const nowIso = now.toISOString();
+            const pending = state.pendingControllerAction;
+            const immediateStop = await this.getImmediateStop(resolved, state);
+            if (immediateStop) {
+                return {
+                    changePath: resolved,
+                    status: state.status,
+                    actionId: pending?.actionId || null,
+                    items: [],
+                    settled: false,
+                    tickNow: true,
+                    reason: immediateStop.reason,
+                    nextInstruction: `Run "ospec loop run --once --compact-json" now: ${immediateStop.instruction}`,
+                };
+            }
+            if (!pending || pending.status !== 'awaiting-evidence') {
+                return {
+                    changePath: resolved,
+                    status: state.status,
+                    actionId: null,
+                    items: [],
+                    settled: false,
+                    tickNow: true,
+                    reason: 'No pending controller action; a full tick decides the next step.',
+                    nextInstruction: 'Run "ospec loop run --once --compact-json" now.',
+                };
+            }
+            await this.refreshPendingEvidenceReadiness(resolved, state, nowIso, config.efficiency);
+            this.refreshClaimedLeasesFromControllerPoll(pending, now, { ignoreLapsedTolerance: true });
+            const itemStates = pending.itemStates || [];
+            const observation = await this.observePending(resolved, pending);
+            const anyEvidenceReady = itemStates.some(item => !this.isTerminalItemStatus(item.status) && item.evidenceReadyAt);
+            const anyTerminal = itemStates.some(item => this.isTerminalItemStatus(item.status));
+            const anyAbsoluteExpired = itemStates.some(item => !this.isTerminalItemStatus(item.status)
+                && Number.isFinite(Date.parse(item.absoluteExpiresAt || ''))
+                && Date.parse(item.absoluteExpiresAt || '') <= now.getTime());
+            await this.writeState(resolved, state);
+            const tickNow = observation.settled || anyEvidenceReady || anyTerminal || anyAbsoluteExpired
+                || Boolean(pending.executorCompletedAt);
+            const reason = observation.settled
+                ? 'Durable evidence is settled.'
+                : anyEvidenceReady || anyTerminal
+                    ? 'At least one item finished or produced durable evidence.'
+                    : anyAbsoluteExpired
+                        ? 'An item reached its absolute runtime deadline.'
+                        : `All executors still running (${observation.feedback || 'no durable evidence yet'}). Leases refreshed.`;
+            return {
+                changePath: resolved,
+                status: state.status,
+                actionId: pending.actionId,
+                items: itemStates.map(item => ({
+                    id: item.actionItemId,
+                    status: item.status,
+                    evidenceReady: Boolean(item.evidenceReadyAt),
+                })),
+                settled: observation.settled,
+                tickNow,
+                reason,
+                nextInstruction: tickNow
+                    ? 'Run "ospec loop run --once --compact-json" now.'
+                    : `Keep waiting on the native child batch (one bounded wait up to ${IDLE_MAX_WAIT_MS}ms while nothing else is dispatchable), then run "ospec loop poll" again. No full tick and no separate heartbeat command are needed until tickNow=true.`,
+            };
+        });
+    }
     async runOnceUnlocked(changePath, options = {}) {
         await this.assertExists(changePath);
         const resolved = path.resolve(changePath);
@@ -1176,8 +1308,8 @@ class LoopService {
             verificationRepairRequired = observation.repairRequired === true;
             state.lastFeedback = feedback;
             this.ensurePendingItemStates(state.pendingControllerAction);
-            const pendingItemStates = state.pendingControllerAction.itemStates || [];
-            const executorLifecycleSettled = pendingItemStates.length === 0
+            let pendingItemStates = state.pendingControllerAction.itemStates || [];
+            let executorLifecycleSettled = pendingItemStates.length === 0
                 || pendingItemStates.every(item => this.isTerminalItemStatus(item.status));
             if (observation.settled && !executorLifecycleSettled) {
                 for (const itemState of state.pendingControllerAction.itemStates || []) {
@@ -1186,18 +1318,25 @@ class LoopService {
                         itemState.evidenceResultDeadlineAt = new Date(now.getTime() + config.efficiency.evidenceResultGraceMinutes * 60 * 1000).toISOString();
                     }
                 }
+                await this.settleEvidenceCompleteItems(resolved, state, state.pendingControllerAction, nowIso);
+                pendingItemStates = state.pendingControllerAction.itemStates || [];
+                executorLifecycleSettled = pendingItemStates.length === 0
+                    || pendingItemStates.every(item => this.isTerminalItemStatus(item.status));
+            }
+            if (observation.settled && !executorLifecycleSettled) {
                 const hardStop = await this.getHardStop(resolved, config, state, now);
                 if (hardStop) {
                     state.status = hardStop.status;
                     await this.writeState(resolved, state);
                     return this.result(resolved, state, state.pendingControllerAction, hardStop.status !== 'paused', hardStop.reason, hardStop.instruction, verifyPassed, feedback);
                 }
-                feedback = `${observation.feedback || 'Durable evidence is ready.'} Awaiting the claimed executor result before advancing.`;
+                const unclaimed = pendingItemStates.filter(item => !this.isTerminalItemStatus(item.status)).length;
+                feedback = `${observation.feedback || 'Durable evidence is ready.'} Waiting for the executor claim of ${unclaimed} item(s); this is a normal handshake, not a failure.`;
                 state.lastFeedback = feedback;
                 state.lastTickTs = nowIso;
                 await this.writeState(resolved, state);
                 await this.appendRunLog(resolved, this.logEntry(state, trigger, verifyPassed, feedback));
-                return this.result(resolved, state, state.pendingControllerAction, false, null, `Awaiting executor result for ${state.pendingControllerAction.actionId}. actions[] is intentionally empty; do not relaunch the child.`, verifyPassed, feedback);
+                return this.result(resolved, state, state.pendingControllerAction, false, null, `Awaiting executor claim for ${state.pendingControllerAction.actionId}. actions[] is intentionally empty; do not relaunch the child.`, verifyPassed, feedback);
             }
             if (!observation.settled) {
                 if (state.pendingControllerAction.executorCompletedAt) {
@@ -1817,6 +1956,30 @@ class LoopService {
             return null;
         }
     }
+    /**
+     * A single implementation dispatch is a serial bottleneck when every other
+     * pending task waits only on it (dependency, its review, or a conflict).
+     * Controller-inline execution is then allowed: spawning a subagent buys
+     * no parallelism and only adds context-rebuild and wait overhead.
+     */
+    async isSerialBottleneck(changePath, taskId) {
+        if (!taskId)
+            return false;
+        try {
+            const report = await this.taskGraph.getReport(changePath);
+            const pendingBlocked = report.blockedTasks.filter(entry => entry.task.status === 'PENDING');
+            if (pendingBlocked.length === 0)
+                return false;
+            return report.readyTasks.every(task => task.id === taskId)
+                && pendingBlocked.every(entry => entry.reasons.length > 0
+                    && entry.reasons.every(reason => reason === `waiting_for:${taskId}`
+                        || reason === `waiting_for_task_review:${taskId}`
+                        || reason === `conflicts_with_running:${taskId}`));
+        }
+        catch {
+            return false;
+        }
+    }
     async issueAction(changePath, config, state, trigger, kind, items, feedback, verifyPassed = null, prepared) {
         const issuedAt = this.now();
         const now = issuedAt.toISOString();
@@ -1828,6 +1991,11 @@ class LoopService {
         if (items.length > preparedBatch.limit) {
             return this.gateResult(changePath, state, trigger, `Loop blocked: prepared ${kind} batch contains ${items.length} item(s), exceeding the safe effective limit ${preparedBatch.limit}.`);
         }
+        const serialBottleneck = kind === 'implementation' && items.length === 1
+            ? await this.isSerialBottleneck(changePath, items[0].taskId)
+            : false;
+        if (serialBottleneck)
+            preparedBatch.diagnostics.serialBottleneck = true;
         preparedBatch.diagnostics.effectiveEmitted = items.length;
         state.lastBatchDiagnostics = { ...preparedBatch.diagnostics };
         const actionId = `loop-action-${state.iteration + 1}-${Date.parse(now)}`;
@@ -1878,10 +2046,13 @@ class LoopService {
             }
             const promptAdditions = [
                 `Runtime adapter: ${actionRuntimeAdapter.selectedAdapterId}. ${actionRuntimeAdapter.selected?.supportsParallel ? 'This safe batch may run in parallel.' : 'Run this batch serially in item order.'}`,
-                `Use bounded native waits only: poll for at most ${actionRuntimeAdapter.selected?.nativeSubagent?.maxWaitMs || 60000}ms, refresh this action heartbeat before ${item.heartbeatDueAt}, persist each finished result immediately, and tick OSpec again after every poll.`,
+                `Claim this action with one heartbeat, then use bounded native waits: up to ${actionRuntimeAdapter.selected?.nativeSubagent?.maxWaitMs || 60000}ms while other work is dispatchable, or one idle wait up to ${actionRuntimeAdapter.selected?.nativeSubagent?.idleMaxWaitMs || IDLE_MAX_WAIT_MS}ms when this batch is the only outstanding work. After each wait run "ospec loop poll" (it refreshes leases; no periodic heartbeat command is needed) and run a full "ospec loop run --once" only when poll reports tickNow=true. Persist each finished result immediately.`,
             ];
             if (item.tokenAllowance !== null) {
                 promptAdditions.push(`Token allowance for this action: ${item.tokenAllowance}. Keep the run within this reserved share and report actual usage.`);
+            }
+            if (serialBottleneck) {
+                promptAdditions.push('Serial-graph bottleneck: every remaining task waits on this one, so subagent dispatch has no parallel payoff. The controller may implement this task directly in the current session instead of spawning a subagent: claim it with the heartbeat command using executor id "controller-inline", do the work against the referenced packet, then run the completion and result commands yourself. Reviews remain independent subagents either way.');
             }
             item.prompt = this.boundPrompt([
                 item.prompt,
@@ -2135,13 +2306,13 @@ class LoopService {
                 `No runtime adapter is available: ${runtimeAdapter.warnings.join(' ')}`,
             ]
             : [
-                `Run "ospec loop run ${this.quote(changePath)} --once --json". For every non-empty actions[] batch, immediately launch one fresh ${selected.nativeSubagent?.primitive || 'model-native'} subagent per item.`,
+                `Run "ospec loop run ${this.quote(changePath)} --once --compact-json". For every non-empty actions[] batch, immediately launch one fresh ${selected.nativeSubagent?.primitive || 'model-native'} subagent per item.`,
                 selected.nativeSubagent?.dispatch || 'Use the current model harness native subagent dispatch primitive.',
                 selected.nativeSubagent?.wait || 'Poll the native child batch with a bounded wait in the current model session.',
-                `Never block indefinitely: each native wait or poll must return within ${selected.nativeSubagent?.maxWaitMs || 60000}ms, with a recommended poll interval of ${selected.nativeSubagent?.pollIntervalMs || 30000}ms.`,
-                'Give each subagent only its referenced packet. After dispatch, record heartbeatCommand with the real child id; before every item heartbeatDueAt, refresh its heartbeat. Persist each completionCommand/evidence and resultCommand as that child finishes, then tick again after every poll without another user prompt.',
+                `Never block indefinitely: each native wait must return within ${selected.nativeSubagent?.maxWaitMs || 60000}ms while other work is dispatchable. When the pending batch is the only outstanding work, one idle wait may extend to ${selected.nativeSubagent?.idleMaxWaitMs || IDLE_MAX_WAIT_MS}ms.`,
+                'Give each subagent only its referenced packet. After dispatch, record heartbeatCommand once with the real child id to claim each item. Between waits run "ospec loop poll" instead of a full tick: poll refreshes leases (no periodic heartbeat command needed) and reports tickNow. Run "ospec loop run --once" only when poll reports tickNow=true or right after dispatching. Persist each completionCommand/evidence and resultCommand as that child finishes.',
                 'Use loop recover --force only when the prior session or child is known to be gone; never relaunch completed siblings.',
-                'If actions[] is empty and pending is present, observe/wait only and never relaunch pending items. Stop only for a real decision/safety gate, configured guard/STOP, paused/stopped/done, or explicit user pause.',
+                'If actions[] is empty and pending is present, observe/wait/poll only and never relaunch pending items. Stop only for a real decision/safety gate, configured guard/STOP, paused/stopped/done, or explicit user pause.',
                 'OSpec owns durable workflow state; the current model harness owns native subagent execution. Agent CLI processes are not a supported fallback.',
             ];
         return {
@@ -2278,6 +2449,7 @@ class LoopService {
             reviewMaxRuntimeMinutes: 60,
             verificationMaxRuntimeMinutes: 60,
             evidenceResultGraceMinutes: 5,
+            reviewGating: 'strict',
         };
     }
     isControllerCapabilityCurrent(config, now) {

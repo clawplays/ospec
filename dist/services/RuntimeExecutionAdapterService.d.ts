@@ -18,6 +18,8 @@ export interface RuntimeNativeSubagentContract {
     result: string;
     pollIntervalMs: number;
     maxWaitMs: number;
+    /** Upper bound for one idle wait when the pending batch is the only outstanding work. Additive in 1.9.8. */
+    idleMaxWaitMs?: number;
     heartbeatBeforeDue: true;
     persistResultsIncrementally: true;
     retickAfterPoll: true;

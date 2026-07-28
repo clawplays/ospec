@@ -39,7 +39,7 @@ const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'tick', 'watch', 'status', 'pause', 'resume', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
+const LOOP_ACTIONS = ['run', 'tick', 'poll', 'watch', 'status', 'pause', 'resume', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
@@ -48,6 +48,9 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 case 'run':
                 case 'tick':
                     await this.run(args);
+                    return;
+                case 'poll':
+                    await this.poll(args);
                     return;
                 case 'watch':
                     await this.watch(args);
@@ -101,7 +104,9 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             layoutConfig: project.config,
         });
         if (args.includes('--json') || args.includes('--compact-json')) {
-            console.log(JSON.stringify(args.includes('--compact-json') ? this.compactTickResult(result) : result, null, 2));
+            console.log(JSON.stringify(args.includes('--compact-json')
+                ? this.compactTickResult(result, await this.readGraphSummary(changePath))
+                : result, null, 2));
             return;
         }
         console.log('\nLoop Tick');
@@ -141,7 +146,54 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         console.log(`  ${result.nextInstruction}`);
         console.log('');
     }
-    compactTickResult(result) {
+    async poll(args) {
+        const inputPath = this.parseOptionalPath(args, [], ['--json']);
+        const changePath = await this.resolveChangePath(inputPath);
+        const result = await services_1.services.loopService.poll(changePath);
+        if (args.includes('--json')) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+        console.log(`Loop poll: tickNow=${result.tickNow ? 'yes' : 'no'} settled=${result.settled ? 'yes' : 'no'} action=${result.actionId || 'none'}`);
+        for (const item of result.items) {
+            console.log(`  - ${item.id}: ${item.status}${item.evidenceReady ? ' evidence-ready' : ''}`);
+        }
+        console.log(`Reason: ${result.reason}`);
+        console.log(`Next: ${result.nextInstruction}`);
+    }
+    /** Reads a token-lean task graph summary so the controller does not need a separate `ospec execute status` call per tick. */
+    async readGraphSummary(changePath) {
+        try {
+            const graph = await services_1.services.fileService.readJSON(path.join(changePath, 'artifacts', 'agents', 'task-graph.json'));
+            if (!Array.isArray(graph?.tasks))
+                return null;
+            const statusCounts = {};
+            let reviewsPending = 0;
+            for (const task of graph.tasks) {
+                const status = String(task?.status || 'UNKNOWN').toUpperCase();
+                statusCounts[status] = (statusCounts[status] || 0) + 1;
+                const decision = String(task?.review?.decision || 'PENDING').toUpperCase();
+                if (decision !== 'APPROVED' && decision !== 'APPROVED_WITH_CONCERNS')
+                    reviewsPending += 1;
+            }
+            return {
+                graphStatus: graph.status ?? null,
+                tasks: graph.tasks.length,
+                statusCounts,
+                reviewsPending,
+            };
+        }
+        catch {
+            return null;
+        }
+    }
+    compactTickResult(result, graphSummary = null) {
+        const capText = (value, max = 600) => {
+            if (value === null || value === undefined)
+                return value;
+            const text = String(value);
+            return text.length > max ? `${text.slice(0, max)}…` : text;
+        };
         const pending = result.pending
             ? {
                 actionId: result.pending.actionId,
@@ -150,7 +202,17 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 issuedAt: result.pending.issuedAt,
                 executorCompletedAt: result.pending.executorCompletedAt || null,
                 executorSucceeded: result.pending.executorSucceeded ?? null,
-                itemStates: result.pending.itemStates || [],
+                itemStates: (result.pending.itemStates || []).map((item) => ({
+                    actionItemId: item.actionItemId,
+                    status: item.status,
+                    executorId: item.executorId,
+                    heartbeatDueAt: item.heartbeatDueAt || null,
+                    leaseExpiresAt: item.leaseExpiresAt,
+                    absoluteExpiresAt: item.absoluteExpiresAt || null,
+                    evidenceReady: Boolean(item.evidenceReadyAt),
+                    tokensUsed: item.tokensUsed,
+                    summary: capText(item.summary, 200),
+                })),
             }
             : null;
         const actions = (result.actions || []).map((action) => ({
@@ -180,9 +242,10 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             verifyPassed: result.verifyPassed,
             stopped: result.stopped,
             stopReason: result.stopReason,
-            feedback: result.feedback,
-            nextInstruction: result.nextInstruction,
+            feedback: capText(result.feedback),
+            nextInstruction: capText(result.nextInstruction, 900),
             metrics: result.metrics,
+            graph: graphSummary,
             pending,
             actions,
             batchDiagnostics: result.batchDiagnostics,
@@ -465,6 +528,13 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const maxParallelReason = scalar('--max-parallel-reason');
         if (maxParallelReason !== undefined) {
             options.maxParallelReason = maxParallelReason.toLowerCase() === 'none' ? null : maxParallelReason;
+        }
+        const reviewGating = scalar('--review-gating');
+        if (reviewGating !== undefined) {
+            if (reviewGating !== 'strict' && reviewGating !== 'optimistic') {
+                throw new Error('--review-gating must be strict or optimistic.');
+            }
+            options.reviewGating = reviewGating;
         }
         options.promptMaxChars = nullableNumber('--prompt-max-chars') ?? undefined;
         options.implementationMaxRuntimeMinutes = nullableNumber('--implementation-max-runtime-minutes') ?? undefined;

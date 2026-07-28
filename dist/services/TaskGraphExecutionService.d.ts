@@ -904,6 +904,8 @@ export interface TaskBootstrapTaskGraphSnapshot {
     completed: number;
     blocked: number;
     invalid: number;
+    /** True when every blocked task is only waiting on running work, dependencies, or pending task reviews. Additive in 1.9.8. */
+    waitingOnly?: boolean;
     issues: string[];
     nextInstruction: string;
 }
@@ -1467,6 +1469,14 @@ export declare class TaskGraphExecutionService {
     private runtimeAdapterService;
     private reportDocumentLanguageCache;
     constructor(fileService: FileService, runtimeAdapterService?: RuntimeExecutionAdapterService);
+    /**
+     * Optimistic review gating lets dependents dispatch while an upstream
+     * task review is still pending; the task's own review requirement and the
+     * final-review gate still require every task review to be approved.
+     * Strict remains the default and is unchanged for classic changes, which
+     * have no loop configuration.
+     */
+    private readLoopReviewGating;
     getReport(changePath: string): Promise<TaskGraphExecutionReport>;
     selectConflictSafeTasks(tasks: TaskGraphExecutionTask[], options?: {
         respectParallelizable?: boolean;
@@ -1610,6 +1620,13 @@ export declare class TaskGraphExecutionService {
      */
     closeOutSupersededPlanningRepair(changePath: string): Promise<boolean>;
     private buildPostRepairReviewSections;
+    /**
+     * When a task review is re-dispatched after a NEEDS_CHANGES round, scope
+     * the fresh reviewer to verifying the repaired findings plus their direct
+     * regression surface instead of re-reviewing the whole task from scratch.
+     * Read before prepareReviewArtifactForDispatch removes the prior findings.
+     */
+    private buildTaskPostRepairReviewSections;
     private buildPlanningRepairDiffSections;
     private buildVerificationFailureFocusSections;
     private truncateForPacket;
@@ -2034,6 +2051,7 @@ export declare class TaskGraphExecutionService {
     private toFileSafeTimestamp;
     private toFileSafeId;
     private toChangeRelativePath;
+    /** Token-lean pointer block: workers read the referenced brief only when they need project context. */
     private buildProjectSessionBriefLines;
     private buildTaskReviewRepairContextLines;
     private buildDispatchPacket;

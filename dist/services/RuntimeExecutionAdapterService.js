@@ -4,61 +4,62 @@ exports.RuntimeExecutionAdapterService = void 0;
 exports.createRuntimeExecutionAdapterService = createRuntimeExecutionAdapterService;
 const NATIVE_POLL_INTERVAL_MS = 30 * 1000;
 const NATIVE_MAX_WAIT_MS = 60 * 1000;
+const NATIVE_IDLE_MAX_WAIT_MS = 10 * 60 * 1000;
 const NATIVE_TARGETS = Object.freeze({
     codex: {
         primitive: 'spawn_agent',
         dispatch: 'Call spawn_agent once per action packet in the current Codex session.',
         wait: 'Use wait_agent with a timeout no greater than maxWaitMs. Never make one indefinite wait; return after each bounded poll.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     gpt: {
         primitive: 'spawn_agent',
         dispatch: 'Call spawn_agent once per action packet in the current GPT/Codex session.',
         wait: 'Use wait_agent with a timeout no greater than maxWaitMs. Never make one indefinite wait; return after each bounded poll.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     claude: {
         primitive: 'Task',
         dispatch: 'Call the Claude Task tool once per action packet with a fresh subagent context.',
         wait: 'Use background Task execution with bounded polling when available. Never make one indefinite wait; return control within maxWaitMs.',
-        result: 'Before heartbeatDueAt, refresh every running Task heartbeat. Persist each finished Task result immediately, then tick OSpec again.',
+        result: 'Claim each Task once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished Task result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     gemini: {
         primitive: '@generalist',
         dispatch: 'Dispatch one Gemini @generalist subagent per action packet.',
         wait: 'Poll the native @generalist batch for no more than maxWaitMs at a time. Never make one indefinite wait.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     grok: {
         primitive: 'spawn_subagent',
         dispatch: 'Call spawn_subagent once per action packet in the current Grok Build session.',
         wait: 'Use get_command_or_subagent_output with the returned subagent ids and a timeout_ms no greater than maxWaitMs. Never make one indefinite wait; return after each bounded poll.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     opencode: {
         primitive: '@mention',
         dispatch: 'Dispatch one OpenCode @mention subagent per action packet.',
         wait: 'Poll the native @mention batch for no more than maxWaitMs at a time. Never make one indefinite wait.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     cursor: {
         primitive: 'Agent',
         dispatch: 'Use the current Cursor session native Agent/task primitive once per action packet.',
         wait: 'Poll the native Cursor child batch for no more than maxWaitMs at a time. Never make one indefinite wait.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
     copilot: {
         primitive: 'Agent',
         dispatch: 'Use the current Copilot session native agent/task primitive once per action packet.',
         wait: 'Poll the native Copilot child batch for no more than maxWaitMs at a time. Never make one indefinite wait.',
-        result: 'Before heartbeatDueAt, refresh every running child heartbeat. Persist each finished child result immediately, then tick OSpec again.',
+        result: 'Claim each child once with its heartbeatCommand, then run "ospec loop poll" between bounded waits; poll refreshes leases, so no periodic heartbeat command is needed. Persist each finished child result immediately and run a full tick only when poll reports tickNow=true.',
         supportsParallel: true,
     },
 });
@@ -150,6 +151,7 @@ class RuntimeExecutionAdapterService {
                     result: definition.result,
                     pollIntervalMs: NATIVE_POLL_INTERVAL_MS,
                     maxWaitMs: NATIVE_MAX_WAIT_MS,
+                    idleMaxWaitMs: NATIVE_IDLE_MAX_WAIT_MS,
                     heartbeatBeforeDue: true,
                     persistResultsIncrementally: true,
                     retickAfterPoll: true,
