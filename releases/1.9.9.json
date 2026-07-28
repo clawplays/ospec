@@ -1,0 +1,9 @@
+{
+  "title_suffix": "archive metadata parity",
+  "summary": "OSpec 1.9.9 syncs the proposal's `affects` scopes into state.json at archive time for both profiles, so a frozen classic archive no longer shows an empty affects array that tempts AI sessions into hand-editing archived metadata. The skills and protocol documents now state explicitly that everything under changes/archived/ is frozen evidence.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.8...1.9.9",
+  "improved": [
+    "Ordinary and force archives copy the proposal.md frontmatter `affects` scopes into the archived state.json (the goal bootstrap already synced them during execution; classic fast-flow changes previously archived with an empty array). proposal.md remains the authority the knowledge index extracts from, so existing archives lose nothing.",
+    "The change and goal skills plus the four-language execution-protocol documents now teach: never edit anything under `changes/archived/` — archive-time metadata is synced by the CLI, residual inconsistencies should be reported instead of rewritten, and the knowledge index self-heals its cache from the authoritative documents."
+  ]
+}

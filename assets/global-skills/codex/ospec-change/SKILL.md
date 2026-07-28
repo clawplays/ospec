@@ -84,3 +84,4 @@ ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive
 - Never escalate or auto-promote a change to the Goal workflow; only the user selects Goal.
 - Do not claim completion until implementation, verification notes, and closeout status are aligned.
 - If real project tests exist, run or recommend them separately from `ospec verify`.
+- Archived changes are frozen evidence: never edit anything under `changes/archived/` (state.json, documents, or artifacts). Archive-time metadata is synced from the authoritative sources by the CLI; if something still looks inconsistent, report it instead of rewriting history — the knowledge index derives from the authoritative documents and self-heals its cache.

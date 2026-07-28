@@ -158,3 +158,4 @@ ospec finalize [changes/active/<goal>] --force-archive --confirm-force-archive <
 - Treat the emitted packet path as authoritative context. Do not paste the whole goal into each worker or reuse a reviewer context for implementation.
 - Do not claim goal closeout while document reviews, task graph, final reviews, worker status, required user decisions, or verification evidence are incomplete.
 - If real project tests exist, run them separately before recording verification evidence.
+- Archived changes are frozen evidence: never edit anything under `changes/archived/`. Report metadata concerns instead of rewriting history — the knowledge index derives from the authoritative documents and self-heals its cache.

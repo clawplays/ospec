@@ -783,6 +783,22 @@ class ProjectService {
         const proposalPath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL);
         const persistedFeatureState = await this.fileService.readJSON(statePath);
         const featureState = forceArchive ? persistedFeatureState : item.closeoutState || persistedFeatureState;
+        // proposal.md frontmatter is the authority for affects; classic changes
+        // never sync it into state.json during the fast flow, so archive-time
+        // sync keeps the frozen state.json consistent with the proposal and
+        // removes the temptation to hand-edit archived metadata afterwards.
+        let archiveAffects = Array.isArray(featureState.affects) ? featureState.affects : [];
+        try {
+            const proposalDoc = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath));
+            const proposalAffects = Array.isArray(proposalDoc.data?.affects)
+                ? proposalDoc.data.affects.map((item) => String(item).trim()).filter(Boolean)
+                : [];
+            if (proposalAffects.length > 0)
+                archiveAffects = proposalAffects;
+        }
+        catch {
+            // A malformed or missing proposal is already reported by archive readiness.
+        }
         if (forceArchive && item.archiveReady && blockingChecks.length === 0 && progressIssues.length === 0) {
             throw new Error(`Change ${item.name} is already ready to finalize; use ordinary ospec finalize without --force-archive.`);
         }
@@ -816,6 +832,7 @@ class ProjectService {
             current_step: 'archived',
             completed: Array.from(new Set([...(featureState.completed || []), 'archived'])).sort((left, right) => left.localeCompare(right)),
             pending: (featureState.pending || []).filter(step => step !== 'archived'),
+            affects: archiveAffects,
             archive_disposition: 'forced',
             completion_status: 'incomplete',
             accepted_risk: true,
@@ -827,6 +844,7 @@ class ProjectService {
             current_step: 'archived',
             completed: Array.from(new Set([...(featureState.completed || []), 'archived'])).sort((left, right) => left.localeCompare(right)),
             pending: (featureState.pending || []).filter(step => step !== 'archived'),
+            affects: archiveAffects,
             blocked_by: [],
         };
         await this.preflightArchivedKnowledgeWrite(projectRoot, archivePath);
