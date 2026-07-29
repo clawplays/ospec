@@ -1435,7 +1435,9 @@ function getActivatedSteps(workflowConfig, flags) {
     return activated.sort((left, right) => left.localeCompare(right));
 }
 function getStagedFiles(rootDir) {
-    const result = spawnSync('git', ['diff', '--cached', '--name-only', '--diff-filter=ACMR'], {
+    // core.quotePath=false keeps non-ASCII (e.g. CJK) staged paths as raw UTF-8
+    // instead of octal-escaped, double-quoted strings the parsing below can't read.
+    const result = spawnSync('git', ['-c', 'core.quotePath=false', 'diff', '--cached', '--name-only', '--diff-filter=ACMR'], {
         cwd: rootDir,
         encoding: 'utf8',
     });

@@ -75,7 +75,11 @@ class ClassicChangeCloseoutService {
                 },
             ],
         });
-        const status = (0, child_process_1.spawnSync)('git', ['status', '--porcelain', '--untracked-files=all', '--no-renames'], { cwd: projectRoot, encoding: 'utf8', windowsHide: true });
+        // core.quotePath=false keeps non-ASCII (e.g. CJK) paths as raw UTF-8; the
+        // default octal-escaped, double-quoted form is mangled by the strip-quotes /
+        // backslash->slash parsing below and would flag an in-scope file (declared
+        // by its exact non-ASCII path in affects) as out-of-scope, blocking closeout.
+        const status = (0, child_process_1.spawnSync)('git', ['-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all', '--no-renames'], { cwd: projectRoot, encoding: 'utf8', windowsHide: true });
         if (status.error || status.status !== 0) {
             return skipped('Workspace scope check skipped (not a Git repository)');
         }

@@ -223,7 +223,10 @@ class NewCommand extends BaseCommand_1.BaseCommand {
      */
     warnOnDirtyWorkspace(targetDir) {
         try {
-            const status = (0, child_process_1.spawnSync)('git', ['status', '--porcelain', '--untracked-files=all', '--no-renames'], { cwd: targetDir, encoding: 'utf8', windowsHide: true });
+            // core.quotePath=false keeps non-ASCII (e.g. CJK) paths as raw UTF-8
+            // so the strip-quotes / backslash->slash parsing below reports real
+            // filenames instead of octal-escaped garbage.
+            const status = (0, child_process_1.spawnSync)('git', ['-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=all', '--no-renames'], { cwd: targetDir, encoding: 'utf8', windowsHide: true });
             if (status.error || status.status !== 0)
                 return;
             const dirty = status.stdout

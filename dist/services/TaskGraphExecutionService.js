@@ -9854,7 +9854,13 @@ class TaskGraphExecutionService {
         };
     }
     runGit(cwd, args) {
-        const result = childProcess.spawnSync('git', args, {
+        // Force core.quotePath=false so git emits raw UTF-8 paths instead of
+        // octal-escaped, double-quoted ones. Without this, non-ASCII (e.g. CJK)
+        // paths in `git status` output are mangled by the strip-quotes /
+        // backslash->slash parsers and the workspace-scope gate misattributes
+        // in-scope files as out-of-scope, blocking closeout. Harmless for
+        // non-path git subcommands.
+        const result = childProcess.spawnSync('git', ['-c', 'core.quotePath=false', ...args], {
             cwd,
             encoding: 'utf8',
             windowsHide: true,

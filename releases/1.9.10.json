@@ -1,0 +1,9 @@
+{
+  "title_suffix": "non-ASCII path archive fix",
+  "summary": "OSpec 1.9.10 fixes a workspace-scope bug where changes touching files with non-ASCII (for example CJK) names could not be archived. `git status`/`git diff` octal-escape and quote non-ASCII paths by default, and the classic and goal scope gates parsed those mangled paths, so a file declared by its exact non-ASCII path in `affects` was flagged out-of-scope and blocked closeout. All path-reading git calls now run with `core.quotePath=false` so paths stay raw UTF-8.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/1.9.9...1.9.10",
+  "fixed": [
+    "Workspace-scope closeout gates now read non-ASCII (e.g. CJK) git paths correctly. Previously a change whose `affects` named an exact non-ASCII file path had that file octal-escaped by git and misparsed as out-of-scope, blocking `ospec finalize`/archive and forcing operators to broaden `affects` to an ASCII parent directory or archive from a separate clean worktree.",
+    "The fix forces `core.quotePath=false` on every git status/diff call that parses paths: the classic closeout scope gate (ClassicChangeCloseoutService), all goal-side git calls (TaskGraphExecutionService.runGit, including the task-dispatch workspace snapshot), the new-change dirty-workspace warning (NewCommand), and staged-file detection during index builds (build-index)."
+  ]
+}
