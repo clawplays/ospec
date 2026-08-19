@@ -31,3 +31,10 @@ tags: [conventions, skill, ospec]
 - `SKILL.index.json` は発見用であり、`SKILL.md` の代替ではない
 - `SKILL.md` 更新後は index を再生成する
 - AI はまず index を読み、その後に対象 `SKILL.md` を読む
+
+## 実行要件
+
+- `SKILL.md` を更新しないコードだけの変更は認められない
+- 設計文書に属する設計理由を `SKILL.md` に詰め込まない
+- `SKILL.md` は今あるものを説明し、設計文書はなぜそう設計したかを説明する
+

@@ -54,9 +54,33 @@ const cliPath = path.join(rootDir, 'dist', 'cli.js');
 
 const packageJson = require(path.join(rootDir, 'package.json'));
 
+/**
+ * Agent-home sandbox for the whole smoke run.
+ *
+ * This script runs `node dist/cli.js init <tempdir>`, and `init` installs the
+ * ospec skills into the CALLER's agent home. With no `env` passed to spawnSync
+ * the child inherited the developer's, so every `npm run release:smoke`
+ * silently rewrote the real `~/.claude/skills` and `~/.codex/skills` with
+ * whatever the working tree currently says. It is a verification gate; it must
+ * not mutate the machine it verifies on.
+ *
+ * Only CLAUDE_HOME and CODEX_HOME are redirected -- deliberately not HOME or
+ * USERPROFILE. `InitCommand.resolveProviderHome` prefers those two and only
+ * falls back to `homedir()` when they are unset, so this is sufficient; and
+ * redirecting HOME would take `~/.npmrc` away from the `npm pack` / `npm
+ * install` steps below and could break a private-registry or proxy setup that
+ * has nothing to do with what is being smoke-tested.
+ *
+ * Populated by main() once the temp dir exists; before that the value is null
+ * and spawns inherit the environment, which is correct for the no-op window.
+ */
+let smokeEnv = null;
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || rootDir,
+
+    env: options.env || smokeEnv || process.env,
 
     encoding: 'utf8',
 
@@ -75,6 +99,8 @@ function run(command, args, options = {}) {
 function runExpectFailure(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || rootDir,
+
+    env: options.env || smokeEnv || process.env,
 
     encoding: 'utf8',
 
@@ -305,8 +331,20 @@ async function main() {
 
   const tempClaudeSkillDir = path.join(tempDir, 'claude-skill');
 
+  const agentHomeDir = path.join(tempDir, 'agent-home');
+
+  smokeEnv = {
+    ...process.env,
+
+    CLAUDE_HOME: path.join(agentHomeDir, '.claude'),
+
+    CODEX_HOME: path.join(agentHomeDir, '.codex'),
+  };
+
   try {
     console.log(`[release:smoke] using temp dir: ${tempDir}`);
+
+    console.log(`[release:smoke] agent home sandboxed at: ${agentHomeDir}`);
 
     let output = run('node', [
       path.join(rootDir, 'scripts', 'release-content-scan.js'),
@@ -341,10 +379,6 @@ async function main() {
     output = run('node', [cliPath, 'workflow', '--help']);
 
     assertContains(output, 'ospec workflow show', 'workflow help');
-
-    output = run('node', [cliPath, 'batch', '--help']);
-
-    assertContains(output, 'ospec batch stats', 'batch help');
 
     output = run('node', [cliPath, 'queue', '--help']);
 

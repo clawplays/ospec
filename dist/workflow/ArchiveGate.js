@@ -2,6 +2,25 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.archiveGate = exports.ArchiveGate = void 0;
 class ArchiveGate {
+    /**
+     * The message for one required-step check.
+     *
+     * M-cfg2: the false branch used to be the single string "<step> required but
+     * not completed", printed regardless of whether the step was required. So a
+     * project with `require_skill_update: false` -- which is EVERY classic
+     * Change, because `ArchiveCommand` forces that flag off -- printed
+     *
+     *     PASS Skill Updated
+     *       Skill update required but not completed
+     *
+     * a line that contradicts its own verdict on the line above it. Three
+     * states, three messages.
+     */
+    describeRequirement(done, required, labels) {
+        if (done)
+            return labels.done;
+        return required ? labels.pending : labels.waived;
+    }
     async checkArchiveReadiness(featureState, config, protocolState) {
         const checks = [];
         const blockers = [];
@@ -10,9 +29,11 @@ class ArchiveGate {
         checks.push({
             name: 'Verification Passed',
             passed: verificationPassed || !config.require_verification,
-            message: verificationPassed
-                ? 'Verification has been completed'
-                : 'Verification required but not completed',
+            message: this.describeRequirement(verificationPassed, config.require_verification, {
+                done: 'Verification has been completed',
+                pending: 'Verification required but not completed',
+                waived: 'Verification not completed, and not required by workflow.archive_gate.require_verification',
+            }),
         });
         if (config.require_verification && !verificationPassed) {
             blockers.push('Verification must be completed before archiving');
@@ -21,9 +42,11 @@ class ArchiveGate {
         checks.push({
             name: 'Skill Updated',
             passed: skillUpdated || !config.require_skill_update,
-            message: skillUpdated
-                ? 'Skill documentation has been updated'
-                : 'Skill update required but not completed',
+            message: this.describeRequirement(skillUpdated, config.require_skill_update, {
+                done: 'Skill documentation has been updated',
+                pending: 'Skill update required but not completed',
+                waived: 'Skill documentation not updated, and not required by workflow.archive_gate.require_skill_update',
+            }),
         });
         if (config.require_skill_update && !skillUpdated) {
             blockers.push('Skill documentation must be updated before archiving');
@@ -32,26 +55,42 @@ class ArchiveGate {
         checks.push({
             name: 'Index Regenerated',
             passed: indexRegenerated || !config.require_index_regenerated,
-            message: indexRegenerated
-                ? 'Index has been regenerated'
-                : 'Index regeneration required but not completed',
+            message: this.describeRequirement(indexRegenerated, config.require_index_regenerated, {
+                done: 'Index has been regenerated',
+                pending: 'Index regeneration required but not completed',
+                waived: 'Index not regenerated, and not required by workflow.archive_gate.require_index_regenerated',
+            }),
         });
         if (config.require_index_regenerated && !indexRegenerated) {
             blockers.push('Index must be regenerated before archiving');
         }
+        /*
+         * M-cfg2: this is where `require_verification: false` was silently undone.
+         *
+         * The dedicated verification check above honoured the flag, but
+         * `verification_passed` was ALSO an unconditional member of the core-step
+         * list, so turning the requirement off moved the refusal from
+         * "Verification must be completed before archiving" to "All core steps
+         * must be completed before archiving" and changed nothing else. The flag
+         * had exactly one observable effect: a worse error message.
+         *
+         * The step is now in the core list only while it is required, which is the
+         * one reading under which the flag means what it says.
+         */
         const coreSteps = [
             'proposal_complete',
             'tasks_complete',
             'implementation_complete',
-            'verification_passed',
+            ...(config.require_verification ? ['verification_passed'] : []),
         ];
-        const corePassed = coreSteps.every(step => featureState.completed.includes(step));
+        const missingCoreSteps = coreSteps.filter(step => !featureState.completed.includes(step));
+        const corePassed = missingCoreSteps.length === 0;
         checks.push({
             name: 'Core Steps Completed',
             passed: corePassed,
             message: corePassed
                 ? 'All core steps have been completed'
-                : 'Some core steps are still pending',
+                : `Some core steps are still pending: ${missingCoreSteps.join(', ')}`,
         });
         if (!corePassed) {
             blockers.push('All core steps must be completed before archiving');
@@ -76,7 +115,14 @@ class ArchiveGate {
             if (!protocolState.tasksComplete) {
                 blockers.push('tasks.md still has unchecked items');
             }
-            if (!protocolState.verificationComplete) {
+            /*
+             * M-cfg2: the second place the flag was undone. `verification.md still
+             * has unchecked items` is a verification requirement by any reading, and
+             * leaving it unconditional meant `require_verification: false` still
+             * could not archive a change whose verification checklist was open --
+             * the exact state the flag exists to allow.
+             */
+            if (config.require_verification && !protocolState.verificationComplete) {
                 blockers.push('verification.md still has unchecked items');
             }
             checks.push({

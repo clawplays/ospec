@@ -27,6 +27,12 @@ export declare class BrainstormCommand extends BaseCommand {
     private buildDecisionGates;
     private resolveDecisionGateChangePath;
     private writeDecisionGates;
+    /**
+     * See `utils/ShellQuote`. This was a third copy of the rule, and the worst
+     * of them: as well as escaping only `"`, its raw fast path included `\`, so
+     * a Windows path was returned completely unquoted and sh then ate the
+     * backslashes as escapes.
+     */
     private quoteCommandArg;
 }
 export {};

@@ -33,11 +33,6 @@ class WorkflowCommand extends BaseCommand_1.BaseCommand {
                     await this.setMode(args[0], args[1] || process.cwd());
                     break;
                 }
-                case 'simulate': {
-                    // mode and flags are required
-                    console.error('Usage: ospec workflow simulate <mode> <flags...>');
-                    break;
-                }
                 default:
                     this.info((0, subcommandHelp_1.getWorkflowHelpText)());
             }
@@ -53,7 +48,7 @@ class WorkflowCommand extends BaseCommand_1.BaseCommand {
             const config = await services_1.services.configManager.loadConfig(projectPath);
             const mode = config.mode;
             const workflow = new workflow_1.ConfigurableWorkflow(mode);
-            const composer = new workflow_1.PluginWorkflowComposer(config);
+            const composer = new workflow_1.WorkflowComposer(config);
             console.log('\n?? Workflow Configuration:');
             console.log('=========================\n');
             console.log(`Mode: ${mode.toUpperCase()}\n`);
@@ -69,26 +64,6 @@ class WorkflowCommand extends BaseCommand_1.BaseCommand {
                     console.log(`  ? ${name}`);
                     console.log(`    Triggers: ${config.when.join(', ')}`);
                 }
-            }
-            console.log('\nEnabled Plugins:');
-            const enabledPlugins = composer.getEnabledPlugins();
-            if (enabledPlugins.length === 0) {
-                console.log('  (none)');
-            }
-            else {
-                enabledPlugins.forEach(plugin => {
-                    console.log(`  ? ${plugin.name}${plugin.blocking ? ' (blocking)' : ''}`);
-                });
-            }
-            const pluginCapabilities = composer.getPluginCapabilities();
-            if (pluginCapabilities.length > 0) {
-                console.log('\nPlugin-Contributed Steps:');
-                pluginCapabilities.forEach(capability => {
-                    console.log(`  ? ${capability.step}`);
-                    console.log(`    Plugin: ${capability.plugin}`);
-                    console.log(`    Capability: ${capability.capability}`);
-                    console.log(`    Triggers: ${capability.activateWhenFlags.join(', ')}`);
-                });
             }
             console.log('\nSupported Workflow Flags:');
             const flags = composer.getSupportedFlags();
@@ -110,7 +85,7 @@ class WorkflowCommand extends BaseCommand_1.BaseCommand {
     async listSupportedFlags(projectPath) {
         try {
             const config = await services_1.services.configManager.loadConfig(projectPath);
-            const composer = new workflow_1.PluginWorkflowComposer(config);
+            const composer = new workflow_1.WorkflowComposer(config);
             const flags = composer.getSupportedFlags();
             console.log('\n???? Supported Workflow Flags:');
             console.log('===========================\n');

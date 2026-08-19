@@ -29,8 +29,7 @@ OSpec の公式 CLI パッケージは `@clawplays/ospec-cli`、公式コマン�
   <a href="usage.ja.md">使い方</a> |
   <a href="project-overview.ja.md">概要</a> |
   <a href="installation.ja.md">インストール</a> |
-  <a href="external-plugins.ja.md">外部プラグイン</a> |
-  <a href="plugin-release.ja.md">プラグイン公開</a> |
+  <a href="skills-installation.ja.md">スキルのインストール</a> |
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
@@ -171,7 +170,7 @@ CLI は `changes/active/<change-name>` の短縮パスも受け付けますが�
 
 ユーザーがフルワークフローを明示的に選択した場合だけ `ospec goal <goal-name>` を使います。選択済みの Change は複雑さ、ファイル数、risk、batch size によって Goal へ自動昇格しません。
 
-Change は compact な stage-aware guidance、現在の AI による 1 回の lightweight review、derived closeout を使います。verification、documentation、plugin、review の gate がすべて通れば、`APPROVED` または `APPROVED_WITH_CONCERNS` は自動的に finalize と archive が可能です。明示的な batch は queue で直列実行されます。
+Change は compact な stage-aware guidance、現在の AI による 1 回の lightweight review、derived closeout を使います。verification、documentation、review の gate がすべて通れば、`APPROVED` または `APPROVED_WITH_CONCERNS` は自動的に finalize と archive が可能です。明示的な batch は queue で直列実行されます。
 
 **あなたは goal を起こして要件を説明するだけ。** 残りの `ospec` コマンドはすべて AI が自分で実行し、あなたはチャットで質問に答えるだけです（`Zero-Setup`）。
 
@@ -273,70 +272,11 @@ ospec update
 - **ドキュメント保守**: `ospec docs generate` で後から知識レイヤを更新・修復
 - **change 実行の追跡**: proposal、design、implementation plan、task graph、tasks、handoff artifacts、document-review artifacts、worker status、state、verification、review を継続的に揃える
 - **task graph controller**: `ospec execute bootstrap` で project session brief snapshot を含む one-change startup/resume snapshot と次の安全な action を記録し、`handoff` で project session brief snapshot を含む cross-tool worker handoff guide を外部 worker を起動せずに記録し、`preflight` で project session brief snapshot を含む task 実行前の design / implementation-plan reviewer packet を作成し、`status` と `next` で controller 状態と安全な次 task 候補を表示し、`workspace` で worker handoff 前の git workspace safety を記録し、`worktree` で isolated-worktree preparation plan を記録し、`finish` で closeout readiness を記録し、`dispatch` と `complete` で project session brief snapshot、worker profile、target tool mapping 付きの parallel-safe な worker packet と task 結果を OSpec artifact として記録し、`NEEDS_CONTEXT` または `BLOCKED` には blocker escalation を書き、`--limit` で dispatch batch size を制限でき、`review` で project session brief snapshot を含む task 完了後の統合 code review packet（spec compliance と code quality を一度に確認）を作成し、`debug` で symptom、hypothesis、root cause、fix evidence を記録し、`tdd` で red/green/refactor の test-cycle evidence を記録し、`verify` で fresh verification evidence を記録し、`sync` で execution と review artifacts から `worker-status.md` を再構築
+- **生きた feature ドキュメントとロケータ**: 人が管理する文書内の feature セクションを `<!-- ospec:feature <slug> code:<パス> -->` で宣言。`docs/project/feature-catalog.md` は宣言済み feature ごとに 1 行（slug、一文、`文書#セクション`、状態、最新アーカイブ）を持ち、`ospec docs locate --feature <slug>` / `--affects <パス>` がそのセクションの位置と行範囲を返すため、AI は文書全体ではなく 1 セクションだけを読む
+- **アーカイブのオンデマンド表示**: アーカイブは index エントリを書き、カタログ行を更新し、`ospec:last-change` トレーサビリティコメントを冪等に書く。`docs/project/changes/` 配下にファイルは生成されず、`ospec changes show <アーカイブ名>` が要約・影響範囲・ファイル一覧・検証コマンドをオンデマンドに表示する
+- **文書義務**: 計画時に `ospec docs obligations --apply` が `change_type` と feature 一覧（空なら `affects` を `code:` 宣言で解決）から義務を導出し、`ファイル#セクション` まで解決済みの対象を書き込む。fix は該当セクションが修正前の誤った挙動を記述していないか確認し、refactor は正確さを検証して無変更なら `ospec docs confirm` で `verified_unchanged` を記録する。`.skillrc` の `docs_contract.mode: warn|strict` が未達の必須義務を警告にするかアーカイブ阻止にするかを決める。`ospec docs audit` は `code:` パスが変わったのに文書が動いていないセクションを列挙し、`ospec docs migrate` は旧生成文書を 4 段階のゲート付きで feature ドキュメントへ移行する
 - **キュー支援**: `queue` と `run` で複数 change の明示的な実行を管理
-- **プラグインゲート**: Stitch のデザインレビューと Checkpoint の自動化チェックをサポート
-- **標準クローズアウト**: `finalize` が検証、インデックス再構築、アーカイブを行う
-
-## プラグイン機能
-
-OSpec には、文書駆動ワークフローに UI レビューとフロー検証を追加する 2 つのオプションプラグインがあります。
-
-### Stitch
-
-Stitch はページデザインレビューとプレビュー共有に使います。ランディングページや UI 変更が多い change に向いています。
-
-AI 対話:
-
-```text
-OSpec で Stitch プラグインを有効にし、Codex/Gemini で接続してください。
-```
-
-Claude / Codex skill:
-
-```text
-/ospec で Stitch プラグインを有効にし、Codex/Gemini で接続してください。
-```
-
-<details>
-<summary>コマンドライン</summary>
-
-```bash
-ospec plugins enable stitch .
-```
-
-</details>
-
-### Checkpoint
-
-Checkpoint は画面フロー検証と自動チェックに使います。重要フローや受け入れ前のランタイム検証に向いています。
-
-AI 対話:
-
-```text
-OSpec で Checkpoint プラグインを有効にしてください。
-```
-
-Claude / Codex skill:
-
-```text
-/ospec で Checkpoint プラグインを有効にしてください。
-```
-
-<details>
-<summary>コマンドライン</summary>
-
-```bash
-ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
-```
-
-メモ:
-
-- `--base-url` は自動チェック対象となる起動中アプリの URL を指定します
-- 内蔵 Checkpoint runner を有効にすると、OSpec は対象プロジェクトに `playwright`、`pixelmatch`、`pngjs` を自動インストールします
-- AI 対話で「Checkpoint プラグインを有効にする」と依頼した場合、この依存関係のインストール完了まで含めてはじめて有効化成功とみなします
-- Checkpoint を無効化しても、プロジェクトにインストール済みのこれらの依存関係は自動削除しません
-
-</details>
+- **標準クローズアウト**: `finalize` が検証、feature カタログと knowledge index の再構築、アーカイブを行う
 
 ## ドキュメント
 
@@ -347,15 +287,6 @@ ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
 - [Project Overview](project-overview.ja.md)
 - [Installation](installation.ja.md)
 - [Skills Installation](skills-installation.ja.md)
-- [External Plugins](external-plugins.ja.md)
-- [Plugin Release](plugin-release.ja.md)
-
-### プラグインのインストール方法
-
-- `ospec plugins list`
-- `ospec plugins install <plugin>`
-- `ospec plugins enable <plugin> [path]`
-- 会話で「Stitch / Checkpoint を開いて」と頼まれた場合は、まずグローバルインストール済みか確認し、未インストールならインストールし、その後に有効化する
 
 ## リポジトリ構成
 

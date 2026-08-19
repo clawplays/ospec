@@ -208,6 +208,24 @@ function ensureRemoteTagExists(tag, repositoryUrl = resolveRepositoryUrl()) {
   }
 }
 
+/**
+ * One `key=value` line from `git credential fill`.
+ *
+ * M-misc4: was `line.split('=', 2)` inline. JavaScript's `split` limit
+ * TRUNCATES, it does not keep the remainder -- unlike Python's
+ * `split(sep, maxsplit)`, which is almost certainly what it was written
+ * against. `password=ab=cd` came back as `['password', 'ab']`, so a GitHub
+ * token containing `=` was silently cut at the first one and the upload
+ * failed with a 401 that says nothing about why.
+ */
+function parseCredentialLine(line) {
+  const separator = line.indexOf('=');
+  return {
+    key: line.slice(0, separator),
+    value: line.slice(separator + 1),
+  };
+}
+
 function getGitCredentialAuth(repositoryUrl) {
   const token = String(
     process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '',
@@ -229,7 +247,7 @@ function getGitCredentialAuth(repositoryUrl) {
     if (!line.includes('=')) {
       continue;
     }
-    const [key, value] = line.split('=', 2);
+    const { key, value } = parseCredentialLine(line);
     credentialMap[key] = value;
   }
 
@@ -267,16 +285,43 @@ function buildHeaders(auth) {
 async function requestJson(url, options) {
   const response = await fetch(url, options);
   const responseText = await response.text();
-  const data = responseText ? JSON.parse(responseText) : {};
 
+  /*
+   * M-misc4: the parse used to run BEFORE this check. A GitHub 5xx, a proxy
+   * error page or a captive-portal redirect answers with HTML, so the release
+   * upload died on `SyntaxError: Unexpected token '<'` -- which names neither
+   * the status nor the URL -- instead of on the diagnosis the next four lines
+   * were written to produce.
+   */
   if (!response.ok) {
-    const error = new Error(`GitHub API request failed (${response.status})`);
+    const error = new Error(
+      `GitHub API request failed (${response.status} ${response.statusText || ''})`.trim(),
+    );
     error.status = response.status;
-    error.data = data;
+    error.data = parseJsonOrNull(responseText);
+    error.body = responseText.slice(0, 500);
     throw error;
   }
 
+  if (!responseText) {
+    return {};
+  }
+  const data = parseJsonOrNull(responseText);
+  if (data === null) {
+    throw new Error(
+      `GitHub API returned ${response.status} with a body that is not JSON: ${responseText.slice(0, 200)}`,
+    );
+  }
   return data;
+}
+
+/** `JSON.parse`, or `null` for anything that is not JSON. */
+function parseJsonOrNull(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 async function uploadReleaseNotes(options) {
@@ -389,6 +434,10 @@ if (require.main === module) {
 
 module.exports = {
   getReleaseMetadataPath,
+  // M-misc4: exported so its response handling is testable directly rather
+  // than only through a live GitHub call.
+  requestJson,
+  parseCredentialLine,
   hasCompleteStructuredReleaseMetadata,
   hasStructuredReleaseMetadata,
   ensureRemoteTagExists,

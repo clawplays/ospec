@@ -28,8 +28,7 @@ The official OSpec CLI package is `@clawplays/ospec-cli`, and the official comma
   <a href="docs/usage.md">Usage</a> |
   <a href="docs/project-overview.md">Overview</a> |
   <a href="docs/installation.md">Installation</a> |
-  <a href="docs/external-plugins.md">External Plugins</a> |
-  <a href="docs/plugin-release.md">Plugin Release</a> |
+  <a href="docs/skills-installation.md">Skills Installation</a> |
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
@@ -194,7 +193,7 @@ Archive notes:
 
 Use a Goal only when you choose the full workflow. A user-selected Change remains a Change regardless of complexity, file count, risk, or batch size; create it with `ospec change` (`ospec new` remains an alias).
 
-A Change uses compact stage-aware guidance, one lightweight current-AI review, and derived closeout state. When verification, documentation, plugin, and review gates pass, `APPROVED` or `APPROVED_WITH_CONCERNS` may finalize and archive automatically; explicit batches stay sequential in the queue.
+A Change uses compact stage-aware guidance, one lightweight current-AI review, and derived closeout state. When verification, documentation, and review gates pass, `APPROVED` or `APPROVED_WITH_CONCERNS` may finalize and archive automatically; explicit batches stay sequential in the queue.
 
 Start from a terminal:
 
@@ -214,7 +213,7 @@ That is all a normal user needs to operate. The AI will:
 
 You remain in control. The AI explains what it is about to do, pauses when it needs a decision, and records task, review, repair, verification, and loop progress in the repository so a fresh worker or later session can continue without replaying the conversation. You do not need to run the internal `ospec execute` commands yourself.
 
-Every 1.9 Goal uses the same fast quality workflow. Required user decisions always block implementation. The integrated goal loop reads `task-graph.json`, emits a bounded conflict-safe parallel batch, and explains whether configured limits, graph conflicts, token funding, an optional configured allowlist, or known harness capacity reduced it. Unknown native capacity uses an implementation fallback of three; a larger positive session-bound capacity can support configured batches such as 5-10 when the graph, shared resources, token budget, and `maxParallel` allow. The current IDE AI launches one fresh native subagent per referenced packet, polls with bounded waits, refreshes heartbeats, persists each finished result immediately, and continues ticking without another user prompt. If the IDE lacks native subagents, controller dispatch fails clearly.
+Every Goal uses the same fast quality workflow. Required user decisions always block implementation. The integrated goal loop reads `task-graph.json`, emits a bounded conflict-safe parallel batch, and explains whether configured limits, graph conflicts, token funding, an optional configured allowlist, or known harness capacity reduced it. Unknown native capacity uses an implementation fallback of three; a larger positive session-bound capacity can support configured batches such as 5-10 when the graph, shared resources, token budget, and `maxParallel` allow. The current IDE AI launches one fresh native subagent per referenced packet, polls with bounded waits, refreshes heartbeats, persists each finished result immediately, and continues ticking without another user prompt. If the IDE lacks native subagents, controller dispatch fails clearly.
 
 To see progress, child executor ids, heartbeat due times, leases, token sources, and concurrency reasons, run `ospec loop status --brief`; controller agents should use `ospec loop run --once --compact-json` to avoid repeating large runtime-adapter objects. Use `ospec loop configure` for concurrency, budgets, action runtime limits, evidence-result grace, and optional allowlists. IDE controllers persist child ownership with `ospec loop heartbeat` and atomically commit successful evidence plus executor outcome with `ospec loop finalize`. After a confirmed session or child loss, `ospec loop recover --force` expires only unfinished items. Task and final repair convergence guards prevent repeated finding sets from cycling indefinitely. Durable worker blockers are not redispatched, technical executor failures remain retryable, and independent ready tasks run first. Advanced loop and triage commands are documented in [docs/loop-engineering.md](docs/loop-engineering.md).
 
@@ -243,10 +242,9 @@ ospec update
 ```
 
 `ospec update` also migrates legacy root-level `build-index-auto.cjs` / `build-index-auto.js` tooling into `.ospec/tools/build-index-auto.cjs` and refreshes OSpec-managed hook entrypoints to use the new location.
-It also repairs older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, refreshes managed skills and archive layout metadata, and syncs project assets for already-enabled plugins.
+It also repairs older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, and refreshes managed skills and archive layout metadata.
 For nested projects that still carry legacy knowledge under `.ospec/src/` or `.ospec/tests/`, `ospec update` migrates those paths into `.ospec/knowledge/src/` and `.ospec/knowledge/tests/`.
-When an already-enabled plugin has a newer compatible npm package version available, `ospec update` upgrades that global plugin package automatically and prints the version transition.
-It does not upgrade the CLI itself, and it does not enable plugins or migrate active / queued changes automatically.
+It does not upgrade the CLI itself, and it does not migrate active / queued changes automatically.
 It also does not switch a classic project layout to nested automatically.
 If you want to convert an older classic project to the new layout, run `ospec layout migrate --to nested` explicitly.
 
@@ -312,7 +310,7 @@ If you want to convert an older classic project to the new layout, run `ospec la
 |---------|---------------|
 | **Protocol Shell** | The minimum collaboration skeleton: root `.skillrc` and `README.md`, plus managed OSpec files under `.ospec/` for change state, SKILL docs, index state, `for-ai/` guidance, and project docs. |
 | **Project Knowledge Layer** | Explicit project context such as `docs/project/*`, layered skill files, and index state that AI can read consistently. |
-| **Active Change** | A dedicated execution container for one small or routine requirement, using the classic fast files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`, plus plugin artifacts when activated. |
+| **Active Change** | A dedicated execution container for one small or routine requirement, using the classic fast files: `proposal.md`, `tasks.md`, `state.json`, `verification.md`, and `review.md`. |
 | **Active Goal** | A full-workflow execution container created with `ospec goal`, adding `design.md`, `implementation-plan.md`, `artifacts/agents/task-graph.json`, handoff artifacts, document-review artifacts, launch-plan artifacts, worker-run artifacts, reviewer-run artifacts, retry artifacts, review artifacts, `artifacts/agents/worker-status.md`, and evidence artifacts. |
 
 ## Features
@@ -320,7 +318,9 @@ If you want to convert an older classic project to the new layout, run `ospec la
 - **Change-ready initialization**: `ospec init` creates the protocol shell and baseline project knowledge docs in one pass.
 - **Guided initialization**: AI-assisted init can ask once for missing summary or tech stack; direct CLI init falls back to placeholder docs when context is missing.
 - **Stable project language**: the chosen document language is stored in `.skillrc` so later guidance and generated change docs stay consistent unless you explicitly change it.
-- **One indexed document per archived change**: every successful `finalize` or `archive` writes `docs/project/changes/<archive-path>.md`, then links it from `docs/project/feature-index.md`, `SKILL.index.json.documents`, and `SKILL.index.json.archived_changes`. Before moving the active change, archive preflight refuses to overwrite a human-owned file at that path and verifies the managed output directories are writable. Goals still update the relevant human-maintained architecture, API, module, or operational docs; the generated change summary does not replace them.
+- **Living feature docs with a locator**: feature sections in human-owned docs declare `<!-- ospec:feature <slug> code:<paths> -->`; `docs/project/feature-catalog.md` carries one row per declared feature — slug, one line, `doc#section`, status, last-change archive — and `ospec docs locate --feature <slug>` or `--affects <path>` returns that one section's location and line range so an agent reads one section instead of a document.
+- **Archived changes render on demand**: archiving writes the change's index entry (with its features and documentation updates), refreshes the affected catalogue rows, and replaces the section's `ospec:last-change` traceability comment idempotently — the engine's only write into a human-owned document, and a comment failure warns instead of blocking. Nothing is generated under `docs/project/changes/`; `ospec changes show <archive>` renders the summary, affects, file list, and verification commands from the index and the archive directory. Goals still update the relevant human-maintained architecture, API, module, or operational docs.
+- **Documentation obligations**: at planning time `ospec docs obligations --apply` derives this change's obligations from its `change_type` and features (falling back to `affects` resolution through the `code:` declarations) with the resolved `path#section` already filled in — a fix checks the section for the pre-fix wrong behaviour, a refactor verifies it and may record `verified_unchanged` with `ospec docs confirm`. `.skillrc` `docs_contract.mode: warn|strict` decides whether an unmet required obligation warns or blocks archiving. `ospec docs audit` lists feature sections whose `code:` paths changed since their last recorded change, and `ospec docs migrate` converts legacy generated documents into feature docs through four gated phases.
 - **Scoped review evidence and cost metrics**: task and final review dispatches write `artifacts/agents/review-packages/*.diff` with scoped Git evidence, while `artifacts/agents/execution-metrics.json` records packet/report/package bytes and task duration. Goal task graphs can enable `documentation_updates` so missing or undeclared project docs block archive.
 - **Tracked requirement execution**: small changes keep proposal, tasks, state, verification, and review files aligned; full goals also keep design, implementation plan, task graph, handoff, review, worker status, and evidence artifacts aligned.
 - **Goal experience contracts**: every goal runs with `Announce-Before-Act` (the AI announces its skill and stage, the `ospec execute …` command and the artifact it writes, and each subagent dispatch), `Brainstorm-First` (open direction, architecture, API, UI, risk, and scope decisions are asked one at a time through the native question UI before design is locked), and `Zero-Setup` (you only start a goal and describe the requirement — the AI runs every `ospec` command itself). In Claude Code, `ospec session hook --target claude --apply` adds hooks that announce every dispatch and hard-block subagent dispatch while a required decision is still pending.
@@ -330,42 +330,10 @@ If you want to convert an older classic project to the new layout, run `ospec la
 - **Task graph controller**: `ospec execute bootstrap` writes a one-change startup/resume snapshot; `preflight` records deterministic design and implementation-plan evidence under `artifacts/agents/planning-preflights/`; `workspace` records git safety; `dispatch`, `launch`, `complete`, and `review` settle native-subagent packets; `debug`, `tdd`, and `verify` record durable evidence; `sync` rebuilds derived status.
 - **Fast planning quality**: deterministic preflights cost no model round trip, while one independent combined planning reviewer checks requirement, architecture, task-graph, dependency, and verification semantics. A `NEEDS_CHANGES` decision permits one grouped planning repair and at most one delta-scoped re-review; a repair executor failure with no planning edits re-arms instead of consuming the allowance, and all-medium-or-lower findings settle deterministically as `APPROVED_WITH_CONCERNS` after the repair. Planning approvals are invalidated only by semantic planning changes, never by execution progress; repeated semantic failure is a stable blocker.
 - **Measured execution and grouped repair**: command runners can write authoritative usage to `OSPEC_USAGE_FILE` for automatic ingestion, while `--usage-file` remains a manual input. Metrics distinguish complete, partial, and missing coverage. `ospec execute repair` turns all structured `NEEDS_CHANGES` findings into one repair task.
-- **Verified durable documentation**: declared documentation targets capture before/after normalized content hashes, so an unchanged file cannot satisfy a new run. Feature indexes link completed work directly to the durable project documents it updated.
+- **Verified durable documentation**: declared documentation targets capture before/after normalized content hashes, so an unchanged file cannot satisfy a new run. The feature catalogue links completed work directly to the durable project documents it updated.
 - **Queue helpers**: `queue` and `run` support explicit multi-change execution when one active change is not enough.
-- **Plugin workflow gates**: plugin commands support Stitch design review and Checkpoint automation through npm-installed official plugins.
 - **Skill management**: install and inspect OSpec skills for Codex and Claude Code.
-- **Standard closeout**: `finalize` verifies and archives the change, then refreshes the generated feature locator and knowledge index before manual Git commit. It never overwrites human-maintained architecture, module, or API prose.
-
-## Plugin Installation
-
-OSpec supports plugins for UI review and runtime validation.
-Keep the public flow simple:
-
-```text
-/ospec open Stitch for this project.
-/ospec open Checkpoint for this project.
-```
-
-In AI / `/ospec` flows, requests like "open Stitch" or "open Checkpoint" should be handled as: check whether the plugin is already installed globally, install only when missing, then enable it in the current project.
-
-Command line fallback:
-
-```bash
-ospec plugins list
-ospec plugins install stitch
-ospec plugins enable stitch .
-ospec plugins install checkpoint
-ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
-```
-
-Official npm plugin packages:
-
-- `@clawplays/ospec-plugin-stitch`
-- `@clawplays/ospec-plugin-checkpoint`
-
-After a plugin is enabled, its detailed setup docs are synced into `.ospec/plugins/<plugin>/docs/`.
-
-Maintainers can find plugin publishing and automation details in `docs/plugin-release.md`.
+- **Standard closeout**: `finalize` verifies and archives the change, then refreshes the feature catalogue and knowledge index before manual Git commit. It never overwrites human-maintained architecture, module, or API prose.
 
 ## Documentation
 
@@ -376,8 +344,6 @@ Maintainers can find plugin publishing and automation details in `docs/plugin-re
 - [Project Overview](docs/project-overview.md)
 - [Installation](docs/installation.md)
 - [Skills Installation](docs/skills-installation.md)
-- [External Plugins](docs/external-plugins.md)
-- [Plugin Release](docs/plugin-release.md)
 
 ## Repository Structure
 

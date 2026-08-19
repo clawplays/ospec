@@ -1,8 +1,7 @@
 import { FileService } from './FileService';
 interface ClaudeHookEntry {
     type: 'command';
-    command: 'node';
-    args: string[];
+    command: string;
 }
 interface ClaudeHookGroup {
     matcher?: string;

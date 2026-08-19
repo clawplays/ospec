@@ -43,7 +43,7 @@ class VerifyCommand extends BaseCommand_1.BaseCommand {
     async execute(featurePath) {
         try {
             const targetPath = featurePath && !path.isAbsolute(featurePath)
-                ? (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), featurePath, await services_1.services.configManager.loadConfig(process.cwd()).catch(() => null))
+                ? (0, ProjectLayout_1.resolveManagedInputPath)(process.cwd(), featurePath, await services_1.services.configManager.loadConfigOrNull(process.cwd()))
                 : featurePath || process.cwd();
             this.logger.info(`Verifying change at ${targetPath}`);
             const outcome = await (0, VerificationService_1.createVerificationService)().verify(targetPath);

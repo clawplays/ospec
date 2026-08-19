@@ -9,16 +9,28 @@ const child_process_1 = require("child_process");
 const crypto_1 = require("crypto");
 const path_1 = __importDefault(require("path"));
 const constants_1 = require("../core/constants");
+const errors_1 = require("../core/errors");
 const ProjectPresets_1 = require("../presets/ProjectPresets");
 const ArchiveGate_1 = require("../workflow/ArchiveGate");
 const ConfigurableWorkflow_1 = require("../workflow/ConfigurableWorkflow");
-const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
+const WorkflowComposer_1 = require("../workflow/WorkflowComposer");
+const FeatureCatalog_1 = require("./FeatureCatalog");
+const DocsObligationService_1 = require("./DocsObligationService");
+const FeatureCaptureService_1 = require("./FeatureCaptureService");
+const SkillParser_1 = require("./SkillParser");
+const FeatureCatalogPort_1 = require("./FeatureCatalogPort");
+const FeatureTraceability_1 = require("./FeatureTraceability");
+const DocsObligationPort_1 = require("./DocsObligationPort");
 const helpers_1 = require("../utils/helpers");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
 const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
 const ClassicChangeCloseoutService_1 = require("./ClassicChangeCloseoutService");
+const LegacyPluginMigrationService_1 = require("./LegacyPluginMigrationService");
+const ChecklistScan_1 = require("../utils/ChecklistScan");
+const MarkdownLinks_1 = require("../utils/MarkdownLinks");
+const ContractVersion_1 = require("../utils/ContractVersion");
 const AGENT_WORKER_ALLOWED_STATUSES = [
     'DONE',
     'DONE_WITH_CONCERNS',
@@ -68,6 +80,7 @@ const REVIEW_ARTIFACT_TERMINAL_DECISION_SET = new Set(REVIEW_ARTIFACT_TERMINAL_D
 class ProjectService {
     constructor(fileService, configManager, templateEngine, indexBuilder, skillParser, projectAssetService, projectScaffoldService, projectScaffoldCommandService) {
         this.fileService = fileService;
+        this.legacyPluginMigrationService = new LegacyPluginMigrationService_1.LegacyPluginMigrationService(fileService);
         this.configManager = configManager;
         this.templateEngine = templateEngine;
         this.indexBuilder = indexBuilder;
@@ -278,6 +291,25 @@ class ProjectService {
             refreshedFiles.push(constants_1.FILE_NAMES.SKILLRC);
             verifiedFiles.push(constants_1.FILE_NAMES.SKILLRC);
         }
+        /*
+         * A project initialized before OSpec 2.0 still carries `## Plugin
+         * Gates` in its own generated root SKILL.md -- an instruction to block
+         * on a Stitch approval no surviving command can produce. The root
+         * SKILL.md of a real project is not a protocol shell, so the refresh
+         * below skips it and the section survives forever.
+         *
+         * It is repaired here rather than in UpdateCommand so that every entry
+         * point into this sync (`ospec update`, `ospec docs sync-protocol`,
+         * `ospec docs generate`, `ospec layout migrate`) fixes it, and so the
+         * index rebuild at the end of this method re-routes agents away from
+         * the removed heading in the same run.
+         */
+        const pluginGuidanceMigration = await this.legacyPluginMigrationService
+            .migrateProjectSkillGuidance(rootDir, config);
+        for (const relativePath of pluginGuidanceMigration.rewrittenPaths) {
+            refreshedFiles.push(relativePath);
+            verifiedFiles.push(relativePath);
+        }
         const rootSkillPath = this.resolveManagedPath(rootDir, constants_1.FILE_NAMES.SKILL_MD, config);
         const renderedRootSkill = this.renderProtocolShellRootSkill(normalized.projectName, normalized.documentLanguage, config.mode);
         const rootSkillRelativePath = this.toProjectRelativePath(rootDir, constants_1.FILE_NAMES.SKILL_MD, config);
@@ -298,7 +330,7 @@ class ProjectService {
                 verifiedFiles.push(rootSkillRelativePath);
             }
         }
-        else {
+        else if (!refreshedFiles.includes(rootSkillRelativePath)) {
             skippedFiles.push(rootSkillRelativePath);
         }
         try {
@@ -326,6 +358,7 @@ class ProjectService {
             refreshedFiles,
             skippedFiles,
             verifiedFiles: Array.from(new Set(verifiedFiles)),
+            pluginGuidanceRemovals: pluginGuidanceMigration.removals,
         };
     }
     async initializeProtocolShellProject(rootDir, mode, input) {
@@ -386,7 +419,7 @@ class ProjectService {
         };
     }
     async detectProjectStructure(rootDir) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const checks = await Promise.all(this.getStructureDefinitions().map(async (definition) => ({
             key: definition.key,
             path: this.resolveManagedPath(rootDir, definition.pathSegments.join('/'), config),
@@ -419,23 +452,16 @@ class ProjectService {
         const createdAt = (await this.fileService.exists(configPath))
             ? (await this.fileService.stat(configPath)).mtime.toISOString()
             : null;
-        let activeChangeCount = 0;
-        if (structure.initialized) {
-            const execution = await this.getExecutionStatus(rootDir);
-            activeChangeCount = execution.totalActiveChanges;
-        }
-        else {
-            const activeDir = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, config);
-            if (await this.fileService.exists(activeDir)) {
-                try {
-                    const entries = await fs_1.promises.readdir(activeDir, { withFileTypes: true });
-                    activeChangeCount = entries.filter(entry => entry.isDirectory()).length;
-                }
-                catch {
-                    activeChangeCount = 0;
-                }
-            }
-        }
+        /*
+         * S4: this used to run the whole `getExecutionStatus` deep analysis on
+         * an initialized project -- every active change parsed, its task graph
+         * validated, its verification freshness recomputed -- to read one
+         * number off the end of it. `totalActiveChanges` is a directory count,
+         * and the uninitialised branch below already computed it that way, so
+         * the two branches disagreed about cost by an order of magnitude while
+         * agreeing about the answer. There is now one cheap path.
+         */
+        const activeChangeCount = await this.countActiveChangeDirectories(rootDir, config);
         return {
             name: path_1.default.basename(path_1.default.resolve(rootDir)),
             path: rootDir,
@@ -509,7 +535,7 @@ class ProjectService {
         };
     }
     async scanModules(rootDir) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const modules = new Map();
         const moduleDirectoryCandidates = [
             this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.KNOWLEDGE}/${constants_1.DIR_NAMES.SRC}/${constants_1.DIR_NAMES.MODULES}`, config),
@@ -551,7 +577,7 @@ class ProjectService {
             key: `module:${module.name}`,
             pathSegments: path_1.default.relative(rootDir, module.skillPath).split(path_1.default.sep),
         })));
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const skillIndexPath = this.resolveManagedPath(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
         let skillIndexStats = null;
         let skillIndexUpdatedAt = null;
@@ -621,6 +647,7 @@ class ProjectService {
         const featuresDir = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, config);
         if (!(await this.fileService.exists(featuresDir))) {
             return {
+                damagedChanges: [],
                 totalActiveChanges: 0,
                 totals: {
                     pass: 0,
@@ -630,20 +657,40 @@ class ProjectService {
                 changes: [],
             };
         }
-        const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
+        const workflow = new WorkflowComposer_1.WorkflowComposer(config);
         const entries = await fs_1.promises.readdir(featuresDir, { withFileTypes: true });
         const activeChanges = [];
+        const damagedChanges = [];
         for (const entry of entries) {
             if (!entry.isDirectory()) {
                 continue;
             }
             const featureDir = path_1.default.join(featuresDir, entry.name);
-            const change = await this.buildActiveChangeStatusItem(rootDir, featureDir, workflow);
+            /*
+             * M-race1: one change with a half-written `state.json` used to
+             * abort this loop, so `ospec status` reported nothing at all for a
+             * project whose other changes were perfectly readable -- the blast
+             * radius was widest exactly when the user most needed the listing
+             * to find the damage. The damaged change is skipped, but NOT
+             * silently: it is named in `damagedChanges`, so the report says
+             * "this one is unreadable" and not "this one is not here".
+             */
+            let change;
+            try {
+                change = await this.buildActiveChangeStatusItem(rootDir, featureDir, workflow);
+            }
+            catch (error) {
+                if (!(error instanceof errors_1.DamagedChangeStateError))
+                    throw error;
+                damagedChanges.push({ name: error.changeName, reason: String(error.details?.reason || error.message) });
+                continue;
+            }
             if (change) {
                 activeChanges.push(change);
             }
         }
         return {
+            damagedChanges: damagedChanges.slice().sort((left, right) => left.name.localeCompare(right.name)),
             totalActiveChanges: activeChanges.length,
             totals: activeChanges.reduce((result, change) => {
                 result[change.summaryStatus] += 1;
@@ -695,15 +742,40 @@ class ProjectService {
         const resolvedFeaturePath = path_1.default.resolve(featurePath);
         const rootDir = await this.findProjectRootFromPath(resolvedFeaturePath);
         const config = await this.configManager.loadConfig(rootDir);
-        const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
+        const workflow = new WorkflowComposer_1.WorkflowComposer(config);
         const item = await this.buildActiveChangeStatusItem(rootDir, resolvedFeaturePath, workflow);
         if (!item) {
             throw new Error('Change state file not found.');
         }
         return item;
     }
+    /**
+     * S4: the cheap `totalActiveChanges`.
+     *
+     * Deliberately matches what `getActiveChangeStatusReport` counts rather
+     * than what the old uninitialised branch counted: that report keeps only
+     * directories `buildActiveChangeStatusItem` could build, and it returns
+     * `null` for a directory with no `state.json`. Counting every directory
+     * would have been cheaper still and would have quietly changed the number
+     * `ospec status` prints for any project with a stray directory under
+     * `changes/active`.
+     */
+    async countActiveChangeDirectories(rootDir, config) {
+        const resolvedConfig = config !== undefined
+            ? config
+            : await this.configManager.loadConfigOrNull(rootDir);
+        const activeDir = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, resolvedConfig);
+        const entries = await fs_1.promises.readdir(activeDir, { withFileTypes: true }).catch(() => null);
+        if (!entries) {
+            return 0;
+        }
+        const present = await Promise.all(entries
+            .filter(entry => entry.isDirectory())
+            .map(entry => this.fileService.exists(path_1.default.join(activeDir, entry.name, constants_1.FILE_NAMES.STATE))));
+        return present.filter(Boolean).length;
+    }
     async listActiveChangeNames(rootDir) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const activeDir = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}`, config);
         if (!(await this.fileService.exists(activeDir))) {
             return [];
@@ -714,7 +786,34 @@ class ProjectService {
             .map(entry => entry.name)
             .sort((left, right) => left.localeCompare(right));
     }
+    /*
+     * M-race2: finalize is a read-assess-write against a file other processes
+     * write, so it retries once on a detected conflict and then fails loudly.
+     *
+     * One retry, not a loop: a second conflict means something is actively
+     * writing `state.json` -- a Loop tick, a worker syncing, another finalize
+     * -- and retrying into a live writer would either spin or eventually win a
+     * race it should not be trying to win. The error names the change and says
+     * what to do, because the safe action (wait, then re-run) is one a person
+     * can take and a retry loop cannot.
+     *
+     * The retry re-runs the WHOLE attempt, including `getActiveChangeStatusItem`
+     * and the archive-readiness gates. Re-deriving only the payload would
+     * archive a change against a readiness verdict computed from state that has
+     * since changed, which is the same class of bug one layer down.
+     */
     async finalizeChange(featurePath, options = {}) {
+        for (let attempt = 1;; attempt += 1) {
+            try {
+                return await this.finalizeChangeAttempt(featurePath, options);
+            }
+            catch (error) {
+                if (attempt > 1 || !(error instanceof errors_1.ConcurrentChangeStateError))
+                    throw error;
+            }
+        }
+    }
+    async finalizeChangeAttempt(featurePath, options = {}) {
         const resolvedFeaturePath = path_1.default.resolve(featurePath);
         const projectRoot = await this.findProjectRootFromPath(resolvedFeaturePath);
         const projectConfig = await this.configManager.loadConfig(projectRoot);
@@ -727,7 +826,28 @@ class ProjectService {
             throw new Error('Force-archive confirmation and reason require --force-archive.');
         }
         const progressStatePath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE);
-        const progressState = await this.fileService.readJSON(progressStatePath);
+        /*
+         * M-race2: the compare-and-swap anchor, and it has to be HERE rather
+         * than next to the later `state.json` read further down.
+         *
+         * The archived payload is `item.closeoutState`, and `item` comes from
+         * the `getActiveChangeStatusItem` call below -- which reads `state.json`
+         * for itself. Anchoring the comparison at the second read would have
+         * left the whole readiness assessment outside the guarded window and
+         * compared bytes that no longer decide anything, which is the
+         * "measures nothing" failure rather than a fix.
+         *
+         * The plan called for a `revision` comparison. There is no `revision`:
+         * `FeatureState` carries `version` (a schema constant) and
+         * `last_updated` (an ISO string a writer may reasonably leave alone).
+         * Introducing a counter would mean auditing every writer to bump it,
+         * including ones this track does not own, and one that forgot would
+         * make the CAS silently vacuous. Comparing the whole file is free,
+         * needs no migration of existing `state.json` files, and cannot be
+         * defeated by a writer that does not know about it.
+         */
+        const observedStateText = await this.fileService.readFile(progressStatePath);
+        const progressState = JSON.parse(observedStateText.replace(/^﻿/, ''));
         const featureName = typeof progressState?.feature === 'string' && progressState.feature.trim()
             ? progressState.feature.trim()
             : path_1.default.basename(resolvedFeaturePath);
@@ -781,7 +901,14 @@ class ProjectService {
         }
         const statePath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.STATE);
         const proposalPath = path_1.default.join(resolvedFeaturePath, constants_1.FILE_NAMES.PROPOSAL);
-        const persistedFeatureState = await this.fileService.readJSON(statePath);
+        /*
+         * M-race2: `statePath` and `progressStatePath` are the same file, and
+         * this used to re-read it. Under the compare-and-swap a second read is
+         * worse than redundant: if it disagreed with `observedStateText` the
+         * archive would be built from bytes the guard is not watching, and if
+         * it agreed the read bought nothing. One read, one guarded value.
+         */
+        const persistedFeatureState = progressState;
         const featureState = forceArchive ? persistedFeatureState : item.closeoutState || persistedFeatureState;
         // proposal.md frontmatter is the authority for affects; classic changes
         // never sync it into state.json during the fast flow, so archive-time
@@ -847,7 +974,41 @@ class ProjectService {
             affects: archiveAffects,
             blocked_by: [],
         };
-        await this.preflightArchivedKnowledgeWrite(projectRoot, archivePath);
+        // 7.7: contract 6.2 has the index read `features` and `doc_updates` off
+        // the archived state.json, so they have to be resolved before the state
+        // is committed and before the rebuild that reads it. The change has
+        // finished editing its feature documents by now, so the index's
+        // `feature_docs` map is the right place to resolve slugs to sections.
+        // Both awaits sit BEFORE the compare-and-swap below, which is exactly
+        // the window that check exists to police.
+        const declaredFeatureSlugs = await this.readDeclaredFeatureSlugs(resolvedFeaturePath);
+        if (declaredFeatureSlugs.length > 0) {
+            nextState.features = declaredFeatureSlugs;
+            const docUpdates = await this.computeDocUpdates(projectRoot, declaredFeatureSlugs);
+            if (docUpdates.length > 0)
+                nextState.doc_updates = docUpdates;
+        }
+        // 7.6/7.7: verify track B's documentation obligations BEFORE the move,
+        // because refusing after it would leave a half-archived change. In warn
+        // mode -- the default for this release cycle -- an unsatisfied required
+        // obligation is reported and archiving continues.
+        const obligations = await this.verifyDocsObligations(projectRoot, resolvedFeaturePath);
+        for (const warning of obligations.warnings)
+            console.warn(`[ospec] warning: ${warning}`);
+        for (const item of obligations.advisory)
+            console.warn(`[ospec] docs obligation (optional): ${item}`);
+        if (obligations.blocking.length > 0) {
+            if (obligations.mode === 'strict') {
+                throw new Error(`Archive refused: ${obligations.blocking.length} required documentation obligation(s) are unsatisfied.\n`
+                    + obligations.blocking.map(item => `  - ${item}`).join('\n')
+                    + '\n  Set docs_contract.mode to "warn" in .skillrc to downgrade this to a warning.');
+            }
+            for (const item of obligations.blocking) {
+                console.warn(`[ospec] docs obligation UNSATISFIED: ${item}`);
+            }
+            console.warn('[ospec] archiving anyway: docs_contract.mode is "warn". Set it to "strict" to block.');
+        }
+        await this.preflightArchiveWrite(projectRoot, archivePath);
         const originalProposal = await this.fileService.exists(proposalPath)
             ? await this.fileService.readFile(proposalPath)
             : null;
@@ -855,6 +1016,31 @@ class ProjectService {
         const originalForceRecord = await this.fileService.exists(originalForceRecordPath)
             ? await this.fileService.readFile(originalForceRecordPath)
             : null;
+        /*
+         * M-race2: the compare half of the compare-and-swap, immediately
+         * before the only irreversible step.
+         *
+         * Everything between the read above and this line is derivation --
+         * loading config, resolving the archive path, reading the proposal,
+         * the knowledge-write preflight -- and each of those awaits is a window
+         * in which a Loop tick or a worker's `execute sync` can write
+         * `state.json`. `nextState` is a full replacement built by spreading
+         * the state as it was BEFORE that window, so committing it would
+         * silently revert the concurrent write: the change is archived with a
+         * `completed` list missing whatever landed while finalize was thinking.
+         *
+         * The check goes here rather than after the move because the move is
+         * what makes the operation unrecoverable. Refusing before it leaves the
+         * change exactly where it was, and `finalizeChange` retries once from
+         * the top -- re-running the readiness assessment too, because a state
+         * that changed invalidates the verdict as much as the payload.
+         */
+        const stateTextAtCommit = await this.fileService.readFile(statePath).catch(() => null);
+        if (stateTextAtCommit !== observedStateText) {
+            throw new errors_1.ConcurrentChangeStateError(featureName, stateTextAtCommit === null
+                ? 'state.json disappeared while finalize was preparing the archive'
+                : 'state.json was rewritten by another process while finalize was preparing the archive');
+        }
         let moved = false;
         let linksRebased = false;
         try {
@@ -879,7 +1065,16 @@ class ProjectService {
             await this.rebaseMovedChangeMarkdownLinks(resolvedFeaturePath, archivePath);
             linksRebased = true;
             await this.rebuildIndex(projectRoot);
-            await this.assertArchivedKnowledgeIndexed(projectRoot, archivePath, forceArchive ? { disposition: 'forced' } : undefined);
+            await this.assertArchivedChangeIndexed(projectRoot, archivePath, forceArchive ? { disposition: 'forced' } : undefined);
+            // Deliberately AFTER the assertion, and deliberately not inside the
+            // try/catch's failure contract: by this point the change is
+            // archived and verified. Writing the catalogue row and the
+            // traceability comment can only add convenience, so it warns and
+            // returns rather than throwing into the rollback below. See
+            // `recordArchiveTraceability`.
+            for (const warning of await this.recordArchiveTraceability(projectRoot, archivePath)) {
+                console.warn(`[ospec] warning: ${warning}`);
+            }
             await this.archiveLinkedBrainstorms(projectRoot, featureState.feature, archivePath);
         }
         catch (error) {
@@ -1007,17 +1202,20 @@ class ProjectService {
                 const originalContent = await this.fileService.readFile(nextFilePath);
                 const previousDir = path_1.default.dirname(previousFilePath);
                 const nextDir = path_1.default.dirname(nextFilePath);
-                const rewrittenContent = originalContent.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, rawHref) => {
+                // M-misc1: was `/\[([^\]]+)\]\(([^)]+)\)/g`. See
+                // `utils/MarkdownLinks` for what that pattern did to a
+                // destination containing parentheses, and to an example link
+                // inside a fenced block.
+                const rewrittenContent = (0, MarkdownLinks_1.rewriteMarkdownLinks)(originalContent, rawHref => {
                     const href = String(rawHref || '').trim();
                     if (!this.isRelativeMarkdownHref(href)) {
-                        return match;
+                        return null;
                     }
                     const previousTargetPath = path_1.default.resolve(previousDir, href);
                     if (this.isPathWithin(previousTargetPath, previousRoot)) {
-                        return match;
+                        return null;
                     }
-                    const rebasedHref = path_1.default.relative(nextDir, previousTargetPath).replace(/\\/g, '/');
-                    return `[${label}](${rebasedHref || '.'})`;
+                    return path_1.default.relative(nextDir, previousTargetPath).replace(/\\/g, '/') || '.';
                 });
                 if (rewrittenContent !== originalContent) {
                     changed.set(nextFilePath, originalContent);
@@ -1043,7 +1241,7 @@ class ProjectService {
         return relativePath === '' || (!relativePath.startsWith('..') && !path_1.default.isAbsolute(relativePath));
     }
     async getFeatureProjectContext(rootDir, affects = []) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const affectSlugs = affects
             .map(item => this.toSlug(item))
             .filter(Boolean);
@@ -1102,7 +1300,7 @@ class ProjectService {
         return skills.skillIndex;
     }
     async getBootstrapUpgradePlan(rootDir) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const docsRoot = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}`, config);
         const readMarkdown = async (filePath) => {
             if (!(await this.fileService.exists(filePath))) {
@@ -1308,13 +1506,13 @@ class ProjectService {
             : undefined;
     }
     async getConfiguredDocumentLanguage(rootDir) {
-        try {
-            const config = await this.configManager.loadConfig(rootDir);
-            return this.normalizeDocumentLanguage(config?.documentLanguage);
-        }
-        catch {
-            return undefined;
-        }
+        // FIX-G1: same rule as `loadConfigOrNull`. "No project here" means
+        // "no configured language", but a DAMAGED config must not resolve to
+        // `undefined` -- that is how an unreadable `documentLanguage` rewrote
+        // every archived knowledge document on a zh-CN / ja-JP / ar project
+        // into the en-US fallback.
+        const config = await this.configManager.loadConfigOrNull(rootDir);
+        return this.normalizeDocumentLanguage(config?.documentLanguage);
     }
     async syncConfigDocumentLanguage(rootDir, config, documentLanguage) {
         const normalized = this.normalizeDocumentLanguage(documentLanguage);
@@ -1524,8 +1722,23 @@ class ProjectService {
         };
     }
     async rebuildIndex(rootDir) {
+        // FIX-G1: the config is read and validated BEFORE anything is written.
+        //
+        // This method used to read it through `loadConfig(rootDir).catch(() =>
+        // null)` and hand `getProjectLayout(null) === 'classic'` straight to
+        // `installDirectCopyAssets`, so on a nested project with a damaged
+        // `.skillrc` seven `for-ai/*` protocol documents landed in the CLASSIC
+        // root and only *then* did `indexBuilder.write` reach the F29 guard and
+        // exit 1. The guard was correct; it was simply not on this path. The
+        // damaged file is one fact, so both entry points now have to see it at
+        // the same point -- before the first byte is written, not after seven
+        // files are.
+        //
+        // `getBootstrapUpgradePlan` reads the config too (it resolves the docs
+        // root to read the language from), so it is deliberately ordered AFTER
+        // this line rather than before it.
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const documentLanguage = (await this.getBootstrapUpgradePlan(rootDir)).documentLanguage || 'en-US';
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
         await this.projectAssetService.installDirectCopyAssets(rootDir, documentLanguage, this.getProjectLayout(config));
         await this.projectAssetService.syncDirectCopyAssets(rootDir, documentLanguage, {
             targetRelativePaths: [constants_1.FILE_NAMES.BUILD_INDEX_SCRIPT],
@@ -1556,40 +1769,28 @@ class ProjectService {
             : ' Item states are missing or nonterminal.';
         throw new Error(`Force archive refused while Loop action ${actionId} can still write evidence.${itemText} Settle or recover its executors first.`);
     }
-    async preflightArchivedKnowledgeWrite(projectRoot, archivePath) {
+    /**
+     * 7.7 renamed this from `preflightArchivedKnowledgeWrite` and deleted its
+     * knowledge-document half along with the generator.
+     *
+     * What remains is the part that was never about knowledge documents: prove
+     * the archive target is inside the managed tree, and prove every directory
+     * finalize is about to write to is actually writable, BEFORE the
+     * irreversible move. Discovering a read-only `docs/project` after the
+     * change directory has already been moved is how a half-archived change
+     * happens.
+     */
+    async preflightArchiveWrite(projectRoot, archivePath) {
         const config = await this.configManager.loadConfig(projectRoot);
         const archivedRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         const archiveRelative = path_1.default.relative(archivedRoot, path_1.default.resolve(archivePath));
         if (!archiveRelative || archiveRelative === '..' || archiveRelative.startsWith(`..${path_1.default.sep}`) || path_1.default.isAbsolute(archiveRelative)) {
-            throw new Error('Archive knowledge preflight failed: archive target is outside the managed archive directory.');
-        }
-        const knowledgeRoot = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/changes`, config);
-        const knowledgePath = path_1.default.resolve(knowledgeRoot, `${archiveRelative}.md`);
-        const relativeToKnowledge = path_1.default.relative(knowledgeRoot, knowledgePath);
-        if (!relativeToKnowledge || relativeToKnowledge === '..' || relativeToKnowledge.startsWith(`..${path_1.default.sep}`) || path_1.default.isAbsolute(relativeToKnowledge)) {
-            throw new Error('Archive knowledge preflight failed: generated document target is outside docs/project/changes.');
-        }
-        const normalizedArchive = path_1.default.relative(projectRoot, path_1.default.resolve(archivePath)).replace(/\\/g, '/');
-        if (await this.fileService.exists(knowledgePath)) {
-            let replaceable = false;
-            try {
-                const document = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(knowledgePath));
-                replaceable = document.data?.generated === true
-                    && document.data?.generator === 'ospec-archive-knowledge'
-                    && String(document.data?.archive || '').replace(/\\/g, '/') === normalizedArchive;
-            }
-            catch {
-                replaceable = false;
-            }
-            if (!replaceable) {
-                throw new Error(`Archive knowledge preflight failed: refusing to overwrite human-owned document ${this.toRelativePath(projectRoot, knowledgePath)}.`);
-            }
+            throw new Error('Archive preflight failed: archive target is outside the managed archive directory.');
         }
         const probeDirectories = Array.from(new Set([
             path_1.default.dirname(archivePath),
-            path_1.default.dirname(knowledgePath),
             path_1.default.dirname(this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config)),
-            path_1.default.dirname(this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/feature-index.md`, config)),
+            path_1.default.dirname(this.resolveManagedPath(projectRoot, FeatureCatalog_1.FEATURE_CATALOG_RELATIVE_PATH, config)),
         ]));
         const probes = [];
         try {
@@ -1601,70 +1802,298 @@ class ProjectService {
             }
         }
         catch (error) {
-            throw new Error(`Archive knowledge preflight failed: ${error?.message || error}`);
+            throw new Error(`Archive preflight failed: ${error?.message || error}`);
         }
         finally {
             await Promise.all(probes.map(probe => fs_1.promises.unlink(probe).catch(() => undefined)));
         }
     }
-    async assertArchivedKnowledgeIndexed(projectRoot, archivePath, expectations = {}) {
+    /**
+     * 7.7 rewrote this from `assertArchivedKnowledgeIndexed`.
+     *
+     * The old assertion guaranteed a generated knowledge document existed and
+     * was linked. That document is gone, so keeping the old shape would mean
+     * asserting nothing -- and this repository has shipped enough checks that
+     * pass while checking nothing that replacing one with a tautology is the
+     * specific failure to avoid here. The guarantee is restated against what
+     * now carries the information:
+     *
+     *   1. the archived_changes entry exists -- the durable record, and what
+     *      `ospec changes show` and `ospec index query` both read;
+     *   2. the archive is linked from feature-index.md, so a reader with only
+     *      the docs tree can still reach the evidence;
+     *   3. forced archives are still visibly forced: in the entry, in the
+     *      preserved force record, and in the generated index;
+     *   4. every feature slug this change declared has a catalogue row -- but
+     *      ONLY when a catalogue exists. A project that has not migrated has no
+     *      catalogue, and refusing to archive over that would make 7.7
+     *      unshippable for exactly the projects 7.9 exists to migrate.
+     */
+    async assertArchivedChangeIndexed(projectRoot, archivePath, expectations = {}) {
         const config = await this.configManager.loadConfig(projectRoot);
         const indexPath = this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config);
+        const featureCatalogPath = this.resolveManagedPath(projectRoot, FeatureCatalog_1.FEATURE_CATALOG_RELATIVE_PATH, config);
         const featureIndexPath = this.resolveManagedPath(projectRoot, `${constants_1.DIR_NAMES.DOCS}/${constants_1.DIR_NAMES.PROJECT}/feature-index.md`, config);
         const normalizedArchive = path_1.default.relative(projectRoot, path_1.default.resolve(archivePath)).replace(/\\/g, '/');
         if (!(await this.fileService.exists(indexPath))) {
-            throw new Error(`Archive knowledge verification failed: ${constants_1.FILE_NAMES.SKILL_INDEX} was not generated.`);
+            throw new Error(`Archive verification failed: ${constants_1.FILE_NAMES.SKILL_INDEX} was not generated.`);
         }
         const index = await this.fileService.readJSON(indexPath);
         const archivedChange = (Array.isArray(index?.archived_changes) ? index.archived_changes : [])
             .find((item) => item?.archive === normalizedArchive);
         if (!archivedChange) {
-            throw new Error(`Archive knowledge verification failed: ${normalizedArchive} is missing from archived_changes.`);
+            throw new Error(`Archive verification failed: ${normalizedArchive} is missing from archived_changes.`);
         }
         if (expectations.disposition === 'forced') {
             if (archivedChange.disposition !== 'forced'
                 || archivedChange.completion_status !== 'incomplete'
                 || archivedChange.accepted_risk !== true) {
-                throw new Error('Archive knowledge verification failed: forced archive metadata is missing from archived_changes.');
+                throw new Error('Archive verification failed: forced archive metadata is missing from archived_changes.');
             }
             const forceRecordPath = path_1.default.join(archivePath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD);
             if (!(await this.fileService.exists(forceRecordPath))) {
-                throw new Error(`Archive knowledge verification failed: ${constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD} was not preserved.`);
+                throw new Error(`Archive verification failed: ${constants_1.FILE_NAMES.FORCE_ARCHIVE_RECORD} was not preserved.`);
             }
         }
-        const knowledgeDocument = typeof archivedChange.knowledge_document === 'string'
-            ? archivedChange.knowledge_document
-            : '';
-        if (!knowledgeDocument) {
-            throw new Error(`Archive knowledge verification failed: ${normalizedArchive} has no generated change knowledge document.`);
-        }
-        const knowledgePath = path_1.default.join(projectRoot, ...knowledgeDocument.split('/'));
-        if (!(await this.fileService.exists(knowledgePath))) {
-            throw new Error(`Archive knowledge verification failed: generated document does not exist at ${knowledgeDocument}.`);
-        }
-        if (!index?.documents || !index.documents[knowledgeDocument]) {
-            throw new Error(`Archive knowledge verification failed: ${knowledgeDocument} is missing from SKILL.index.json documents.`);
-        }
-        if (expectations.disposition === 'forced') {
-            const knowledge = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(knowledgePath));
-            const tags = Array.isArray(knowledge.data?.tags) ? knowledge.data.tags.map(String) : [];
-            if (knowledge.data?.disposition !== 'forced'
-                || knowledge.data?.completion_status !== 'incomplete'
-                || knowledge.data?.accepted_risk !== true
-                || tags.includes('completed')) {
-                throw new Error('Archive knowledge verification failed: forced archive knowledge is not visibly incomplete and accepted-risk.');
+        // 7.7 does not assert anything about docs/project/changes/ here, and
+        // that is deliberate. The obvious check -- "no document under that
+        // directory may be in the documents map" -- is WRONG: 7.2 excludes
+        // generated documents by their `generated: true` frontmatter, not by
+        // path, and now that nothing generates into that directory a human is
+        // free to keep a file there. A path-prefix check refuses to archive
+        // over someone else's document, which is the same class of
+        // fires-on-the-wrong-thing bug this phase exists to stop shipping.
+        //
+        // The real guarantees are asserted where they can be asserted
+        // honestly: "archiving writes no file under docs/project/changes/" on
+        // disk in the archive tests, and the generated-document exclusion in
+        // tests/tools/p7-index-builder-divergence.test.mjs.
+        // feature-index.md is checked ONLY while it is still a live generated
+        // document. Track A's 7.4 stops generating it and freezes the existing
+        // one into pure link lines latched by `historical: true` in its
+        // frontmatter; a project that never had one never gets one. Requiring
+        // it, or requiring it to name a NEW archive, would refuse to archive on
+        // every post-7.4 project -- a defect that exists only after the merge,
+        // which is the shape this effort keeps finding at integration.
+        //
+        // So: absent is fine, frozen is fine, and a live one must still be
+        // correct. The archive's real reachability guarantee is the index entry
+        // above and the catalogue row below.
+        if (await this.fileService.exists(featureIndexPath)) {
+            const featureIndexRaw = await this.fileService.readFile(featureIndexPath);
+            let frozen = false;
+            try {
+                frozen = (0, helpers_1.parseFrontmatterDocument)(featureIndexRaw).data?.historical === true;
+            }
+            catch {
+                frozen = false;
+            }
+            if (!frozen) {
+                if (!featureIndexRaw.includes(normalizedArchive)) {
+                    throw new Error(`Archive verification failed: feature-index.md does not link ${normalizedArchive}.`);
+                }
+                if (expectations.disposition === 'forced' && !featureIndexRaw.includes('FORCED / INCOMPLETE / ACCEPTED RISK')) {
+                    throw new Error('Archive verification failed: feature-index.md does not visibly mark the forced incomplete archive.');
+                }
             }
         }
-        if (!(await this.fileService.exists(featureIndexPath))) {
-            throw new Error('Archive knowledge verification failed: docs/project/feature-index.md was not generated.');
+        // 7.4 re-pointed the routing half of this assertion. It used to require
+        // that feature-index.md linked the knowledge document, but
+        // feature-index.md is no longer generated -- it is frozen once into a
+        // historical link list -- so that check would now pass or fail on a
+        // stale file. The catalogue replaces it, and the catalogue is keyed by
+        // FEATURE SLUG rather than by change, so what can be asserted is:
+        // every feature slug this change recorded has a row pointing at this
+        // archive.
+        //
+        // Track A required the catalogue to EXIST. Track C required only a row
+        // when one exists. C's rule is the one that survives the merge: a
+        // project that has not run 7.9's migration has no catalogue, and
+        // refusing to archive over that would make 7.7 unshippable for exactly
+        // the projects 7.9 exists to migrate. `readCatalogRows` returning null
+        // means "no catalogue", which is not a failure; a catalogue that EXISTS
+        // and is missing a row for a declared slug is a real gap and does fail.
+        //
+        // What is NOT asserted, and why: "the row points at THIS archive".
+        // Track A wrote that check and it was correct on track A, where it
+        // never once ran -- 7.5 was not on that branch, so no change recorded
+        // a feature slug and `declaredSlugs` was always empty. A said so at the
+        // site: "an assertion that cannot hold yet is an assertion that gets
+        // deleted rather than fixed". The merge woke it up, and awake it is
+        // unsatisfiable by construction: the catalogue row is pointed at the
+        // archive by `recordArchiveTraceability`, which ArchiveCommand runs on
+        // the LINE AFTER this assertion, deliberately, because by then the
+        // change is already moved and a failure there could only half-archive
+        // it. Asserting here that the next line has already run fails every
+        // real archive -- the end-to-end fixture failed on exactly this.
+        //
+        // So the row's ARCHIVE POINTER is a warning from
+        // `recordArchiveTraceability`, and the row's EXISTENCE is the gate.
+        //
+        // A change that recorded no feature slugs asserts nothing here. That is
+        // weaker than the old link check, and deliberately so: a change may
+        // legitimately touch no feature.
+        //
+        // Forced-archive VISIBILITY moved with it. feature-index.md carried the
+        // "FORCED / INCOMPLETE / ACCEPTED RISK" banner; the catalogue has no
+        // per-change row to carry one. The guarantee now rests on the checks
+        // above -- the archived_changes entry's disposition/completion_status/
+        // accepted_risk and the preserved force record -- both of which are
+        // asserted for a forced archive.
+        const declaredSlugs = Array.isArray(archivedChange.features)
+            ? archivedChange.features.map((slug) => String(slug || '').trim()).filter(Boolean)
+            : [];
+        if (declaredSlugs.length > 0) {
+            const rows = await (0, FeatureCatalogPort_1.readCatalogRows)(featureCatalogPath);
+            if (rows) {
+                const missing = declaredSlugs.filter((slug) => !rows.has(slug)).sort();
+                if (missing.length > 0) {
+                    throw new Error(`Archive verification failed: the feature catalogue has no row for ${missing.join(', ')}. Run "ospec index build" to regenerate it.`);
+                }
+            }
         }
-        const featureIndex = await this.fileService.readFile(featureIndexPath);
-        if (!featureIndex.includes(knowledgeDocument)) {
-            throw new Error(`Archive knowledge verification failed: feature-index.md does not link ${knowledgeDocument}.`);
+    }
+    /**
+     * The feature slugs a change declares, from the two sources contract 6.2
+     * names: the proposal's frontmatter `features:` (written by 7.5) and
+     * `state.json.features`. Invalid entries are DROPPED rather than thrown on,
+     * exactly as `readFeatureSlugList` does for the index -- an archive is
+     * immutable history and a slug written before the naming rule existed must
+     * not be able to wedge archiving forever.
+     */
+    async readDeclaredFeatureSlugs(changeDir) {
+        const slugs = [];
+        try {
+            const statePath = path_1.default.join(changeDir, constants_1.FILE_NAMES.STATE);
+            if (await this.fileService.exists(statePath)) {
+                const state = await this.fileService.readJSON(statePath);
+                slugs.push(...(0, SkillParser_1.readFeatureSlugList)(state?.features));
+            }
         }
-        if (expectations.disposition === 'forced' && !featureIndex.includes('FORCED / INCOMPLETE / ACCEPTED RISK')) {
-            throw new Error('Archive knowledge verification failed: feature-index.md does not visibly mark the forced incomplete archive.');
+        catch {
+            // A state file we cannot read contributes no slugs, not a failure.
         }
+        try {
+            const proposalPath = path_1.default.join(changeDir, constants_1.FILE_NAMES.PROPOSAL);
+            if (await this.fileService.exists(proposalPath)) {
+                const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath));
+                slugs.push(...(0, SkillParser_1.readFeatureSlugList)(proposal.data?.features));
+            }
+        }
+        catch {
+            // Likewise for an unparseable proposal.
+        }
+        return (0, SkillParser_1.readFeatureSlugList)(slugs);
+    }
+    /**
+     * Resolve feature slugs to the `path#section` targets contract 6.2 stores in
+     * `state.json.doc_updates`. Reads the index that exists NOW, before the
+     * archive's rebuild: `feature_docs` describes the human documents, which the
+     * change has already finished editing.
+     */
+    async computeDocUpdates(projectRoot, slugs) {
+        if (slugs.length === 0)
+            return [];
+        try {
+            const config = await this.configManager.loadConfig(projectRoot);
+            const indexPath = this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config);
+            if (!(await this.fileService.exists(indexPath)))
+                return [];
+            const index = await this.fileService.readJSON(indexPath);
+            const featureDocs = index?.feature_docs || {};
+            const updates = [];
+            for (const slug of slugs) {
+                const entry = featureDocs[slug];
+                const file = String(entry?.file || '').trim();
+                const heading = String(entry?.heading || '').trim();
+                if (file && heading)
+                    updates.push(`${file}#${heading}`);
+            }
+            return (0, SkillParser_1.readDocUpdateList)(updates);
+        }
+        catch {
+            return [];
+        }
+    }
+    /**
+     * The archive-time write into the docs: update the catalogue rows for every
+     * feature this change touched, then write the traceability comment into
+     * each of those feature sections.
+     *
+     * NEVER THROWS, and that is a deliberate design decision rather than
+     * defensive habit. By the time this runs the change has already been moved
+     * into `changes/archived/` and the index already records it -- the work is
+     * archived. A read-only docs tree, a feature document someone is mid-edit
+     * on, or a catalogue that has not been generated yet are all reasons to
+     * tell the user something was skipped, and none of them are reasons to fail
+     * an operation that has already succeeded. Returns the warnings for the
+     * caller to print.
+     */
+    /**
+     * The archive gate's half of track B's 7.6: VERIFY the obligations B
+     * recorded. This never produces them and never recomputes whether one is
+     * satisfied -- it reads `state.json.docs_obligations` (the one location B
+     * writes for both workflows) and asks B's evaluator, because a second
+     * inference path is how warn mode and strict mode drift apart.
+     *
+     * Returns the messages; `warn` is the default for this release cycle per
+     * the plan, so the caller prints them. Only `docs_contract.mode: strict`
+     * turns an unsatisfied REQUIRED obligation into a refusal, and that is the
+     * caller's decision, not this method's.
+     */
+    async verifyDocsObligations(projectRoot, changeDir) {
+        let mode = 'warn';
+        try {
+            const config = await this.configManager.loadConfig(projectRoot);
+            if (config?.docs_contract?.mode === 'strict')
+                mode = 'strict';
+        }
+        catch {
+            // An unreadable config leaves the safe default in place.
+        }
+        // `projectRoot` is threaded through because B's evaluator hashes each
+        // obligation's target relative to it. Before the merge nothing resolved
+        // and it never mattered; now it decides whether the gate reads the real
+        // document or a path that does not exist inside the change directory.
+        const evaluation = await (0, DocsObligationPort_1.evaluateArchiveDocsObligations)(changeDir, mode, projectRoot);
+        return {
+            mode: evaluation.mode,
+            blocking: (0, DocsObligationPort_1.describeUnsatisfied)(evaluation, evaluation.blocking),
+            advisory: (0, DocsObligationPort_1.describeUnsatisfied)(evaluation, evaluation.advisory),
+            warnings: evaluation.warnings,
+        };
+    }
+    async recordArchiveTraceability(projectRoot, archivePath) {
+        const warnings = [];
+        try {
+            const config = await this.configManager.loadConfig(projectRoot);
+            const indexPath = this.resolveManagedPath(projectRoot, constants_1.FILE_NAMES.SKILL_INDEX, config);
+            if (!(await this.fileService.exists(indexPath)))
+                return warnings;
+            const index = await this.fileService.readJSON(indexPath);
+            const normalizedArchive = path_1.default.relative(projectRoot, path_1.default.resolve(archivePath)).replace(/\\/g, '/');
+            const entry = (Array.isArray(index?.archived_changes) ? index.archived_changes : [])
+                .find((item) => item?.archive === normalizedArchive);
+            const slugs = (0, SkillParser_1.readFeatureSlugList)(entry?.features);
+            if (slugs.length === 0)
+                return warnings;
+            const archiveName = path_1.default.basename(archivePath);
+            // Track A owns the catalogue row format; this calls its primitive
+            // rather than reimplementing it. Until 7.4 registers a writer the
+            // port reports unavailable, which is the correct state for a
+            // project that has no catalogue.
+            const catalog = await (0, FeatureCatalogPort_1.updateCatalogRows)(projectRoot, { slugs, archiveName });
+            warnings.push(...catalog.warnings);
+            if (catalog.available && catalog.missing.length > 0) {
+                warnings.push(`the feature catalogue has no row for ${catalog.missing.sort().join(', ')}; run "ospec index build" to regenerate it.`);
+            }
+            const traceability = await (0, FeatureTraceability_1.writeTraceabilityComments)(projectRoot, index?.feature_docs, slugs, archiveName);
+            warnings.push(...traceability.warnings);
+        }
+        catch (error) {
+            warnings.push(`could not record archive traceability: ${error?.message || error}`);
+        }
+        return warnings;
     }
     getDirectorySkeleton(rootDir, config = null) {
         return [
@@ -1789,7 +2218,7 @@ class ProjectService {
         return [{ key: constants_1.FILE_NAMES.SKILL_MD, pathSegments: [constants_1.FILE_NAMES.SKILL_MD] }];
     }
     async toDocumentStatusItem(rootDir, definition) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         let filePath = this.resolveManagedPath(rootDir, definition.pathSegments.join('/'), config);
         let exists = await this.fileService.exists(filePath);
         if (!exists && definition.key === constants_1.FILE_NAMES.BUILD_INDEX_SCRIPT) {
@@ -1815,7 +2244,7 @@ class ProjectService {
         };
     }
     async toSkillFileInfo(rootDir, definition) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const filePath = this.resolveManagedPath(rootDir, definition.pathSegments.join('/'), config);
         const exists = await this.fileService.exists(filePath);
         if (!exists) {
@@ -2050,20 +2479,25 @@ class ProjectService {
 - 状态：已完成 OSpec 协议壳初始化
 - 项目知识：尚未生成
 
-## 首先阅读
+## 入口顺序
 
-- [AI 指南](for-ai/ai-guide.md)
-- [执行协议](for-ai/execution-protocol.md)
-- [命名规范](for-ai/naming-conventions.md)
-- [技能规范](for-ai/skill-conventions.md)
-- [工作流规范](for-ai/workflow-conventions.md)
-- [开发指南](for-ai/development-guide.md)
+1. \`.skillrc\`：布局、文档语言、工作流策略与模型档案。
+2. \`.ospec/session-brief.md\`：若已存在则先读；否则运行 \`ospec session [path]\` 创建它。
+3. \`ospec index query <关键词...>\`：以索引为路由定位知识，再读目标文件；绝不通读整个 \`SKILL.index.json\`。
+
+## 按需引用
+
+以下文档只在对应场景出现时才打开，不在入口阶段加载：
+
+- [AI 指南](for-ai/ai-guide.md)：任何 OSpec 工作的通用执行规则。
+- [Change 协议](for-ai/change-protocol.md)：当前 \`workflow_profile_id: change\` 时。
+- [执行协议](for-ai/execution-protocol.md)：goal 控制器层（\`workflow_profile_id: goal\`，或任何 \`ospec execute …\` / \`ospec loop …\` 工作）里 \`ospec-goal\` 技能背后的权威细则；只有当具体场景真的需要该细则时才打开，而不是把它当成进入该层的步骤。
+- [命名规范](for-ai/naming-conventions.md)、[技能规范](for-ai/skill-conventions.md)、[工作流规范](for-ai/workflow-conventions.md)、[开发指南](for-ai/development-guide.md)：命名、编写 SKILL、设计工作流或写代码需要项目采用版规范时。
 
 ## 说明
 
 - 当前仓库仅包含 OSpec 协议壳。
 - 项目文档、源码结构、测试入口与业务 scaffold 需后续通过明确命令或技能生成。
-- 如果项目启用了 Stitch 且某个 active change 激活了 \`stitch_design_review\`，继续执行或声称可归档前，先检查 \`changes/active/<change>/artifacts/stitch/approval.json\`。
 - Active change 位于 \`changes/active/<change>\`。`
             : documentLanguage === 'ja-JP'
                 ? `# ${projectName}
@@ -2077,20 +2511,25 @@ class ProjectService {
 - 状態: OSpec のプロトコルシェルは初期化済み
 - プロジェクト知識: まだ生成されていません
 
-## 最初に読むもの
+## エントリ順序
 
-- [AI ガイド](for-ai/ai-guide.md)
-- [実行プロトコル](for-ai/execution-protocol.md)
-- [命名規約](for-ai/naming-conventions.md)
-- [SKILL 規約](for-ai/skill-conventions.md)
-- [ワークフロー規約](for-ai/workflow-conventions.md)
-- [開発ガイド](for-ai/development-guide.md)
+1. \`.skillrc\`: レイアウト、文書言語、ワークフロー方針、モデルプロファイル。
+2. \`.ospec/session-brief.md\` があれば先に読む。なければ \`ospec session [path]\` を実行して作成する。
+3. \`ospec index query <キーワード...>\` を索引へのルータとして使い、対象ファイルを読む前に知識の所在を確認する。\`SKILL.index.json\` 全体は決して読まない。
+
+## オンデマンド参照
+
+以下は該当する場面に入ったときだけ開く。エントリ時には読み込まない。
+
+- [AI ガイド](for-ai/ai-guide.md): あらゆる OSpec 作業の一般的な実行ルール。
+- [change プロトコル](for-ai/change-protocol.md): 現在が \`workflow_profile_id: change\` のとき。
+- [実行プロトコル](for-ai/execution-protocol.md): goal コントローラ層（\`workflow_profile_id: goal\`、または \`ospec execute …\` / \`ospec loop …\` の作業）で \`ospec-goal\` スキルの背後にある正典の詳細。名指しの状況がその詳細を必要とするときだけ開き、この層に入る手順としては読まない。
+- [命名規約](for-ai/naming-conventions.md)、[SKILL 規約](for-ai/skill-conventions.md)、[ワークフロー規約](for-ai/workflow-conventions.md)、[開発ガイド](for-ai/development-guide.md): 命名、SKILL 作成、ワークフロー設計、コード記述でプロジェクト採用ルールが必要なとき。
 
 ## メモ
 
 - このリポジトリには現在 OSpec のプロトコルシェルのみがあります。
 - プロジェクト文書、ソース構造、テスト導線、業務用 scaffold は後で明示的なコマンドまたはスキルで生成してください。
-- Stitch が有効で、active change が \`stitch_design_review\` を有効化している場合は、作業継続や archive 可否を主張する前に \`changes/active/<change>/artifacts/stitch/approval.json\` を確認してください。
 - active change は \`changes/active/<change>\` にあります。`
                 : documentLanguage === 'ar'
                     ? `# ${projectName}
@@ -2104,20 +2543,25 @@ class ProjectService {
 - الحالة: تم تهيئة غلاف بروتوكول OSpec
 - معرفة المشروع: لم يتم توليدها بعد
 
-## اقرأ أولاً
+## تسلسل الدخول
 
-- [دليل الذكاء الاصطناعي](for-ai/ai-guide.md)
-- [بروتوكول التنفيذ](for-ai/execution-protocol.md)
-- [اتفاقيات التسمية](for-ai/naming-conventions.md)
-- [اتفاقيات SKILL](for-ai/skill-conventions.md)
-- [اتفاقيات سير العمل](for-ai/workflow-conventions.md)
-- [دليل التطوير](for-ai/development-guide.md)
+1. \`.skillrc\` للتخطيط ولغة الوثائق وسياسة سير العمل وملفات النماذج.
+2. اقرأ \`.ospec/session-brief.md\` إذا كان موجوداً؛ وإلا شغّل \`ospec session [path]\` لإنشائه.
+3. \`ospec index query <كلمات...>\` كموجّه إلى الفهرس لتحديد موقع المعرفة قبل قراءة الملفات الهدف؛ لا تقرأ \`SKILL.index.json\` كاملاً أبداً.
+
+## مراجع عند الحاجة
+
+لا تفتح ما يلي إلا عند وقوع الحالة المسماة، ولا تحمّله عند الدخول:
+
+- [دليل الذكاء الاصطناعي](for-ai/ai-guide.md): قواعد التنفيذ العامة لأي عمل OSpec.
+- [بروتوكول change](for-ai/change-protocol.md): عندما يكون الوضع الحالي \`workflow_profile_id: change\`.
+- [بروتوكول التنفيذ](for-ai/execution-protocol.md): المرجع الموثوق خلف مهارة \`ospec-goal\` في طبقة تحكم goal (\`workflow_profile_id: goal\`، أو أي عمل عبر \`ospec execute …\` / \`ospec loop …\`)؛ لا تفتحه إلا عندما تحتاج حالة محددة بالاسم إلى ذلك التفصيل، لا كخطوة من خطوات الدخول إلى الطبقة.
+- [اتفاقيات التسمية](for-ai/naming-conventions.md) و[اتفاقيات SKILL](for-ai/skill-conventions.md) و[اتفاقيات سير العمل](for-ai/workflow-conventions.md) و[دليل التطوير](for-ai/development-guide.md): عند الحاجة إلى القواعد المعتمدة للمشروع في التسمية أو تأليف SKILL أو تصميم سير العمل أو كتابة الكود.
 
 ## ملاحظات
 
 - يحتوي هذا المستودع حالياً على غلاف بروتوكول OSpec فقط.
 - يجب إنشاء وثائق المشروع وبنية المصدر ومسار الاختبارات والـ scaffold الخاص بالأعمال لاحقاً عبر أوامر أو مهارات صريحة.
-- إذا كان Stitch مفعلاً وكان التغيير النشط يفعّل \`stitch_design_review\`، فافحص \`changes/active/<change>/artifacts/stitch/approval.json\` قبل متابعة التنفيذ أو الادعاء بأن الأرشفة جاهزة.
 - توجد التغييرات النشطة تحت \`changes/active/<change>\` .`
                     : `# ${projectName}
 
@@ -2130,20 +2574,25 @@ class ProjectService {
 - Status: OSpec protocol shell initialized
 - Project knowledge: not generated yet
 
-## Read First
+## Entry Sequence
 
-- [AI guide](for-ai/ai-guide.md)
-- [Execution protocol](for-ai/execution-protocol.md)
-- [Naming conventions](for-ai/naming-conventions.md)
-- [Skill conventions](for-ai/skill-conventions.md)
-- [Workflow conventions](for-ai/workflow-conventions.md)
-- [Development guide](for-ai/development-guide.md)
+1. \`.skillrc\` for layout, document language, workflow policy, and model profiles.
+2. \`.ospec/session-brief.md\` if it exists; otherwise run \`ospec session [path]\` to create it.
+3. \`ospec index query <keyword...>\` as the router into the index; locate knowledge before reading target files and never read \`SKILL.index.json\` wholesale.
+
+## On-Demand References
+
+Open these only when the named situation applies; never load them at entry time.
+
+- [AI guide](for-ai/ai-guide.md): general execution rules for any OSpec work.
+- [Change protocol](for-ai/change-protocol.md): when the active profile is \`workflow_profile_id: change\`.
+- [Execution protocol](for-ai/execution-protocol.md): the authoritative detail behind the \`ospec-goal\` skill in the goal controller layer (\`workflow_profile_id: goal\`, or any \`ospec execute …\` / \`ospec loop …\` work); open it only when a named situation needs that detail, never as a step of entering the layer.
+- [Naming conventions](for-ai/naming-conventions.md), [Skill conventions](for-ai/skill-conventions.md), [Workflow conventions](for-ai/workflow-conventions.md), [Development guide](for-ai/development-guide.md): when naming, authoring a SKILL, shaping a workflow, or writing code needs the project-adopted convention.
 
 ## Notes
 
 - This repository currently contains only the OSpec protocol shell.
 - Project docs, source structure, tests, and business scaffold should be generated later through explicit skills or commands.
-- If Stitch is enabled and an active change triggers \`stitch_design_review\`, inspect \`changes/active/<change>/artifacts/stitch/approval.json\` before continuing execution or archive claims.
 - Active changes live under \`changes/active/<change>\`.`;
         return `---
 name: ${projectName}
@@ -2159,13 +2608,29 @@ ${body}
         await this.fileService.writeFile(filePath, this.renderBootstrapSummary(input, rootDir));
     }
     renderBootstrapSummary(input, rootDir) {
-        const isEnglish = input.normalized.documentLanguage === 'en-US';
-        const title = isEnglish ? 'Bootstrap Summary' : '初始化摘要';
+        /*
+         * M-i18n1: ja-JP and ar have no translated copy for this document, and
+         * the fallback has to be English.
+         *
+         * This read `=== 'en-US'`, so every language that was not English got
+         * the CHINESE string -- a Japanese or Arabic project's bootstrap
+         * summary came out in Chinese, which is not a fallback, it is a
+         * different wrong answer. `!== 'zh-CN'` makes the Chinese branch the
+         * special case it actually is and sends everything else to English.
+         *
+         * Renamed from `isEnglish` because the flag no longer means "the
+         * document language is English"; it means "use the English copy",
+         * which for ja-JP and ar is a deliberate fallback rather than a
+         * statement about the project. `TemplateBuilderBase.copy(language, zh,
+         * en, ja = en, ar = en)` already encodes exactly this default.
+         */
+        const englishCopy = input.normalized.documentLanguage !== 'zh-CN';
+        const title = englishCopy ? 'Bootstrap Summary' : '初始化摘要';
         const commandStatus = this.describeCommandExecutionStatus(input.commandExecution.status, input.normalized.documentLanguage);
         const formatPaths = (items, emptyLabel) => items.length > 0 ? items.map(item => `- \`${item}\``).join('\n') : `- ${emptyLabel}`;
         const formatCommandSteps = () => {
             if (!input.commandPlan || input.commandPlan.steps.length === 0) {
-                return isEnglish ? '- No scaffold command plan.' : '- 当前没有脚手架命令计划。';
+                return englishCopy ? '- No scaffold command plan.' : '- 当前没有脚手架命令计划。';
             }
             return input.commandPlan.steps
                 .map(step => `- \`${step.shellCommand}\` (${step.description})`)
@@ -2173,17 +2638,17 @@ ${body}
         };
         const formatSuggestion = () => {
             if (!input.firstChangeSuggestion) {
-                return isEnglish ? '- No preset-driven first change suggestion.' : '- 当前没有预设驱动的首个变更建议。';
+                return englishCopy ? '- No preset-driven first change suggestion.' : '- 当前没有预设驱动的首个变更建议。';
             }
             return [
-                `- ${isEnglish ? 'Suggested change' : '建议变更'}: \`${input.firstChangeSuggestion.name}\``,
-                `- ${isEnglish ? 'Affects' : '影响模块'}: ${input.firstChangeSuggestion.affects.join(', ') || '-'}`,
-                `- ${isEnglish ? 'Flags' : '标记'}: ${input.firstChangeSuggestion.flags.join(', ') || '-'}`,
+                `- ${englishCopy ? 'Suggested change' : '建议变更'}: \`${input.firstChangeSuggestion.name}\``,
+                `- ${englishCopy ? 'Affects' : '影响模块'}: ${input.firstChangeSuggestion.affects.join(', ') || '-'}`,
+                `- ${englishCopy ? 'Flags' : '标记'}: ${input.firstChangeSuggestion.flags.join(', ') || '-'}`,
             ].join('\n');
         };
         const recoveryLine = input.recoveryFilePath
-            ? `- ${isEnglish ? 'Recovery record' : '补救记录'}: \`${this.toRelativePath(rootDir, input.recoveryFilePath)}\``
-            : `- ${isEnglish ? 'Recovery record' : '补救记录'}: ${isEnglish ? 'None' : '无'}`;
+            ? `- ${englishCopy ? 'Recovery record' : '补救记录'}: \`${this.toRelativePath(rootDir, input.recoveryFilePath)}\``
+            : `- ${englishCopy ? 'Recovery record' : '补救记录'}: ${englishCopy ? 'None' : '无'}`;
         return `---
 
 
@@ -2248,7 +2713,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-## ${isEnglish ? 'Context' : '上下文'}
+## ${englishCopy ? 'Context' : '上下文'}
 
 
 
@@ -2264,7 +2729,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Project' : '项目'}: ${input.normalized.projectName}
+- ${englishCopy ? 'Project' : '项目'}: ${input.normalized.projectName}
 
 
 
@@ -2272,7 +2737,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Mode' : '模式'}: ${input.mode}
+- ${englishCopy ? 'Mode' : '模式'}: ${input.mode}
 
 
 
@@ -2280,7 +2745,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Preset' : 'Preset'}: ${input.normalized.projectPresetId || (isEnglish ? 'None' : '无')}
+- ${englishCopy ? 'Preset' : 'Preset'}: ${input.normalized.projectPresetId || (englishCopy ? 'None' : '无')}
 
 
 
@@ -2288,7 +2753,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Document language' : '文档语言'}: ${input.normalized.documentLanguage}
+- ${englishCopy ? 'Document language' : '文档语言'}: ${input.normalized.documentLanguage}
 
 
 
@@ -2296,7 +2761,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Scaffold command execution' : '脚手架命令执行'}: ${commandStatus}
+- ${englishCopy ? 'Scaffold command execution' : '脚手架命令执行'}: ${commandStatus}
 
 
 
@@ -2312,7 +2777,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-## ${isEnglish ? 'Business Scaffold' : '业务框架脚手架'}
+## ${englishCopy ? 'Business Scaffold' : '业务框架脚手架'}
 
 
 
@@ -2328,7 +2793,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Framework' : '框架方案'}: ${input.scaffoldPlan?.framework || (isEnglish ? 'None' : '无')}
+- ${englishCopy ? 'Framework' : '框架方案'}: ${input.scaffoldPlan?.framework || (englishCopy ? 'None' : '无')}
 
 
 
@@ -2336,7 +2801,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-- ${isEnglish ? 'Install command' : '安装命令'}: ${input.scaffoldPlan?.installCommand || (isEnglish ? 'None' : '无')}
+- ${englishCopy ? 'Install command' : '安装命令'}: ${input.scaffoldPlan?.installCommand || (englishCopy ? 'None' : '无')}
 
 
 
@@ -2352,7 +2817,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-### ${isEnglish ? 'Created directories' : '本次创建目录'}
+### ${englishCopy ? 'Created directories' : '本次创建目录'}
 
 
 
@@ -2368,7 +2833,7 @@ tags: [project, bootstrap, scaffold]
 
 
 
-${formatPaths(input.scaffoldCreatedDirectories, isEnglish ? 'No new scaffold directories were created.' : '本次没有新建业务框架目录。')}
+${formatPaths(input.scaffoldCreatedDirectories, englishCopy ? 'No new scaffold directories were created.' : '本次没有新建业务框架目录。')}
 
 
 
@@ -2384,7 +2849,7 @@ ${formatPaths(input.scaffoldCreatedDirectories, isEnglish ? 'No new scaffold dir
 
 
 
-### ${isEnglish ? 'Created files' : '本次创建文件'}
+### ${englishCopy ? 'Created files' : '本次创建文件'}
 
 
 
@@ -2400,7 +2865,7 @@ ${formatPaths(input.scaffoldCreatedDirectories, isEnglish ? 'No new scaffold dir
 
 
 
-${formatPaths(input.scaffoldCreatedFiles, isEnglish ? 'No new scaffold files were created.' : '本次没有新建业务框架文件。')}
+${formatPaths(input.scaffoldCreatedFiles, englishCopy ? 'No new scaffold files were created.' : '本次没有新建业务框架文件。')}
 
 
 
@@ -2416,7 +2881,7 @@ ${formatPaths(input.scaffoldCreatedFiles, isEnglish ? 'No new scaffold files wer
 
 
 
-### ${isEnglish ? 'Preserved existing scaffold paths' : '已保留的现有框架路径'}
+### ${englishCopy ? 'Preserved existing scaffold paths' : '已保留的现有框架路径'}
 
 
 
@@ -2432,7 +2897,7 @@ ${formatPaths(input.scaffoldCreatedFiles, isEnglish ? 'No new scaffold files wer
 
 
 
-${formatPaths([...input.scaffoldSkippedDirectories, ...input.scaffoldSkippedFiles], isEnglish ? 'No scaffold paths were preserved.' : '当前没有需要保留的现有框架路径。')}
+${formatPaths([...input.scaffoldSkippedDirectories, ...input.scaffoldSkippedFiles], englishCopy ? 'No scaffold paths were preserved.' : '当前没有需要保留的现有框架路径。')}
 
 
 
@@ -2448,7 +2913,7 @@ ${formatPaths([...input.scaffoldSkippedDirectories, ...input.scaffoldSkippedFile
 
 
 
-## ${isEnglish ? 'OSpec Knowledge Backfill' : 'OSpec 知识回填'}
+## ${englishCopy ? 'OSpec Knowledge Backfill' : 'OSpec 知识回填'}
 
 
 
@@ -2464,7 +2929,7 @@ ${formatPaths([...input.scaffoldSkippedDirectories, ...input.scaffoldSkippedFile
 
 
 
-### ${isEnglish ? 'Direct-copy assets created' : '直接复制资产'}
+### ${englishCopy ? 'Direct-copy assets created' : '直接复制资产'}
 
 
 
@@ -2480,7 +2945,7 @@ ${formatPaths([...input.scaffoldSkippedDirectories, ...input.scaffoldSkippedFile
 
 
 
-${formatPaths(input.directCopyCreatedFiles, isEnglish ? 'No direct-copy assets were created.' : '本次没有新建直接复制资产。')}
+${formatPaths(input.directCopyCreatedFiles, englishCopy ? 'No direct-copy assets were created.' : '本次没有新建直接复制资产。')}
 
 
 
@@ -2496,7 +2961,7 @@ ${formatPaths(input.directCopyCreatedFiles, isEnglish ? 'No direct-copy assets w
 
 
 
-### ${isEnglish ? 'Git hooks installed' : 'Git hooks'}
+### ${englishCopy ? 'Git hooks installed' : 'Git hooks'}
 
 
 
@@ -2512,7 +2977,7 @@ ${formatPaths(input.directCopyCreatedFiles, isEnglish ? 'No direct-copy assets w
 
 
 
-${formatPaths(input.hookInstalledFiles, isEnglish ? 'No hooks were installed.' : '本次没有安装 Git hooks。')}
+${formatPaths(input.hookInstalledFiles, englishCopy ? 'No hooks were installed.' : '本次没有安装 Git hooks。')}
 
 
 
@@ -2528,7 +2993,7 @@ ${formatPaths(input.hookInstalledFiles, isEnglish ? 'No hooks were installed.' :
 
 
 
-### ${isEnglish ? 'Runtime-generated files' : '运行期生成文件'}
+### ${englishCopy ? 'Runtime-generated files' : '运行期生成文件'}
 
 
 
@@ -2544,7 +3009,7 @@ ${formatPaths(input.hookInstalledFiles, isEnglish ? 'No hooks were installed.' :
 
 
 
-${formatPaths(input.runtimeGeneratedFiles, isEnglish ? 'No runtime-generated files were recorded.' : '当前没有记录运行期生成文件。')}
+${formatPaths(input.runtimeGeneratedFiles, englishCopy ? 'No runtime-generated files were recorded.' : '当前没有记录运行期生成文件。')}
 
 
 
@@ -2560,7 +3025,7 @@ ${formatPaths(input.runtimeGeneratedFiles, isEnglish ? 'No runtime-generated fil
 
 
 
-## ${isEnglish ? 'Command Plan' : '命令计划'}
+## ${englishCopy ? 'Command Plan' : '命令计划'}
 
 
 
@@ -2592,7 +3057,7 @@ ${formatCommandSteps()}
 
 
 
-- ${isEnglish ? 'Execution result' : '执行结果'}: ${commandStatus}
+- ${englishCopy ? 'Execution result' : '执行结果'}: ${commandStatus}
 
 
 
@@ -2616,7 +3081,7 @@ ${recoveryLine}
 
 
 
-## ${isEnglish ? 'Default First Change Suggestion' : '默认首个 Change 建议'}
+## ${englishCopy ? 'Default First Change Suggestion' : '默认首个 Change 建议'}
 
 
 
@@ -2643,14 +3108,16 @@ ${formatSuggestion()}
 `;
     }
     describeCommandExecutionStatus(status, language) {
-        const isEnglish = language === 'en-US';
+        // M-i18n1: English is the fallback for ja-JP and ar, not Chinese.
+        // See the note in the bootstrap summary builder above.
+        const englishCopy = language !== 'zh-CN';
         if (status === 'completed') {
-            return isEnglish ? 'Completed' : '已完成';
+            return englishCopy ? 'Completed' : '已完成';
         }
         if (status === 'failed') {
-            return isEnglish ? 'Failed' : '失败';
+            return englishCopy ? 'Failed' : '失败';
         }
-        return isEnglish ? 'Deferred' : '已延后';
+        return englishCopy ? 'Deferred' : '已延后';
     }
     getPresetDefaults(input) {
         const preset = (0, ProjectPresets_1.getProjectPresetById)(input?.projectPresetId);
@@ -2693,6 +3160,27 @@ ${formatSuggestion()}
             .filter(line => !line.startsWith('#'));
         return lines[0] || 'No description yet';
     }
+    /*
+     * M-race1: `state.json` for one change, with absence and damage kept apart.
+     *
+     * Absence is already handled by the `exists` check in the only caller, so
+     * reaching `absent` here means the directory was removed between the two
+     * calls -- a concurrent archive or a `rm -rf` -- and that is a vanished
+     * change, not a damaged one, so it degrades to `null` and gets skipped.
+     *
+     * Damage is a typed throw. It has to leave this method loudly, because the
+     * fields it feeds (`status`, `current_step`, `completed`, `pending`) decide
+     * whether the change is archive-ready; substituting an empty object would
+     * report a half-written change as a fresh draft with nothing done.
+     */
+    async readChangeStateOrThrow(featureDir, statePath) {
+        const result = await this.fileService.readJsonSafe(statePath);
+        if (result.status === 'ok')
+            return result.value;
+        if (result.status === 'absent')
+            return null;
+        throw new errors_1.DamagedChangeStateError(path_1.default.basename(featureDir), result.message);
+    }
     async buildActiveChangeStatusItem(rootDir, featureDir, workflow) {
         const statePath = path_1.default.join(featureDir, constants_1.FILE_NAMES.STATE);
         if (!(await this.fileService.exists(statePath))) {
@@ -2707,7 +3195,7 @@ ${formatSuggestion()}
         const verificationPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.VERIFICATION);
         const reviewPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.REVIEW);
         const [state, proposalExists, designExists, implementationPlanExists, taskGraphExists, agentWorkerStatusExists, tasksExists, verificationExists] = await Promise.all([
-            this.fileService.readJSON(statePath),
+            this.readChangeStateOrThrow(featureDir, statePath),
             this.fileService.exists(proposalPath),
             this.fileService.exists(designPath),
             this.fileService.exists(implementationPlanPath),
@@ -2716,6 +3204,11 @@ ${formatSuggestion()}
             this.fileService.exists(tasksPath),
             this.fileService.exists(verificationPath),
         ]);
+        // The `exists` check above raced a concurrent archive or delete: the
+        // change has vanished, which is not the same as being damaged, so it
+        // simply drops out of the listing.
+        if (!state)
+            return null;
         const workflowProfile = await (0, WorkflowProfile_1.inferWorkflowProfileFromChangeDir)(featureDir, state);
         const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
         const reviewArtifactSet = isGoalWorkflow
@@ -2882,9 +3375,6 @@ ${formatSuggestion()}
         const classicReviewAnalysis = classicCloseout
             ? await classicCloseout.analyzeReview(reviewPath)
             : null;
-        const classicPluginAnalysis = classicCloseout
-            ? await classicCloseout.analyzePluginGates(featureDir, activatedSteps, workflow)
-            : null;
         const classicWorkspaceAnalysis = classicCloseout
             ? await classicCloseout.analyzeWorkspaceScope(rootDir, featureDir, proposalPath)
             : null;
@@ -2892,10 +3382,13 @@ ${formatSuggestion()}
             checks.push(...classicDocumentationAnalysis.checks);
         if (classicReviewAnalysis)
             checks.push(...classicReviewAnalysis.checks);
-        if (classicPluginAnalysis)
-            checks.push(...classicPluginAnalysis.checks);
         if (classicWorkspaceAnalysis)
             checks.push(...classicWorkspaceAnalysis.checks);
+        // 7.6: the documentation obligations. Deliberately OUTSIDE the
+        // goal/classic branch above -- the record lives in `state.json` for
+        // both profiles, so the gate reads one place and cannot develop two
+        // opinions about whether a change documented what it changed.
+        checks.push(...(await this.analyzeDocsObligations(rootDir, featureDir)));
         const closeoutState = classicCloseout
             ? classicCloseout.deriveCloseoutState(state, {
                 proposalReady: proposalExists,
@@ -2903,7 +3396,6 @@ ${formatSuggestion()}
                 verificationReady: verificationAnalysis?.checklistComplete ?? false,
                 reviewReady: classicReviewAnalysis?.archiveReady ?? false,
                 documentationReady: classicDocumentationAnalysis?.archiveReady ?? false,
-                pluginsReady: classicPluginAnalysis?.archiveReady ?? false,
             })
             : state;
         const stateAligned = isGoalWorkflow
@@ -2925,7 +3417,7 @@ ${formatSuggestion()}
                 require_index_regenerated: false,
             };
         const proposalAcceptanceComplete = proposalExists
-            ? !/^\s*[-*+]\s+\[ \]\s+/m.test((0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath)).content)
+            ? !(0, ChecklistScan_1.hasUncheckedChecklistItem)((0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath)).content)
             : false;
         const goalReviewSummary = isGoalWorkflow
             ? await (0, ReviewArtifacts_1.analyzeGoalReviewSummary)(this.fileService, featureDir)
@@ -3054,9 +3546,8 @@ ${formatSuggestion()}
         const missing = optionalStepsFieldValid
             ? activatedSteps.filter(step => !optionalSteps.includes(step))
             : [...activatedSteps];
-        const checklistItems = parsed?.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
-        const uncheckedItems = parsed?.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
-        const checklistStructureValid = checklistItems.length > 0;
+        const checklistStructureValid = (0, ChecklistScan_1.hasChecklistItem)(parsed?.content ?? '');
+        const uncheckedItems = (0, ChecklistScan_1.listUncheckedChecklistItems)(parsed?.content ?? '');
         const checklistComplete = hasFrontmatter &&
             parseError === null &&
             missingRequiredFields.length === 0 &&
@@ -3168,12 +3659,11 @@ ${formatSuggestion()}
         const statuses = {};
         const taskIds = new Set();
         const duplicateTaskIds = new Set();
-        const graphContract = String(data.contract_version || '').trim();
-        const [contractMajor, contractMinor, contractPatch] = graphContract.split('.').map(Number);
-        const requiresSerialReason = Number.isFinite(contractMajor)
-            && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 6))));
-        const requiresScopeReason = Number.isFinite(contractMajor)
-            && (contractMajor > 1 || (contractMajor === 1 && (contractMinor > 8 || (contractMinor === 8 && contractPatch >= 5))));
+        // M-misc6: see `utils/ContractVersion`. `Number('v1')` is NaN, so a
+        // `contract_version` of `v1.9.0` turned both of these off.
+        const graphContract = data.contract_version;
+        const requiresSerialReason = (0, ContractVersion_1.contractVersionAtLeast)(graphContract, 1, 8, 6);
+        const requiresScopeReason = (0, ContractVersion_1.contractVersionAtLeast)(graphContract, 1, 8, 5);
         if (tasksFieldValid && tasks.length === 0) {
             taskSchemaIssues.push('tasks must contain at least one task');
         }
@@ -3428,6 +3918,106 @@ ${formatSuggestion()}
                 },
             ],
         };
+    }
+    /**
+     * 7.6: evaluate this change's documentation obligations and map them onto
+     * gate checks.
+     *
+     * Reads `state.json.docs_obligations` -- the single record, written at
+     * planning time for both workflow profiles. A change with no obligations
+     * produces one passing check and nothing else; that is the honest result
+     * for a project that has not adopted feature documents, and it is why the
+     * check is named even when the list is empty, so an empty list is visible
+     * in the gate output rather than silently absent.
+     */
+    async analyzeDocsObligations(rootDir, featureDir) {
+        const statePath = path_1.default.join(featureDir, constants_1.FILE_NAMES.STATE);
+        if (!(await this.fileService.exists(statePath)))
+            return [];
+        let obligations = [];
+        try {
+            const state = await this.fileService.readJSON(statePath);
+            obligations = Array.isArray(state?.docs_obligations) ? state.docs_obligations : [];
+        }
+        catch {
+            return [];
+        }
+        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const mode = config?.docs_contract?.mode === 'strict' ? 'strict' : 'warn';
+        const service = (0, DocsObligationService_1.createDocsObligationService)(this.fileService);
+        if (obligations.length === 0) {
+            return this.reportMissingDocsObligations(rootDir, featureDir, service);
+        }
+        const verdicts = await service.evaluate({ obligations, projectRoot: rootDir });
+        return service.applyMode(verdicts, mode);
+    }
+    /**
+     * 7.6: an empty obligation list is not automatically innocent.
+     *
+     * `docs_obligations` is written by `ospec docs obligations --apply` at
+     * planning time. Nothing forces that command to run, so without this check a
+     * change could skip the entire documentation contract by simply never
+     * invoking it -- and the gate would report nothing at all, which reads
+     * exactly like "this change owed no documentation". That is the
+     * gate-passes-because-the-list-was-empty failure this phase exists to avoid.
+     *
+     * So when the list is empty, re-derive what this change's `change_type`
+     * WOULD generate. If the answer is "nothing", the empty list is honest and
+     * one passing check says so. If the answer is "something", the operator is
+     * told the obligations were never recorded.
+     *
+     * This is a `warn` in BOTH modes, deliberately. It reports a process step
+     * that was skipped, not an unmet obligation, and blocking on it would
+     * punish every project that has not adopted the engine yet.
+     */
+    async reportMissingDocsObligations(rootDir, featureDir, service) {
+        const proposalPath = path_1.default.join(featureDir, constants_1.FILE_NAMES.PROPOSAL);
+        if (!(await this.fileService.exists(proposalPath)))
+            return [];
+        let changeType = '';
+        let features = [];
+        let affects = [];
+        try {
+            const proposal = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(proposalPath));
+            changeType = String(proposal.data?.change_type || '').trim().toLowerCase();
+            features = Array.isArray(proposal.data?.features)
+                ? proposal.data.features.map((slug) => String(slug || '').trim()).filter(Boolean)
+                : [];
+            affects = Array.isArray(proposal.data?.affects)
+                ? proposal.data.affects.map((entry) => String(entry || '').trim()).filter(Boolean)
+                : [];
+        }
+        catch {
+            return [];
+        }
+        const featureDocs = await (0, FeatureCaptureService_1.createFeatureCaptureService)(this.fileService)
+            .readFeatureDocs(rootDir, await this.configManager.loadConfig(rootDir).catch(() => null));
+        // Same affects fallback as the planner. This preview exists to say what
+        // planning WOULD have recorded; computing it from fewer inputs than the
+        // planner uses would make the warning disagree with the real run.
+        if (features.length === 0) {
+            features = (0, DocsObligationService_1.resolveFeaturesFromAffects)(affects, featureDocs);
+        }
+        const would = service.generate({
+            changeType,
+            features,
+            featureDocs,
+            changeName: path_1.default.basename(featureDir),
+        });
+        if (would.length === 0) {
+            return [{
+                    name: 'docs_obligations',
+                    status: 'pass',
+                    message: `No documentation obligations apply to this change (change_type: ${changeType || 'unset'}).`,
+                }];
+        }
+        return [{
+                name: 'docs_obligations',
+                status: 'warn',
+                message: `This ${changeType} change would generate ${would.length} documentation obligation(s), but none were recorded. `
+                    + 'Run "ospec docs obligations --apply" to record them, then satisfy or confirm each one. '
+                    + `Targets: ${would.map(item => item.target).join(', ')}`,
+            }];
     }
     async analyzeDocumentationUpdates(featureDir) {
         const taskGraphPath = path_1.default.join(featureDir, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.AGENTS, constants_1.FILE_NAMES.TASK_GRAPH);
@@ -3755,9 +4345,8 @@ ${formatSuggestion()}
         const invalidDecision = rawDecision.length > 0 && !REVIEW_ARTIFACT_ALLOWED_DECISION_SET.has(rawDecision);
         const unresolvedDecision = !REVIEW_ARTIFACT_TERMINAL_DECISION_SET.has(rawDecision);
         const concernDecision = rawDecision === 'APPROVED_WITH_CONCERNS';
-        const checklistItems = parsed?.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
-        const uncheckedItems = parsed?.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
-        const checklistStructureValid = checklistItems.length > 0;
+        const checklistStructureValid = (0, ChecklistScan_1.hasChecklistItem)(parsed?.content ?? '');
+        const uncheckedItems = (0, ChecklistScan_1.listUncheckedChecklistItems)(parsed?.content ?? '');
         const checklistComplete = hasFrontmatter &&
             parseError === null &&
             missingRequiredFields.length === 0 &&
@@ -3909,9 +4498,8 @@ ${formatSuggestion()}
         const concernStatuses = Object.entries(statuses)
             .filter(([, status]) => status === 'DONE_WITH_CONCERNS')
             .map(([field]) => field);
-        const checklistItems = parsed?.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
-        const uncheckedItems = parsed?.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
-        const checklistStructureValid = checklistItems.length > 0;
+        const checklistStructureValid = (0, ChecklistScan_1.hasChecklistItem)(parsed?.content ?? '');
+        const uncheckedItems = (0, ChecklistScan_1.listUncheckedChecklistItems)(parsed?.content ?? '');
         const checklistComplete = hasFrontmatter &&
             parseError === null &&
             missingRequiredFields.length === 0 &&
@@ -4040,9 +4628,8 @@ ${formatSuggestion()}
         const missing = optionalStepsFieldValid
             ? activatedSteps.filter(step => !optionalSteps.includes(step))
             : [...activatedSteps];
-        const checklistItems = parsed?.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
-        const uncheckedItems = parsed?.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
-        const checklistStructureValid = checklistItems.length > 0;
+        const checklistStructureValid = (0, ChecklistScan_1.hasChecklistItem)(parsed?.content ?? '');
+        const uncheckedItems = (0, ChecklistScan_1.listUncheckedChecklistItems)(parsed?.content ?? '');
         const checklistComplete = hasFrontmatter &&
             parseError === null &&
             missingRequiredFields.length === 0 &&
@@ -4583,7 +5170,7 @@ ${formatSuggestion()}
             .replace(/^-+|-+$/g, '');
     }
     async scanDocsInDirectory(rootDir, docSection) {
-        const config = await this.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await this.configManager.loadConfigOrNull(rootDir);
         const targetDir = this.resolveManagedPath(rootDir, `${constants_1.DIR_NAMES.DOCS}/${docSection}`, config);
         if (!(await this.fileService.exists(targetDir))) {
             return [];

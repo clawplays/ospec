@@ -35,6 +35,15 @@ tags: [conventions, naming, ospec]
 - 设计文档放在 `docs/design/`
 - 计划文档放在 `docs/planning/`
 - API 文档放在 `docs/api/`
+- 活功能文档放在 `docs/features/`
+
+## 功能 slug 命名
+
+- 功能 slug 用小写 kebab-case，匹配 `^[a-z0-9]+(-[a-z0-9]+)*$`
+- slug 在全项目内唯一；重复会让 `ospec index build` 报错并同时给出两处位置
+- slug 写在行内：`docs/features/<领域>.md` 中紧贴 `##` 标题下的第一个非空行——`<!-- ospec:feature <slug> code:src/a/,src/b/ -->`
+- 命名描述行为而不是描述那次 change：用 `login-timeout`，不要用 `fix-login-bug-2026`
+- 没有声明的节就不是功能，这是允许的
 
 ## 固定协议文件
 

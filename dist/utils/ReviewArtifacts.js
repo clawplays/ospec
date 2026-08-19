@@ -38,6 +38,7 @@ exports.analyzeGoalReviewSummary = analyzeGoalReviewSummary;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const helpers_1 = require("./helpers");
+const ChecklistScan_1 = require("./ChecklistScan");
 async function resolveGoalReviewArtifacts(fileService, changePath) {
     const reviewsDir = path.join(changePath, constants_1.DIR_NAMES.ARTIFACTS, constants_1.DIR_NAMES.REVIEWS);
     const combined = {
@@ -112,7 +113,7 @@ async function analyzeGoalReviewSummary(fileService, changePath) {
         const summary = (0, helpers_1.parseFrontmatterDocument)(await fileService.readFile(summaryPath));
         summaryDecision = String(summary.data?.decision || '').trim().toUpperCase() || 'PENDING';
         sourceMarked = String(summary.data?.review_source || '').trim() === 'artifacts/reviews/final-review.md';
-        hasUnchecked = /^\s*[-*+]\s+\[ \]\s+/m.test(summary.content);
+        hasUnchecked = (0, ChecklistScan_1.hasUncheckedChecklistItem)(summary.content);
     }
     catch {
         // Fall through with the not-aligned defaults.

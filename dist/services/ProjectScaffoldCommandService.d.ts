@@ -1,3 +1,4 @@
+import { ChildSpawnClass } from '../utils/childEnv';
 import { FileService } from './FileService';
 import { Logger } from './Logger';
 import { NormalizedProjectBootstrapInput } from './TemplateEngine';
@@ -10,6 +11,14 @@ export interface ProjectScaffoldCommandStep {
     shellCommand: string;
     description: string;
     phase: 'install';
+    /**
+     * F7: which environment this step's child gets. Optional, and an absent
+     * value is treated as `worker` -- the stripping class -- so a step added
+     * later fails closed rather than inheriting the parent's secrets by
+     * omission. The one step that ships today declares `package-manager`,
+     * because it is `npm install` and registry auth must survive.
+     */
+    spawnClass?: ChildSpawnClass;
 }
 export interface ProjectScaffoldCommandPlan {
     presetId: string;

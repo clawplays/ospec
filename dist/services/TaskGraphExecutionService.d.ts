@@ -1,8 +1,27 @@
 import { AgentModelProfileId } from '../core/types';
+import { ReviewDecisionDocument, WorkerReportDocument } from '../utils/structuredReports';
 import { WorkflowProfileId } from '../utils/WorkflowProfile';
 import { FileService } from './FileService';
 import { HarnessCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService } from './RuntimeExecutionAdapterService';
+export declare const STALE_LOCK_STEAL_RECHECK_MS: number;
+export declare const GIT_COMMAND_TIMEOUT_MS: number;
+export declare const GIT_KILL_GRACE_MS: number;
+export declare const REVIEW_PACKAGE_DIFF_LIMIT_BYTES: number;
+export declare const GIT_OUTPUT_LIMIT_BYTES: number;
+export type HeldLease = {
+    readonly lockPath: string;
+    readonly nonce: string;
+};
+export declare function registerHeldLease(lockPath: string, nonce: string): HeldLease;
+export declare function releaseHeldLease(lease: HeldLease): void;
+/** Run `operation` with `lease` marked as covering it (nested leases stack). */
+export declare function runWithHeldLease<T>(lease: HeldLease, operation: () => Promise<T>): Promise<T>;
+export declare function getActiveHeldLeases(): readonly HeldLease[];
+export declare function markHeldLeaseWedged(lease: HeldLease): void;
+export declare function isHeldLeaseWedged(lease: HeldLease): boolean;
+export declare function touchLeasesSync(leases: readonly HeldLease[]): void;
+export declare function touchActiveLeasesSync(): void;
 export type TaskWorkerCapabilityTier = 'mechanical' | 'standard' | 'strong-reasoning' | 'review';
 export type TaskWorkerToolTarget = 'codex' | 'gpt' | 'claude' | 'gemini' | 'grok' | 'opencode' | 'cursor' | 'copilot' | 'shell' | 'generic';
 export type TaskWorkerRunStatus = 'completed' | 'failed';
@@ -140,7 +159,6 @@ export interface TaskGraphExecutionReport {
     blockedTasks: TaskGraphBlockedTask[];
     invalidTasks: TaskGraphBlockedTask[];
     decisions: TaskUserDecisionSnapshot;
-    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     issues: string[];
     scheduling: TaskGraphSchedulingDiagnostics;
     nextInstruction: string;
@@ -286,6 +304,27 @@ export interface GoalProgressReconciliationResult {
     unknownTaskIds: string[];
     ambiguousLines: GoalProgressAmbiguousLine[];
     issues: string[];
+    /**
+     * FIX-5: every artifact the reconciliation would rewrite, with the exact
+     * bytes it would write -- in the order it writes them.
+     *
+     * This is the complete list of repairs `ospec archive` applies before its
+     * readiness gates run, which is what makes `archive --check` able to gate
+     * on the POST-repair state without performing the repair.
+     *
+     * ABSENT on the persisting path, which is what the optionality means: there
+     * these bytes are already on disk, so carrying a copy of every repaired
+     * artifact through every `syncWorkerStatus` report would be pure weight --
+     * and would change the shape of a result six benchmarked call sites
+     * fingerprint, for nobody's benefit. `inspectGoalProgress` always sets it,
+     * to `[]` when nothing needs repairing. A `blocked` reconciliation still
+     * repairs the graph (the checklist re-tick is the part it withholds), so
+     * this can be non-empty with `status: 'blocked'`.
+     */
+    repairedArtifacts?: {
+        path: string;
+        content: string;
+    }[];
 }
 export interface TaskReviewDispatchRecord {
     id: string;
@@ -495,6 +534,8 @@ export interface TaskPlanningRepairRecord {
     afterSnapshotHash: string | null;
     workspaceGitHead: string | null;
     workspaceBaselineSnapshots: TaskDocumentationSnapshot[] | null;
+    /** F30: true when the baseline `git status` was cut at the output limit. */
+    workspaceBaselineTruncated?: boolean;
     recordPath: string;
     packetPath: string;
     /** Pre-repair copies of the authorized planning files, kept for the delta re-review packet. */
@@ -515,7 +556,14 @@ export interface TaskVerificationEvidenceRecord {
     id: string;
     command: string;
     status: TaskVerificationEvidenceStatus;
+    /** F5: any integer, including negative ones; null when no code was produced. */
     exitCode: number | null;
+    /** F5: the runtime killed the command for exceeding a deadline. */
+    timedOut?: boolean;
+    /** F5: POSIX signal that killed the command; null on win32 and clean exits. */
+    signal?: string | null;
+    /** F5: the harness failed to run the command, rather than the command failing. */
+    infraFailure?: boolean;
     recordedAt: string;
     recordPath: string;
     reportPath: string;
@@ -583,7 +631,14 @@ export interface TaskTddEvidenceRecord {
     phase: TaskTddEvidencePhase;
     command: string;
     status: TaskVerificationEvidenceStatus;
+    /** F5: any integer, including negative ones; null when no code was produced. */
     exitCode: number | null;
+    /** F5: the runtime killed the command for exceeding a deadline. */
+    timedOut?: boolean;
+    /** F5: POSIX signal that killed the command; null on win32 and clean exits. */
+    signal?: string | null;
+    /** F5: the harness failed to run the command, rather than the command failing. */
+    infraFailure?: boolean;
     recordedAt: string;
     recordPath: string;
     reportPath: string;
@@ -758,6 +813,13 @@ export interface TaskWorktreeRunCommandResult {
     stderr: string;
     status: number | null;
     error: string | null;
+    /**
+     * F30: true when `runGit` stopped accumulating at `GIT_OUTPUT_LIMIT_BYTES`.
+     * The recorded `stdout`/`stderr` is then a prefix, and an artifact that does
+     * not say so is read as the whole output.
+     */
+    stdoutTruncated?: boolean;
+    stderrTruncated?: boolean;
 }
 export interface TaskWorktreeRunArtifact {
     version: string;
@@ -815,9 +877,7 @@ export interface TaskFinishPlanArtifact {
         verificationEvidence: TaskVerificationEvidenceSession['status'];
         tddEvidence: TaskTddEvidenceSession['status'];
         debugEvidence: TaskDebugEvidenceSession['status'];
-        checkpointEvidence: TaskCheckpointEvidenceSnapshot['status'];
     };
-    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     git: {
         available: boolean;
         repository: boolean;
@@ -847,7 +907,6 @@ export interface TaskFinishPlanResult {
     artifactPath: string;
     reportPath: string;
     status: TaskFinishPlanStatus;
-    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     targetBranch: string;
     remote: string;
     commands: string[];
@@ -926,7 +985,7 @@ export interface TaskBootstrapProjectSessionSnapshot {
     activeChangeCount: number;
     queuedChangeCount: number;
     knowledgeIndexPath: string | null;
-    featureIndexPath: string | null;
+    featureCatalogPath: string | null;
     indexedDocumentCount: number;
     archivedChangeCount: number;
     recommendedCommands: string[];
@@ -971,7 +1030,6 @@ export interface TaskBootstrapExecutionSnapshot {
         debug: TaskDebugEvidenceSession['status'];
         debugRecords: number;
         debugPhases: TaskDebugEvidencePhaseSnapshot[];
-        checkpoint: TaskCheckpointEvidenceSnapshot;
     };
     worker: {
         implementer: TaskGraphCompletionStatus | 'PENDING';
@@ -980,43 +1038,6 @@ export interface TaskBootstrapExecutionSnapshot {
         controller: TaskGraphCompletionStatus | 'PENDING';
         verificationChecklistComplete: boolean;
     };
-}
-export interface TaskCheckpointEvidenceStepSnapshot {
-    step: string;
-    gateStatus: string;
-    evidenceStatus: string;
-    screenshots: number;
-    traces: number;
-    visualDiffs: number;
-    routes: number;
-    flows: number;
-    assertions: number;
-    consoleEvents: number;
-    networkEvents: number;
-    accessibility: number;
-    missing: string[];
-}
-export interface TaskCheckpointEvidenceSnapshot {
-    active: boolean;
-    status: 'not_active' | 'missing' | 'complete' | 'incomplete' | 'failed';
-    gatePath: string;
-    resultPath: string;
-    summaryPath: string;
-    activeSteps: string[];
-    gateStatus: string;
-    evidenceStatus: string;
-    screenshots: number;
-    traces: number;
-    visualDiffs: number;
-    routes: number;
-    flows: number;
-    assertions: number;
-    consoleEvents: number;
-    networkEvents: number;
-    accessibility: number;
-    missing: string[];
-    nextActions: string[];
-    steps: TaskCheckpointEvidenceStepSnapshot[];
 }
 export interface TaskBootstrapArtifact {
     version: string;
@@ -1043,7 +1064,6 @@ export interface TaskBootstrapResult {
     artifactPath: string;
     reportPath: string;
     status: TaskBootstrapStatus;
-    checkpointEvidence: TaskCheckpointEvidenceSnapshot;
     blockers: string[];
     warnings: string[];
     nextInstruction: string;
@@ -1317,9 +1337,12 @@ export interface TaskWorkerRunRecord {
     environment: Record<string, string> | null;
     cwd: string;
     status: TaskWorkerRunStatus;
+    /** F5: any integer, including negative ones; null when no code was produced. */
     exitCode: number | null;
     signal: string | null;
     timedOut: boolean;
+    /** F5: the harness failed to run the worker, rather than the work failing. */
+    infraFailure?: boolean;
     timeoutMs: number | null;
     startedAt: string;
     completedAt: string;
@@ -1336,89 +1359,6 @@ export interface TaskWorkerRunRecord {
     summary: string | null;
     collectedAt: string | null;
     completionStatus: TaskGraphCompletionStatus | null;
-}
-export interface TaskWorkerRunResult {
-    changePath: string;
-    recordPath: string;
-    reportPath: string;
-    stdoutPath: string;
-    stderrPath: string;
-    record: TaskWorkerRunRecord;
-    nextInstruction: string;
-}
-export type TaskOrchestrationRunStatus = 'completed' | 'blocked' | 'partial' | 'dry_run';
-export interface TaskOrchestrationRunTaskResult {
-    taskId: string;
-    taskTitle: string;
-    dispatchId: string;
-    target: TaskWorkerToolTarget;
-    command: string;
-    environment: Record<string, string>;
-    packetPath: string;
-    recordPath: string;
-    runId: string | null;
-    runRecordPath: string | null;
-    runReportPath: string | null;
-    exitCode: number | null;
-    timedOut: boolean;
-    completionStatus: TaskGraphCompletionStatus | null;
-    collected: boolean;
-    error: string | null;
-}
-export interface TaskOrchestrationRunRound {
-    round: number;
-    dispatchesCreated: number;
-    activeDispatches: number;
-    tasks: TaskOrchestrationRunTaskResult[];
-}
-export interface TaskOrchestrationRunArtifact {
-    version: string;
-    id: string;
-    feature: string;
-    status: TaskOrchestrationRunStatus;
-    startedAt: string;
-    completedAt: string;
-    changePath: string;
-    projectRoot: string;
-    target: TaskWorkerToolTarget | null;
-    limit: number | null;
-    maxRounds: number;
-    timeoutMs: number | null;
-    dryRun: boolean;
-    collect: boolean;
-    continueOnFailure: boolean;
-    commandTemplate: string | null;
-    commandSource: 'option' | 'config' | 'missing';
-    workspaceStatus: TaskWorkspaceReadiness | 'missing';
-    rounds: TaskOrchestrationRunRound[];
-    failedTasks: TaskOrchestrationFailedTask[];
-    blockers: string[];
-    warnings: string[];
-    nextInstruction: string;
-}
-export interface TaskOrchestrationFailedTask {
-    taskId: string;
-    taskTitle: string;
-    dispatchId: string;
-    runId: string | null;
-    exitCode: number | null;
-    timedOut: boolean;
-    completionStatus: TaskGraphCompletionStatus | null;
-    collected: boolean;
-    error: string | null;
-    retryCommand: string;
-}
-export interface TaskOrchestrationRunResult {
-    changePath: string;
-    projectRoot: string;
-    artifactPath: string;
-    reportPath: string;
-    status: TaskOrchestrationRunStatus;
-    rounds: TaskOrchestrationRunRound[];
-    failedTasks: TaskOrchestrationFailedTask[];
-    blockers: string[];
-    warnings: string[];
-    nextInstruction: string;
 }
 export interface TaskWorkerCollectResult {
     changePath: string;
@@ -1454,14 +1394,6 @@ export interface TaskWorkerRetryBatchResult {
     changePath: string;
     retries: TaskWorkerRetryResult[];
     dispatches: TaskDispatchRecord[];
-    nextInstruction: string;
-}
-export interface TaskReviewRunResult {
-    changePath: string;
-    review: TaskReviewDispatchResult;
-    run: TaskWorkerRunResult;
-    workerStatusPath: string;
-    decision: TaskReviewRunDecision | null;
     nextInstruction: string;
 }
 export declare class TaskGraphExecutionService {
@@ -1503,13 +1435,6 @@ export declare class TaskGraphExecutionService {
      * produces controller instructions; the model harness owns native dispatch.
      */
     private buildLaunchLoopPlan;
-    launchAndRun(changePath: string, options: {
-        taskId?: string;
-        target?: TaskWorkerToolTarget;
-        dryRun?: boolean;
-        command: string;
-        timeoutMs?: number;
-    }): Promise<TaskWorkerRunResult>;
     collectWorkerRun(changePath: string, options?: {
         taskId?: string;
         runId?: string;
@@ -1540,36 +1465,40 @@ export declare class TaskGraphExecutionService {
     private repairScopeSnapshotHash;
     private repairFindingsFingerprint;
     private extractFindingIds;
-    orchestrate(changePath: string, options?: {
-        command?: string;
-        target?: TaskWorkerToolTarget;
-        limit?: number;
-        maxRounds?: number;
-        timeoutMs?: number;
-        dryRun?: boolean;
-        collect?: boolean;
-        continueOnFailure?: boolean;
-    }): Promise<TaskOrchestrationRunResult>;
-    runReview(changePath: string, options: {
-        stage?: TaskReviewStage;
-        taskId?: string;
-        command: string;
-        decision?: TaskReviewRunDecision;
-        summary?: string;
-        timeoutMs?: number;
-        usageFile?: string;
-    }): Promise<TaskReviewRunResult>;
     complete(changePath: string, taskId: string, options?: {
         status?: TaskGraphCompletionStatus;
         summary?: string;
         usageFile?: string;
         dispatchId?: string;
         retryable?: boolean;
+        /** F2: a validated structured worker report; renders the Markdown human view. */
+        report?: WorkerReportDocument;
     }): Promise<TaskCompletionResult>;
     deferExternalBlocker(changePath: string, taskId: string, options: {
         reason: string;
     }): Promise<TaskBlockerEscalationRecord>;
     private completeUnlocked;
+    /**
+     * F2: record a review verdict from a validated JSON decision file.
+     *
+     * Updates the EXISTING review artifact in place rather than writing a fresh
+     * one: the frontmatter carries provenance (`review_dispatch_id`, executor
+     * binding) that the review gates read, and regenerating it from the JSON
+     * would drop exactly the keys that make the decision trustworthy. Only
+     * `decision` and `reviewed_at` are replaced; the body is rendered from the
+     * JSON, and the sibling `*.findings.json` is written so the gates read
+     * explicit severities instead of the Markdown fallback's `unknown`.
+     */
+    recordReviewDecision(changePath: string, options: {
+        reviewArtifactPath: string;
+        decision: ReviewDecisionDocument;
+    }): Promise<{
+        reviewArtifactPath: string;
+        findingsPath: string;
+        decision: string;
+        findings: number;
+        nextInstruction: string;
+    }>;
     syncWorkerStatus(changePath: string): Promise<TaskWorkerStatusSyncResult>;
     private syncWorkerStatusUnlocked;
     /**
@@ -1634,6 +1563,28 @@ export declare class TaskGraphExecutionService {
     private capturePlanningRepairWorkspaceBaseline;
     private validatePlanningRepairWorkspaceScope;
     private reviewUnlocked;
+    /**
+     * M-race5: releases task-graph bindings that no Loop action owns.
+     *
+     * `bindReviewLoopAction` and `bindPlanningRepairLoopAction` are one-shot:
+     * both refuse a record already bound to a different action, and until now
+     * neither had an inverse. That is correct while the binding belongs to a
+     * live action and fatal when it does not -- a crash between the bindings
+     * and the loop-state write leaves records naming an `actionId` that no
+     * `pendingControllerAction` will ever claim, and every subsequent tick dies
+     * on the guard. This is the inverse, and it is deliberately narrow: it
+     * releases bindings for ONE named action and touches nothing else, so it
+     * cannot be used to unbind a live one.
+     *
+     * The planning-repair record goes back to `ready` rather than to some
+     * neutral value: `bindPlanningRepairLoopAction` only ever moves `ready ->
+     * dispatched` (it returns early when already dispatched to the same action
+     * and throws when completed), so `ready` is the exact state it left.
+     */
+    releaseLoopActionBindings(changePath: string, actionId: string): Promise<{
+        reviewDispatchIds: string[];
+        planningRepairReleased: boolean;
+    }>;
     bindReviewLoopAction(changePath: string, options: {
         dispatchId: string;
         actionId: string;
@@ -1724,6 +1675,9 @@ export declare class TaskGraphExecutionService {
         command?: string;
         status?: TaskVerificationEvidenceStatus;
         exitCode?: number;
+        timedOut?: boolean;
+        signal?: string;
+        infraFailure?: boolean;
         summary?: string;
         satisfies?: string[];
         loopActionId?: string;
@@ -1739,11 +1693,15 @@ export declare class TaskGraphExecutionService {
         required?: boolean;
     }): Promise<TaskVerificationRequirementResult>;
     validateVerificationRequirements(changePath: string): Promise<TaskVerificationRequirementsStatus>;
+    private validateVerificationRequirementsUnscoped;
     recordTddEvidence(changePath: string, options: {
         phase?: TaskTddEvidencePhase;
         command?: string;
         status?: TaskVerificationEvidenceStatus;
         exitCode?: number;
+        timedOut?: boolean;
+        signal?: string;
+        infraFailure?: boolean;
         testName?: string;
         summary?: string;
     }): Promise<TaskTddEvidenceResult>;
@@ -1763,10 +1721,17 @@ export declare class TaskGraphExecutionService {
     private validatePlanningPreflightEvidence;
     validateTaskReviewEvidence(changePath: string, taskId: string | null): Promise<TaskLoopReadinessResult>;
     validatePlanningReviewEvidence(changePath: string): Promise<TaskLoopReadinessResult>;
+    /**
+     * Resolves the two things both public entry points need and hands off to
+     * the evidence path, which is always run in full. There is deliberately no
+     * verdict cache in front of this: see the note at the top of this file.
+     */
     private validateReviewEvidence;
+    private validateReviewEvidenceAgainstDisk;
     readValidatedFinalReviewDecision(changePath: string): Promise<TaskReviewRunDecision>;
     readValidatedPlanningReviewDecision(changePath: string): Promise<TaskReviewRunDecision>;
     validateLatestVerificationEvidence(changePath: string): Promise<TaskLoopReadinessResult>;
+    private validateLatestVerificationEvidenceUnscoped;
     validateWorkspaceEvidence(changePath: string, allowedTaskPaths?: string[]): Promise<TaskLoopReadinessResult>;
     readAuthoritativeTokenUsage(changePath: string): Promise<number>;
     readAuthoritativeUsageSnapshot(changePath: string): Promise<TaskAuthoritativeUsageSnapshot>;
@@ -1787,7 +1752,9 @@ export declare class TaskGraphExecutionService {
         remote?: string;
     }): Promise<TaskFinishPlanResult>;
     routeWorkflow(changePath: string): Promise<TaskWorkflowRouteResult>;
+    private routeWorkflowUnlocked;
     bootstrap(changePath: string): Promise<TaskBootstrapResult>;
+    private bootstrapUnlocked;
     handoff(changePath: string, options?: {
         target?: TaskHandoffTarget;
     }): Promise<TaskHandoffResult>;
@@ -1799,9 +1766,6 @@ export declare class TaskGraphExecutionService {
     private isTaskReviewRequired;
     private getBlockedTaskReviewInstruction;
     private getNextInstruction;
-    private readCheckpointEvidenceSnapshot;
-    private readActiveCheckpointSteps;
-    private buildCheckpointEvidenceNextActions;
     private getSessionPath;
     private getProjectSessionBriefPath;
     private getProjectSessionBriefReportPath;
@@ -1810,7 +1774,6 @@ export declare class TaskGraphExecutionService {
     private getWorktreePlanPath;
     private getWorktreePlanReportPath;
     private getWorktreeRunDir;
-    private getOrchestrationRunDir;
     private getVerificationEvidencePath;
     private getVerificationRequirementsPath;
     private getVerificationLoopActionPath;
@@ -1837,19 +1800,89 @@ export declare class TaskGraphExecutionService {
     private readUserDecisionSnapshot;
     private writeUserDecisionIndex;
     private normalizeUserDecisionRecord;
-    private validateStructuredFindingIds;
     private normalizeUserDecisionOptions;
     private getUserDecisionNextInstruction;
     private readVerificationEvidence;
     private readVerificationRequirements;
     private normalizeVerificationRequirementIds;
     private normalizeVerificationRequirementKind;
+    /**
+     * The whole-tree snapshot every passing verification record is measured
+     * against. Every record in one artifact is measured against the *same*
+     * tree at the *same* commit, so it is derived once and handed to each
+     * record rather than re-derived per record -- which is what made the
+     * freshness check grow quadratically as evidence accumulated.
+     */
+    private buildVerificationFreshnessContext;
+    /**
+     * FIX-4: the observation behind `VerificationFreshnessContext.confirm`.
+     *
+     * Re-captures the same target files and reads HEAD -- unmemoised, and
+     * therefore immune to the external commit that the per-scope memo cannot
+     * see. A throw is a refusal, not a rethrow: a target that became
+     * unreadable between the capture and here is a changed tree, which is the
+     * answer this is being asked for.
+     *
+     * FIX-4 + FIX-5 MERGE: `archive --check` runs the whole readiness gate --
+     * and therefore this -- inside `FileService.withReadOverlay`, which serves
+     * the bytes a reconciliation WOULD have written for the task graph, the
+     * checklist and the progress projection. This method sees none of them, and
+     * that is correct rather than accidental:
+     *
+     *  - `captureTargetSnapshots` reads through raw `fs`, not `fileService`, so
+     *    it hashes the bytes on disk;
+     *  - HEAD comes from a git child process, which no `FileService` overlay
+     *    can reach.
+     *
+     * Both halves of the comparison therefore describe the same tree: the
+     * record's `targetSnapshotHash` was taken from real disk when the evidence
+     * was stamped, so confirming it against hypothetical unwritten bytes would
+     * compare two different worlds and refuse for a reason that is not true.
+     * The three overlaid artifacts are archive bookkeeping, never a task's
+     * target files -- and if one ever were, this is still the reading that
+     * keeps the verdict honest.
+     *
+     * This rests on HOW the two reads are implemented, not on any signature, so
+     * a refactor to `this.fileService` would undo it silently. Pinned by
+     * `tests/commands/archive-check-head-overlay-interaction.test.mjs`, which
+     * overlays a target file with bytes that exist nowhere and asserts the
+     * snapshot hash does not move, with a control proving the overlay was live.
+     */
+    private confirmVerificationFreshnessContext;
+    /**
+     * The half of the freshness test that is a pure function of the captured
+     * context. FIX-4 moved the HEAD comparison out of here and next to the
+     * confirmation, because HEAD is a refusal condition and therefore has to be
+     * observed at the moment of the verdict rather than at capture time.
+     */
+    private isPassingVerificationRecordFreshAgainst;
+    /**
+     * Builds the context at most once, and only if something actually needs
+     * it: a record that fails a cheap structural check never reaches the walk,
+     * while a caller with many records walks the tree once for all of them.
+     *
+     * FIX-4 corrects what this comment used to claim. It said "a per-sweep
+     * memo, not a cache: it recomputes on the next sweep, so it has nothing to
+     * go stale". The first half is true and the second was not: within one
+     * sweep the whole-tree snapshot is captured once and every record is
+     * measured against it, so a target file rewritten after the capture is
+     * invisible to the rest of the sweep. `main` re-derived per record, so the
+     * window closed per record; here it lasted the whole sweep.
+     *
+     * What this memo remembers: the target-file set and their snapshot, as of
+     * the first record that needed them.
+     * What makes that memory false: any write to a target file before the
+     * sweep ends.
+     * What catches it: `context.confirm()`, which
+     * `isPassingVerificationRecordFresh` awaits before returning any PASS, and
+     * which also supplies the HEAD the PASS is judged against so that HEAD is
+     * never remembered at all.
+     */
+    private memoiseVerificationFreshnessContext;
     private isPassingVerificationRecordFresh;
-    private isVerificationEvidenceSessionStatus;
     private isVerificationEvidenceRecord;
     private isVerificationEvidenceStatus;
     private readTddEvidence;
-    private isTddEvidenceSessionStatus;
     private isTddEvidenceRecord;
     private isTddEvidencePhase;
     private isDebugEvidencePhase;
@@ -1860,24 +1893,37 @@ export declare class TaskGraphExecutionService {
     private isDebugEvidenceStatus;
     private readReviewWorkerStatus;
     reconcileGoalProgress(changePath: string): Promise<GoalProgressReconciliationResult>;
+    /**
+     * The same reconciliation, computed and reported but never written.
+     *
+     * FIX-2 / D4: making `archive --check` and `execute status` read-only
+     * removed their only `reconcileGoalProgress` call, and with it the only
+     * producer of the `Goal progress cannot be reconciled ...` diagnostic --
+     * so `archive --check` started passing goals that the real `ospec archive`
+     * refuses. The reconciliation splits cleanly into a pure computation and
+     * three writes at the end, so the diagnostic comes back by running the
+     * identical computation with `persist: false`: same inputs, same `issues`,
+     * same `status`, byte-for-byte the same verdict as `--repair` would reach,
+     * without the task-graph mutation lease and without touching disk.
+     *
+     * `graphChanged` / `tasksChanged` / `projectionChanged` are still reported,
+     * so a caller can say whether a repair is actually PENDING rather than
+     * printing an unconditional note that carries no signal (D16).
+     */
+    inspectGoalProgress(changePath: string): Promise<GoalProgressReconciliationResult>;
     private reconcileGoalProgressUnlocked;
     private syncTaskReviewStateFromArtifactsUnlocked;
     private parsePrimaryTaskChecklistId;
     private findDuplicateStrings;
     private hashProgressProjectionContent;
     private readReviewDecision;
-    private selectNextReviewStage;
-    private selectNextReviewFeedbackStage;
     private deriveReviewFeedbackAction;
     private selectNextDocumentReviewStage;
     private getDocumentReviewTarget;
     private getDocumentReviewArtifactPath;
-    private getTaskReviewArtifactFile;
-    private getTaskReviewArtifactRelativePath;
     private getTaskCombinedReviewArtifactRelativePath;
     private getTaskWorkerReportRelativePath;
     private getTaskWorkerReportProjectRelativePath;
-    private getTaskReviewArtifactPath;
     private prepareTaskReviewDispatch;
     private buildDefaultTaskReviewArtifact;
     private buildDefaultFinalReviewArtifact;
@@ -1887,11 +1933,35 @@ export declare class TaskGraphExecutionService {
     private deriveWorkerStatusDocumentStatus;
     private isVerificationChecklistComplete;
     private writeTaskReviewPackage;
+    private renderReviewPackageDiff;
     private getUpstreamRegressionTasks;
     private taskTransitivelyDependsOn;
     private canCarryTaskReviewForwardAfterDownstreamWork;
     private renderGitStatusEntries;
+    /**
+     * Ingests usage sidecars incrementally.
+     *
+     * This runs on every dispatch and every sync, and it used to re-read every
+     * historical review-dispatch record on each pass -- a cost that grew for
+     * the whole life of the Goal to re-derive an answer that could not have
+     * changed. What it actually needs to know is which sidecars have already
+     * been consumed, so that is recorded (`id -> ingested sidecar mtime`) and
+     * an already-consumed dispatch whose sidecar has not moved costs one stat
+     * instead of a full record parse.
+     *
+     * The dispatch-record filename is the dispatch id, so the id is known
+     * before the record is opened; the record only has to be read for
+     * dispatches that are genuinely being ingested.
+     *
+     * Invalidation: a sidecar whose mtime differs from the watermark is
+     * re-ingested. A missing or corrupt watermark falls back to the execution
+     * metrics artifact, which is the durable record of what was ingested, so a
+     * lost watermark costs one slow pass and never a lost or duplicated metric.
+     */
     private ingestReviewUsageSidecars;
+    private getUsageIngestWatermarkPath;
+    private readUsageIngestWatermark;
+    private writeUsageIngestWatermark;
     private readExecutionUsageFile;
     private captureDocumentationSnapshots;
     private normalizeTargetFiles;
@@ -1914,7 +1984,63 @@ export declare class TaskGraphExecutionService {
     private captureDocumentationEvidence;
     private hashMeaningfulDocumentation;
     private recordExecutionMetric;
+    /**
+     * Runs `operation` with one resolved git HEAD. Callers that validate many
+     * pieces of evidence in a row -- a controller tick, `ospec execute status`,
+     * the archive gate -- should wrap the whole sweep so HEAD is resolved once
+     * for all of them instead of once each.
+     *
+     * Nested calls join the outer scope, so wrapping is always safe.
+     */
+    withValidationScope<T>(operation: () => Promise<T>): Promise<T>;
+    /**
+     * The single read primitive every validation input goes through.
+     *
+     * Returns null for a path that is absent -- including one whose parent is
+     * not a directory, which `readFile` reports as ENOTDIR -- so a caller can
+     * tell "missing" from "unreadable" without a separate stat. A directory
+     * still surfaces as the EISDIR the caller would have got anyway.
+     */
+    private readValidationInput;
+    /**
+     * Matches `FileService.readJSON`'s failure message exactly, so routing a
+     * validation input through these helpers does not change the reason string
+     * a refusal carries.
+     */
+    private parseValidationInputJSON;
+    private readValidationInputText;
+    /**
+     * One `git rev-parse HEAD` per operation instead of one per validated
+     * task. Any git command that is not provably read-only drops the memo, so
+     * a commit or checkout *this process* makes mid-operation is never read
+     * through.
+     *
+     * D6: the pending promise is memoised before the await, so a fan-out of
+     * concurrent validations shares one spawn instead of one each.
+     *
+     * FIX-4: `use` is mandatory, and it carries the entire safety argument.
+     *
+     * What the memo remembers: the commit HEAD pointed at when the enclosing
+     * `withValidationScope` first asked for it.
+     * What makes that memory false: any commit, checkout, reset, merge or
+     * branch switch performed by ANOTHER process while the scope is open --
+     * `forgetMemoisedGitHeads` only sees this process's own git subcommands.
+     *
+     * A false memory is harmless for a verdict that merely records or reports
+     * HEAD, and is a stale PASS for any verdict that REFUSES when HEAD moves.
+     * The second class passes 'refusal-condition' and pays a fresh spawn.
+     *
+     * The parameter is required rather than defaulted because that is the
+     * failure this phase actually had: FIX-1 hand-patched one refusing caller
+     * (the final review) and wrote that it was "the ONE verdict that refuses
+     * on a moved HEAD". It was not -- `isPassingVerificationRecordFreshAgainst`
+     * refuses on it too and went on reading the memo. A default would have let
+     * the next such caller repeat it silently; now the compiler asks.
+     */
+    private readValidationGitHead;
+    private forgetMemoisedGitHeads;
     private withTaskGraphMutationLease;
+    private confirmTaskGraphLockStillStale;
     private readTaskGraphLockOwner;
     private refreshTaskGraphLockIfOwned;
     private isProcessAlive;
@@ -1958,7 +2084,37 @@ export declare class TaskGraphExecutionService {
     private formatGitCommand;
     private runGitForArtifact;
     private runGit;
+    /**
+     * F30: `runGit` bounds what it accumulates at `GIT_OUTPUT_LIMIT_BYTES` and
+     * reports it, but `readGitOutput` used to drop both flags on the floor, so
+     * every one of its ~28 call sites read a partial answer as a complete one.
+     * On the reads that can legitimately pass 8 MB -- `git status
+     * --untracked-files=all` and `git worktree list` -- that is fail-open on a
+     * safety gate: `|| ''` turns a truncated status into an EMPTY status, and
+     * an empty status means "clean".
+     *
+     * So there are now two readers. This one hands the flag to the caller,
+     * because only the caller knows what a partial answer means for the
+     * decision it is about to make; `readGitOutput` below is the fail-closed
+     * default for reads whose output is bounded by construction (a sha, a
+     * branch name, a repository root).
+     */
+    private readGitOutputWithTruncation;
+    /**
+     * A truncated read is not a shorter answer, it is no answer: it collapses
+     * to `null` exactly like a failed command, so every existing `|| null`
+     * fallback takes its "not available" branch instead of trusting a prefix.
+     * Callers whose output can legitimately be huge must use
+     * `readGitOutputWithTruncation` and decide explicitly -- for those, `null`
+     * and `''` are indistinguishable at the call site and `''` reads as clean.
+     */
     private readGitOutput;
+    /**
+     * One sentence for every safety gate that refuses because git told it less
+     * than the whole truth. Naming the command and the limit is the difference
+     * between an actionable refusal and a mystery.
+     */
+    private gitTruncationReason;
     private parseGitStatusEntries;
     private parseGitStatusV2ZPaths;
     private workspaceEntryPaths;
@@ -1984,25 +2140,20 @@ export declare class TaskGraphExecutionService {
     private buildWorktreeLifecycle;
     private buildFinishPlanCommands;
     private buildFinishDecisionPrompts;
+    /**
+     * Quotes a value into one of the ~15 command strings this service emits for
+     * a human or an agent to PASTE INTO A SHELL.
+     *
+     * This used to be a local double-quoted implementation that escaped only
+     * `"`, so `$VAR`, `` `cmd` `` and `$(cmd)` still expanded on paste and a
+     * trailing backslash escaped the closing quote. It now delegates to the one
+     * shared rule in `utils/ShellQuote`, which is also what `SessionCommand`
+     * uses -- see that module's header for the guarantee and why cmd.exe is out
+     * of scope. Kept as a thin private method so the call sites read unchanged.
+     */
     private quoteShellArg;
-    private quoteHarnessTemplateArg;
     private normalizeHandoffTarget;
     private normalizeWorkerToolTarget;
-    private normalizePositiveInteger;
-    private resolveHarnessCommandTemplate;
-    private normalizeOptionalWorkerTarget;
-    private readHarnessCommandForTarget;
-    private ensureWorkspaceReadyForOrchestration;
-    private readActiveDispatches;
-    private selectParallelSafeActiveDispatches;
-    private readOrchestrationFinalReadiness;
-    private prepareOrchestrationTaskRun;
-    private buildOrchestrationFailedTasks;
-    private isOrchestrationTaskFailure;
-    private buildHarnessEnvironment;
-    private renderHarnessCommandTemplate;
-    private getOrchestrationNextInstruction;
-    private buildOrchestrationRunReport;
     private buildHandoffToolMapping;
     private buildHandoffCommandSequence;
     private buildHandoffSafetyRules;
@@ -2012,21 +2163,68 @@ export declare class TaskGraphExecutionService {
     private getNativeAgentPrimitive;
     private getNativeAgentDispatchMode;
     private buildWorkerLaunchPrompt;
-    private runWorkerCommand;
-    private normalizeTimeoutMs;
-    private runShellCommand;
     private writeWorkerRunRecord;
     private findWorkerRunRecord;
     private buildWorkerRunReport;
     private buildWorkerRetryReport;
+    /**
+     * Every task in the report, once.
+     *
+     * The six lists are NOT a partition, and the overlap is guaranteed rather
+     * than exotic: `TERMINAL_TASK_STATUSES` is `{DONE, DONE_WITH_CONCERNS}` and
+     * drives `completedTasks`, while `concernTasks` is built from
+     * `DONE_WITH_CONCERNS` alone -- so every concern-status task is in both, and
+     * the plain concatenation this used to be yielded it twice on any graph
+     * containing one.
+     *
+     * Most of the 16 call sites were unharmed, because they immediately build a
+     * `new Map` keyed by id or call `.find`, and the duplicate entries are the
+     * same object reference (both filters run over the same `tasks` array).
+     * Two were not:
+     *
+     *  - the derived review summary maps over this list to write
+     *    "- <id>: <decision>" lines, so a DONE_WITH_CONCERNS task was listed
+     *    twice in the "Task Review Decisions" section of the document
+     *    `ospec execute sync` generates;
+     *  - `getUpstreamRegressionTasks` ends in a `.filter` over it, so a
+     *    concern-status upstream task was returned twice and flowed into both
+     *    `writeTaskReviewPackage({ regressionTasks })` and
+     *    `computeTaskReviewContextHash(..., regressionTasks.map(t => t.id), ...)`
+     *    -- a duplicated id changes the hash, so two runs over the same graph
+     *    could disagree about whether the review context had changed.
+     *
+     * Deduped by id rather than by reference: callers already assume ids are
+     * unique within a graph, and keying on the thing they key on means a report
+     * assembled some other way cannot reintroduce the defect.
+     */
     private flattenReportTasks;
-    private applyReviewRunDecision;
     private normalizeReviewRunDecision;
     private getHandoffNextInstruction;
     private updateRawTaskStatus;
     private resetRawTaskReview;
     private normalizeCompletionStatus;
     private normalizeVerificationEvidenceStatus;
+    /**
+     * F5: independent validation of the four outcome fields at the record
+     * boundary. Track A's batch validator checks the *shape* of a reported
+     * result and then passes the object through; this checks the things a shape
+     * check cannot see, because these values are read back and rendered.
+     *
+     * Validated here, independently of any caller:
+     * - `exitCode`: when supplied it must be a finite integer. Negative is
+     *   allowed on purpose -- that is the F5 unclamping -- but `NaN`, `Infinity`
+     *   and `2.5` are rejected rather than silently nulled, because a `null`
+     *   already means "no code was ever produced" and quietly turning a
+     *   malformed number into that claim is a lie the reader cannot detect.
+     * - `signal`: when supplied it must look like a signal name. A shape check
+     *   sees "a string"; a newline inside it forges extra rows in the evidence
+     *   markdown, where every outcome field is one list line.
+     *
+     * `timedOut` and `infraFailure` are compared with `=== true`, which no
+     * malformed value can defeat, so they are coerced rather than validated --
+     * stated plainly so the difference is not mistaken for an oversight.
+     */
+    private normalizeOutcomeFields;
     private normalizeTddEvidencePhase;
     private normalizeTddEvidenceStatus;
     private validateTddEvidenceTransition;
@@ -2060,16 +2258,30 @@ export declare class TaskGraphExecutionService {
     private buildReviewDispatchPacket;
     private extractReviewFindings;
     private getReviewFindingsRelativePath;
+    /**
+     * The findings contract applied to bytes that are already in hand.
+     *
+     * Split out of `readReviewFindings` so the evidence validation judges the
+     * bytes it already read rather than re-reading the path. A verdict derived
+     * from a second, later read of the same file is a verdict about a file that
+     * may have changed in between.
+     */
+    private parseReviewFindingsDocument;
     private readReviewFindings;
     private renderReviewFinding;
     private createReviewFeedbackDecisionGateIfNeeded;
     private getReviewFeedbackDecisionGateReason;
     private buildReviewFeedbackRecommendedActions;
     private buildReviewFeedbackNextInstruction;
-    private getTaskReviewRunDecisionNextInstruction;
     private buildReviewFeedbackPlanReport;
     private buildRepairWavePacket;
     private buildDocumentReviewArtifact;
+    /**
+     * F5: render the three non-exit-code outcome fields, and only when one of
+     * them carries information. A line per record per field would cost output
+     * on every evidence read for the common case where all three are false.
+     */
+    private outcomeReportLines;
     private buildVerificationEvidenceReport;
     private buildTddEvidenceReport;
     private buildDebugEvidenceReport;
@@ -2080,7 +2292,6 @@ export declare class TaskGraphExecutionService {
     private buildUserDecisionIndexReport;
     private buildFinishPlanReport;
     private buildWorkflowRouteReport;
-    private buildCheckpointEvidenceReportLines;
     private buildWorkerLaunchPlanReport;
     private buildHandoffReport;
     private buildBootstrapReport;

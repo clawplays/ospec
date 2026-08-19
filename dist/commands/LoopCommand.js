@@ -34,12 +34,28 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LoopCommand = void 0;
+const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const loopBatchEnvelope_1 = require("../utils/loopBatchEnvelope");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const BaseCommand_1 = require("./BaseCommand");
-const LOOP_ACTIONS = ['run', 'tick', 'poll', 'watch', 'status', 'pause', 'resume', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
+const LOOP_ACTIONS = ['run', 'tick', 'step', 'poll', 'status', 'pause', 'resume', 'configure', 'allowlist', 'tick-plan', 'heartbeat', 'result', 'finalize', 'recover'];
+/**
+ * Cap for the batch envelope, deliberately separate from the prose
+ * `--max-output-chars` and deliberately *below* the structured-output cap
+ * (32768) so this command's reduction always runs first.
+ *
+ * Prose pruning is head+tail truncation with the middle spilled to a file. Doing
+ * that to a JSON document yields invalid JSON, and recovering it costs the
+ * consumer an extra file read — the exact round-trip this command exists to
+ * remove. So the batch envelope is reduced *semantically* (drop item-state
+ * summaries, then action prompts, then paginate) and never byte-truncated. The
+ * ordering only holds if this cap binds first, hence 24576 rather than a value
+ * at or above the generic structured cap.
+ */
+const DEFAULT_MAX_BATCH_CHARS = 24576;
 class LoopCommand extends BaseCommand_1.BaseCommand {
     async execute(action = 'status', ...args) {
         try {
@@ -49,11 +65,11 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 case 'tick':
                     await this.run(args);
                     return;
+                case 'step':
+                    await this.step(args);
+                    return;
                 case 'poll':
                     await this.poll(args);
-                    return;
-                case 'watch':
-                    await this.watch(args);
                     return;
                 case 'tick-plan':
                     await this.tickPlan(args[0]);
@@ -142,9 +158,234 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         if (result.stopped) {
             console.log(`Stopped: ${result.stopReason || 'yes'}`);
         }
+        // F6: immediately before the next instruction, because that is the line
+        // the reader acts on and this is the reason not to act on it as written.
+        if (result.repeatedFailureAdvisory) {
+            console.log(`\n${result.repeatedFailureAdvisory.message}`);
+        }
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
+    }
+    /**
+     * One controller round in one process.
+     *
+     * Replaces `heartbeat x N` + `finalize x N` + `run --once` with a single
+     * call: claims, then results, then the tick that observes them. Every step
+     * delegates to the same public LoopService method the standalone command
+     * uses, so the lease, the ownership checks and the durable-evidence gate are
+     * byte-for-byte the ones that were already there.
+     *
+     * Application is strictly ordered and stops at the first failure. Loop state
+     * is shared, so continuing past a failed finalize would make the emitted
+     * tick describe a state the controller never asked for; instead the command
+     * reports exactly which items are already durable so the retry can drop
+     * them.
+     */
+    async step(args) {
+        const inputPath = this.parseOptionalPath(args, ['--batch-file', '--max-batch-chars'], ['--json', '--compact-json', '--no-tick']);
+        const batchFile = this.parseFlagValue(args, '--batch-file');
+        if (!batchFile) {
+            throw new Error('loop step requires --batch-file <path|->. Use "-" to read the batch envelope from stdin.');
+        }
+        const maxBatchChars = this.parseMaxBatchChars(args);
+        const shouldTick = !args.includes('--no-tick');
+        const full = args.includes('--json') && !args.includes('--compact-json');
+        const source = batchFile === '-' ? 'read from stdin' : `at ${batchFile}`;
+        const raw = batchFile === '-'
+            ? await this.readStdin()
+            : await fs.promises.readFile(path.resolve(process.cwd(), batchFile), 'utf8');
+        const envelope = (0, loopBatchEnvelope_1.parseLoopBatchEnvelope)(raw, source);
+        const changePath = await this.resolveChangePath(inputPath);
+        if (envelope.changePath) {
+            const declared = path.resolve(process.cwd(), envelope.changePath);
+            if (declared !== path.resolve(changePath)) {
+                throw new Error(`Batch envelope changePath ${envelope.changePath} resolves to ${declared}, but this command resolved the goal to ${changePath}. Drop the key or point it at the same goal.`);
+            }
+        }
+        const applied = { claims: [], results: [], ticked: false };
+        const evidencePaths = {};
+        for (const result of envelope.results) {
+            if (result.evidencePaths?.length)
+                evidencePaths[result.actionItemId] = result.evidencePaths;
+        }
+        const failure = await this.applyBatch(changePath, envelope, applied);
+        let tick = null;
+        if (!failure && shouldTick) {
+            try {
+                const project = await this.resolveProjectRoot(changePath);
+                const result = await services_1.services.loopService.runOnce(changePath, {
+                    trigger: 'cli-batch',
+                    projectRoot: project.projectRoot,
+                    layoutConfig: project.config,
+                });
+                applied.ticked = true;
+                tick = full ? result : this.compactTickResult(result, await this.readGraphSummary(changePath));
+            }
+            catch (error) {
+                const output = this.renderStepEnvelope({ applied, evidencePaths, tick: null, maxBatchChars });
+                output.error = {
+                    stage: 'tick',
+                    index: null,
+                    actionItemId: null,
+                    message: String(error?.message || error),
+                };
+                console.log(JSON.stringify(output));
+                throw new Error(this.describeStepFailure(output.error, applied, envelope));
+            }
+        }
+        const output = this.renderStepEnvelope({ applied, evidencePaths, tick, maxBatchChars });
+        if (failure) {
+            output.error = failure;
+            console.log(JSON.stringify(output));
+            throw new Error(this.describeStepFailure(failure, applied, envelope));
+        }
+        console.log(JSON.stringify(output));
+    }
+    /**
+     * Applies claims then results, in envelope order, stopping at the first
+     * service-level rejection. Returns the failure descriptor, or null.
+     */
+    async applyBatch(changePath, envelope, applied) {
+        for (let index = 0; index < envelope.claims.length; index += 1) {
+            const claim = envelope.claims[index];
+            try {
+                await services_1.services.loopService.heartbeatExecution(changePath, claim);
+                applied.claims.push(claim.actionItemId);
+            }
+            catch (error) {
+                return { stage: 'claims', index, actionItemId: claim.actionItemId, message: String(error?.message || error) };
+            }
+        }
+        for (let index = 0; index < envelope.results.length; index += 1) {
+            const result = envelope.results[index];
+            // The object is forwarded as a variable, not an object literal, so
+            // TypeScript excess-property checking does not strip the keys this
+            // command does not name. Track C's F5 fields (signal, infraFailure)
+            // therefore reach LoopService untouched, and since C widened
+            // LoopExecutionResult they are read there: LoopService validates
+            // `signal` at its own record boundary and persists all four onto the
+            // item state. This parser is NOT what protects that boundary -- it
+            // checks the shape and forwards, which is why a signal carrying a
+            // newline passes here and is rejected there.
+            const forwarded = { ...result };
+            delete forwarded.evidencePaths;
+            try {
+                if (envelope.finalize)
+                    await services_1.services.loopService.finalizeExecutionItem(changePath, forwarded);
+                else
+                    await services_1.services.loopService.recordExecutionResults(changePath, [forwarded]);
+                applied.results.push(result.actionItemId);
+            }
+            catch (error) {
+                return { stage: 'results', index, actionItemId: result.actionItemId, message: String(error?.message || error) };
+            }
+        }
+        return null;
+    }
+    describeStepFailure(failure, applied, envelope) {
+        const notApplied = failure.stage === 'tick'
+            ? []
+            : (failure.stage === 'claims' ? envelope.claims : envelope.results)
+                .slice(failure.index ?? 0)
+                .map(item => item.actionItemId);
+        const lines = [
+            failure.stage === 'tick'
+                ? `Batch step applied every claim and result but the tick failed: ${failure.message}`
+                : `Batch step failed while applying ${failure.stage}[${failure.index}] (${failure.actionItemId}): ${failure.message}`,
+            'Applied before the failure (already durable, do not resend):',
+            `  claims:  ${applied.claims.join(', ') || 'none'}`,
+            `  results: ${applied.results.join(', ') || 'none'}`,
+        ];
+        if (notApplied.length > 0) {
+            lines.push(`Not applied: ${notApplied.join(', ')}.`);
+            lines.push('Fix the failing item, then resend a batch containing only the not-applied items.');
+        }
+        else {
+            lines.push('No tick was emitted; rerun "ospec loop run --once --compact-json" once the cause is resolved.');
+        }
+        return lines.join('\n');
+    }
+    /**
+     * Builds the output envelope and keeps it inside the structured cap by
+     * dropping payload semantically, then paginating. It never truncates bytes:
+     * a half-JSON document would force the consumer into a spill-file read.
+     */
+    renderStepEnvelope(input) {
+        const base = {
+            // Versions THIS envelope's shape only. Deliberately not the CLI or
+            // product version: a product version copied into a payload is stale
+            // the moment the product moves and tells a consumer nothing about
+            // whether its parser still fits.
+            stepEnvelopeVersion: 1,
+            kind: 'loop-step',
+            applied: input.applied,
+            reduced: [],
+        };
+        if (Object.keys(input.evidencePaths).length > 0)
+            base.evidencePaths = input.evidencePaths;
+        const build = (tick) => JSON.stringify({ ...base, tick });
+        if (!input.tick)
+            return { ...base, tick: null };
+        let tick = input.tick;
+        if (build(tick).length <= input.maxBatchChars)
+            return { ...base, tick };
+        // Each marker is recorded only when the reduction actually removed
+        // something, so `reduced` names what the consumer is missing rather
+        // than what the reducer merely attempted.
+        if ((tick.pending?.itemStates || []).some((item) => item.summary)) {
+            base.reduced.push('itemStateSummaries');
+            tick = {
+                ...tick,
+                pending: { ...tick.pending, itemStates: tick.pending.itemStates.map((item) => ({ ...item, summary: null })) },
+            };
+            if (build(tick).length <= input.maxBatchChars)
+                return { ...base, tick };
+        }
+        if ((tick.actions || []).some((action) => action.prompt)) {
+            base.reduced.push('actionPrompts');
+            tick = {
+                ...tick,
+                actions: tick.actions.map((action) => ({ ...action, prompt: null })),
+            };
+            if (build(tick).length <= input.maxBatchChars)
+                return { ...base, tick };
+        }
+        const total = (tick.actions || []).length;
+        const paginate = (emitted) => ({
+            ...tick,
+            actions: (tick.actions || []).slice(0, emitted),
+            truncatedActions: {
+                emitted,
+                total,
+                reason: `The action batch exceeded --max-batch-chars ${input.maxBatchChars}. Dispatch these, then run "ospec loop step" again to receive the rest; the batch is paginated, never spilled.`,
+            },
+        });
+        for (let emitted = Math.max(1, total - 1); emitted >= 1; emitted -= 1) {
+            const paginated = paginate(emitted);
+            if (build(paginated).length <= input.maxBatchChars)
+                return { ...base, tick: paginated };
+        }
+        // Even one action plus the irreducible tick header does not fit. Emit
+        // the smallest valid envelope and say so, rather than silently
+        // overshooting the cap or cutting the JSON in half.
+        base.reduced.push('capExceeded');
+        return { ...base, tick: total > 0 ? paginate(1) : tick };
+    }
+    parseMaxBatchChars(args) {
+        const value = this.parseFlagValue(args, '--max-batch-chars');
+        if (value === undefined)
+            return DEFAULT_MAX_BATCH_CHARS;
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed <= 0)
+            throw new Error('--max-batch-chars must be a positive integer.');
+        return parsed;
+    }
+    async readStdin() {
+        const chunks = [];
+        for await (const chunk of process.stdin)
+            chunks.push(Buffer.from(chunk));
+        return Buffer.concat(chunks).toString('utf8');
     }
     async poll(args) {
         const inputPath = this.parseOptionalPath(args, [], ['--json']);
@@ -234,7 +475,13 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             runtimeAdapterId: action.runtimeAdapter?.selectedAdapterId || null,
         }));
         return {
-            version: '1.9.0',
+            // Versions THIS projection's shape only, and starts at 1. It was
+            // `version: '1.9.0'` -- a product version copied into a payload,
+            // which was already stale the moment the package moved to 2.0.0 and
+            // told a consumer nothing about whether its parser still fits.
+            // `loop step` embeds this object verbatim as its `tick`, so the
+            // stale value was riding inside the batch envelope too.
+            tickEnvelopeVersion: 1,
             changePath: result.changePath,
             iteration: result.iteration,
             status: result.status,
@@ -249,6 +496,11 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             pending,
             actions,
             batchDiagnostics: result.batchDiagnostics,
+            // F6: omitted entirely when there is nothing to say, so the common
+            // case costs no output at all.
+            ...(result.repeatedFailureAdvisory
+                ? { repeatedFailure: result.repeatedFailureAdvisory }
+                : {}),
         };
     }
     async tickPlan(inputPath) {
@@ -265,9 +517,6 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             console.log(`  - ${instruction}`);
         }
         console.log('');
-    }
-    async watch(_args) {
-        throw new Error('Loop watch agent execution was removed. Use "ospec loop run --once --json" and dispatch each action through the current model harness native subagent API.');
     }
     parseOptionalPath(args, valueFlags, booleanFlags) {
         const valueSet = new Set(valueFlags);
@@ -293,10 +542,34 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         }
         return inputPath;
     }
+    /**
+     * The value of `--flag value` or `--flag=value`, or undefined if absent.
+     *
+     * M-misc6: the space-separated form returned `args[index + 1]` with no
+     * check on what that was. Two ways it lied:
+     *
+     *  - `ospec loop result --action-item --executor codex-1` returned
+     *    `'--executor'` as the action item id. The command then looked up an
+     *    item by that name, failed, and reported a missing action item -- with
+     *    no hint that the real problem was a forgotten value one flag earlier.
+     *  - `ospec loop result --summary` with nothing after it returned
+     *    `undefined`, indistinguishable from not passing `--summary` at all,
+     *    so a typo'd trailing flag was silently dropped.
+     *
+     * Both now fail loud. A value that genuinely starts with `--` is still
+     * reachable through `--flag=--value`, and the error says so.
+     */
     parseFlagValue(args, flag) {
         for (let index = 0; index < args.length; index += 1) {
             if (args[index] === flag) {
-                return args[index + 1];
+                const value = args[index + 1];
+                if (value === undefined) {
+                    throw new Error(`${flag} requires a value.`);
+                }
+                if (value.startsWith('--')) {
+                    throw new Error(`${flag} requires a value, but the next argument is "${value}". Write ${flag}=${value} if that really is the value.`);
+                }
+                return value;
             }
             if (args[index].startsWith(`${flag}=`)) {
                 return args[index].slice(`${flag}=`.length);
@@ -308,7 +581,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         let current = path.resolve(changePath);
         while (true) {
             if (await services_1.services.fileService.exists(path.join(current, constants_1.FILE_NAMES.SKILLRC))) {
-                const config = await services_1.services.configManager.loadConfig(current).catch(() => null);
+                const config = await services_1.services.configManager.loadConfigOrNull(current);
                 return { projectRoot: current, config };
             }
             const parent = path.dirname(current);
@@ -329,7 +602,14 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         const state = await services_1.services.loopService.readState(changePath);
         const planningDecision = await services_1.services.taskGraphExecutionService.readValidatedPlanningReviewDecision(changePath);
         if (args.includes('--json')) {
-            console.log(JSON.stringify({ version: '1.9.0', changePath, config, state, planningDecision }, null, 2));
+            // Versions THIS projection's shape only, and starts at 1. It was
+            // `version: '1.9.0'`, the same product-version-in-a-payload defect
+            // track A fixed one method up in `compactTickResult` -- left behind
+            // there because it belongs to a different command's payload, and
+            // still emitting a 1.9.0 out of a 2.0.0 package. Same defect, same
+            // fix: a shape version a consumer can actually check its parser
+            // against.
+            console.log(JSON.stringify({ statusEnvelopeVersion: 1, changePath, config, state, planningDecision }, null, 2));
             return;
         }
         if (args.includes('--brief')) {
@@ -404,6 +684,11 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             return found;
         };
         const scalar = (flag) => values(flag).at(-1);
+        /**
+         * A flag whose "none" really is a value: the four `stopConditions`
+         * budgets, which are `number | null` in `LoopConfig` and where null
+         * means unbounded.
+         */
         const nullableNumber = (flag) => {
             const value = scalar(flag);
             if (value === undefined)
@@ -415,9 +700,59 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
                 throw new Error(`${flag} must be a positive integer or "none".`);
             return parsed;
         };
+        /*
+         * M-cfg4. The plan called this "8 nullable options must pass null for
+         * none, like budgetTokens does". Re-derived against the current tree,
+         * that is wrong twice over.
+         *
+         * There are NINE of them, not eight: --max-parallel,
+         * --no-progress-limit, --max-task-repair-rounds,
+         * --max-final-repair-rounds, --prompt-max-chars,
+         * --implementation-max-runtime-minutes, --review-max-runtime-minutes,
+         * --verification-max-runtime-minutes and
+         * --evidence-result-grace-minutes.
+         *
+         * And they are not nullable. Every one lands in `LoopEfficiency`,
+         * where the field is a plain `number` with a built-in default -- null
+         * has no meaning there, `LoopConfigureOptions` does not admit it, and
+         * `configure()` would write it straight through `positiveInteger()`.
+         * `budgetTokens` is genuinely different: it is a `stopConditions`
+         * budget, `number | null`, and null means unbounded. Copying its
+         * treatment onto these nine would have required changing LoopService's
+         * public option type and its writer -- both track B's files this
+         * phase -- to express a state the config has no slot for.
+         *
+         * The real defect is the one the user hits: `nullableNumber` ACCEPTS
+         * "none" for all nine (its own error message advertises it), and the
+         * `?? undefined` at each call site then converts that null into "flag
+         * not supplied". So `ospec loop configure --max-parallel none` exits
+         * 0, prints the same summary as a no-op, and changes nothing. Same
+         * silently-ignored-input class as M-cfg1, one command over.
+         *
+         * The `?? undefined` sites are gone; these nine now parse through a
+         * helper that refuses "none" and says what to write instead. The help
+         * text agrees -- it documents `N|none` for the four budgets and a bare
+         * `N` for these nine, and always did.
+         */
+        const positiveNumber = (flag) => {
+            const value = scalar(flag);
+            if (value === undefined)
+                return undefined;
+            if (value.toLowerCase() === 'none') {
+                throw new Error(`${flag} has no "none": it is always set. Pass a positive integer, or omit the flag to leave it unchanged.`);
+            }
+            const parsed = Number(value);
+            if (!Number.isInteger(parsed) || parsed <= 0)
+                throw new Error(`${flag} must be a positive integer.`);
+            return parsed;
+        };
         const target = scalar('--target');
         if (target) {
-            const allowed = new Set(['codex', 'gpt', 'claude', 'gemini', 'opencode', 'cursor', 'copilot', 'shell', 'generic']);
+            // M-cfg5: `grok` is a first-class `TaskWorkerToolTarget` with its own
+            // RuntimeExecutionAdapterService entry and its own native-subagent
+            // branch in TGES, and `ospec execute handoff|launch --target grok` is
+            // documented in the help. It was missing from all three validators.
+            const allowed = new Set(['codex', 'gpt', 'claude', 'gemini', 'grok', 'opencode', 'cursor', 'copilot', 'shell', 'generic']);
             if (!allowed.has(target))
                 throw new Error(`Unsupported loop target: ${target}.`);
             options.target = target;
@@ -501,10 +836,10 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             options.allowCommands = allowCommands;
         if (allowCommandPolicies.length > 0)
             options.allowCommandPolicies = allowCommandPolicies;
-        options.maxParallel = nullableNumber('--max-parallel') ?? undefined;
-        options.noProgressLimit = nullableNumber('--no-progress-limit') ?? undefined;
-        options.maxTaskRepairRounds = nullableNumber('--max-task-repair-rounds') ?? undefined;
-        options.maxFinalRepairRounds = nullableNumber('--max-final-repair-rounds') ?? undefined;
+        options.maxParallel = positiveNumber('--max-parallel');
+        options.noProgressLimit = positiveNumber('--no-progress-limit');
+        options.maxTaskRepairRounds = positiveNumber('--max-task-repair-rounds');
+        options.maxFinalRepairRounds = positiveNumber('--max-final-repair-rounds');
         const continueWhileProgressing = scalar('--continue-while-progressing');
         if (continueWhileProgressing !== undefined) {
             if (continueWhileProgressing !== 'true' && continueWhileProgressing !== 'false') {
@@ -536,11 +871,11 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             }
             options.reviewGating = reviewGating;
         }
-        options.promptMaxChars = nullableNumber('--prompt-max-chars') ?? undefined;
-        options.implementationMaxRuntimeMinutes = nullableNumber('--implementation-max-runtime-minutes') ?? undefined;
-        options.reviewMaxRuntimeMinutes = nullableNumber('--review-max-runtime-minutes') ?? undefined;
-        options.verificationMaxRuntimeMinutes = nullableNumber('--verification-max-runtime-minutes') ?? undefined;
-        options.evidenceResultGraceMinutes = nullableNumber('--evidence-result-grace-minutes') ?? undefined;
+        options.promptMaxChars = positiveNumber('--prompt-max-chars');
+        options.implementationMaxRuntimeMinutes = positiveNumber('--implementation-max-runtime-minutes');
+        options.reviewMaxRuntimeMinutes = positiveNumber('--review-max-runtime-minutes');
+        options.verificationMaxRuntimeMinutes = positiveNumber('--verification-max-runtime-minutes');
+        options.evidenceResultGraceMinutes = positiveNumber('--evidence-result-grace-minutes');
         const changePath = await this.resolveChangePath(inputPath);
         const replacesPaths = allowPaths.length > 0;
         const replacesCommands = allowCommands.length > 0 || allowCommandPolicies.length > 0;
@@ -662,9 +997,15 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         if (!executorId)
             throw new Error(`loop ${finalize ? 'finalize' : 'result'} requires --executor <child-id>.`);
         const exitValue = this.parseFlagValue(args, '--exit-code');
+        // F5: negative codes are legitimate. A harness that never started the
+        // child reports -1, and rejecting it forced callers to lie with a 1.
         const exitCode = exitValue === undefined ? null : Number(exitValue);
         if (exitCode !== null && !Number.isInteger(exitCode))
             throw new Error('--exit-code must be an integer.');
+        const signalValue = this.parseFlagValue(args, '--signal');
+        const signal = signalValue === undefined ? undefined : signalValue.trim();
+        if (signal !== undefined && signal.length === 0)
+            throw new Error('--signal requires a signal name.');
         const tokenValue = this.parseFlagValue(args, '--tokens-used');
         const tokensUsed = tokenValue === undefined ? undefined : Number(tokenValue);
         if (tokensUsed !== undefined && (!Number.isFinite(tokensUsed) || tokensUsed < 0)) {
@@ -676,6 +1017,8 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
             executorId,
             exitCode,
             timedOut: args.includes('--timed-out'),
+            signal: signal ?? null,
+            infraFailure: args.includes('--infra-failure'),
             tokensUsed,
             summary: this.parseFlagValue(args, '--summary'),
         };
@@ -692,7 +1035,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
     }
     async resolveChangePath(inputPath) {
         const cwd = process.cwd();
-        const config = await services_1.services.configManager.loadConfig(cwd).catch(() => null);
+        const config = await services_1.services.configManager.loadConfigOrNull(cwd);
         const candidatePath = inputPath
             ? (path.isAbsolute(inputPath) ? inputPath : (0, ProjectLayout_1.resolveManagedInputPath)(cwd, inputPath, config))
             : cwd;
@@ -707,7 +1050,7 @@ class LoopCommand extends BaseCommand_1.BaseCommand {
         if (activeNames.length > 1) {
             throw new Error(`Multiple active changes found: ${activeNames.join(', ')}. Pass one change path explicitly.`);
         }
-        const projectConfig = await services_1.services.configManager.loadConfig(resolved).catch(() => null);
+        const projectConfig = await services_1.services.configManager.loadConfigOrNull(resolved);
         return (0, ProjectLayout_1.resolveManagedPath)(resolved, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}/${activeNames[0]}`, projectConfig);
     }
 }

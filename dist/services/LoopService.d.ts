@@ -2,6 +2,7 @@ import { FileService } from './FileService';
 import { VerificationService } from './VerificationService';
 import { HarnessCapability, NativeLoopCapability, TaskAgentPrimitive } from './CapabilityProbeService';
 import { LayoutConfigInput } from './TriageService';
+import { RepeatedFailureAdvisory } from '../utils/repeatedFailureGuard';
 import { RuntimeExecutionModelSelectionInput, RuntimeExecutionAdapterResolution, RuntimeExecutionAdapterService, RuntimeNativeHarnessExecutionMetadata } from './RuntimeExecutionAdapterService';
 import { TaskGraphExecutionService, TaskVerificationLoopBinding, TaskWorkerToolTarget } from './TaskGraphExecutionService';
 export type LoopStatus = 'idle' | 'running' | 'blocked' | 'paused' | 'stopped' | 'done';
@@ -143,6 +144,10 @@ export interface PendingControllerActionItemState {
     completedAt: string | null;
     exitCode: number | null;
     timedOut: boolean;
+    /** F5: signal that killed the executor; additive, absent on states written before 1.9.11. */
+    signal?: string | null;
+    /** F5: infrastructure failure rather than a failure of the work itself. */
+    infraFailure?: boolean;
     tokensUsed: number;
     tokenAllowance: number | null;
     tokenReservation: number;
@@ -189,6 +194,10 @@ export interface LoopRunLogEntry {
     trigger: string;
     tokensEst: number | null;
     exitCode: number | null;
+    /** F5: signal reported with the first failure in this entry, when there was one. */
+    signal?: string | null;
+    /** F5: true when every failure folded into this entry was infrastructure. */
+    infraFailure?: boolean;
     verifyPassed: boolean | null;
     summary: string;
     costToDate: number | null;
@@ -234,6 +243,11 @@ export interface LoopTickResult {
     feedback: string | null;
     metrics: LoopMetrics;
     batchDiagnostics: LoopBatchDiagnostics | null;
+    /**
+     * F6: advisory raised when the tail of the run log is a run of >= 3
+     * identical failures. Output only -- the state machine never reads it.
+     */
+    repeatedFailureAdvisory?: RepeatedFailureAdvisory | null;
 }
 export interface LoopPollItemSnapshot {
     id: string;
@@ -250,11 +264,38 @@ export interface LoopPollResult {
     reason: string;
     nextInstruction: string;
 }
+/**
+ * F5: the four orthogonal outcome fields. They are deliberately independent --
+ * none is inferred from another, because collapsing them is what made the
+ * controller misdiagnose failures in the first place.
+ *
+ * - `exitCode`   any integer, including negative ones (a harness that reports
+ *                `-1` for "never started" must be able to say so); `null` means
+ *                no code was ever produced.
+ * - `timedOut`   the runtime killed it for exceeding a deadline.
+ * - `signal`     POSIX signal name (`SIGKILL`); `null` on win32 and clean exits.
+ * - `infraFailure` the harness failed to *run* the work -- EINVAL/ENOENT/EACCES
+ *                class spawn errors, an unavailable adapter, a transport fault.
+ *                A failing test or a failing build is NOT an infra failure.
+ */
+export interface ExecutionOutcomeFields {
+    exitCode?: number | null;
+    timedOut?: boolean;
+    signal?: string | null;
+    infraFailure?: boolean;
+}
 export interface LoopExecutionResult {
     actionItemId: string;
     executorId: string;
     exitCode: number | null;
     timedOut?: boolean;
+    /** F5: POSIX signal that killed the executor, when the harness reports one. */
+    signal?: string | null;
+    /**
+     * F5: true when the failure is infrastructure rather than the work. Such a
+     * failure still routes a retry but must not consume a no-progress round.
+     */
+    infraFailure?: boolean;
     tokensUsed?: number | null;
     summary?: string;
 }
@@ -329,6 +370,24 @@ export declare class LoopService {
     }): Promise<LoopConfig>;
     readConfig(changePath: string): Promise<LoopConfig>;
     readState(changePath: string): Promise<LoopState>;
+    /** M-race5: see the note in `issueAction`. */
+    private bindingIntentPath;
+    /**
+     * M-race5: clears task-graph bindings that no loop state claims.
+     *
+     * Runs at the top of every tick, before anything reads the bindings. The
+     * marker names the action whose bindings were being written; if durable
+     * loop state does not have a `pendingControllerAction` with that id, the
+     * `writeState` that should have adopted them never happened, so they belong
+     * to nothing. Releasing them is what lets the next tick bind a fresh
+     * action instead of dying on "already bound to another Loop action"
+     * forever.
+     *
+     * Deliberately compares the id rather than merely checking that SOME action
+     * is pending: a crash followed by a manual `loop resume` can leave a
+     * different, legitimate action pending, and its bindings must survive.
+     */
+    private releaseOrphanedLoopBindings;
     private writeState;
     private assertExists;
     configure(changePath: string, options: LoopConfigureOptions): Promise<LoopConfig>;
@@ -370,8 +429,37 @@ export declare class LoopService {
      */
     private settleEvidenceCompleteItems;
     private executionResultMatches;
+    /**
+     * F5: the loop-side record boundary. What is validated here, and why a
+     * shape check upstream cannot substitute for it:
+     *
+     * - `exitCode`: any integer including negative, or `null`. Rejects `NaN`,
+     *   `Infinity` and fractions -- all of which are `typeof 'number'` and so
+     *   pass a shape check, but would be written to durable state and then
+     *   rendered into a blocker as a number no reader can act on.
+     * - `signal`: a signal name or `null`. Rejects a string carrying newlines or
+     *   markdown, which a shape check reads as "a string" and which forges rows
+     *   in the blocker text `describeFailure` builds.
+     *
+     * `timedOut` and `infraFailure` are read with `=== true` everywhere they are
+     * used, so no value can subvert them and none is rejected here.
+     */
+    private assertOutcomeFields;
+    /**
+     * F5: one failure sentence that names all four outcome fields the reporter
+     * supplied, so a controller reading the blocker knows whether to retry the
+     * work or fix its own environment.
+     */
+    private describeFailure;
+    /**
+     * F6: build the repeated-failure advisory from the run-log tail. A missing
+     * or unreadable run log yields no advisory rather than an error -- a guard
+     * that can break the tick it advises on is worse than no guard.
+     */
+    readRepeatedFailureAdvisory(changePath: string): Promise<RepeatedFailureAdvisory | null>;
     private appendRunLog;
     private withControllerLease;
+    private confirmControllerLockStillStale;
     private readControllerLockOwner;
     private refreshControllerLockIfOwned;
     private isProcessAlive;
@@ -469,6 +557,19 @@ export declare class LoopService {
     private positiveInteger;
     private nonNegativeInteger;
     private assignDefined;
+    /**
+     * See `utils/ShellQuote`. A fifth copy of the rule, and the only one that
+     * branched on `process.platform`: on win32 it doubled `'` as `''`, which is
+     * the PowerShell/cmd convention and is simply wrong for the POSIX sh these
+     * strings are written for -- and it meant the same change emitted different
+     * bytes into its committed artifacts depending on the machine that ran it.
+     * The POSIX branch used `'"'"'`, a valid alternative spelling of the shared
+     * `'\''`, so that half was correct.
+     *
+     * The dropped `!value.startsWith('-')` guard was cosmetic: quoting does not
+     * stop a leading `-` being read as a flag, because the shell removes the
+     * quotes before the receiving CLI ever sees the word.
+     */
     private quote;
 }
 export declare function createLoopService(fileService: FileService, dependencies?: LoopServiceDependencies): LoopService;

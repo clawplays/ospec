@@ -19,7 +19,6 @@ export declare class SkillCommand extends BaseCommand {
     private buildPackageAssets;
     private buildLegacyAliasPackage;
     private syncSkillFiles;
-    private isPackageInSync;
     private buildCodexSkillYaml;
     private buildOpenAiYaml;
     private resolvePackageRoot;

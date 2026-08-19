@@ -7,6 +7,8 @@ export interface FeatureTemplateInput {
     placement?: 'active' | 'queued';
     workflowProfile?: WorkflowProfileId;
     affects?: string[];
+    /** Phase 7 feature slugs (7.5), written into the proposal frontmatter. */
+    features?: string[];
     flags?: string[];
     optionalSteps?: string[];
     background?: string;
@@ -25,6 +27,7 @@ export interface NormalizedFeatureTemplateInput {
     placement: 'active' | 'queued';
     workflowProfile: WorkflowProfileId;
     affects: string[];
+    features: string[];
     flags: string[];
     optionalSteps: string[];
     background: string;

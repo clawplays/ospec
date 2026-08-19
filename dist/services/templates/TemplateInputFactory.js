@@ -2,6 +2,18 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TemplateInputFactory = void 0;
 const constants_1 = require("../../core/constants");
+/*
+ * M-i18n2: DOS device names. `con.md` cannot be created on Windows at all --
+ * not "is awkward", cannot be created -- and the same holds for the whole set
+ * with or without an extension. The previous ASCII-allowlist slugify did not
+ * protect against this either; it is handled here because widening the
+ * accepted character set is the moment the question becomes visible.
+ */
+const RESERVED_DEVICE_NAMES = new Set([
+    'con', 'prn', 'aux', 'nul',
+    'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+    'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+]);
 class TemplateInputFactory {
     normalizeFeatureTemplateInput(input) {
         if (typeof input === 'string') {
@@ -12,6 +24,7 @@ class TemplateInputFactory {
                 placement: 'active',
                 workflowProfile: 'change',
                 affects: [],
+                features: [],
                 flags: [],
                 optionalSteps: [],
                 background: englishDefaults.background,
@@ -35,6 +48,7 @@ class TemplateInputFactory {
                 : constants_1.DIR_NAMES.ACTIVE,
             workflowProfile: input.workflowProfile === 'goal' ? 'goal' : 'change',
             affects: input.affects ?? [],
+            features: input.features ?? [],
             flags: input.flags ?? [],
             optionalSteps: input.optionalSteps ?? [],
             background: input.background?.trim() || localizedDefaults.background,
@@ -307,12 +321,47 @@ class TemplateInputFactory {
                 };
         }
     }
+    /*
+     * M-i18n2: keep unicode, replace only what a filesystem actually refuses.
+     *
+     * This was `[^a-z0-9]+ -> '-'`, an ASCII allowlist. Every non-ASCII name
+     * collapsed to nothing: a module called "認証" or "المصادقة" produced an
+     * empty slug, so `buildPlannedFiles` fell back to the bare prefix and every
+     * such module in a project became `module`, `module-2`, `module-3`. The
+     * displayName survived, so the docs read correctly while their paths were
+     * anonymous and their order was an accident of iteration.
+     *
+     * Verified before changing rather than assumed: the non-ASCII path policy
+     * still holds. `NewCommand.warnOnDirtyWorkspace`, `TGES`'s workspace-scope
+     * gate and `src/tools/build-index.ts` all force `core.quotePath=false`
+     * specifically so git reports CJK paths as raw UTF-8 instead of
+     * octal-escaped garbage. The project deliberately handles non-ASCII paths
+     * end to end; this function was the one place discarding them.
+     *
+     * What is still replaced is the intersection of what Windows and POSIX
+     * refuse, applied on both (G5): the Windows-reserved `< > : " / \ | ? *`,
+     * ASCII control characters, and NUL. Whitespace collapses to `-` because a
+     * path with spaces is legal but miserable in the markdown links these slugs
+     * end up in. Trailing dots and spaces go because Windows silently strips
+     * them, which would make the slug and the directory disagree.
+     *
+     * Reserved DOS device names get a trailing `-`. `con.md` cannot be created
+     * on Windows at all, and the previous allowlist did not protect against
+     * this either -- it is fixed here because widening the accepted character
+     * set is the moment the question becomes visible.
+     */
     slugify(value) {
-        return value
+        const slug = value
             .toLowerCase()
             .replace(/\.md$/i, '')
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '');
+            // `\p{Cc}` rather than a literal control-character range: the range
+            // has to be written as raw bytes in the source to survive formatting,
+            // and a source file with NUL in it is its own problem.
+            .replace(/[\p{Cc}<>:"/\\|?*]+/gu, '-')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^[-.]+|[-. ]+$/g, '');
+        return RESERVED_DEVICE_NAMES.has(slug) ? `${slug}-` : slug;
     }
     normalizeModuleDisplayName(value) {
         return value

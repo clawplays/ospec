@@ -17,17 +17,12 @@ export declare class TemplateEngine {
     generateImplementationPlanTemplate(input: string | FeatureTemplateInput): string;
     generateTasksTemplate(input: string | FeatureTemplateInput): string;
     generateVerificationTemplate(input: string | FeatureTemplateInput): string;
-    generateSpecComplianceReviewTemplate(input: string | FeatureTemplateInput): string;
-    generateCodeQualityReviewTemplate(input: string | FeatureTemplateInput): string;
     generateTaskGraphTemplate(input: string | FeatureTemplateInput): string;
     generateAgentWorkerStatusTemplate(input: string | FeatureTemplateInput): string;
     generateReviewTemplate(input: string | FeatureTemplateInput): string;
     generateProjectReadmeTemplate(fallbackName: string, mode: ProjectMode, input?: ProjectBootstrapInput): string;
     generateRootSkillTemplate(fallbackName: string, mode: ProjectMode, input?: ProjectBootstrapInput): string;
     generateDocsSkillTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
-    generateSrcSkillTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
-    generateCoreSkillTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
-    generateTestsSkillTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
     generateProjectOverviewTemplate(fallbackName: string, mode: ProjectMode, input?: ProjectBootstrapInput): string;
     generateTechStackTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
     generateArchitectureTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
@@ -36,13 +31,10 @@ export declare class TemplateEngine {
     generateDesignDocsTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
     generatePlanningDocsTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
     generateApiDocsTemplate(fallbackName: string, input?: ProjectBootstrapInput): string;
-    generateModuleSkillTemplate(fallbackName: string, moduleName: string, input?: ProjectBootstrapInput, moduleSlug?: string): string;
     generateApiAreaDocTemplate(fallbackName: string, apiAreaName: string, input?: ProjectBootstrapInput): string;
     generateModuleApiDocTemplate(fallbackName: string, moduleName: string, input?: ProjectBootstrapInput, moduleSlug?: string): string;
     generateDesignDocTemplate(fallbackName: string, docName: string, input?: ProjectBootstrapInput): string;
     generatePlanningDocTemplate(fallbackName: string, docName: string, input?: ProjectBootstrapInput): string;
-    generateAiGuideTemplate(input?: ProjectBootstrapInput): string;
-    generateExecutionProtocolTemplate(input?: ProjectBootstrapInput): string;
     generateBuildIndexScriptTemplate(): string;
 }
 export declare const templateEngine: TemplateEngine;

@@ -33,14 +33,28 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TaskGraphExecutionService = void 0;
+exports.TaskGraphExecutionService = exports.GIT_OUTPUT_LIMIT_BYTES = exports.REVIEW_PACKAGE_DIFF_LIMIT_BYTES = exports.GIT_KILL_GRACE_MS = exports.GIT_COMMAND_TIMEOUT_MS = exports.STALE_LOCK_STEAL_RECHECK_MS = void 0;
+exports.registerHeldLease = registerHeldLease;
+exports.releaseHeldLease = releaseHeldLease;
+exports.runWithHeldLease = runWithHeldLease;
+exports.getActiveHeldLeases = getActiveHeldLeases;
+exports.markHeldLeaseWedged = markHeldLeaseWedged;
+exports.isHeldLeaseWedged = isHeldLeaseWedged;
+exports.touchLeasesSync = touchLeasesSync;
+exports.touchActiveLeasesSync = touchActiveLeasesSync;
 exports.createTaskGraphExecutionService = createTaskGraphExecutionService;
 const path = __importStar(require("path"));
 const fs_1 = require("fs");
+const syncFs = __importStar(require("fs"));
 const crypto_1 = require("crypto");
+const async_hooks_1 = require("async_hooks");
 const childProcess = require("child_process");
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
+const structuredReports_1 = require("../utils/structuredReports");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
+const ShellQuote_1 = require("../utils/ShellQuote");
+const ChecklistScan_1 = require("../utils/ChecklistScan");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const CapabilityProbeService_1 = require("./CapabilityProbeService");
 const RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
@@ -118,8 +132,164 @@ const DEFAULT_ORCHESTRATION_MAX_ROUNDS = 10;
 const TASK_GRAPH_MUTATION_LOCK_FILE = 'task-graph-mutation.lock';
 const GOAL_PROGRESS_PROJECTION_FILE = 'progress-projection.json';
 const TASK_GRAPH_MUTATION_LOCK_TIMEOUT_MS = 30 * 1000;
-const STALE_TASK_GRAPH_MUTATION_LOCK_MS = 2 * 60 * 1000;
 const TASK_GRAPH_MUTATION_LOCK_HEARTBEAT_MS = 30 * 1000;
+// Four missed heartbeats. The threshold was briefly six, because a blocking
+// git call could close a two-minute window and make "stale" and "busy"
+// indistinguishable. Git no longer blocks the event loop, cannot wait on stdin
+// and cannot outlive GIT_COMMAND_TIMEOUT_MS, so the recheck below -- not the
+// threshold -- is what separates slow from dead. Paying another minute of
+// post-crash recovery latency for a distinction the recheck already makes is
+// the wrong trade.
+const STALE_TASK_GRAPH_MUTATION_LOCK_MS = 4 * TASK_GRAPH_MUTATION_LOCK_HEARTBEAT_MS;
+// Before deleting a lock judged stale, wait and look again: a holder that is
+// merely slow moves the mtime within one heartbeat, and a dead one never will.
+exports.STALE_LOCK_STEAL_RECHECK_MS = 5 * 1000;
+// spawnSync closed the child's stdin and capped its output. Async spawn does
+// neither, so both have to be restored explicitly here: without a bound, a git
+// that waits on input or never exits holds the mutation lease forever, which is
+// a worse failure than the race P0-6 set out to fix. Sized for the slowest real
+// call (`git worktree add` on a large repo), not the typical one.
+exports.GIT_COMMAND_TIMEOUT_MS = 4 * 60 * 1000;
+// How long a killed git child may keep the lease alive before the operation is
+// declared wedged and the lease stops being refreshed.
+exports.GIT_KILL_GRACE_MS = 5 * 1000;
+// Same limit the review package already applies to untracked file content.
+exports.REVIEW_PACKAGE_DIFF_LIMIT_BYTES = 256 * 1024;
+// F25: the hard memory ceiling on what a single git call may accumulate.
+// `REVIEW_PACKAGE_DIFF_LIMIT_BYTES` bounds only what is *written* to the review
+// artifact; the whole diff was still materialised in the heap first, so
+// removing spawnSync's 1 MB `maxBuffer` left the accumulation itself unbounded.
+// 8 MB is deliberately eight times that old maxBuffer: every call that
+// succeeded under spawnSync (anything up to 1 MB, past which spawnSync returned
+// ENOBUFS) still comes back whole, while a runaway `git diff` costs a bounded
+// amount of memory instead of the repository's worth. Overshoot is at most one
+// stream chunk, because a chunk is admitted or dropped as a unit -- slicing it
+// by bytes could sever a UTF-8 codepoint.
+exports.GIT_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
+// ---------------------------------------------------------------------------
+// Evidence-validation scope
+// ---------------------------------------------------------------------------
+//
+// Validating one task's review evidence re-reads the review artifact, its
+// dispatch record and its findings, SHA-256s every target file and spawns
+// `git rev-parse HEAD`. The controller does that for every non-PENDING task on
+// every tick, so a 15-task Goal paid ~15 git processes per tick to re-derive an
+// answer that had not changed.
+//
+// Phase 3 attacked that from two directions: batching the sweep (a bounded
+// fan-out plus one shared scope, so HEAD is resolved once for all of it) and an
+// on-disk cache of the verdicts themselves. Only the first survives.
+//
+// The disk cache is gone, deliberately. Its first shape stamped `(kind,
+// mtimeMs, size)` *after* the validation had already read its inputs, which
+// meant a write landing in the read->stamp window was recorded as the validated
+// state and served `ready: true` for bytes that were never validated; and the
+// stamp itself was forgeable without any clock games, because `tar -x`, `unzip`,
+// `cp -p`, `rsync --times` and "restore previous version" all rewrite content
+// while restoring the mtime, and a same-length rewrite (`APPROVED` ->
+// `REJECTED`) keeps the size too. Keying entries on a SHA-256 of the bytes each
+// validation actually read closed both -- and made a HIT re-read and re-hash
+// every input before believing it, which is nearly all the work a miss does.
+//
+// Measured on this tree, the split between batching and caching over the whole
+// `archive --check` win was a median 97% / 3%, range -0% to 9%: the cache's
+// contribution was inside the run-to-run noise. A permanently-maintained
+// staleness hazard that buys nothing is not worth keeping, so what is left here
+// is the batching -- and the per-scope `git rev-parse HEAD` memo below, which
+// recomputes rather than persists and therefore cannot go stale across runs.
+//
+// Which usage sidecars have already been folded into the execution metrics.
+// Derived, never read by an agent, and a total miss when missing or corrupt.
+const USAGE_INGEST_WATERMARK_FILE = 'usage-ingest-watermark.json';
+const USAGE_INGEST_WATERMARK_VERSION = '1.0';
+const validationScopeStorage = new async_hooks_1.AsyncLocalStorage();
+// git subcommands that cannot move HEAD. Anything not listed drops the
+// memoised HEAD rather than assuming it survived.
+const HEAD_PRESERVING_GIT_SUBCOMMANDS = new Set([
+    'rev-parse',
+    'status',
+    'diff',
+    'log',
+    'show',
+    'ls-files',
+    'ls-tree',
+    'cat-file',
+    'config',
+    'rev-list',
+    'symbolic-ref',
+    'name-rev',
+    'describe',
+    'blame',
+]);
+const heldLeases = new Map();
+// Which leases cover the operation currently running. Refreshing every lease
+// the process holds is a lie in the other direction: unrelated git work on a
+// second change would keep a genuinely wedged lease alive forever, so it could
+// never be stolen and never released. Async context tracks who the caller
+// actually is, so only the leases wrapping this call get refreshed.
+const activeLeaseStack = new async_hooks_1.AsyncLocalStorage();
+function registerHeldLease(lockPath, nonce) {
+    const lease = { lockPath, nonce };
+    heldLeases.set(lease, { wedged: false });
+    return lease;
+}
+function releaseHeldLease(lease) {
+    heldLeases.delete(lease);
+}
+/** Run `operation` with `lease` marked as covering it (nested leases stack). */
+function runWithHeldLease(lease, operation) {
+    const covering = activeLeaseStack.getStore();
+    return activeLeaseStack.run(covering ? [...covering, lease] : [lease], operation);
+}
+function getActiveHeldLeases() {
+    return activeLeaseStack.getStore() || [];
+}
+// A lease whose operation is wedged must stop being refreshed, or the lock it
+// guards is immortal: `confirm*LockStillStale` keeps seeing the mtime move and
+// nobody can ever recover the change. Stopping the refresh is what turns an
+// unrecoverable deadlock back into a stealable stale lock.
+// F26: wedged is one-way for the life of the lease. There is deliberately no
+// `clearHeldLeaseWedged`. The `close` handler in `runGit` used to call one for
+// every covering lease on every successful exit, and a timeout is normally
+// swallowed upstream (`readGitOutput` returns null on `!ok` and ~30 call sites
+// then do `|| ''`), so the operation carried on and the very next successful
+// git call un-wedged the lease -- while the zombie child that wedged it was
+// still running and still holding whatever it was holding. That made the lock
+// immortal again, which is the single failure this flag exists to prevent. A
+// later success proves nothing about the child that is still wedged, so only
+// ending the lease clears the state: `releaseHeldLease` drops the entry, and
+// the owner's `finally` in `withTaskGraphMutationLease` always reaches it.
+function markHeldLeaseWedged(lease) {
+    const state = heldLeases.get(lease);
+    if (state)
+        state.wedged = true;
+}
+function isHeldLeaseWedged(lease) {
+    return heldLeases.get(lease)?.wedged === true;
+}
+function touchLeasesSync(leases) {
+    if (leases.length === 0)
+        return;
+    const now = new Date();
+    for (const lease of leases) {
+        // Released, or wedged: neither is ours to keep alive.
+        if (!heldLeases.has(lease) || isHeldLeaseWedged(lease))
+            continue;
+        try {
+            // Only refresh a lock this process still owns: after a steal the
+            // file belongs to someone else and extending it would be a lie.
+            if (JSON.parse(syncFs.readFileSync(lease.lockPath, 'utf8'))?.nonce !== lease.nonce)
+                continue;
+            syncFs.utimesSync(lease.lockPath, now, now);
+        }
+        catch {
+            // A lock that cannot be read or touched is not ours to refresh.
+        }
+    }
+}
+function touchActiveLeasesSync() {
+    touchLeasesSync(getActiveHeldLeases());
+}
 function emptyExecutionUsage() {
     return {
         inputTokens: null,
@@ -160,11 +330,6 @@ function addExecutionUsage(left, right) {
                     ? 'complete'
                     : 'partial',
     };
-}
-function unknownRecord(value) {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value
-        : {};
 }
 function normalizeStatus(value) {
     return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -291,7 +456,7 @@ function buildWorkerTargetToolMapping(target) {
     };
     return {
         ...mappings[target],
-        readContext: 'Read the generated packet first. Use SKILL.index.json and docs/project/feature-index.md to locate existing behavior, then open only the specific source or change document needed to resolve a concrete gap.',
+        readContext: 'Read the generated packet first. Run `ospec docs locate --affects <path>` (or `--feature <slug>`) to get the one section that describes the existing behavior, and `ospec index query <keyword...>` when you only have a keyword; then open only that section, not the whole document.',
     };
 }
 function resolveWorkerModel(profile, target, modelProfiles = {}) {
@@ -704,7 +869,6 @@ class TaskGraphExecutionService {
         const feature = typeof graph.feature === 'string' && graph.feature.trim().length > 0 ? graph.feature.trim() : path.basename(resolvedChangePath);
         const globalConstraints = stringArray(graph.global_constraints);
         const decisions = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
-        const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
         const dispatchableTasks = decisions.pendingRequired > 0 || decisions.blockers.length > 0
             ? []
             : this.selectDispatchableTasks(readyTasks, runningTasks);
@@ -737,14 +901,12 @@ class TaskGraphExecutionService {
             blockedTasks,
             invalidTasks,
             decisions,
-            checkpointEvidence,
             issues,
             scheduling,
             nextInstruction: this.getNextInstruction({
                 issues,
                 invalidTasks,
                 decisions,
-                checkpointEvidence,
                 dispatchableTasks,
                 runningTasks,
                 blockedTasks,
@@ -804,6 +966,7 @@ class TaskGraphExecutionService {
         const dispatchableTasks = options.taskId
             ? report.readyTasks.filter(task => task.id === options.taskId
                 && (report.runningTasks.length === 0 || task.parallelizable)
+                && report.runningTasks.every(runningTask => runningTask.parallelizable)
                 && report.runningTasks.every(runningTask => !tasksConflict(task, runningTask)))
             : typeof options.limit === 'number'
                 ? report.dispatchableTasks.slice(0, options.limit)
@@ -822,7 +985,7 @@ class TaskGraphExecutionService {
         const warnings = [...projectSession.warnings];
         const rawGraph = await this.fileService.readJSON(report.graphPath);
         const createdDispatches = [];
-        const gitStatusResult = this.runGit(projectRoot, [
+        const gitStatusResult = await this.runGit(projectRoot, [
             'status',
             '--porcelain=v2',
             '--branch',
@@ -833,7 +996,7 @@ class TaskGraphExecutionService {
         const gitSnapshot = gitStatusResult.ok
             ? parseGitDispatchSnapshot(gitStatusResult.stdout)
             : null;
-        const fallbackHeadCommit = gitSnapshot ? null : this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
+        const fallbackHeadCommit = gitSnapshot ? null : await this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
         const gitBaseCommit = gitSnapshot?.headCommit || fallbackHeadCommit;
         // Porcelain paths are relative to the command cwd, including when the
         // initialized OSpec project is nested below the repository root.
@@ -842,11 +1005,32 @@ class TaskGraphExecutionService {
             const files = entry.file.replace(/^"|"$/g, '').replace(/\\/g, '/').split(/\s+->\s+/);
             return files.some(file => !this.isGoalWorkspaceControlPath(file, changeRelativeToGit));
         };
-        const workspaceDirtyAtDispatch = gitSnapshot
-            ? parseGitStatusV2Entries(gitStatusResult.stdout).some(outsideCurrentChange)
-            : fallbackHeadCommit
-                ? this.parseGitStatusEntries(this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '').some(outsideCurrentChange)
-                : null;
+        // F30: a truncated `git status` used to arrive here as a SHORTER list of
+        // dirty files, and a short-enough one reads as a clean workspace. The
+        // fallback path was worse still: `readGitOutput` returned the partial
+        // string, `|| ''` could not tell it from "no output", and an empty
+        // porcelain status means clean by definition. Truncation is therefore
+        // resolved before either list is consulted, and it resolves to DIRTY --
+        // 8 MB of porcelain status is tens of thousands of entries, so "the
+        // workspace is dirty" is not merely the safe answer here, it is the
+        // certain one.
+        const fallbackStatus = !gitSnapshot && fallbackHeadCommit
+            ? await this.readGitOutputWithTruncation(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all'])
+            : null;
+        const workspaceStatusTruncated = gitSnapshot
+            ? gitStatusResult.stdoutTruncated === true
+            : fallbackStatus?.truncated === true;
+        if (workspaceStatusTruncated) {
+            warnings.push(this.gitTruncationReason('git status while recording whether the workspace was dirty at dispatch')
+                + ' The dispatch record marks the workspace dirty because a partial status cannot prove it clean.');
+        }
+        const workspaceDirtyAtDispatch = workspaceStatusTruncated
+            ? true
+            : gitSnapshot
+                ? parseGitStatusV2Entries(gitStatusResult.stdout).some(outsideCurrentChange)
+                : fallbackStatus
+                    ? this.parseGitStatusEntries(fallbackStatus.text || '').some(outsideCurrentChange)
+                    : null;
         const dispatchMetrics = [];
         for (const task of dispatchableTasks) {
             const actualTarget = controllerSession.controllerMode
@@ -1230,66 +1414,6 @@ class TaskGraphExecutionService {
             instructions,
         };
     }
-    async launchAndRun(changePath, options) {
-        throw new Error('Worker CLI launch was removed. Generate the launch plan and dispatch runtimeAdapter.selected.nativeSubagent through the current model harness.');
-        const command = options.command?.trim();
-        if (!command) {
-            throw new Error('Worker launch --run requires --command.');
-        }
-        const preparedLaunch = await this.withTaskGraphMutationLease(changePath, async () => {
-            const launch = await this.planLaunchUnlocked(changePath, {
-                taskId: options.taskId,
-                target: options.target,
-                dryRun: options.dryRun,
-            });
-            if (launch.status !== 'ready') {
-                throw new Error(`Cannot run worker until launch plan is ready: ${launch.blockers.join('; ') || 'launch blocked'}`);
-            }
-            const artifact = await this.fileService.readJSON(launch.artifactPath);
-            if (artifact.selectedDispatch?.id !== launch.dispatchId) {
-                throw new Error('Cannot run worker because the shared launch plan changed before it could be consumed.');
-            }
-            const immutableId = `launch-${this.toFileSafeId(launch.dispatchId || artifact.selectedDispatch.id)}-${this.toFileSafeTimestamp(new Date().toISOString())}`;
-            const immutableDir = path.join(path.resolve(changePath), 'artifacts', 'agents', 'launch-plans');
-            const immutableArtifactPath = path.join(immutableDir, `${immutableId}.json`);
-            const immutableReportPath = path.join(immutableDir, `${immutableId}.md`);
-            await this.fileService.writeJSON(immutableArtifactPath, artifact);
-            await this.writeLocalizedReportFile(path.resolve(changePath), immutableReportPath, this.buildWorkerLaunchPlanReport(artifact));
-            return {
-                launch: { ...launch, artifactPath: immutableArtifactPath, reportPath: immutableReportPath },
-                artifact,
-            };
-        });
-        const { launch, artifact: launchArtifact } = preparedLaunch;
-        const selected = launchArtifact.selectedDispatch;
-        if (!selected) {
-            throw new Error('Cannot run worker because launch plan did not select exactly one dispatch.');
-        }
-        const automaticUsagePath = path.join(path.resolve(changePath), 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${selected.id}.json`);
-        await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
-        return this.runWorkerCommand({
-            changePath: path.resolve(changePath),
-            projectRoot: launch.projectRoot,
-            kind: 'worker',
-            feature: launchArtifact.feature,
-            target: launch.target,
-            command,
-            taskId: selected.taskId,
-            dispatchId: selected.id,
-            reviewStage: null,
-            reviewDispatchId: null,
-            launchPlanPath: this.toChangeRelativePath(path.resolve(changePath), launch.artifactPath),
-            reviewArtifactPath: null,
-            environment: {
-                OSPEC_USAGE_FILE: automaticUsagePath,
-                OSPEC_RUN_ID: selected.id,
-                OSPEC_WORKFLOW_STAGE: selected.taskId.startsWith('repair-final-') ? 'repair' : 'implementation',
-            },
-            directoryName: WORKER_RUNS_DIR,
-            timeoutMs: options.timeoutMs,
-            nextInstruction: (record) => `Worker run ${record.id} finished with exit code ${record.exitCode ?? 'unknown'}. Run ospec execute collect ${this.quoteShellArg(this.toProjectRelativeChangePath(launch.projectRoot, path.resolve(changePath)))} --task ${this.quoteShellArg(selected.taskId)} to record the task result.`,
-        });
-    }
     async collectWorkerRun(changePath, options = {}) {
         return this.withTaskGraphMutationLease(changePath, () => this.collectWorkerRunUnlocked(changePath, options));
     }
@@ -1311,9 +1435,14 @@ class TaskGraphExecutionService {
             throw new Error(`Worker run ${record.id} has already been collected.`);
         }
         const completionStatus = options.status || (record.exitCode === 0 ? 'DONE' : 'BLOCKED');
+        // F5: an infra failure still blocks the task, but the summary has to say
+        // which of the two it was -- "exit code 1" and "the spawn never started"
+        // call for opposite next moves from whoever reads this.
         const summary = options.summary?.trim()
             || record.summary
-            || `Collected worker run ${record.id} with exit code ${record.exitCode ?? 'unknown'}.`;
+            || (record.infraFailure === true
+                ? `Collected worker run ${record.id}: infrastructure failure (exit code ${record.exitCode ?? 'unknown'}${record.signal ? `, signal ${record.signal}` : ''}). The harness could not run the work; fix the environment rather than the task.`
+                : `Collected worker run ${record.id} with exit code ${record.exitCode ?? 'unknown'}.`);
         const completion = await this.completeUnlocked(resolvedChangePath, record.taskId, {
             status: completionStatus,
             summary,
@@ -2129,288 +2258,6 @@ class TaskGraphExecutionService {
             .map(id => id.toUpperCase())
             .sort();
     }
-    async orchestrate(changePath, options = {}) {
-        throw new Error('CLI orchestration was removed. Use ospec loop run --once and dispatch the emitted batch through the current model harness native subagent API.');
-        const resolvedChangePath = path.resolve(changePath);
-        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
-        const startedAt = new Date().toISOString();
-        const feature = await this.readFeatureName(resolvedChangePath);
-        const runId = `orchestration-${this.toFileSafeTimestamp(startedAt)}-${this.toFileSafeId(feature)}`;
-        const artifactPath = path.join(this.getOrchestrationRunDir(resolvedChangePath), `${runId}.json`);
-        const reportPath = path.join(this.getOrchestrationRunDir(resolvedChangePath), `${runId}.md`);
-        const blockers = [];
-        const warnings = [];
-        const rounds = [];
-        const commandResolution = await this.resolveHarnessCommandTemplate(projectRoot, options);
-        const commandTemplate = commandResolution.commandTemplate;
-        const maxRounds = this.normalizePositiveInteger(options.maxRounds ?? commandResolution.maxRounds, DEFAULT_ORCHESTRATION_MAX_ROUNDS);
-        const timeoutMs = this.normalizeTimeoutMs(options.timeoutMs ?? commandResolution.timeoutMs);
-        const collect = options.collect !== false;
-        const continueOnFailure = options.continueOnFailure === true;
-        let workspaceStatus = 'missing';
-        warnings.push(...commandResolution.warnings);
-        if (!commandTemplate) {
-            blockers.push('No harness worker command template was provided. Pass --command or configure .ospec/harness.json.');
-        }
-        if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit <= 0)) {
-            blockers.push('Orchestration limit must be a positive integer.');
-        }
-        if (options.maxRounds !== undefined && (!Number.isInteger(options.maxRounds) || options.maxRounds <= 0)) {
-            blockers.push('Orchestration max rounds must be a positive integer.');
-        }
-        const workspace = await this.ensureWorkspaceReadyForOrchestration(resolvedChangePath);
-        workspaceStatus = workspace.status;
-        warnings.push(...workspace.warnings);
-        blockers.push(...workspace.blockers);
-        if (blockers.length === 0 && commandTemplate) {
-            for (let roundNumber = 1; roundNumber <= maxRounds; roundNumber += 1) {
-                const report = await this.getReport(resolvedChangePath);
-                if (report.issues.length > 0 || report.invalidTasks.length > 0) {
-                    blockers.push('Cannot orchestrate tasks until task graph issues and invalid tasks are resolved.');
-                    break;
-                }
-                let activeDispatches = await this.readActiveDispatches(resolvedChangePath, report.feature);
-                let dispatchesCreated = 0;
-                if (activeDispatches.length === 0) {
-                    if (report.dispatchableTasks.length === 0) {
-                        break;
-                    }
-                    const dispatch = await this.dispatch(resolvedChangePath, { limit: options.limit });
-                    activeDispatches = dispatch.dispatches;
-                    dispatchesCreated = dispatch.dispatches.length;
-                }
-                else {
-                    const safeSelection = this.selectParallelSafeActiveDispatches(activeDispatches, report);
-                    warnings.push(...safeSelection.warnings);
-                    activeDispatches = safeSelection.dispatches;
-                    if (activeDispatches.length === 0) {
-                        blockers.push('Active dispatches exist, but none are safe to run together. Resolve stale or conflicting dispatches before orchestration.');
-                        break;
-                    }
-                }
-                if (options.limit !== undefined) {
-                    activeDispatches = activeDispatches.slice(0, options.limit);
-                }
-                if (activeDispatches.length === 0) {
-                    break;
-                }
-                const round = {
-                    round: roundNumber,
-                    dispatchesCreated,
-                    activeDispatches: activeDispatches.length,
-                    tasks: [],
-                };
-                const runInputs = activeDispatches.map(dispatch => this.prepareOrchestrationTaskRun({
-                    changePath: resolvedChangePath,
-                    projectRoot,
-                    feature: report.feature,
-                    dispatch,
-                    commandTemplate,
-                    target: options.target,
-                    timeoutMs,
-                    dryRun: options.dryRun === true,
-                }));
-                const taskResults = await Promise.all(runInputs);
-                round.tasks.push(...taskResults);
-                rounds.push(round);
-                if (options.dryRun === true) {
-                    break;
-                }
-                for (const taskResult of taskResults) {
-                    if (!taskResult.runId || taskResult.error) {
-                        continue;
-                    }
-                    if (collect) {
-                        try {
-                            const collected = await this.collectWorkerRun(resolvedChangePath, {
-                                taskId: taskResult.taskId,
-                                runId: taskResult.runId,
-                            });
-                            taskResult.completionStatus = collected.completionStatus;
-                            taskResult.collected = true;
-                        }
-                        catch (error) {
-                            taskResult.error = error?.message || String(error);
-                        }
-                    }
-                }
-                const failed = taskResults.some(result => result.error || result.exitCode !== 0 || result.timedOut || result.completionStatus === 'BLOCKED' || result.completionStatus === 'NEEDS_CONTEXT');
-                if (failed && !continueOnFailure) {
-                    blockers.push('At least one worker failed, timed out, or recorded a blocking status.');
-                    break;
-                }
-                const nextReport = await this.getReport(resolvedChangePath);
-                if (nextReport.taskCount > 0
-                    && nextReport.completedTasks.length === nextReport.taskCount
-                    && nextReport.graphStatus.toLowerCase() === 'completed') {
-                    break;
-                }
-            }
-        }
-        const finalReadiness = await this.readOrchestrationFinalReadiness(resolvedChangePath);
-        warnings.push(...finalReadiness.warnings);
-        if (options.dryRun !== true && blockers.length === 0 && !finalReadiness.completed) {
-            blockers.push(finalReadiness.reason);
-        }
-        const completedAt = new Date().toISOString();
-        const status = options.dryRun === true
-            ? 'dry_run'
-            : blockers.length > 0
-                ? rounds.length > 0 ? 'partial' : 'blocked'
-                : 'completed';
-        const failedTasks = this.buildOrchestrationFailedTasks({
-            changePath: resolvedChangePath,
-            projectRoot,
-            rounds,
-        });
-        const nextInstruction = this.getOrchestrationNextInstruction(status, {
-            changePath: resolvedChangePath,
-            projectRoot,
-            rounds,
-            failedTasks,
-            blockers,
-        });
-        const artifact = {
-            version: '1.0',
-            id: runId,
-            feature,
-            status,
-            startedAt,
-            completedAt,
-            changePath: resolvedChangePath,
-            projectRoot,
-            target: options.target ?? commandResolution.target ?? null,
-            limit: options.limit ?? null,
-            maxRounds,
-            timeoutMs,
-            dryRun: options.dryRun === true,
-            collect,
-            continueOnFailure,
-            commandTemplate,
-            commandSource: commandResolution.source,
-            workspaceStatus,
-            rounds,
-            failedTasks,
-            blockers,
-            warnings,
-            nextInstruction,
-        };
-        await this.fileService.writeJSON(artifactPath, artifact);
-        await this.writeLocalizedReportFile(resolvedChangePath, reportPath, this.buildOrchestrationRunReport(artifact));
-        return {
-            changePath: resolvedChangePath,
-            projectRoot,
-            artifactPath,
-            reportPath,
-            status,
-            rounds,
-            failedTasks,
-            blockers,
-            warnings,
-            nextInstruction,
-        };
-    }
-    async runReview(changePath, options) {
-        throw new Error('Reviewer CLI execution was removed. Dispatch the review packet through a fresh model-native subagent.');
-        const command = options.command?.trim();
-        if (!command) {
-            throw new Error('Review --run requires --command.');
-        }
-        const resolvedChangePath = path.resolve(changePath);
-        const loopControllerSession = await this.readLoopControllerSession(resolvedChangePath);
-        if (loopControllerSession.controllerMode) {
-            throw new Error('Review --run was removed; dispatch the review through the current IDE native-subagent Loop lifecycle.');
-        }
-        const review = await this.review(changePath, { stage: options.stage, taskId: options.taskId });
-        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
-        const automaticUsagePath = path.join(resolvedChangePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${review.dispatch.id}.json`);
-        await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
-        const run = await this.runWorkerCommand({
-            changePath: resolvedChangePath,
-            projectRoot,
-            kind: 'review',
-            feature: await this.readFeatureName(resolvedChangePath),
-            target: 'shell',
-            command,
-            taskId: review.dispatch.taskId || null,
-            dispatchId: null,
-            reviewStage: review.dispatch.stage,
-            reviewDispatchId: review.dispatch.id,
-            launchPlanPath: null,
-            reviewArtifactPath: review.dispatch.reviewArtifactPath,
-            environment: {
-                OSPEC_USAGE_FILE: automaticUsagePath,
-                OSPEC_RUN_ID: review.dispatch.id,
-                OSPEC_WORKFLOW_STAGE: review.dispatch.taskId ? 'task_review' : 'final_review',
-            },
-            directoryName: REVIEW_RUNS_DIR,
-            timeoutMs: options.timeoutMs,
-            nextInstruction: (record) => `Review run ${record.id} finished with exit code ${record.exitCode ?? 'unknown'}. Update ${review.dispatch.reviewArtifactPath}, then run ospec execute sync ${this.quoteShellArg(this.toProjectRelativeChangePath(projectRoot, resolvedChangePath))}.`,
-        });
-        const usagePath = options.usageFile
-            || (await this.fileService.exists(automaticUsagePath) ? automaticUsagePath : null);
-        const usage = usagePath ? await this.readExecutionUsageFile(usagePath) : null;
-        const workflowStage = review.dispatch.taskId ? 'task_review' : 'final_review';
-        const metricEntries = [{
-                kind: 'review_run',
-                id: review.dispatch.id,
-                taskId: review.dispatch.taskId || null,
-                path: run.recordPath,
-                recordedAt: run.record.completedAt,
-                durationMs: Math.max(0, Date.parse(run.record.completedAt) - Date.parse(run.record.startedAt)),
-                capabilityTier: review.dispatch.workerProfile?.capabilityTier || 'unknown',
-                modelProfile: review.dispatch.workerProfile?.modelProfile || null,
-                model: review.dispatch.workerProfile?.model || null,
-                workflowStage,
-            }];
-        if (usage) {
-            metricEntries.push({
-                kind: 'usage',
-                id: review.dispatch.id,
-                taskId: review.dispatch.taskId || null,
-                path: null,
-                recordedAt: run.record.completedAt,
-                durationMs: usage.elapsedMs,
-                usage,
-                capabilityTier: review.dispatch.workerProfile?.capabilityTier || 'unknown',
-                modelProfile: review.dispatch.workerProfile?.modelProfile || null,
-                model: review.dispatch.workerProfile?.model || null,
-                workflowStage,
-            });
-        }
-        await this.withTaskGraphMutationLease(resolvedChangePath, async () => this.recordExecutionMetric(resolvedChangePath, await this.readFeatureName(resolvedChangePath), metricEntries));
-        let workerStatusPath = review.workerStatusPath;
-        const decision = options.decision || null;
-        if (decision) {
-            const sync = await this.withTaskGraphMutationLease(resolvedChangePath, async () => {
-                const reviewArtifactPath = path.resolve(resolvedChangePath, review.dispatch.reviewArtifactPath);
-                const current = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-                await this.assertCurrentReviewDispatch(resolvedChangePath, this.taskReviewScopeKey(review.dispatch.taskId || null), review.dispatch.id);
-                if (String(current.data?.review_dispatch_id || '') !== review.dispatch.id) {
-                    throw new Error(`Review run ${run.record.id} is stale because a newer review dispatch replaced ${review.dispatch.id}.`);
-                }
-                await this.applyReviewRunDecision(resolvedChangePath, review.dispatch.reviewArtifactPath, {
-                    decision,
-                    summary: options.summary,
-                    run,
-                });
-                return this.syncWorkerStatusUnlocked(resolvedChangePath);
-            });
-            workerStatusPath = sync.workerStatusPath;
-        }
-        return {
-            changePath: resolvedChangePath,
-            review,
-            run,
-            workerStatusPath,
-            decision,
-            nextInstruction: decision
-                ? review.dispatch.taskId
-                    ? this.getTaskReviewRunDecisionNextInstruction(review.dispatch.taskId, review.dispatch.stage, decision)
-                    : `Review decision ${decision} recorded. Continue with ospec execute feedback ${this.quoteShellArg(this.toProjectRelativeChangePath(projectRoot, resolvedChangePath))} --stage ${review.dispatch.stage}.`
-                : `Review run recorded. Update ${review.dispatch.reviewArtifactPath} with findings and decision, then run ospec execute sync.`,
-        };
-    }
     async complete(changePath, taskId, options = {}) {
         return this.withTaskGraphMutationLease(changePath, () => this.completeUnlocked(changePath, taskId, options));
     }
@@ -2523,7 +2370,7 @@ class TaskGraphExecutionService {
             dispatch.completedAt = now;
             dispatch.summary = summary;
             const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
-            dispatch.gitHeadAtCompletion = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
+            dispatch.gitHeadAtCompletion = await this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']);
             dispatch.documentationEvidence = await this.captureDocumentationEvidence(projectRoot, dispatch.documentationBaseline || []);
             await this.fileService.writeJSON(path.join(resolvedChangePath, dispatch.recordPath), dispatch);
         }
@@ -2578,6 +2425,13 @@ class TaskGraphExecutionService {
             });
         }
         const workerReportPath = ['artifacts', 'agents', WORKER_REPORTS_DIR, `${this.toFileSafeId(normalizedTaskId) || 'task'}.md`].join('/');
+        if (options.report) {
+            // The JSON is the authority the controller reads; the Markdown at
+            // the existing path is rendered from it so humans lose nothing and
+            // a reviewer's `- Worker report:` link keeps resolving.
+            await this.fileService.writeJSON(path.join(resolvedChangePath, workerReportPath.replace(/\.md$/i, '.json')), options.report);
+            await this.writeLocalizedReportFile(resolvedChangePath, path.join(resolvedChangePath, workerReportPath), (0, structuredReports_1.renderWorkerReportMarkdown)(normalizedTaskId, options.report));
+        }
         if (await this.fileService.exists(path.join(resolvedChangePath, workerReportPath))) {
             completionMetrics.push({
                 kind: 'worker_report',
@@ -2622,6 +2476,51 @@ class TaskGraphExecutionService {
                         : 'Run ospec execute status to inspect remaining work.',
         };
     }
+    /**
+     * F2: record a review verdict from a validated JSON decision file.
+     *
+     * Updates the EXISTING review artifact in place rather than writing a fresh
+     * one: the frontmatter carries provenance (`review_dispatch_id`, executor
+     * binding) that the review gates read, and regenerating it from the JSON
+     * would drop exactly the keys that make the decision trustworthy. Only
+     * `decision` and `reviewed_at` are replaced; the body is rendered from the
+     * JSON, and the sibling `*.findings.json` is written so the gates read
+     * explicit severities instead of the Markdown fallback's `unknown`.
+     */
+    async recordReviewDecision(changePath, options) {
+        const resolvedChangePath = path.resolve(changePath);
+        const relative = String(options.reviewArtifactPath || '').trim();
+        if (!relative)
+            throw new Error('Recording a review decision requires the review artifact path.');
+        const absolute = path.isAbsolute(relative) ? path.resolve(relative) : path.resolve(resolvedChangePath, relative);
+        const normalized = absolute.replace(/\\/g, '/');
+        if (!normalized.includes('/artifacts/reviews/')) {
+            throw new Error(`Review artifact ${relative} must live under artifacts/reviews/ inside the goal; got ${absolute}.`);
+        }
+        if (!(await this.fileService.exists(absolute))) {
+            throw new Error(`Review artifact ${relative} does not exist. Run the review dispatch first; a decision may only settle a review that was issued.`);
+        }
+        const existing = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(absolute));
+        const title = String(existing.data?.title || path.basename(absolute, '.md'));
+        // The renderer emits its own frontmatter; strip it and keep the
+        // artifact's original provenance frontmatter instead.
+        const body = (0, structuredReports_1.renderReviewDecisionMarkdown)(title, options.decision).replace(/^---\n[\s\S]*?\n---\n/, '');
+        const frontmatter = {
+            ...(existing.data || {}),
+            decision: options.decision.decision,
+            reviewed_at: new Date().toISOString(),
+        };
+        await this.writeLocalizedReportFile(resolvedChangePath, absolute, (0, helpers_1.stringifyFrontmatter)(body, frontmatter));
+        const findingsPath = absolute.replace(/\.md$/i, '.findings.json');
+        await this.fileService.writeJSON(findingsPath, (0, structuredReports_1.renderReviewFindingsDocument)(options.decision));
+        return {
+            reviewArtifactPath: this.toChangeRelativePath(resolvedChangePath, absolute),
+            findingsPath: this.toChangeRelativePath(resolvedChangePath, findingsPath),
+            decision: options.decision.decision,
+            findings: options.decision.findings.length,
+            nextInstruction: `Review decision ${options.decision.decision} recorded with ${options.decision.findings.length} structured finding(s). Run ospec loop step / ospec loop run --once so the controller observes it.`,
+        };
+    }
     async syncWorkerStatus(changePath) {
         return this.withTaskGraphMutationLease(changePath, () => this.syncWorkerStatusUnlocked(changePath));
     }
@@ -2642,7 +2541,7 @@ class TaskGraphExecutionService {
         const specReviewerStatus = finalReviewerStatus;
         const qualityReviewerStatus = finalReviewerStatus;
         const implementerStatus = this.deriveImplementerWorkerStatus(tasks, report);
-        const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), report.feature);
+        const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), report.feature, { changePath: resolvedChangePath, report });
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), report.feature);
         const debugEvidence = await this.readDebugEvidence(this.getDebugEvidencePath(resolvedChangePath), report.feature);
         const latestBlockerEscalation = await this.readLatestBlockerEscalation(resolvedChangePath);
@@ -3187,6 +3086,7 @@ class TaskGraphExecutionService {
                 afterSnapshotHash: null,
                 workspaceGitHead: workspaceBaseline?.gitHead || null,
                 workspaceBaselineSnapshots: workspaceBaseline?.snapshots || null,
+                workspaceBaselineTruncated: workspaceBaseline?.truncated === true,
                 recordPath: this.toChangeRelativePath(resolvedChangePath, existingPath),
                 packetPath: this.toChangeRelativePath(resolvedChangePath, packetPath),
                 baselineFiles,
@@ -3476,7 +3376,7 @@ class TaskGraphExecutionService {
             '### Repaired Findings To Verify',
             '',
             ...(record.findings || []).map(finding => `- ${this.renderReviewFinding(finding)}`),
-            ...this.buildPlanningRepairDiffSections(changePath, projectRoot, record),
+            ...(await this.buildPlanningRepairDiffSections(changePath, projectRoot, record)),
         ];
     }
     /**
@@ -3513,7 +3413,7 @@ class TaskGraphExecutionService {
             ...findings.map(finding => `- ${this.renderReviewFinding(finding)}`),
         ];
     }
-    buildPlanningRepairDiffSections(changePath, projectRoot, record) {
+    async buildPlanningRepairDiffSections(changePath, projectRoot, record) {
         if (!Array.isArray(record.baselineFiles) || record.baselineFiles.length === 0) {
             return [
                 '',
@@ -3530,7 +3430,7 @@ class TaskGraphExecutionService {
             }
             const baselineAbsolute = path.join(changePath, ...item.baselinePath.split('/'));
             const currentAbsolute = path.resolve(projectRoot, ...item.path.split('/'));
-            const diff = this.runGit(projectRoot, ['diff', '--no-index', '--unified=3', '--', baselineAbsolute, currentAbsolute]);
+            const diff = await this.runGit(projectRoot, ['diff', '--no-index', '--unified=3', '--', baselineAbsolute, currentAbsolute]);
             if (diff.status === 0) {
                 sections.push(`- ${item.path}: unchanged by the repair.`);
                 continue;
@@ -3538,6 +3438,11 @@ class TaskGraphExecutionService {
             if (diff.status !== 1 || !diff.stdout.trim()) {
                 sections.push(`- ${item.path}: diff unavailable; compare ${item.baselinePath} against the current file.`);
                 continue;
+            }
+            // F30: informational. `truncateForPacket` already caps this at 250
+            // lines, so the git-level cut is invisible unless it is named.
+            if (diff.stdoutTruncated === true) {
+                sections.push(`- ${item.path}: the diff below is INCOMPLETE (${this.gitTruncationReason('git diff')})`);
             }
             sections.push(`#### ${item.path}`, '', '```diff', this.truncateForPacket(diff.stdout, 250), '```', '');
         }
@@ -3585,7 +3490,7 @@ class TaskGraphExecutionService {
         };
     }
     async capturePlanningRepairWorkspaceBaseline(projectRoot) {
-        const status = this.runGit(projectRoot, [
+        const status = await this.runGit(projectRoot, [
             'status',
             '--porcelain=v2',
             '--untracked-files=all',
@@ -3596,14 +3501,22 @@ class TaskGraphExecutionService {
             return null;
         const paths = this.parseGitStatusV2ZPaths(status.stdout);
         return {
-            gitHead: this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
+            gitHead: await this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
             snapshots: await this.captureTargetSnapshots(projectRoot, paths),
+            // F30: a truncated baseline is a baseline missing files, and every
+            // missing file reads as "unchanged" at validation time. The scope
+            // check cannot be run against it, so the fact is recorded and the
+            // validation below refuses rather than certifying scope it never saw.
+            truncated: status.stdoutTruncated === true,
         };
     }
     async validatePlanningRepairWorkspaceScope(changePath, record, context) {
         if (!Array.isArray(record.workspaceBaselineSnapshots))
             return null;
-        const status = this.runGit(context.projectRoot, [
+        if (record.workspaceBaselineTruncated === true) {
+            return `Grouped planning repair workspace scope cannot be verified: ${this.gitTruncationReason('the baseline git status')}`;
+        }
+        const status = await this.runGit(context.projectRoot, [
             'status',
             '--porcelain=v2',
             '--untracked-files=all',
@@ -3613,7 +3526,10 @@ class TaskGraphExecutionService {
         if (!status.ok) {
             return 'Grouped planning repair workspace scope cannot be verified because Git status is unavailable.';
         }
-        const currentHead = this.readGitOutput(context.projectRoot, ['rev-parse', 'HEAD']) || null;
+        if (status.stdoutTruncated === true) {
+            return `Grouped planning repair workspace scope cannot be verified: ${this.gitTruncationReason('git status')}`;
+        }
+        const currentHead = await this.readGitOutput(context.projectRoot, ['rev-parse', 'HEAD']) || null;
         if (record.workspaceGitHead !== currentHead) {
             return 'Grouped planning repair changed Git HEAD; planning repair workers may not commit or switch revisions.';
         }
@@ -3908,6 +3824,74 @@ class TaskGraphExecutionService {
             warnings,
             nextInstruction: `Hand the combined final code review packet to one reviewer (spec compliance + code quality in a single pass), then update ${record.reviewArtifactPath} with one decision and run ospec execute sync.`,
         };
+    }
+    /**
+     * M-race5: releases task-graph bindings that no Loop action owns.
+     *
+     * `bindReviewLoopAction` and `bindPlanningRepairLoopAction` are one-shot:
+     * both refuse a record already bound to a different action, and until now
+     * neither had an inverse. That is correct while the binding belongs to a
+     * live action and fatal when it does not -- a crash between the bindings
+     * and the loop-state write leaves records naming an `actionId` that no
+     * `pendingControllerAction` will ever claim, and every subsequent tick dies
+     * on the guard. This is the inverse, and it is deliberately narrow: it
+     * releases bindings for ONE named action and touches nothing else, so it
+     * cannot be used to unbind a live one.
+     *
+     * The planning-repair record goes back to `ready` rather than to some
+     * neutral value: `bindPlanningRepairLoopAction` only ever moves `ready ->
+     * dispatched` (it returns early when already dispatched to the same action
+     * and throws when completed), so `ready` is the exact state it left.
+     */
+    async releaseLoopActionBindings(changePath, actionId) {
+        return this.withTaskGraphMutationLease(changePath, async () => {
+            const resolvedChangePath = path.resolve(changePath);
+            const reviewDispatchIds = [];
+            const dispatchesDir = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR);
+            if (await this.fileService.exists(dispatchesDir)) {
+                const entries = (await fs_1.promises.readdir(dispatchesDir, { withFileTypes: true }))
+                    .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+                    .sort((left, right) => left.name.localeCompare(right.name));
+                for (const entry of entries) {
+                    const recordPath = path.join(dispatchesDir, entry.name);
+                    const result = await this.fileService.readJsonSafe(recordPath);
+                    // A damaged dispatch record is not this method's problem to
+                    // diagnose, and it cannot be bound to the orphaned action
+                    // in any way this can verify. Every reader of that record
+                    // still reports it; releasing bindings must not become the
+                    // place that decides what a corrupt dispatch means.
+                    if (result.status !== 'ok')
+                        continue;
+                    const record = result.value;
+                    if (record.loopActionId !== actionId)
+                        continue;
+                    record.loopActionId = null;
+                    record.loopActionItemId = null;
+                    record.controllerSessionReportedAt = null;
+                    record.reviewerExecutorId = null;
+                    record.reviewerClaimedAt = null;
+                    record.reviewerCompletedAt = null;
+                    record.reviewerSucceeded = null;
+                    await this.fileService.writeJSON(recordPath, record);
+                    reviewDispatchIds.push(record.id);
+                }
+            }
+            let planningRepairReleased = false;
+            const planningRepairPath = path.join(resolvedChangePath, 'artifacts', 'agents', PLANNING_REPAIR_FILE);
+            if (await this.fileService.exists(planningRepairPath)) {
+                const result = await this.fileService.readJsonSafe(planningRepairPath);
+                if (result.status === 'ok'
+                    && result.value.loopActionId === actionId
+                    && result.value.status === 'dispatched') {
+                    result.value.status = 'ready';
+                    result.value.loopActionId = null;
+                    result.value.loopActionItemId = null;
+                    await this.fileService.writeJSON(planningRepairPath, result.value);
+                    planningRepairReleased = true;
+                }
+            }
+            return { reviewDispatchIds, planningRepairReleased };
+        });
     }
     async bindReviewLoopAction(changePath, options) {
         return this.withTaskGraphMutationLease(changePath, async () => {
@@ -4706,10 +4690,11 @@ class TaskGraphExecutionService {
     }
     async assertCurrentReviewDispatch(changePath, scope, dispatchId) {
         const indexPath = this.getCurrentReviewDispatchIndexPath(changePath);
-        if (!(await this.fileService.exists(indexPath))) {
+        const indexText = await this.readValidationInputText(indexPath);
+        if (indexText === null) {
             throw new Error(`Review dispatch ${dispatchId} has no current-dispatch index provenance.`);
         }
-        const index = await this.fileService.readJSON(indexPath);
+        const index = this.parseValidationInputJSON(indexText, indexPath);
         const currentDispatchId = index.dispatches?.[scope];
         if (currentDispatchId !== dispatchId) {
             throw new Error(`Review dispatch ${dispatchId} is stale; current dispatch for ${scope} is ${currentDispatchId || '(missing)'}.`);
@@ -4767,7 +4752,7 @@ class TaskGraphExecutionService {
             const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
             const binding = {
                 expectedCommand: options.expectedCommand?.trim() || null,
-                gitHead: this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
+                gitHead: await this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
                 targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
             };
             const record = {
@@ -4898,15 +4883,20 @@ class TaskGraphExecutionService {
             throw new Error('Verification evidence requires a non-empty command.');
         }
         const status = this.normalizeVerificationEvidenceStatus(options.status);
-        const exitCode = typeof options.exitCode === 'number' && Number.isFinite(options.exitCode)
-            ? options.exitCode
-            : null;
+        const outcome = this.normalizeOutcomeFields(options, 'Verification evidence');
+        const exitCode = outcome.exitCode;
         if (status === 'PASSED' && exitCode !== 0) {
             throw new Error('PASSED verification evidence requires an explicit exit code of 0.');
         }
+        // F5: the four outcome fields are orthogonal, so a PASSED record cannot
+        // also claim it timed out, was signalled, or never ran. Accepting that
+        // combination is how a green record ends up describing a red run.
+        if (status === 'PASSED' && (outcome.timedOut || outcome.infraFailure || outcome.signal)) {
+            throw new Error('PASSED verification evidence cannot also be reported as timed out, signalled, or an infrastructure failure.');
+        }
         const now = new Date().toISOString();
         const evidencePath = this.getVerificationEvidencePath(resolvedChangePath);
-        const evidence = await this.readVerificationEvidence(evidencePath, report.feature);
+        const evidence = await this.readVerificationEvidence(evidencePath, report.feature, { changePath: resolvedChangePath, report });
         const requirements = await this.readVerificationRequirements(resolvedChangePath, report.feature);
         const satisfies = this.normalizeVerificationRequirementIds(options.satisfies || []);
         const knownRequirementIds = new Set(requirements.requirements.map(item => item.id));
@@ -4922,7 +4912,7 @@ class TaskGraphExecutionService {
         const targetSnapshots = await this.captureTargetSnapshots(projectRoot, targetFiles);
         const loopProvenance = await this.validateVerificationLoopProvenance(resolvedChangePath, options, {
             command,
-            gitHead: this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
+            gitHead: await this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null,
             targetFiles,
             targetSnapshots,
             targetSnapshotHash: this.hashTargetSnapshots(targetSnapshots),
@@ -4932,6 +4922,9 @@ class TaskGraphExecutionService {
             command,
             status,
             exitCode,
+            timedOut: outcome.timedOut,
+            signal: outcome.signal,
+            infraFailure: outcome.infraFailure,
             recordedAt: now,
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
@@ -5014,6 +5007,9 @@ class TaskGraphExecutionService {
         });
     }
     async validateVerificationRequirements(changePath) {
+        return this.withValidationScope(() => this.validateVerificationRequirementsUnscoped(changePath));
+    }
+    async validateVerificationRequirementsUnscoped(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const feature = await this.readFeatureName(resolvedChangePath);
         const artifactPath = this.getVerificationRequirementsPath(resolvedChangePath);
@@ -5022,10 +5018,18 @@ class TaskGraphExecutionService {
         if (required.length === 0) {
             return { ready: true, artifactPath, required: 0, satisfied: [], pending: [], reason: null };
         }
-        const evidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
+        // Every record here is judged against the same tree at the same commit,
+        // so the snapshot is captured once and reused instead of being rebuilt
+        // (plus a git spawn) for each of them.
+        const lookup = {
+            changePath: resolvedChangePath,
+            context: this.memoiseVerificationFreshnessContext(resolvedChangePath),
+        };
+        const evidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature, lookup);
         const satisfied = new Set();
         for (const record of evidence.records) {
-            if (record.status !== 'PASSED' || !(await this.isPassingVerificationRecordFresh(resolvedChangePath, record)))
+            if (record.status !== 'PASSED'
+                || !(await this.isPassingVerificationRecordFresh(resolvedChangePath, record, lookup)))
                 continue;
             for (const id of this.normalizeVerificationRequirementIds(record.satisfies || []))
                 satisfied.add(id);
@@ -5071,7 +5075,7 @@ class TaskGraphExecutionService {
             phase,
             command,
             status,
-            exitCode: typeof options.exitCode === 'number' && Number.isFinite(options.exitCode) ? options.exitCode : null,
+            ...this.normalizeOutcomeFields(options, 'TDD evidence'),
             recordedAt: now,
             recordPath: this.toChangeRelativePath(resolvedChangePath, recordPath),
             reportPath: this.toChangeRelativePath(resolvedChangePath, reportPath),
@@ -5159,7 +5163,7 @@ class TaskGraphExecutionService {
         const warnings = [];
         const artifactPath = this.getWorkspaceStatusPath(resolvedChangePath);
         const reportPath = this.getWorkspaceStatusReportPath(resolvedChangePath);
-        const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
+        const gitRootResult = await this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
         let artifact;
         if (!gitRootResult.ok) {
             warnings.push('Git repository could not be inspected; workspace safety requires manual review.');
@@ -5199,9 +5203,17 @@ class TaskGraphExecutionService {
         }
         else {
             const gitRoot = path.resolve(gitRootResult.stdout.trim());
-            const branch = this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
-            const head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
-            const statusOutput = this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '';
+            const branch = await this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
+            const head = await this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
+            // F30: a truncated status is a SHORTER list of dirty files, and this
+            // gate reads a short-enough list as `ready`. It is the one decision
+            // in this file that authorizes parallel dispatch, so it refuses on a
+            // partial answer instead of certifying one.
+            const statusRead = await this.readGitOutputWithTruncation(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+            const statusOutput = statusRead.text || '';
+            if (statusRead.truncated) {
+                blockers.push(this.gitTruncationReason('git status'));
+            }
             const changeRelative = path.relative(gitRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
             const projectRelative = path.relative(gitRoot, projectRoot).replace(/\\/g, '/').replace(/\/$/, '');
             const statusEntries = this.parseGitStatusEntries(statusOutput).filter(entry => {
@@ -5227,7 +5239,13 @@ class TaskGraphExecutionService {
                     blockingStatusEntries.push(entry);
                 }
             }
-            const worktreesOutput = this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '';
+            const worktreeRead = await this.readGitOutputWithTruncation(projectRoot, ['worktree', 'list', '--porcelain']);
+            if (worktreeRead.truncated) {
+                // A short worktree list hides the same-branch collision below,
+                // and hiding it is what lets two workers share a checkout.
+                blockers.push(this.gitTruncationReason('git worktree list'));
+            }
+            const worktreesOutput = worktreeRead.text || '';
             const worktrees = this.parseGitWorktrees(worktreesOutput);
             const currentWorktree = this.findCurrentWorktree(gitRoot, worktrees);
             const dirty = statusEntries.length > 0;
@@ -5352,24 +5370,40 @@ class TaskGraphExecutionService {
         }
     }
     async validateTaskReviewEvidence(changePath, taskId) {
-        return this.validateReviewEvidence(changePath, taskId, false);
+        return this.withValidationScope(() => this.validateReviewEvidence(changePath, taskId, false));
     }
     async validatePlanningReviewEvidence(changePath) {
-        return this.validateReviewEvidence(changePath, null, true);
+        return this.withValidationScope(() => this.validateReviewEvidence(changePath, null, true));
     }
+    /**
+     * Resolves the two things both public entry points need and hands off to
+     * the evidence path, which is always run in full. There is deliberately no
+     * verdict cache in front of this: see the note at the top of this file.
+     */
     async validateReviewEvidence(changePath, taskId, planning) {
         const resolvedChangePath = path.resolve(changePath);
+        const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
+        return this.validateReviewEvidenceAgainstDisk(resolvedChangePath, taskId, planning, projectRoot);
+    }
+    async validateReviewEvidenceAgainstDisk(resolvedChangePath, taskId, planning, projectRoot) {
         const reviewArtifactPath = planning
             ? path.join(resolvedChangePath, 'artifacts', 'reviews', PLANNING_REVIEW_FILE)
             : taskId
                 ? path.join(resolvedChangePath, this.getTaskCombinedReviewArtifactRelativePath(taskId))
                 : path.join(resolvedChangePath, 'artifacts', 'reviews', constants_1.FILE_NAMES.FINAL_REVIEW);
         const label = planning ? 'Combined planning review' : taskId ? `Task ${taskId} code review` : 'Final code review';
-        if (!(await this.fileService.exists(reviewArtifactPath))) {
+        let reviewText;
+        try {
+            reviewText = await this.readValidationInputText(reviewArtifactPath);
+        }
+        catch (error) {
+            return { ready: false, reason: `${label} evidence could not be validated (${error?.message || error}).` };
+        }
+        if (reviewText === null) {
             return { ready: false, reason: `${label} evidence is missing.` };
         }
         try {
-            const review = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
+            const review = (0, helpers_1.parseFrontmatterDocument)(reviewText);
             const decision = this.normalizeReviewRunDecision(review.data?.decision);
             if (decision === 'PENDING') {
                 return { ready: false, reason: `${label} decision is PENDING.` };
@@ -5379,10 +5413,11 @@ class TaskGraphExecutionService {
                 return { ready: false, reason: `${label} has no valid dispatch provenance.` };
             }
             const dispatchPath = path.join(resolvedChangePath, 'artifacts', 'agents', REVIEW_DISPATCHES_DIR, `${dispatchId}.json`);
-            if (!(await this.fileService.exists(dispatchPath))) {
+            const dispatchText = await this.readValidationInputText(dispatchPath);
+            if (dispatchText === null) {
                 return { ready: false, reason: `${label} dispatch record is missing.` };
             }
-            const dispatch = await this.fileService.readJSON(dispatchPath);
+            const dispatch = this.parseValidationInputJSON(dispatchText, dispatchPath);
             const expectedArtifact = this.toChangeRelativePath(resolvedChangePath, reviewArtifactPath);
             if (dispatch.id !== dispatchId
                 || (dispatch.taskId || null) !== taskId
@@ -5437,7 +5472,6 @@ class TaskGraphExecutionService {
                 || this.hashTargetSnapshots(dispatch.targetSnapshots) !== dispatch.targetSnapshotHash) {
                 return { ready: false, reason: `${label} target-file snapshot provenance is invalid.` };
             }
-            const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
             const currentSnapshots = planning && dispatch.snapshotContract === PLANNING_SNAPSHOT_CONTRACT
                 ? await this.capturePlanningSemanticSnapshots(projectRoot, dispatch.targetFiles)
                 : await this.captureTargetSnapshots(projectRoot, dispatch.targetFiles);
@@ -5457,17 +5491,78 @@ class TaskGraphExecutionService {
                     return { ready: false, reason: `${label} target files changed after review dispatch; dispatch a fresh review (${carryForward.reason}).` };
                 }
             }
-            const currentHead = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null;
-            // Planning approvals are anchored to planning semantics, not the commit
-            // graph: implementation-phase commits must not invalidate them.
-            if (dispatch.gitHead && currentHead !== dispatch.gitHead && !taskId && !planning && !downstreamCarryForward) {
-                return { ready: false, reason: `${label} Git HEAD changed after review dispatch; dispatch a fresh review.` };
+            /*
+             * FIX-1: the final review resolves HEAD outside the per-scope memo,
+             * because the refusal just below fires when HEAD has moved and the
+             * memo cannot see another process's commit. A task or planning
+             * review never reaches that refusal (`!taskId && !planning` guards
+             * it), so those keep the memo -- which is what holds
+             * `archive --check`'s 8-wide fan-out at one git spawn, not eight.
+             *
+             * FIX-4 corrects what FIX-1 wrote here. It claimed the final review
+             * was "the ONE verdict that refuses on a moved HEAD". It was not:
+             * `isPassingVerificationRecordFresh` refuses on a moved HEAD too and
+             * was reading its `currentHead` straight out of the memo, so an
+             * external commit inside an open scope served a stale PASS for
+             * verification evidence. Both call sites now go through
+             * `readValidationGitHead`'s mandatory `use` discriminator; see the
+             * note on that method for the full enumeration.
+             *
+             * FIX-4 also noticed, and deliberately did not act on, the fact that
+             * this was the memo's ONLY consumer and that it DISCARDED the
+             * memoised value: the refusal below is guarded by
+             * `!taskId && !planning`, which is exactly the condition under which
+             * the fresh read was taken instead.
+             *
+             * Phase 6 re-derived that and acted on it. The read moved inside
+             * the refusal, so a task or planning review no longer resolves a
+             * HEAD it never compares. Measured on the same 8-task fan-out those
+             * two pinned tests use: 1 spawn before, 0 after.
+             *
+             * What was NOT retired, and why the `use` discriminator stays:
+             * `'memoisable'` now has no callers, but the memo machinery behind
+             * it cannot be removed from this track. `withValidationScope` is
+             * public and its ENTIRE body is the memo, so retiring the memo
+             * means retiring the scope, and the scope is called from
+             * `ArchiveCommand` (Phase 6 track A's file),
+             * `tests/perf/controller-tick-bench.mjs` (track C's), plus
+             * `ExecuteCommand`, `VerificationService` and `LoopService`.
+             *
+             * While the memo exists, `use` is load-bearing regardless of how
+             * many callers pass which value: it is what stops the NEXT caller
+             * from silently reading a HEAD that another process has already
+             * moved. Dropping a mandatory discriminator because today's callers
+             * happen to agree is how FIX-1 got this wrong the first time.
+             */
+            /*
+             * Planning approvals are anchored to planning semantics, not the
+             * commit graph: implementation-phase commits must not invalidate
+             * them. The guard below is unchanged; what changed is that HEAD is
+             * now resolved INSIDE it.
+             *
+             * It used to be resolved unconditionally, `memoisable` whenever the
+             * refusal could not fire, so a task or planning review paid a git
+             * spawn for a value it then discarded -- and paid it exactly in the
+             * case the memo existed to make cheap. Resolving it where it is
+             * read costs one fresh spawn for a final review, which that path
+             * always paid anyway, and ZERO for every other review.
+             *
+             * Measured on the 8-task fan-out that
+             * `resolves HEAD once for a serial/CONCURRENT batched sweep` pins:
+             * 1 spawn before, 0 after.
+             */
+            if (!taskId && !planning && !downstreamCarryForward && dispatch.gitHead) {
+                const currentHead = await this.readValidationGitHead(projectRoot, 'refusal-condition');
+                if (currentHead !== dispatch.gitHead) {
+                    return { ready: false, reason: `${label} Git HEAD changed after review dispatch; dispatch a fresh review.` };
+                }
             }
             const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
-            if (!(await this.fileService.exists(findingsPath))) {
+            const findingsText = await this.readValidationInputText(findingsPath);
+            if (findingsText === null) {
                 return { ready: false, reason: `${label} structured findings are missing.` };
             }
-            await this.readReviewFindings(reviewArtifactPath, review.content);
+            this.parseReviewFindingsDocument(findingsPath, findingsText);
             return { ready: true, reason: null };
         }
         catch (error) {
@@ -5497,9 +5592,12 @@ class TaskGraphExecutionService {
         return validation.ready ? decision : 'PENDING';
     }
     async validateLatestVerificationEvidence(changePath) {
+        return this.withValidationScope(() => this.validateLatestVerificationEvidenceUnscoped(changePath));
+    }
+    async validateLatestVerificationEvidenceUnscoped(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const report = await this.getReport(resolvedChangePath);
-        const evidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), report.feature);
+        const evidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), report.feature, { changePath: resolvedChangePath, report });
         return evidence.status === 'passed'
             ? { ready: true, reason: null }
             : { ready: false, reason: `Latest verification evidence is not fresh and passing (current: ${evidence.status}).` };
@@ -5519,14 +5617,22 @@ class TaskGraphExecutionService {
                 return { ready: false, reason: 'Workspace safety evidence lacks a Git fingerprint; rerun workspace inspection.' };
             }
             const projectRoot = await this.findProjectRoot(resolvedChangePath);
-            const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
+            const gitRootResult = await this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
             if (!gitRootResult.ok || !gitRootResult.stdout.trim()) {
                 return { ready: false, reason: 'Workspace Git repository can no longer be inspected.' };
             }
             const gitRoot = path.resolve(gitRootResult.stdout.trim());
-            const head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
-            const branch = this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
-            const statusOutput = this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '';
+            const head = await this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
+            const branch = await this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
+            // F30: this compares the live status against the recorded one. A
+            // truncated live read shortens the live side, which makes a changed
+            // workspace compare equal to a clean inspection -- the exact
+            // fail-open this gate exists to prevent.
+            const statusRead = await this.readGitOutputWithTruncation(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+            if (statusRead.truncated) {
+                return { ready: false, reason: this.gitTruncationReason('git status') };
+            }
+            const statusOutput = statusRead.text || '';
             const changeRelative = path.relative(gitRoot, resolvedChangePath).replace(/\\/g, '/').replace(/\/$/, '');
             const projectRelative = path.relative(gitRoot, projectRoot).replace(/\\/g, '/').replace(/\/$/, '');
             const outsideChange = (entry) => {
@@ -5620,7 +5726,7 @@ class TaskGraphExecutionService {
         const warnings = [];
         const artifactPath = this.getWorktreePlanPath(resolvedChangePath);
         const reportPath = this.getWorktreePlanReportPath(resolvedChangePath);
-        const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
+        const gitRootResult = await this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
         const safeFeature = this.toFileSafeId(feature).toLowerCase() || 'change';
         let gitRoot = null;
         let branch = null;
@@ -5637,10 +5743,20 @@ class TaskGraphExecutionService {
             gitRepository = true;
             gitAvailable = true;
             gitRoot = path.resolve(gitRootResult.stdout.trim());
-            branch = this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
-            head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
-            statusEntries = this.parseGitStatusEntries(this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '');
-            worktrees = this.parseGitWorktrees(this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '');
+            branch = await this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
+            head = await this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
+            // F30: `statusEntries.length > 0` is the "commit or stash first"
+            // blocker and `worktrees` is what proves the recommended path is not
+            // already checked out. Both shrink under truncation, and both blocks
+            // disappear when they shrink to nothing.
+            const statusRead = await this.readGitOutputWithTruncation(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+            if (statusRead.truncated)
+                blockers.push(this.gitTruncationReason('git status'));
+            statusEntries = this.parseGitStatusEntries(statusRead.text || '');
+            const worktreeRead = await this.readGitOutputWithTruncation(projectRoot, ['worktree', 'list', '--porcelain']);
+            if (worktreeRead.truncated)
+                blockers.push(this.gitTruncationReason('git worktree list'));
+            worktrees = this.parseGitWorktrees(worktreeRead.text || '');
             currentWorktree = gitRoot ? this.findCurrentWorktree(gitRoot, worktrees) : null;
         }
         const recommendedBranch = this.normalizeWorktreeBranch(options.branch, safeFeature);
@@ -5768,7 +5884,7 @@ class TaskGraphExecutionService {
                 blockers.push(`Worktree plan is not ready: ${plan.status}`);
             }
             if (blockers.length === 0) {
-                commandResults.push(this.runGitForArtifact(projectRoot, ['worktree', 'add', '-b', plan.recommendedBranch, plan.recommendedPath, plan.baseRef]));
+                commandResults.push(await this.runGitForArtifact(projectRoot, ['worktree', 'add', '-b', plan.recommendedBranch, plan.recommendedPath, plan.baseRef]));
             }
         }
         else {
@@ -5783,7 +5899,7 @@ class TaskGraphExecutionService {
                 ? [this.formatGitCommand(['worktree', 'remove', targetPath])]
                 : [];
             if (blockers.length === 0) {
-                commandResults.push(this.runGitForArtifact(projectRoot, ['worktree', 'remove', targetPath]));
+                commandResults.push(await this.runGitForArtifact(projectRoot, ['worktree', 'remove', targetPath]));
             }
         }
         const failedCommand = commandResults.find(result => !result.ok);
@@ -5907,7 +6023,6 @@ class TaskGraphExecutionService {
         const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), feature);
         const debugEvidence = await this.readDebugEvidence(this.getDebugEvidencePath(resolvedChangePath), feature);
-        const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
         const userDecisions = await this.readUserDecisionSnapshot(resolvedChangePath, feature);
         if (userDecisions.pendingRequired > 0) {
             blockers.push(`${userDecisions.pendingRequired} required user decision(s) are pending.`);
@@ -5932,12 +6047,7 @@ class TaskGraphExecutionService {
         else if (debugEvidence.status === 'skipped') {
             warnings.push('Debug evidence is skipped; confirm debugging was not applicable.');
         }
-        if (checkpointEvidence.active && checkpointEvidence.status !== 'complete') {
-            blockers.push(`Checkpoint evidence coverage is not complete (current: ${checkpointEvidence.status}).`);
-            blockers.push(...checkpointEvidence.missing.map(item => `Checkpoint missing evidence: ${item}`));
-            warnings.push(...checkpointEvidence.nextActions);
-        }
-        const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
+        const gitRootResult = await this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
         let gitRoot = null;
         let branch = null;
         let head = null;
@@ -5953,10 +6063,19 @@ class TaskGraphExecutionService {
             gitRepository = true;
             gitAvailable = true;
             gitRoot = path.resolve(gitRootResult.stdout.trim());
-            branch = this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
-            head = this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
-            statusEntries = this.parseGitStatusEntries(this.readGitOutput(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '');
-            worktrees = this.parseGitWorktrees(this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '');
+            branch = await this.readGitOutput(projectRoot, ['branch', '--show-current']) || null;
+            head = await this.readGitOutput(projectRoot, ['rev-parse', '--short', 'HEAD']) || null;
+            // F30: closeout reads "0 uncommitted changes" as safe to finish. A
+            // truncated status produces that same 0 from a workspace full of
+            // them, so a partial answer blocks instead of clearing the gate.
+            const statusRead = await this.readGitOutputWithTruncation(projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+            if (statusRead.truncated)
+                blockers.push(this.gitTruncationReason('git status'));
+            statusEntries = this.parseGitStatusEntries(statusRead.text || '');
+            const worktreeRead = await this.readGitOutputWithTruncation(projectRoot, ['worktree', 'list', '--porcelain']);
+            if (worktreeRead.truncated)
+                blockers.push(this.gitTruncationReason('git worktree list'));
+            worktrees = this.parseGitWorktrees(worktreeRead.text || '');
             currentWorktree = gitRoot ? this.findCurrentWorktree(gitRoot, worktrees) : null;
             if (statusEntries.length > 0) {
                 blockers.push(`Workspace has ${statusEntries.length} uncommitted file change(s); commit, stash, or intentionally review them before closeout.`);
@@ -6017,9 +6136,7 @@ class TaskGraphExecutionService {
                 verificationEvidence: verificationEvidence.status,
                 tddEvidence: tddEvidence.status,
                 debugEvidence: debugEvidence.status,
-                checkpointEvidence: checkpointEvidence.status,
             },
-            checkpointEvidence,
             git: {
                 available: gitAvailable,
                 repository: gitRepository,
@@ -6043,7 +6160,6 @@ class TaskGraphExecutionService {
             artifactPath,
             reportPath,
             status,
-            checkpointEvidence,
             targetBranch,
             remote,
             commands,
@@ -6053,12 +6169,41 @@ class TaskGraphExecutionService {
             nextInstruction: artifact.nextInstruction,
         };
     }
+    /*
+     * M-race3: `routeWorkflow` and `bootstrap` mutate, so they hold the lease.
+     *
+     * Both looked like read-only inspections and neither was. `bootstrap` runs
+     * the goal-progress reconciliation, writes the bootstrap artifact and its
+     * report, and finishes with `syncFeatureStateFromBootstrap` -- a
+     * read-modify-write of `state.json`. `routeWorkflow` calls `bootstrap` and
+     * then writes two more artifacts derived from what it just wrote. Every one
+     * of those raced any leased operation running concurrently.
+     *
+     * Split into `*Unlocked` bodies rather than nesting the wrapper, because
+     * `withTaskGraphMutationLease` is an `fs.open(..., 'wx')` on a lock file
+     * and is NOT reentrant: `routeWorkflow` taking the lease and then calling a
+     * `bootstrap` that takes it again would not deadlock quietly -- it would
+     * spin for the full acquisition timeout and then throw. This is the same
+     * `*Unlocked` split `planLaunch`, `complete` and `syncWorkerStatus` already
+     * use, for the same reason.
+     *
+     * The reconciliation call inside `bootstrapUnlocked` moves to
+     * `reconcileGoalProgressUnlocked` for that same reason. Note what that
+     * changes: the reconciliation used to acquire and release the lease on its
+     * own, so bootstrap's remaining reads and its three writes ran outside any
+     * lease AND outside the window the reconciliation held. Now the whole
+     * operation is one critical section, which is also what makes the artifact
+     * consistent with the state it was derived from.
+     */
     async routeWorkflow(changePath) {
+        return this.withTaskGraphMutationLease(changePath, () => this.routeWorkflowUnlocked(changePath));
+    }
+    async routeWorkflowUnlocked(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRootForOptionalSession(resolvedChangePath);
         const feature = await this.readFeatureName(resolvedChangePath);
         const generatedAt = new Date().toISOString();
-        await this.bootstrap(resolvedChangePath);
+        await this.bootstrapUnlocked(resolvedChangePath);
         const bootstrapArtifact = await this.fileService.readJSON(this.getBootstrapPath(resolvedChangePath));
         const recommendations = this.buildWorkflowRouteRecommendations(bootstrapArtifact);
         const blockers = [...bootstrapArtifact.blockers];
@@ -6100,6 +6245,9 @@ class TaskGraphExecutionService {
         };
     }
     async bootstrap(changePath) {
+        return this.withTaskGraphMutationLease(changePath, () => this.bootstrapUnlocked(changePath));
+    }
+    async bootstrapUnlocked(changePath) {
         const resolvedChangePath = path.resolve(changePath);
         const projectRoot = await this.findProjectRoot(resolvedChangePath);
         const feature = await this.readFeatureName(resolvedChangePath);
@@ -6111,7 +6259,8 @@ class TaskGraphExecutionService {
         const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
         const graphExists = await this.fileService.exists(graphPath);
         if (graphExists) {
-            const progressProjection = await this.reconcileGoalProgress(resolvedChangePath);
+            // Already inside the lease: see the note on `routeWorkflow`.
+            const progressProjection = await this.reconcileGoalProgressUnlocked(resolvedChangePath);
             if (progressProjection.status === 'blocked') {
                 blockers.push(`Goal progress projection is blocked: ${progressProjection.issues.join('; ')}`);
             }
@@ -6149,7 +6298,6 @@ class TaskGraphExecutionService {
         const verificationEvidence = await this.readVerificationEvidence(this.getVerificationEvidencePath(resolvedChangePath), feature);
         const tddEvidence = await this.readTddEvidence(this.getTddEvidencePath(resolvedChangePath), feature);
         const debugEvidence = await this.readDebugEvidence(this.getDebugEvidencePath(resolvedChangePath), feature);
-        const checkpointEvidence = await this.readCheckpointEvidenceSnapshot(resolvedChangePath);
         const implementerStatus = report
             ? this.deriveImplementerWorkerStatus(tasks, report)
             : 'PENDING';
@@ -6229,7 +6377,6 @@ class TaskGraphExecutionService {
                 debug: debugEvidence.status,
                 debugRecords: debugEvidence.records.length,
                 debugPhases: debugEvidence.phases,
-                checkpoint: checkpointEvidence,
             },
             worker: {
                 implementer: implementerStatus,
@@ -6271,7 +6418,6 @@ class TaskGraphExecutionService {
             artifactPath,
             reportPath,
             status: artifact.status,
-            checkpointEvidence,
             blockers,
             warnings,
             nextInstruction: artifact.nextInstruction,
@@ -6362,6 +6508,13 @@ class TaskGraphExecutionService {
         };
     }
     selectDispatchableTasks(readyTasks, runningTasks) {
+        // A serial task owns its whole round: while one is IN_PROGRESS nothing
+        // else may start. tasksConflict only sees declared conflicts and
+        // file/module overlap, so without this gate a serial task's exclusivity
+        // would silently reduce to "happens to touch the same paths".
+        if (runningTasks.some(runningTask => !runningTask.parallelizable)) {
+            return [];
+        }
         const safeReadyTasks = readyTasks.filter(task => runningTasks.every(runningTask => !tasksConflict(task, runningTask)));
         if (runningTasks.length > 0) {
             return this.selectNonConflictingBatch(safeReadyTasks.filter(task => task.parallelizable));
@@ -6437,6 +6590,10 @@ class TaskGraphExecutionService {
     }
     getSchedulingDeferralReasons(task, selectedTasks, runningTasks) {
         const reasons = [];
+        const runningSerialTasks = runningTasks.filter(running => !running.parallelizable);
+        if (runningSerialTasks.length > 0) {
+            return [`serial_task_running:${runningSerialTasks.map(item => item.id).join(',')}`];
+        }
         const runningConflicts = runningTasks.filter(running => tasksConflict(task, running));
         const selectedConflicts = selectedTasks.filter(selected => tasksConflict(task, selected));
         if (runningConflicts.length > 0)
@@ -6505,194 +6662,12 @@ class TaskGraphExecutionService {
             return taskReviewInstruction;
         }
         if (input.completedTasks.length === input.taskCount && input.taskCount > 0) {
-            if (input.checkpointEvidence.active && input.checkpointEvidence.status !== 'complete') {
-                return input.checkpointEvidence.nextActions[0] || 'Complete Checkpoint evidence coverage before finish or archive.';
-            }
             return 'Task graph is complete. Continue with review, verification, and archive gates.';
         }
         if (input.blockedTasks.length > 0) {
             return 'Resolve blocked tasks or missing context before dispatch.';
         }
         return 'No dispatchable tasks found.';
-    }
-    async readCheckpointEvidenceSnapshot(changePath) {
-        const gatePath = path.join(changePath, 'artifacts', 'checkpoint', 'gate.json');
-        const resultPath = path.join(changePath, 'artifacts', 'checkpoint', 'result.json');
-        const summaryPath = path.join(changePath, 'artifacts', 'checkpoint', 'summary.md');
-        const activeSteps = await this.readActiveCheckpointSteps(changePath);
-        const emptyCounts = {
-            screenshots: 0,
-            traces: 0,
-            visualDiffs: 0,
-            routes: 0,
-            flows: 0,
-            assertions: 0,
-            consoleEvents: 0,
-            networkEvents: 0,
-            accessibility: 0,
-        };
-        if (activeSteps.length === 0) {
-            return {
-                active: false,
-                status: 'not_active',
-                gatePath,
-                resultPath,
-                summaryPath,
-                activeSteps: [],
-                gateStatus: 'not_active',
-                evidenceStatus: 'not_active',
-                ...emptyCounts,
-                missing: [],
-                nextActions: [],
-                steps: [],
-            };
-        }
-        if (!(await this.fileService.exists(gatePath))) {
-            const missing = ['artifacts/checkpoint/gate.json'];
-            return {
-                active: true,
-                status: 'missing',
-                gatePath,
-                resultPath,
-                summaryPath,
-                activeSteps,
-                gateStatus: 'missing',
-                evidenceStatus: 'missing',
-                ...emptyCounts,
-                missing,
-                nextActions: this.buildCheckpointEvidenceNextActions(missing, activeSteps),
-                steps: activeSteps.map(step => ({
-                    step,
-                    gateStatus: 'missing',
-                    evidenceStatus: 'missing',
-                    ...emptyCounts,
-                    missing: ['gate artifact'],
-                })),
-            };
-        }
-        const gate = await this.fileService.readJSON(gatePath);
-        const evidence = gate?.evidence && typeof gate.evidence === 'object' && !Array.isArray(gate.evidence)
-            ? gate.evidence
-            : {};
-        const toNumber = (value) => {
-            const numeric = Number(value);
-            return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
-        };
-        const readStep = (step) => {
-            const stepGateStatus = typeof gate?.steps?.[step]?.status === 'string' ? gate.steps[step].status : 'missing';
-            const stepEvidence = evidence?.by_step?.[step] && typeof evidence.by_step[step] === 'object'
-                ? evidence.by_step[step]
-                : {};
-            return {
-                step,
-                gateStatus: stepGateStatus,
-                evidenceStatus: typeof stepEvidence.status === 'string' ? stepEvidence.status : 'missing',
-                screenshots: toNumber(stepEvidence.screenshots),
-                traces: toNumber(stepEvidence.traces),
-                visualDiffs: toNumber(stepEvidence.visual_diffs ?? stepEvidence.visualDiffs),
-                routes: toNumber(stepEvidence.routes),
-                flows: toNumber(stepEvidence.flows),
-                assertions: toNumber(stepEvidence.assertions),
-                consoleEvents: toNumber(stepEvidence.console_events ?? stepEvidence.consoleEvents),
-                networkEvents: toNumber(stepEvidence.network_events ?? stepEvidence.networkEvents),
-                accessibility: toNumber(stepEvidence.accessibility),
-                missing: Array.isArray(stepEvidence.missing)
-                    ? stepEvidence.missing.map(item => String(item || '').trim()).filter(Boolean)
-                    : [],
-            };
-        };
-        const steps = activeSteps.map(readStep);
-        const missing = Array.from(new Set([
-            ...(Array.isArray(evidence.missing) ? evidence.missing.map(item => String(item || '').trim()).filter(Boolean) : []),
-            ...steps.flatMap(step => step.missing.map(item => `${step.step}: ${item}`)),
-            ...(gate.status === 'passed' ? [] : [`gate status ${gate.status || 'missing'}`]),
-            ...(String(evidence.status || '') === 'complete' ? [] : [`evidence status ${evidence.status || 'missing'}`]),
-        ]));
-        const status = gate.status !== 'passed'
-            ? 'failed'
-            : String(evidence.status || '') === 'complete' && steps.every(step => step.evidenceStatus === 'complete')
-                ? 'complete'
-                : 'incomplete';
-        return {
-            active: true,
-            status,
-            gatePath,
-            resultPath,
-            summaryPath,
-            activeSteps,
-            gateStatus: typeof gate.status === 'string' ? gate.status : 'missing',
-            evidenceStatus: typeof evidence.status === 'string' ? evidence.status : 'missing',
-            screenshots: toNumber(evidence.screenshots),
-            traces: toNumber(evidence.traces),
-            visualDiffs: toNumber(evidence.visual_diffs ?? evidence.visualDiffs),
-            routes: toNumber(evidence.routes),
-            flows: toNumber(evidence.flows),
-            assertions: toNumber(evidence.assertions),
-            consoleEvents: toNumber(evidence.console_events ?? evidence.consoleEvents),
-            networkEvents: toNumber(evidence.network_events ?? evidence.networkEvents),
-            accessibility: toNumber(evidence.accessibility),
-            missing,
-            nextActions: this.buildCheckpointEvidenceNextActions(missing, activeSteps),
-            steps,
-        };
-    }
-    async readActiveCheckpointSteps(changePath) {
-        const verificationPath = path.join(changePath, constants_1.FILE_NAMES.VERIFICATION);
-        if (!(await this.fileService.exists(verificationPath))) {
-            return [];
-        }
-        try {
-            const verification = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(verificationPath));
-            const optionalSteps = Array.isArray(verification.data.optional_steps)
-                ? verification.data.optional_steps
-                : [];
-            return optionalSteps
-                .map(step => String(step || '').trim())
-                .filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
-        }
-        catch {
-            return [];
-        }
-    }
-    buildCheckpointEvidenceNextActions(missing, activeSteps) {
-        const normalized = missing.map(item => item.toLowerCase());
-        const actions = [];
-        const add = (action) => {
-            if (!actions.includes(action)) {
-                actions.push(action);
-            }
-        };
-        if (normalized.some(item => item.includes('gate'))) {
-            add('Run `ospec plugins run checkpoint <change-path>` to create artifacts/checkpoint/gate.json, result.json, and summary.md.');
-        }
-        if (activeSteps.includes('checkpoint_ui_review') && normalized.some(item => item.includes('route'))) {
-            add('Add changed pages to `.ospec/plugins/checkpoint/routes.yaml` with required selectors and viewport coverage.');
-        }
-        if (activeSteps.includes('checkpoint_flow_check') && normalized.some(item => item.includes('flow'))) {
-            add('Add critical user paths to `.ospec/plugins/checkpoint/flows.yaml` with screenshots and assertions.');
-        }
-        if (normalized.some(item => item.includes('visual') || item.includes('baseline'))) {
-            add('Add or refresh visual baselines under `.ospec/plugins/checkpoint/baselines/`, then rerun Checkpoint.');
-        }
-        if (normalized.some(item => item.includes('screenshot'))) {
-            add('Configure route screenshots or flow `screenshot` steps, then rerun Checkpoint.');
-        }
-        if (normalized.some(item => item.includes('trace'))) {
-            add('Rerun Checkpoint with the Playwright adapter so trace artifacts are written under `artifacts/checkpoint/traces/`.');
-        }
-        if (normalized.some(item => item.includes('assertion'))) {
-            add('Add flow assertions such as `assert_text`, `assert_url`, `api_assertions`, or `assert_command`.');
-        }
-        if (normalized.some(item => item.includes('console') || item.includes('network'))) {
-            add('Enable console/network capture in Checkpoint evidence and rerun the gate.');
-        }
-        if (normalized.some(item => item.includes('accessibility') || item.includes('landmark') || item.includes('focus') || item.includes('keyboard'))) {
-            add('Add accessibility expectations such as landmarks, visible names, focus, keyboard reachability, or contrast checks.');
-        }
-        if (actions.length === 0 && activeSteps.length > 0) {
-            add('Inspect `artifacts/checkpoint/summary.md`, complete missing runtime evidence, then rerun Checkpoint.');
-        }
-        return actions;
     }
     getSessionPath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', EXECUTION_SESSION_FILE);
@@ -6717,9 +6692,6 @@ class TaskGraphExecutionService {
     }
     getWorktreeRunDir(changePath) {
         return path.join(changePath, 'artifacts', 'agents', WORKTREE_RUNS_DIR);
-    }
-    getOrchestrationRunDir(changePath) {
-        return path.join(changePath, 'artifacts', 'agents', ORCHESTRATION_RUNS_DIR);
     }
     getVerificationEvidencePath(changePath) {
         return path.join(changePath, 'artifacts', 'agents', VERIFICATION_EVIDENCE_FILE);
@@ -6927,23 +6899,6 @@ class TaskGraphExecutionService {
             nextInstruction: typeof raw?.nextInstruction === 'string' ? raw.nextInstruction : '',
         };
     }
-    validateStructuredFindingIds(findings, label) {
-        const ids = [];
-        const seen = new Set();
-        for (const rawFinding of findings) {
-            const finding = unknownRecord(rawFinding);
-            const id = String(finding.id || '').trim();
-            if (!id) {
-                throw new Error(`${label} structured findings contain a finding without a non-empty ID.`);
-            }
-            if (seen.has(id)) {
-                throw new Error(`${label} structured findings contain duplicate finding ID ${id}.`);
-            }
-            seen.add(id);
-            ids.push(id);
-        }
-        return ids;
-    }
     normalizeUserDecisionOptions(options) {
         const seen = new Set();
         const normalized = [];
@@ -6971,7 +6926,7 @@ class TaskGraphExecutionService {
         }
         return `Decision ${record.id} is ${record.status}. Run ospec execute bootstrap ${this.quoteShellArg(relativeChangePath)} to continue with the next safe action.`;
     }
-    async readVerificationEvidence(evidencePath, feature) {
+    async readVerificationEvidence(evidencePath, feature, lookup) {
         if (!(await this.fileService.exists(evidencePath))) {
             return {
                 version: '1.0',
@@ -6988,8 +6943,8 @@ class TaskGraphExecutionService {
         let status = this.deriveVerificationEvidenceStatus(records);
         const latest = records[records.length - 1];
         if (latest?.status === 'PASSED') {
-            const changePath = path.dirname(path.dirname(path.dirname(evidencePath)));
-            if (!(await this.isPassingVerificationRecordFresh(changePath, latest))) {
+            const changePath = lookup?.changePath || path.dirname(path.dirname(path.dirname(evidencePath)));
+            if (!(await this.isPassingVerificationRecordFresh(changePath, latest, lookup))) {
                 status = 'pending';
             }
         }
@@ -7052,7 +7007,118 @@ class TaskGraphExecutionService {
             ? normalized
             : 'other';
     }
-    async isPassingVerificationRecordFresh(changePath, record) {
+    /**
+     * The whole-tree snapshot every passing verification record is measured
+     * against. Every record in one artifact is measured against the *same*
+     * tree at the *same* commit, so it is derived once and handed to each
+     * record rather than re-derived per record -- which is what made the
+     * freshness check grow quadratically as evidence accumulated.
+     */
+    async buildVerificationFreshnessContext(changePath, report) {
+        const resolvedReport = report || await this.getReport(changePath);
+        const currentTargetFiles = this.normalizeTargetFiles(Array.from(new Set(this.flattenReportTasks(resolvedReport).flatMap(task => task.targetFiles))));
+        const projectRoot = await this.findProjectRootForOptionalSession(changePath);
+        const currentSnapshots = await this.captureTargetSnapshots(projectRoot, currentTargetFiles);
+        const capturedSnapshotHash = this.hashTargetSnapshots(currentSnapshots);
+        let confirmation = null;
+        return {
+            changePath: path.resolve(changePath),
+            projectRoot,
+            currentTargetFiles,
+            currentTargetFilesKey: JSON.stringify(currentTargetFiles),
+            currentSnapshots,
+            graphPath: resolvedReport.graphPath,
+            confirm: () => (confirmation ?? (confirmation = this.confirmVerificationFreshnessContext(projectRoot, currentTargetFiles, capturedSnapshotHash))),
+        };
+    }
+    /**
+     * FIX-4: the observation behind `VerificationFreshnessContext.confirm`.
+     *
+     * Re-captures the same target files and reads HEAD -- unmemoised, and
+     * therefore immune to the external commit that the per-scope memo cannot
+     * see. A throw is a refusal, not a rethrow: a target that became
+     * unreadable between the capture and here is a changed tree, which is the
+     * answer this is being asked for.
+     *
+     * FIX-4 + FIX-5 MERGE: `archive --check` runs the whole readiness gate --
+     * and therefore this -- inside `FileService.withReadOverlay`, which serves
+     * the bytes a reconciliation WOULD have written for the task graph, the
+     * checklist and the progress projection. This method sees none of them, and
+     * that is correct rather than accidental:
+     *
+     *  - `captureTargetSnapshots` reads through raw `fs`, not `fileService`, so
+     *    it hashes the bytes on disk;
+     *  - HEAD comes from a git child process, which no `FileService` overlay
+     *    can reach.
+     *
+     * Both halves of the comparison therefore describe the same tree: the
+     * record's `targetSnapshotHash` was taken from real disk when the evidence
+     * was stamped, so confirming it against hypothetical unwritten bytes would
+     * compare two different worlds and refuse for a reason that is not true.
+     * The three overlaid artifacts are archive bookkeeping, never a task's
+     * target files -- and if one ever were, this is still the reading that
+     * keeps the verdict honest.
+     *
+     * This rests on HOW the two reads are implemented, not on any signature, so
+     * a refactor to `this.fileService` would undo it silently. Pinned by
+     * `tests/commands/archive-check-head-overlay-interaction.test.mjs`, which
+     * overlays a target file with bytes that exist nowhere and asserts the
+     * snapshot hash does not move, with a control proving the overlay was live.
+     */
+    async confirmVerificationFreshnessContext(projectRoot, targetFiles, capturedSnapshotHash) {
+        try {
+            const [snapshots, head] = await Promise.all([
+                this.captureTargetSnapshots(projectRoot, targetFiles),
+                this.readValidationGitHead(projectRoot, 'refusal-condition'),
+            ]);
+            return {
+                stillCurrent: this.hashTargetSnapshots(snapshots) === capturedSnapshotHash,
+                head,
+            };
+        }
+        catch {
+            return { stillCurrent: false, head: null };
+        }
+    }
+    /**
+     * The half of the freshness test that is a pure function of the captured
+     * context. FIX-4 moved the HEAD comparison out of here and next to the
+     * confirmation, because HEAD is a refusal condition and therefore has to be
+     * observed at the moment of the verdict rather than at capture time.
+     */
+    isPassingVerificationRecordFreshAgainst(record, context) {
+        if (context.currentTargetFilesKey !== JSON.stringify(this.normalizeTargetFiles(record.targetFiles))) {
+            return false;
+        }
+        return this.targetSnapshotsMatchDispatch(context.currentSnapshots, record.targetSnapshots, record.targetSnapshotHash);
+    }
+    /**
+     * Builds the context at most once, and only if something actually needs
+     * it: a record that fails a cheap structural check never reaches the walk,
+     * while a caller with many records walks the tree once for all of them.
+     *
+     * FIX-4 corrects what this comment used to claim. It said "a per-sweep
+     * memo, not a cache: it recomputes on the next sweep, so it has nothing to
+     * go stale". The first half is true and the second was not: within one
+     * sweep the whole-tree snapshot is captured once and every record is
+     * measured against it, so a target file rewritten after the capture is
+     * invisible to the rest of the sweep. `main` re-derived per record, so the
+     * window closed per record; here it lasted the whole sweep.
+     *
+     * What this memo remembers: the target-file set and their snapshot, as of
+     * the first record that needed them.
+     * What makes that memory false: any write to a target file before the
+     * sweep ends.
+     * What catches it: `context.confirm()`, which
+     * `isPassingVerificationRecordFresh` awaits before returning any PASS, and
+     * which also supplies the HEAD the PASS is judged against so that HEAD is
+     * never remembered at all.
+     */
+    memoiseVerificationFreshnessContext(changePath, report) {
+        let pending = null;
+        return () => (pending ?? (pending = this.buildVerificationFreshnessContext(changePath, report)));
+    }
+    async isPassingVerificationRecordFresh(changePath, record, lookup) {
         if (!Array.isArray(record.targetFiles)
             || !Array.isArray(record.targetSnapshots)
             || !record.targetSnapshotHash
@@ -7060,25 +7126,37 @@ class TaskGraphExecutionService {
             return false;
         }
         try {
-            const report = await this.getReport(changePath);
-            const currentTargetFiles = this.normalizeTargetFiles(Array.from(new Set(this.flattenReportTasks(report).flatMap(task => task.targetFiles))));
-            if (JSON.stringify(currentTargetFiles) !== JSON.stringify(this.normalizeTargetFiles(record.targetFiles))) {
+            /*
+             * This once kept its own `verification:<recordId>` entry in an
+             * on-disk validation cache. That went first, and the rest of that
+             * cache followed; see the note at the top of this file.
+             *
+             * The Phase 3 win here is `memoiseVerificationFreshnessContext`:
+             * one tree walk and one `git rev-parse` for every record in the
+             * artifact instead of one per record. That is untouched.
+             *
+             * FIX-4: a record that already fails against the captured snapshot
+             * costs nothing extra, because a refusal cannot be made wrong by
+             * the tree having moved on -- re-deriving would only find more
+             * reasons to refuse. Everything else pays one confirmation, shared
+             * by every record in the sweep, and the HEAD comparison happens
+             * there because HEAD moving is a refusal condition and must be
+             * observed at the verdict rather than inherited from the scope.
+             */
+            const resolvedChangePath = path.resolve(changePath);
+            const context = lookup?.context
+                ? await lookup.context()
+                : await this.buildVerificationFreshnessContext(resolvedChangePath, lookup?.report);
+            if (!this.isPassingVerificationRecordFreshAgainst(record, context))
                 return false;
-            }
-            const projectRoot = await this.findProjectRootForOptionalSession(changePath);
-            const currentSnapshots = await this.captureTargetSnapshots(projectRoot, currentTargetFiles);
-            if (!this.targetSnapshotsMatchDispatch(currentSnapshots, record.targetSnapshots, record.targetSnapshotHash)) {
+            const confirmed = await context.confirm();
+            if (!confirmed.stillCurrent)
                 return false;
-            }
-            const currentHead = this.readGitOutput(projectRoot, ['rev-parse', 'HEAD']) || null;
-            return !record.gitHead || currentHead === record.gitHead;
+            return !record.gitHead || confirmed.head === record.gitHead;
         }
         catch {
             return false;
         }
-    }
-    isVerificationEvidenceSessionStatus(status) {
-        return status === 'pending' || status === 'passed' || status === 'failed' || status === 'blocked' || status === 'skipped';
     }
     isVerificationEvidenceRecord(value) {
         return typeof value?.id === 'string'
@@ -7112,15 +7190,6 @@ class TaskGraphExecutionService {
             updatedAt: typeof evidence.updatedAt === 'string' ? evidence.updatedAt : new Date().toISOString(),
             records,
         };
-    }
-    isTddEvidenceSessionStatus(status) {
-        return status === 'pending'
-            || status === 'red'
-            || status === 'green'
-            || status === 'refactor'
-            || status === 'failed'
-            || status === 'blocked'
-            || status === 'skipped';
     }
     isTddEvidenceRecord(value) {
         return typeof value?.id === 'string'
@@ -7231,7 +7300,28 @@ class TaskGraphExecutionService {
     async reconcileGoalProgress(changePath) {
         return this.withTaskGraphMutationLease(changePath, () => this.reconcileGoalProgressUnlocked(changePath));
     }
-    async reconcileGoalProgressUnlocked(changePath) {
+    /**
+     * The same reconciliation, computed and reported but never written.
+     *
+     * FIX-2 / D4: making `archive --check` and `execute status` read-only
+     * removed their only `reconcileGoalProgress` call, and with it the only
+     * producer of the `Goal progress cannot be reconciled ...` diagnostic --
+     * so `archive --check` started passing goals that the real `ospec archive`
+     * refuses. The reconciliation splits cleanly into a pure computation and
+     * three writes at the end, so the diagnostic comes back by running the
+     * identical computation with `persist: false`: same inputs, same `issues`,
+     * same `status`, byte-for-byte the same verdict as `--repair` would reach,
+     * without the task-graph mutation lease and without touching disk.
+     *
+     * `graphChanged` / `tasksChanged` / `projectionChanged` are still reported,
+     * so a caller can say whether a repair is actually PENDING rather than
+     * printing an unconditional note that carries no signal (D16).
+     */
+    async inspectGoalProgress(changePath) {
+        return this.reconcileGoalProgressUnlocked(changePath, { persist: false });
+    }
+    async reconcileGoalProgressUnlocked(changePath, options = {}) {
+        const persist = options.persist !== false;
         const resolvedChangePath = path.resolve(changePath);
         const graphPath = path.join(resolvedChangePath, 'artifacts', 'agents', constants_1.FILE_NAMES.TASK_GRAPH);
         const tasksPath = path.join(resolvedChangePath, constants_1.FILE_NAMES.TASKS);
@@ -7347,9 +7437,19 @@ class TaskGraphExecutionService {
             nextTasksContent = nextLines.join(newline);
             tasksChanged = nextTasksContent !== tasksContent;
         }
-        if (graphChanged)
+        /*
+         * FIX-5: the repairs, captured in write order. `writeJSON` serialises
+         * with `JSON.stringify(data, null, 2)`, so the graph entry is the exact
+         * bytes the persisting path lays down.
+         */
+        const repairedArtifacts = [];
+        if (!persist && graphChanged)
+            repairedArtifacts.push({ path: graphPath, content: JSON.stringify(rawGraph, null, 2) });
+        if (!persist && tasksChanged && nextTasksContent !== null)
+            repairedArtifacts.push({ path: tasksPath, content: nextTasksContent });
+        if (persist && graphChanged)
             await this.fileService.writeJSON(graphPath, rawGraph);
-        if (tasksChanged && nextTasksContent !== null)
+        if (persist && tasksChanged && nextTasksContent !== null)
             await this.fileService.writeFileAtomic(tasksPath, nextTasksContent);
         const feature = typeof rawGraph?.feature === 'string' && rawGraph.feature.trim().length > 0
             ? rawGraph.feature.trim()
@@ -7385,10 +7485,21 @@ class TaskGraphExecutionService {
             : null;
         const projectionChanged = JSON.stringify(previousStableProjection) !== JSON.stringify(stableProjection);
         if (projectionChanged) {
-            await this.fileService.writeJSON(projectionPath, {
+            /*
+             * FIX-5: `projectedAt` is a wall-clock stamp, so the dry-run copy
+             * cannot be byte-identical to what a real run would write -- and no
+             * archive gate reads this artifact, so it does not need to be. It is
+             * listed anyway because leaving one of the three writes out is
+             * exactly how the previous half-fixes happened.
+             */
+            const projectionRecord = {
                 ...stableProjection,
                 projectedAt: new Date().toISOString(),
-            });
+            };
+            if (persist)
+                await this.fileService.writeJSON(projectionPath, projectionRecord);
+            else
+                repairedArtifacts.push({ path: projectionPath, content: JSON.stringify(projectionRecord, null, 2) });
         }
         return {
             changePath: resolvedChangePath,
@@ -7407,6 +7518,7 @@ class TaskGraphExecutionService {
             unknownTaskIds,
             ambiguousLines,
             issues,
+            ...(persist ? {} : { repairedArtifacts }),
         };
     }
     async syncTaskReviewStateFromArtifactsUnlocked(changePath, rawGraph) {
@@ -7496,24 +7608,6 @@ class TaskGraphExecutionService {
         const validation = await this.validateTaskReviewEvidence(changePath, taskId);
         return validation.ready ? decision : 'PENDING';
     }
-    selectNextReviewStage(specDecision, qualityDecision) {
-        if (!APPROVED_REVIEW_DECISIONS.has(specDecision)) {
-            return 'spec';
-        }
-        if (!APPROVED_REVIEW_DECISIONS.has(qualityDecision)) {
-            return 'quality';
-        }
-        throw new Error('Spec compliance and code quality reviews are already approved. Continue with verification and archive gates.');
-    }
-    selectNextReviewFeedbackStage(specDecision, qualityDecision) {
-        if (specDecision !== 'APPROVED' && specDecision !== 'APPROVED_WITH_CONCERNS') {
-            return 'spec';
-        }
-        if (qualityDecision !== 'APPROVED' && qualityDecision !== 'APPROVED_WITH_CONCERNS') {
-            return 'quality';
-        }
-        return 'quality';
-    }
     deriveReviewFeedbackAction(decision) {
         if (decision === 'APPROVED' || decision === 'APPROVED_WITH_CONCERNS') {
             return 'accept';
@@ -7546,18 +7640,6 @@ class TaskGraphExecutionService {
     getDocumentReviewArtifactPath(changePath, stage) {
         return path.join(changePath, 'artifacts', 'reviews', this.getDocumentReviewTarget(stage).reviewArtifactFile);
     }
-    getTaskReviewArtifactFile(stage) {
-        return stage === 'spec' ? constants_1.FILE_NAMES.SPEC_COMPLIANCE_REVIEW : constants_1.FILE_NAMES.CODE_QUALITY_REVIEW;
-    }
-    getTaskReviewArtifactRelativePath(taskId, stage) {
-        return [
-            'artifacts',
-            'reviews',
-            TASK_REVIEWS_DIR,
-            this.toFileSafeId(taskId) || 'task',
-            this.getTaskReviewArtifactFile(stage),
-        ].join('/');
-    }
     getTaskCombinedReviewArtifactRelativePath(taskId) {
         return [
             'artifacts',
@@ -7583,9 +7665,6 @@ class TaskGraphExecutionService {
             throw new Error(`Task ${taskId} worker report resolves outside the project root.`);
         }
         return normalized;
-    }
-    getTaskReviewArtifactPath(changePath, taskId, stage) {
-        return path.join(changePath, this.getTaskReviewArtifactRelativePath(taskId, stage));
     }
     async prepareTaskReviewDispatch(changePath, report, taskId) {
         const task = this.flattenReportTasks(report).find(item => item.id === taskId);
@@ -7782,9 +7861,15 @@ class TaskGraphExecutionService {
             return false;
         }
         const verification = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(verificationPath));
-        const checklistItems = verification.content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
-        const uncheckedItems = verification.content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
-        return checklistItems.length > 0 && uncheckedItems.length === 0;
+        // M-cfg3 extracted this predicate to utils/ChecklistScan and pointed
+        // ArchiveCommand, ProjectService and ReviewArtifacts at it, but not this
+        // file -- so `ospec archive` and this closeout gate returned OPPOSITE
+        // answers on the same verification.md, in both directions: a fenced
+        // example made archive say ready and this say incomplete, and a `*`
+        // bullet did the reverse. Two gates disagreeing is worse than both being
+        // wrong the same way, which is what the split created.
+        return (0, ChecklistScan_1.hasChecklistItem)(verification.content)
+            && (0, ChecklistScan_1.listUncheckedChecklistItems)(verification.content).length === 0;
     }
     async writeTaskReviewPackage(input) {
         const packagePath = path.join(input.changePath, 'artifacts', 'agents', REVIEW_PACKAGES_DIR, `${input.reviewId}.diff`);
@@ -7793,7 +7878,7 @@ class TaskGraphExecutionService {
             .map(filePath => String(filePath || '').trim().replace(/\\/g, '/').replace(/^\.\//, ''))
             .filter(filePath => filePath.length > 0 && !path.isAbsolute(filePath) && filePath !== '..' && !filePath.startsWith('../'));
         const targetPathKeys = targetFiles.map(normalizeTaskPath);
-        const statusResult = this.runGit(input.projectRoot, [
+        const statusResult = await this.runGit(input.projectRoot, [
             'status',
             '--porcelain=v2',
             '--branch',
@@ -7801,9 +7886,19 @@ class TaskGraphExecutionService {
             '--no-ahead-behind',
         ]);
         const statusSnapshot = statusResult.ok ? parseGitDispatchSnapshot(statusResult.stdout) : null;
+        // F30: informational, not a gate -- this package is read by a reviewer,
+        // so a partial in/out-of-scope split is still worth writing. It is not
+        // worth writing SILENTLY: the reviewer would read a short out-of-scope
+        // list as a clean one. The package says so, below.
+        const fallbackStatusRead = statusSnapshot
+            ? null
+            : await this.readGitOutputWithTruncation(input.projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+        const statusTruncated = statusSnapshot
+            ? statusResult.stdoutTruncated === true
+            : fallbackStatusRead?.truncated === true;
         const statusEntries = statusSnapshot
             ? parseGitStatusV2Entries(statusResult.stdout)
-            : this.parseGitStatusEntries(this.readGitOutput(input.projectRoot, ['status', '--porcelain=v1', '--untracked-files=all']) || '');
+            : this.parseGitStatusEntries(fallbackStatusRead?.text || '');
         const inScopeStatus = statusEntries.filter(entry => {
             const fileKey = normalizeTaskPath(entry.file);
             return targetPathKeys.some(target => taskPathsOverlap(target, fileKey));
@@ -7811,19 +7906,19 @@ class TaskGraphExecutionService {
         const outOfScopeStatus = statusEntries.filter(entry => !inScopeStatus.includes(entry));
         const requestedBase = input.dispatch?.gitBaseCommit || null;
         const baseValid = requestedBase
-            ? this.runGit(input.projectRoot, ['rev-parse', '--verify', `${requestedBase}^{commit}`]).ok
+            ? (await this.runGit(input.projectRoot, ['rev-parse', '--verify', `${requestedBase}^{commit}`])).ok
             : false;
         const baseCommit = baseValid ? requestedBase : null;
-        const headCommit = statusSnapshot?.headCommit || this.readGitOutput(input.projectRoot, ['rev-parse', 'HEAD']);
+        const headCommit = statusSnapshot?.headCommit || await this.readGitOutput(input.projectRoot, ['rev-parse', 'HEAD']);
         const diffBase = baseCommit || headCommit;
         const log = baseCommit && headCommit && baseCommit !== headCommit
-            ? this.runGit(input.projectRoot, ['log', '--oneline', `${baseCommit}..${headCommit}`])
+            ? await this.runGit(input.projectRoot, ['log', '--oneline', `${baseCommit}..${headCommit}`])
             : null;
         const stat = diffBase && targetFiles.length > 0
-            ? this.runGit(input.projectRoot, ['diff', '--stat', diffBase, '--', ...targetFiles])
+            ? await this.runGit(input.projectRoot, ['diff', '--stat', diffBase, '--', ...targetFiles])
             : null;
         const diff = diffBase && targetFiles.length > 0
-            ? this.runGit(input.projectRoot, ['diff', '--no-ext-diff', '--unified=10', diffBase, '--', ...targetFiles])
+            ? await this.runGit(input.projectRoot, ['diff', '--no-ext-diff', '--unified=10', diffBase, '--', ...targetFiles])
             : null;
         const lines = [
             `# Task Review Package: ${input.task.id}`,
@@ -7857,23 +7952,33 @@ class TaskGraphExecutionService {
             '',
             '## Commits',
             '',
-            log?.ok && log.stdout.trim() ? log.stdout.trimEnd() : '(none or unavailable)',
+            log?.ok && log.stdout.trim()
+                ? `${log.stdout.trimEnd()}${log.stdoutTruncated === true ? '\n(INCOMPLETE: the commit list above was truncated at the git output limit.)' : ''}`
+                : '(none or unavailable)',
             '',
             '## In-Scope Workspace Status',
             '',
+            ...(statusTruncated
+                ? [`(INCOMPLETE: ${this.gitTruncationReason('git status')} The lists below are a prefix, not the whole workspace.)`, '']
+                : []),
             ...this.renderGitStatusEntries(inScopeStatus),
             '',
             '## Out-of-Scope Workspace Status',
             '',
+            ...(statusTruncated
+                ? ['(INCOMPLETE: see the note above. An empty or short list here does NOT mean the work stayed in scope.)', '']
+                : []),
             ...this.renderGitStatusEntries(outOfScopeStatus),
             '',
             '## Files Changed',
             '',
-            stat?.ok && stat.stdout.trim() ? stat.stdout.trimEnd() : '(none or unavailable)',
+            stat?.ok && stat.stdout.trim()
+                ? `${stat.stdout.trimEnd()}${stat.stdoutTruncated === true ? '\n(INCOMPLETE: the file list above was truncated at the git output limit.)' : ''}`
+                : '(none or unavailable)',
             '',
             '## Diff',
             '',
-            diff?.ok && diff.stdout.trim() ? diff.stdout.trimEnd() : '(none or unavailable)',
+            this.renderReviewPackageDiff(diff),
         ];
         const untrackedEntries = inScopeStatus.filter(entry => entry.code === '??');
         if (untrackedEntries.length > 0) {
@@ -7905,6 +8010,47 @@ class TaskGraphExecutionService {
         }
         await this.fileService.writeFile(packagePath, `${lines.join('\n').trimEnd()}\n`);
         return { path: relativePackagePath, gitHead: headCommit || null };
+    }
+    // This section is written to disk *and* handed to a review subagent, so an
+    // unbounded diff is a context and memory blowup, not just a big file.
+    // spawnSync's 1 MB maxBuffer used to bound it by accident (an oversized
+    // diff came back ENOBUFS and the section collapsed to "(none or
+    // unavailable)"); async spawn removed that bound. Cap it explicitly, at the
+    // same limit the untracked-file section directly below already applies, and
+    // say plainly what was dropped instead of silently emitting nothing.
+    renderReviewPackageDiff(diff) {
+        if (!diff?.ok || !diff.stdout.trim())
+            return '(none or unavailable)';
+        const text = diff.stdout.trimEnd();
+        const totalBytes = Buffer.byteLength(text, 'utf8');
+        // F25: `runGit` now stops accumulating at GIT_OUTPUT_LIMIT_BYTES, so a
+        // diff that hit that ceiling is already short of the real total. Say
+        // "at least" rather than quoting a byte count that is a floor as if it
+        // were exact.
+        const atLeast = diff.stdoutTruncated ? 'at least ' : '';
+        if (totalBytes <= exports.REVIEW_PACKAGE_DIFF_LIMIT_BYTES) {
+            return diff.stdoutTruncated
+                ? [
+                    text,
+                    '',
+                    `(diff truncated: git output exceeded the ${exports.GIT_OUTPUT_LIMIT_BYTES}-byte per-command limit. `
+                        + 'Read the target files directly to review the rest.)',
+                ].join('\n')
+                : text;
+        }
+        const head = Buffer.from(text, 'utf8')
+            .subarray(0, exports.REVIEW_PACKAGE_DIFF_LIMIT_BYTES)
+            .toString('utf8');
+        // Drop the trailing partial line: it can end mid-hunk or mid-codepoint.
+        const lastBreak = head.lastIndexOf('\n');
+        const kept = lastBreak > 0 ? head.slice(0, lastBreak) : '';
+        const keptBytes = Buffer.byteLength(kept, 'utf8');
+        return [
+            kept,
+            '',
+            `(diff truncated: ${atLeast}${totalBytes} bytes exceeds ${exports.REVIEW_PACKAGE_DIFF_LIMIT_BYTES}-byte review limit; `
+                + `${atLeast}${totalBytes - keptBytes} bytes omitted. Read the target files directly to review the rest.)`,
+        ].join('\n');
     }
     getUpstreamRegressionTasks(task, tasks) {
         const taskById = new Map(tasks.map(candidate => [candidate.id, candidate]));
@@ -7973,23 +8119,30 @@ class TaskGraphExecutionService {
             rendered.push(`- ... ${entries.length - limit} additional entries omitted`);
         return rendered;
     }
+    /**
+     * Ingests usage sidecars incrementally.
+     *
+     * This runs on every dispatch and every sync, and it used to re-read every
+     * historical review-dispatch record on each pass -- a cost that grew for
+     * the whole life of the Goal to re-derive an answer that could not have
+     * changed. What it actually needs to know is which sidecars have already
+     * been consumed, so that is recorded (`id -> ingested sidecar mtime`) and
+     * an already-consumed dispatch whose sidecar has not moved costs one stat
+     * instead of a full record parse.
+     *
+     * The dispatch-record filename is the dispatch id, so the id is known
+     * before the record is opened; the record only has to be read for
+     * dispatches that are genuinely being ingested.
+     *
+     * Invalidation: a sidecar whose mtime differs from the watermark is
+     * re-ingested. A missing or corrupt watermark falls back to the execution
+     * metrics artifact, which is the durable record of what was ingested, so a
+     * lost watermark costs one slow pass and never a lost or duplicated metric.
+     */
     async ingestReviewUsageSidecars(changePath, feature) {
         const descriptors = [{ directory: REVIEW_DISPATCHES_DIR, documentReview: false }];
         const metrics = [];
-        const metricsPath = path.join(changePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
-        const existingUsage = new Map();
-        if (await this.fileService.exists(metricsPath)) {
-            try {
-                const artifact = await this.fileService.readJSON(metricsPath);
-                for (const entry of Array.isArray(artifact?.entries) ? artifact.entries : []) {
-                    if (entry.kind === 'usage')
-                        existingUsage.set(entry.id, entry.recordedAt);
-                }
-            }
-            catch {
-                existingUsage.clear();
-            }
-        }
+        const ingested = await this.readUsageIngestWatermark(changePath);
         for (const descriptor of descriptors) {
             const directoryPath = path.join(changePath, 'artifacts', 'agents', descriptor.directory);
             if (!(await this.fileService.exists(directoryPath)))
@@ -7998,6 +8151,16 @@ class TaskGraphExecutionService {
                 .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
                 .sort((left, right) => left.name.localeCompare(right.name));
             for (const entry of entries) {
+                const id = entry.name.slice(0, -'.json'.length).trim();
+                if (!id)
+                    continue;
+                const usagePath = path.join(changePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${id}.json`);
+                const usageStat = await fs_1.promises.stat(usagePath).catch(() => null);
+                if (!usageStat)
+                    continue;
+                const recordedAt = usageStat.mtime.toISOString();
+                if (ingested.get(id) === recordedAt)
+                    continue;
                 let record;
                 try {
                     record = await this.fileService.readJSON(path.join(directoryPath, entry.name));
@@ -8005,16 +8168,12 @@ class TaskGraphExecutionService {
                 catch {
                     continue;
                 }
-                const id = String(record?.id || '').trim();
-                if (!id)
-                    continue;
-                const usagePath = path.join(changePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${id}.json`);
-                if (!(await this.fileService.exists(usagePath)))
-                    continue;
-                const recordedAt = (await fs_1.promises.stat(usagePath)).mtime.toISOString();
-                if (existingUsage.get(id) === recordedAt)
+                // The filename is the id by construction, but a hand-edited or
+                // renamed record must not be attributed to the wrong dispatch.
+                if (String(record?.id || '').trim() !== id)
                     continue;
                 const usage = await this.readExecutionUsageFile(usagePath);
+                ingested.set(id, recordedAt);
                 metrics.push({
                     kind: 'usage',
                     id,
@@ -8034,8 +8193,62 @@ class TaskGraphExecutionService {
                 });
             }
         }
-        if (metrics.length > 0)
+        if (metrics.length > 0) {
             await this.recordExecutionMetric(changePath, feature, metrics);
+            await this.writeUsageIngestWatermark(changePath, ingested);
+        }
+    }
+    getUsageIngestWatermarkPath(changePath) {
+        return path.join(changePath, 'artifacts', 'loop', USAGE_INGEST_WATERMARK_FILE);
+    }
+    async readUsageIngestWatermark(changePath) {
+        const ingested = new Map();
+        try {
+            const raw = JSON.parse(await fs_1.promises.readFile(this.getUsageIngestWatermarkPath(changePath), 'utf8'));
+            if (raw?.version === USAGE_INGEST_WATERMARK_VERSION
+                && raw.ingested
+                && typeof raw.ingested === 'object'
+                && !Array.isArray(raw.ingested)) {
+                for (const [id, recordedAt] of Object.entries(raw.ingested)) {
+                    if (typeof recordedAt === 'string')
+                        ingested.set(id, recordedAt);
+                }
+                return ingested;
+            }
+        }
+        catch {
+            ingested.clear();
+        }
+        // No usable watermark: the execution metrics artifact is the durable
+        // record of what has already been ingested, so rebuild from it.
+        const metricsPath = path.join(changePath, 'artifacts', 'agents', EXECUTION_METRICS_FILE);
+        if (await this.fileService.exists(metricsPath)) {
+            try {
+                const artifact = await this.fileService.readJSON(metricsPath);
+                for (const entry of Array.isArray(artifact?.entries) ? artifact.entries : []) {
+                    if (entry.kind === 'usage')
+                        ingested.set(entry.id, entry.recordedAt);
+                }
+            }
+            catch {
+                ingested.clear();
+            }
+        }
+        return ingested;
+    }
+    async writeUsageIngestWatermark(changePath, ingested) {
+        try {
+            const watermarkPath = this.getUsageIngestWatermarkPath(changePath);
+            await fs_1.promises.mkdir(path.dirname(watermarkPath), { recursive: true });
+            await this.fileService.writeJSON(watermarkPath, {
+                version: USAGE_INGEST_WATERMARK_VERSION,
+                updatedAt: new Date().toISOString(),
+                ingested: Object.fromEntries([...ingested].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))),
+            });
+        }
+        catch {
+            // Losing the watermark costs one slow pass, never a lost metric.
+        }
     }
     async readExecutionUsageFile(usageFile) {
         const resolvedPath = path.resolve(String(usageFile || '').trim());
@@ -8141,7 +8354,7 @@ class TaskGraphExecutionService {
             && !filePath.includes('/../'))))
             .sort();
     }
-    async captureTargetSnapshots(projectRoot, targetFiles) {
+    async captureTargetSnapshots(projectRoot, targetFiles, collectContents) {
         const snapshots = [];
         const canonicalProjectRoot = await fs_1.promises.realpath(projectRoot).catch(() => path.resolve(projectRoot));
         for (const targetPath of this.normalizeTargetFiles(targetFiles)) {
@@ -8162,6 +8375,7 @@ class TaskGraphExecutionService {
                 }
                 if (stat.isFile()) {
                     const content = await fs_1.promises.readFile(absolutePath);
+                    collectContents?.set(path.resolve(absolutePath), content);
                     snapshots.push({
                         path: targetPath,
                         exists: true,
@@ -8246,7 +8460,14 @@ class TaskGraphExecutionService {
      * planning approval mid-goal and re-dispatches full planning reviews.
      */
     async capturePlanningSemanticSnapshots(projectRoot, targetFiles) {
-        const raw = await this.captureTargetSnapshots(projectRoot, targetFiles);
+        /*
+         * The semantic hash is derived from the SAME buffer the raw pass read.
+         * It used to re-read each target here, which both cost a second read of
+         * every target file and let the two passes see two different revisions
+         * of it.
+         */
+        const collected = new Map();
+        const raw = await this.captureTargetSnapshots(projectRoot, targetFiles, collected);
         const snapshots = [];
         for (const snapshot of raw) {
             if (!snapshot.exists || snapshot.kind !== 'file') {
@@ -8254,7 +8475,8 @@ class TaskGraphExecutionService {
                 continue;
             }
             const absolutePath = path.resolve(projectRoot, ...snapshot.path.split('/'));
-            const content = await this.fileService.readFile(absolutePath);
+            const buffered = collected.get(absolutePath);
+            const content = buffered ? buffered.toString('utf8') : await this.fileService.readFile(absolutePath);
             snapshots.push({
                 ...snapshot,
                 contentHash: this.hashPlanningSemanticContent(snapshot.path, content),
@@ -8479,6 +8701,106 @@ class TaskGraphExecutionService {
             .at(-1) || updatedAt;
         await this.fileService.writeJSON(metricsPath, artifact);
     }
+    // -----------------------------------------------------------------------
+    // Evidence-validation scope
+    // -----------------------------------------------------------------------
+    /**
+     * Runs `operation` with one resolved git HEAD. Callers that validate many
+     * pieces of evidence in a row -- a controller tick, `ospec execute status`,
+     * the archive gate -- should wrap the whole sweep so HEAD is resolved once
+     * for all of them instead of once each.
+     *
+     * Nested calls join the outer scope, so wrapping is always safe.
+     */
+    async withValidationScope(operation) {
+        if (validationScopeStorage.getStore())
+            return operation();
+        const scope = { gitHeads: new Map() };
+        return validationScopeStorage.run(scope, operation);
+    }
+    /**
+     * The single read primitive every validation input goes through.
+     *
+     * Returns null for a path that is absent -- including one whose parent is
+     * not a directory, which `readFile` reports as ENOTDIR -- so a caller can
+     * tell "missing" from "unreadable" without a separate stat. A directory
+     * still surfaces as the EISDIR the caller would have got anyway.
+     */
+    async readValidationInput(absolutePath) {
+        try {
+            return await fs_1.promises.readFile(path.resolve(absolutePath));
+        }
+        catch (error) {
+            if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR')
+                return null;
+            throw error;
+        }
+    }
+    /**
+     * Matches `FileService.readJSON`'s failure message exactly, so routing a
+     * validation input through these helpers does not change the reason string
+     * a refusal carries.
+     */
+    parseValidationInputJSON(text, filePath) {
+        try {
+            return JSON.parse(text.replace(/^﻿/, ''));
+        }
+        catch {
+            throw new Error(`Failed to parse JSON: ${filePath}`);
+        }
+    }
+    async readValidationInputText(absolutePath) {
+        const content = await this.readValidationInput(absolutePath);
+        return content === null ? null : content.toString('utf8');
+    }
+    /**
+     * One `git rev-parse HEAD` per operation instead of one per validated
+     * task. Any git command that is not provably read-only drops the memo, so
+     * a commit or checkout *this process* makes mid-operation is never read
+     * through.
+     *
+     * D6: the pending promise is memoised before the await, so a fan-out of
+     * concurrent validations shares one spawn instead of one each.
+     *
+     * FIX-4: `use` is mandatory, and it carries the entire safety argument.
+     *
+     * What the memo remembers: the commit HEAD pointed at when the enclosing
+     * `withValidationScope` first asked for it.
+     * What makes that memory false: any commit, checkout, reset, merge or
+     * branch switch performed by ANOTHER process while the scope is open --
+     * `forgetMemoisedGitHeads` only sees this process's own git subcommands.
+     *
+     * A false memory is harmless for a verdict that merely records or reports
+     * HEAD, and is a stale PASS for any verdict that REFUSES when HEAD moves.
+     * The second class passes 'refusal-condition' and pays a fresh spawn.
+     *
+     * The parameter is required rather than defaulted because that is the
+     * failure this phase actually had: FIX-1 hand-patched one refusing caller
+     * (the final review) and wrote that it was "the ONE verdict that refuses
+     * on a moved HEAD". It was not -- `isPassingVerificationRecordFreshAgainst`
+     * refuses on it too and went on reading the memo. A default would have let
+     * the next such caller repeat it silently; now the compiler asks.
+     */
+    async readValidationGitHead(projectRoot, use) {
+        const resolvedRoot = path.resolve(projectRoot);
+        if (use === 'refusal-condition') {
+            return await this.readGitOutput(resolvedRoot, ['rev-parse', 'HEAD']) || null;
+        }
+        const scope = validationScopeStorage.getStore();
+        if (!scope)
+            return await this.readGitOutput(resolvedRoot, ['rev-parse', 'HEAD']) || null;
+        const existing = scope.gitHeads.get(resolvedRoot);
+        if (existing)
+            return existing;
+        const pending = this.readGitOutput(resolvedRoot, ['rev-parse', 'HEAD'])
+            .then(output => output || null)
+            .catch(() => null);
+        scope.gitHeads.set(resolvedRoot, pending);
+        return pending;
+    }
+    forgetMemoisedGitHeads() {
+        validationScopeStorage.getStore()?.gitHeads.clear();
+    }
     async withTaskGraphMutationLease(changePath, operation) {
         const resolvedChangePath = path.resolve(changePath);
         const lockPath = path.join(resolvedChangePath, 'artifacts', 'agents', TASK_GRAPH_MUTATION_LOCK_FILE);
@@ -8486,6 +8808,10 @@ class TaskGraphExecutionService {
         const startedAt = Date.now();
         const nonce = (0, crypto_1.randomBytes)(16).toString('hex');
         let handle = null;
+        // One steal attempt per acquisition. If the confirmation below says the
+        // holder is alive, waiting out this acquisition and letting the caller
+        // retry is always safer than trying again a few milliseconds later.
+        let stealAttempted = false;
         while (!handle) {
             try {
                 const candidate = await fs_1.promises.open(lockPath, 'wx');
@@ -8511,13 +8837,21 @@ class TaskGraphExecutionService {
                 const owner = await this.readTaskGraphLockOwner(lockPath);
                 const stat = await fs_1.promises.stat(lockPath).catch(() => null);
                 const lockAgeMs = stat ? Date.now() - stat.mtimeMs : 0;
-                if (stat
+                if (!stealAttempted
+                    && stat
                     && (lockAgeMs >= STALE_TASK_GRAPH_MUTATION_LOCK_MS || lockAgeMs <= -STALE_TASK_GRAPH_MUTATION_LOCK_MS)
-                    && (owner
-                        ? ((!this.isProcessAlive(owner.pid) || owner.heartbeat)
-                            && await this.removeTaskGraphLockIfOwned(lockPath, owner.nonce))
-                        : await this.removeCorruptTaskGraphLockIfUnchanged(lockPath, stat))) {
-                    continue;
+                    && (owner ? (!this.isProcessAlive(owner.pid) || owner.heartbeat) : true)) {
+                    stealAttempted = true;
+                    // Age alone is not evidence of death: a holder blocked in a
+                    // long call looks identical to a crashed one until you look
+                    // twice. Only a lock whose mtime is still frozen after the
+                    // recheck window is genuinely abandoned.
+                    if (await this.confirmTaskGraphLockStillStale(lockPath, stat)
+                        && (owner
+                            ? await this.removeTaskGraphLockIfOwned(lockPath, owner.nonce)
+                            : await this.removeCorruptTaskGraphLockIfUnchanged(lockPath, stat))) {
+                        continue;
+                    }
                 }
                 if (Date.now() - startedAt >= TASK_GRAPH_MUTATION_LOCK_TIMEOUT_MS) {
                     throw new Error(`Timed out waiting for task graph mutation lease at ${lockPath}.`);
@@ -8525,18 +8859,36 @@ class TaskGraphExecutionService {
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
         }
+        const lease = registerHeldLease(lockPath, nonce);
         const heartbeat = setInterval(() => {
+            // A wedged operation stops refreshing: keeping the mtime moving
+            // while nothing can progress is what makes a stuck lock immortal.
+            if (isHeldLeaseWedged(lease))
+                return;
             void this.refreshTaskGraphLockIfOwned(lockPath, nonce);
         }, TASK_GRAPH_MUTATION_LOCK_HEARTBEAT_MS);
         heartbeat.unref();
         try {
-            return await operation();
+            // The lease is the boundary at which the task graph and the review
+            // artifacts may change. Entering the validation scope here means
+            // one command's worth of validations share one resolved HEAD.
+            return await this.withValidationScope(() => runWithHeldLease(lease, () => operation()));
         }
         finally {
+            releaseHeldLease(lease);
             clearInterval(heartbeat);
             await handle.close().catch(() => undefined);
             await this.removeTaskGraphLockIfOwned(lockPath, nonce);
         }
+    }
+    // A holder that is merely slow refreshes the mtime within a heartbeat; a
+    // dead one never does. Waiting one recheck window and re-stating is what
+    // separates the two, and it is cheap next to corrupting a task graph.
+    async confirmTaskGraphLockStillStale(lockPath, observed) {
+        await new Promise(resolve => setTimeout(resolve, exports.STALE_LOCK_STEAL_RECHECK_MS));
+        const current = await fs_1.promises.stat(lockPath).catch(() => null);
+        // Gone already, or moving again: either way this is not ours to delete.
+        return current !== null && current.mtimeMs === observed.mtimeMs;
     }
     async readTaskGraphLockOwner(lockPath) {
         try {
@@ -8757,14 +9109,26 @@ class TaskGraphExecutionService {
         this.reportDocumentLanguageCache.set(cacheKey, language);
         return language;
     }
+    // FIX-G1: `documentLanguage` is one of the two fields a read cannot recover
+    // by looking around, and this one decides what language every dispatched
+    // task report is written in. The old `catch { return null }` turned an
+    // unreadable or damaged `.skillrc` into "no configured language", i.e. the
+    // en-US fallback, silently, on a zh-CN / ja-JP / ar project. Absent
+    // (`ENOENT`) still means "no configured language"; damaged does not.
     async readReportLanguageFromSkillrc(projectRoot) {
-        try {
-            const config = await this.fileService.readJSON(path.join(projectRoot, constants_1.FILE_NAMES.SKILLRC));
-            return this.normalizeReportDocumentLanguage(config?.documentLanguage);
-        }
-        catch {
+        const configPath = path.join(projectRoot, constants_1.FILE_NAMES.SKILLRC);
+        if (!(await this.fileService.exists(configPath))) {
             return null;
         }
+        let raw;
+        try {
+            raw = await this.fileService.readJSON(configPath);
+        }
+        catch (error) {
+            throw (0, ProjectLayout_1.createDamagedConfigError)(configPath, `invalid JSON (${error?.message || 'parse failed'})`);
+        }
+        const config = (0, ProjectLayout_1.assertProjectConfigUsable)(projectRoot, configPath, raw);
+        return this.normalizeReportDocumentLanguage(config?.documentLanguage);
     }
     async readReportLanguageFromAssetManifest(projectRoot) {
         try {
@@ -8883,7 +9247,6 @@ class TaskGraphExecutionService {
             [/^## Execution State$/u, '## 执行状态'],
             [/^## Reviews And Evidence$/u, '## 评审与证据'],
             [/^## Debug Phase Evidence$/u, '## 调试阶段证据'],
-            [/^## Checkpoint Evidence$/u, '## Checkpoint 证据'],
             [/^## User Decisions$/u, '## 用户决策'],
             [/^## Recent Dispatch Results$/u, '## 最近派发结果'],
             [/^## Active Dispatches$/u, '## 活跃派发'],
@@ -8980,7 +9343,6 @@ class TaskGraphExecutionService {
             'Verification evidence': '验证证据',
             'TDD evidence': 'TDD 证据',
             'Debug evidence': '调试证据',
-            'Checkpoint evidence': 'Checkpoint 证据',
             'Task graph status': '任务图状态',
             'Task status': '任务状态',
             'Workspace status': '工作区状态',
@@ -9348,9 +9710,11 @@ class TaskGraphExecutionService {
         }
         const content = await this.fileService.readFile(documentPath);
         const trimmedContent = content.trim();
-        const checklistItems = content.match(/^\s*-\s+\[(?: |x|X)\]\s+.+$/gm) ?? [];
-        const uncheckedItems = content.match(/^\s*-\s+\[ \]\s+.+$/gm) ?? [];
-        const checklistComplete = checklistItems.length > 0
+        // Same single predicate as `ospec archive` -- see
+        // `isVerificationChecklistComplete` above for why these two agreeing is
+        // the point.
+        const uncheckedItems = (0, ChecklistScan_1.listUncheckedChecklistItems)(content);
+        const checklistComplete = (0, ChecklistScan_1.hasChecklistItem)(content)
             ? uncheckedItems.length === 0
             : options.checklistRequired
                 ? false
@@ -9421,7 +9785,7 @@ class TaskGraphExecutionService {
                 activeChangeCount: 0,
                 queuedChangeCount: 0,
                 knowledgeIndexPath: null,
-                featureIndexPath: null,
+                featureCatalogPath: null,
                 indexedDocumentCount: 0,
                 archivedChangeCount: 0,
                 recommendedCommands: [],
@@ -9456,7 +9820,7 @@ class TaskGraphExecutionService {
                 activeChangeCount: Array.isArray(artifact?.activeChanges) ? artifact.activeChanges.length : 0,
                 queuedChangeCount: Array.isArray(artifact?.queuedChanges) ? artifact.queuedChanges.length : 0,
                 knowledgeIndexPath: typeof artifact?.knowledge?.indexPath === 'string' ? artifact.knowledge.indexPath : null,
-                featureIndexPath: typeof artifact?.knowledge?.featureIndexPath === 'string' ? artifact.knowledge.featureIndexPath : null,
+                featureCatalogPath: typeof artifact?.knowledge?.featureCatalogPath === 'string' ? artifact.knowledge.featureCatalogPath : null,
                 indexedDocumentCount: Number.isFinite(artifact?.knowledge?.documentCount) ? artifact.knowledge.documentCount : 0,
                 archivedChangeCount: Number.isFinite(artifact?.knowledge?.archivedChangeCount) ? artifact.knowledge.archivedChangeCount : 0,
                 recommendedCommands,
@@ -9477,7 +9841,7 @@ class TaskGraphExecutionService {
                 activeChangeCount: 0,
                 queuedChangeCount: 0,
                 knowledgeIndexPath: null,
-                featureIndexPath: null,
+                featureCatalogPath: null,
                 indexedDocumentCount: 0,
                 archivedChangeCount: 0,
                 recommendedCommands: [],
@@ -9762,17 +10126,6 @@ class TaskGraphExecutionService {
                 nextInstruction: 'Resolve debug evidence blockers before closeout.',
             };
         }
-        if (input.execution.evidence.checkpoint.active && input.execution.evidence.checkpoint.status !== 'complete') {
-            blockers.push(`Checkpoint evidence coverage is not complete (current: ${input.execution.evidence.checkpoint.status}).`);
-            blockers.push(...input.execution.evidence.checkpoint.missing.map(item => `Checkpoint missing evidence: ${item}`));
-            warnings.push(...input.execution.evidence.checkpoint.nextActions);
-            return {
-                status: 'needs_verification',
-                blockers,
-                warnings,
-                nextInstruction: input.execution.evidence.checkpoint.nextActions[0] || 'Complete Checkpoint evidence coverage before finish.',
-            };
-        }
         return {
             status: 'ready_to_finish',
             blockers,
@@ -9794,11 +10147,19 @@ class TaskGraphExecutionService {
         const planArtifactPath = plan
             ? this.toChangeRelativePath(changePath, planPath)
             : null;
-        const gitRootResult = this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
+        const gitRootResult = await this.runGit(projectRoot, ['rev-parse', '--show-toplevel']);
         const gitRoot = gitRootResult.ok ? path.resolve(gitRootResult.stdout.trim()) : null;
-        const worktrees = gitRootResult.ok
-            ? this.parseGitWorktrees(this.readGitOutput(projectRoot, ['worktree', 'list', '--porcelain']) || '')
-            : [];
+        // F30: a truncated list can only DROP worktrees, so the "not registered
+        // as a git worktree" blocker below still fires -- but it names the wrong
+        // reason, and "add --path and rerun" is the wrong advice when the entry
+        // was simply cut off. The real reason is recorded alongside it.
+        const worktreeRead = gitRootResult.ok
+            ? await this.readGitOutputWithTruncation(projectRoot, ['worktree', 'list', '--porcelain'])
+            : null;
+        if (worktreeRead?.truncated) {
+            blockers.push(this.gitTruncationReason('git worktree list'));
+        }
+        const worktrees = worktreeRead ? this.parseGitWorktrees(worktreeRead.text || '') : [];
         const targetPath = options.targetPath?.trim()
             ? this.resolveRecommendedWorktreePath(gitRoot || projectRoot, options.targetPath, safeFeature)
             : plan?.recommendedPath || '';
@@ -9840,8 +10201,8 @@ class TaskGraphExecutionService {
     formatGitCommand(args) {
         return ['git', ...args.map(arg => this.quoteShellArg(arg))].join(' ');
     }
-    runGitForArtifact(cwd, args) {
-        const result = this.runGit(cwd, args);
+    async runGitForArtifact(cwd, args) {
+        const result = await this.runGit(cwd, args);
         return {
             command: this.formatGitCommand(args),
             args,
@@ -9851,31 +10212,213 @@ class TaskGraphExecutionService {
             stderr: result.stderr,
             status: result.status,
             error: result.error?.message || null,
+            stdoutTruncated: result.stdoutTruncated === true,
+            stderrTruncated: result.stderrTruncated === true,
         };
     }
-    runGit(cwd, args) {
+    async runGit(cwd, args, options) {
+        // P0-6: this used to be spawnSync. A mutation lease is judged stale by
+        // its mtime while the heartbeat that refreshes that mtime is a timer,
+        // so any git call that outran the stale threshold -- `git diff
+        // --unified=10` over every target file of a large task is the usual
+        // culprit -- froze the heartbeat and let a second controller delete a
+        // live lock and mutate the same task graph. Spawning asynchronously
+        // keeps the event loop, and therefore the heartbeat, running.
+        //
         // Force core.quotePath=false so git emits raw UTF-8 paths instead of
         // octal-escaped, double-quoted ones. Without this, non-ASCII (e.g. CJK)
         // paths in `git status` output are mangled by the strip-quotes /
         // backslash->slash parsers and the workspace-scope gate misattributes
         // in-scope files as out-of-scope, blocking closeout. Harmless for
         // non-path git subcommands.
-        const result = childProcess.spawnSync('git', ['-c', 'core.quotePath=false', ...args], {
-            cwd,
-            encoding: 'utf8',
-            windowsHide: true,
+        //
+        // Two things spawnSync did implicitly have to be restored by hand.
+        // First, stdin: spawnSync writes `input` (undefined) and then *closes*
+        // the pipe, so git sees EOF at once. A default async spawn leaves an
+        // open pipe nobody ever ends, so any git that reads stdin -- a
+        // credential or askpass helper, a clean/smudge filter, a hook fired by
+        // `worktree add` -- waits forever while the lease heartbeat keeps its
+        // lock alive. `stdio[0] = 'ignore'` gives the child no writable stdin
+        // and reproduces the EOF exactly. Second, a bound. That is two separate
+        // bounds, and only one of them is time. A runaway git is bounded by the
+        // explicit timeout below, because an unbounded git under a mutation
+        // lease is a deadlock rather than a slow call; a runaway *output* is
+        // bounded by GIT_OUTPUT_LIMIT_BYTES here, because maxBuffer was also
+        // the only thing keeping a repository-sized `git diff` out of the heap.
+        // Capping what the review package writes bounds the artifact, not the
+        // memory: the accumulation itself has to stop.
+        const covering = getActiveHeldLeases();
+        const timeoutMs = options?.timeoutMs ?? exports.GIT_COMMAND_TIMEOUT_MS;
+        // Any git command that is not provably read-only may move HEAD, so the
+        // memoised HEAD is dropped rather than assumed to have survived. Cheap:
+        // the next reader re-resolves it once.
+        if (!HEAD_PRESERVING_GIT_SUBCOMMANDS.has(String(args[0] || '')))
+            this.forgetMemoisedGitHeads();
+        touchLeasesSync(covering);
+        return await new Promise(resolve => {
+            const child = childProcess.spawn('git', ['-c', 'core.quotePath=false', ...args], {
+                cwd,
+                windowsHide: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let stdout = '';
+            let stderr = '';
+            let stdoutBytes = 0;
+            let stderrBytes = 0;
+            let stdoutTruncated = false;
+            let stderrTruncated = false;
+            let settled = false;
+            let exited = false;
+            let timer = null;
+            let wedgedTimer = null;
+            const clearTimers = () => {
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+                if (wedgedTimer) {
+                    clearTimeout(wedgedTimer);
+                    wedgedTimer = null;
+                }
+            };
+            const settle = (result, settleOptions) => {
+                if (settled)
+                    return;
+                settled = true;
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+                // A timed-out call must not push the lock's mtime forward: the
+                // whole point of surfacing the timeout is to let the lease age
+                // out if the operation above cannot finish either.
+                if (settleOptions?.touch !== false)
+                    touchLeasesSync(covering);
+                resolve({ ...result, stdoutTruncated, stderrTruncated });
+            };
+            child.stdout?.setEncoding('utf8');
+            child.stderr?.setEncoding('utf8');
+            // F25: the accumulation is what has to be bounded, not just what a
+            // caller later writes out. A chunk is taken whole or dropped whole:
+            // `setEncoding('utf8')` already hands over complete codepoints, and
+            // slicing one by byte count could sever a multi-byte character, so
+            // the ceiling is the limit plus at most one stream chunk.
+            child.stdout?.on('data', chunk => {
+                if (stdoutBytes >= exports.GIT_OUTPUT_LIMIT_BYTES) {
+                    stdoutTruncated = true;
+                    return;
+                }
+                stdout += chunk;
+                stdoutBytes += Buffer.byteLength(chunk, 'utf8');
+            });
+            child.stderr?.on('data', chunk => {
+                if (stderrBytes >= exports.GIT_OUTPUT_LIMIT_BYTES) {
+                    stderrTruncated = true;
+                    return;
+                }
+                stderr += chunk;
+                stderrBytes += Buffer.byteLength(chunk, 'utf8');
+            });
+            child.on('error', error => {
+                exited = true;
+                clearTimers();
+                settle({
+                    ok: false,
+                    stdout,
+                    stderr,
+                    status: null,
+                    error: error,
+                });
+            });
+            child.on('close', status => {
+                exited = true;
+                clearTimers();
+                // F26: no un-wedging here. This call exiting cleanly says
+                // nothing about the wedged child that is still running -- see
+                // `markHeldLeaseWedged`.
+                settle({
+                    ok: status === 0,
+                    stdout,
+                    stderr,
+                    status: typeof status === 'number' ? status : null,
+                });
+            });
+            if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+                timer = setTimeout(() => {
+                    timer = null;
+                    try {
+                        child.kill?.('SIGKILL');
+                    }
+                    catch { /* already gone, or not killable from here */ }
+                    // Settle on the timer rather than on the child's exit: a
+                    // child that survives SIGKILL must not be able to keep this
+                    // promise -- and the lease -- pending forever.
+                    const timeoutError = Object.assign(new Error(`git ${args.join(' ')} timed out after ${timeoutMs}ms`), { code: 'ETIMEDOUT' });
+                    // If the kill takes, this was a slow call and the lease is
+                    // fine. If the child is still there after the grace window,
+                    // the operation is genuinely wedged and the lease has to
+                    // stop being refreshed so the lock becomes stealable.
+                    wedgedTimer = setTimeout(() => {
+                        wedgedTimer = null;
+                        if (exited)
+                            return;
+                        for (const lease of covering)
+                            markHeldLeaseWedged(lease);
+                    }, exports.GIT_KILL_GRACE_MS);
+                    wedgedTimer.unref?.();
+                    settle({
+                        ok: false,
+                        stdout,
+                        stderr,
+                        status: null,
+                        error: timeoutError,
+                    }, { touch: false });
+                }, timeoutMs);
+                timer.unref?.();
+            }
         });
+    }
+    /**
+     * F30: `runGit` bounds what it accumulates at `GIT_OUTPUT_LIMIT_BYTES` and
+     * reports it, but `readGitOutput` used to drop both flags on the floor, so
+     * every one of its ~28 call sites read a partial answer as a complete one.
+     * On the reads that can legitimately pass 8 MB -- `git status
+     * --untracked-files=all` and `git worktree list` -- that is fail-open on a
+     * safety gate: `|| ''` turns a truncated status into an EMPTY status, and
+     * an empty status means "clean".
+     *
+     * So there are now two readers. This one hands the flag to the caller,
+     * because only the caller knows what a partial answer means for the
+     * decision it is about to make; `readGitOutput` below is the fail-closed
+     * default for reads whose output is bounded by construction (a sha, a
+     * branch name, a repository root).
+     */
+    async readGitOutputWithTruncation(cwd, args) {
+        const result = await this.runGit(cwd, args);
         return {
-            ok: result.status === 0,
-            stdout: typeof result.stdout === 'string' ? result.stdout : '',
-            stderr: typeof result.stderr === 'string' ? result.stderr : '',
-            status: typeof result.status === 'number' ? result.status : null,
-            error: result.error,
+            text: result.ok ? result.stdout.trim() : null,
+            truncated: result.stdoutTruncated === true,
         };
     }
-    readGitOutput(cwd, args) {
-        const result = this.runGit(cwd, args);
-        return result.ok ? result.stdout.trim() : null;
+    /**
+     * A truncated read is not a shorter answer, it is no answer: it collapses
+     * to `null` exactly like a failed command, so every existing `|| null`
+     * fallback takes its "not available" branch instead of trusting a prefix.
+     * Callers whose output can legitimately be huge must use
+     * `readGitOutputWithTruncation` and decide explicitly -- for those, `null`
+     * and `''` are indistinguishable at the call site and `''` reads as clean.
+     */
+    async readGitOutput(cwd, args) {
+        const result = await this.readGitOutputWithTruncation(cwd, args);
+        return result.truncated ? null : result.text;
+    }
+    /**
+     * One sentence for every safety gate that refuses because git told it less
+     * than the whole truth. Naming the command and the limit is the difference
+     * between an actionable refusal and a mystery.
+     */
+    gitTruncationReason(what) {
+        return `${what} exceeded the ${exports.GIT_OUTPUT_LIMIT_BYTES}-byte per-command output limit and was truncated, so this check cannot be completed from a partial answer; reduce the number of untracked files (or add them to .gitignore) and rerun.`;
     }
     parseGitStatusEntries(output) {
         return output
@@ -10415,20 +10958,19 @@ class TaskGraphExecutionService {
             ].join(' '),
         }));
     }
+    /**
+     * Quotes a value into one of the ~15 command strings this service emits for
+     * a human or an agent to PASTE INTO A SHELL.
+     *
+     * This used to be a local double-quoted implementation that escaped only
+     * `"`, so `$VAR`, `` `cmd` `` and `$(cmd)` still expanded on paste and a
+     * trailing backslash escaped the closing quote. It now delegates to the one
+     * shared rule in `utils/ShellQuote`, which is also what `SessionCommand`
+     * uses -- see that module's header for the guarantee and why cmd.exe is out
+     * of scope. Kept as a thin private method so the call sites read unchanged.
+     */
     quoteShellArg(value) {
-        if (/^[a-zA-Z0-9_./:=@-]+$/.test(value)) {
-            return value;
-        }
-        return `"${value.replace(/"/g, '\\"')}"`;
-    }
-    quoteHarnessTemplateArg(value) {
-        if (/^[a-zA-Z0-9_./:=@-]+$/.test(value)) {
-            return value;
-        }
-        if (process.platform === 'win32') {
-            return `"${value.replace(/([()%!^"<>&|])/g, '^$1')}"`;
-        }
-        return `'${value.replace(/'/g, `'\\''`)}'`;
+        return (0, ShellQuote_1.quoteShellArg)(value);
     }
     normalizeHandoffTarget(target) {
         const normalized = (target || 'generic').trim().toLowerCase();
@@ -10443,412 +10985,6 @@ class TaskGraphExecutionService {
             return normalized;
         }
         throw new Error(`Unsupported worker tool target: ${target}`);
-    }
-    normalizePositiveInteger(value, fallback) {
-        if (value === undefined || value === null || !Number.isInteger(value) || value <= 0) {
-            return fallback;
-        }
-        return value;
-    }
-    async resolveHarnessCommandTemplate(projectRoot, options) {
-        const command = options.command?.trim();
-        if (command) {
-            return {
-                commandTemplate: command,
-                source: 'option',
-                target: options.target || null,
-                timeoutMs: options.timeoutMs,
-                maxRounds: options.maxRounds,
-                warnings: [],
-            };
-        }
-        const warnings = [];
-        const configPath = path.join(projectRoot, '.ospec', 'harness.json');
-        if (!(await this.fileService.exists(configPath))) {
-            return {
-                commandTemplate: null,
-                source: 'missing',
-                target: options.target || null,
-                warnings,
-            };
-        }
-        try {
-            const config = await this.fileService.readJSON(configPath);
-            const target = options.target
-                || this.normalizeOptionalWorkerTarget(config?.defaultTarget || config?.default_target)
-                || null;
-            const commandTemplate = this.readHarnessCommandForTarget(config, target);
-            if (!commandTemplate) {
-                warnings.push(`.ospec/harness.json did not contain a worker command${target ? ` for target ${target}` : ''}.`);
-            }
-            return {
-                commandTemplate,
-                source: commandTemplate ? 'config' : 'missing',
-                target,
-                timeoutMs: typeof config?.timeoutMs === 'number' ? config.timeoutMs : typeof config?.timeout_ms === 'number' ? config.timeout_ms : undefined,
-                maxRounds: typeof config?.maxRounds === 'number' ? config.maxRounds : typeof config?.max_rounds === 'number' ? config.max_rounds : undefined,
-                warnings,
-            };
-        }
-        catch (error) {
-            warnings.push(`.ospec/harness.json could not be read: ${error?.message || error}`);
-            return {
-                commandTemplate: null,
-                source: 'missing',
-                target: options.target || null,
-                warnings,
-            };
-        }
-    }
-    normalizeOptionalWorkerTarget(value) {
-        if (typeof value !== 'string' || value.trim().length === 0) {
-            return null;
-        }
-        return this.normalizeWorkerToolTarget(value);
-    }
-    readHarnessCommandForTarget(config, target) {
-        const candidates = [
-            target ? config?.commands?.[target] : null,
-            target ? config?.workers?.[target]?.command : null,
-            config?.command,
-            config?.workerCommand,
-            config?.worker_command,
-            config?.commands?.default,
-            config?.workers?.default?.command,
-        ];
-        for (const candidate of candidates) {
-            if (typeof candidate === 'string' && candidate.trim().length > 0) {
-                return candidate.trim();
-            }
-        }
-        return null;
-    }
-    async ensureWorkspaceReadyForOrchestration(changePath) {
-        const artifactPath = this.getWorkspaceStatusPath(changePath);
-        if (!(await this.fileService.exists(artifactPath))) {
-            const inspection = await this.inspectWorkspace(changePath);
-            return {
-                status: inspection.status,
-                blockers: inspection.status === 'ready' ? [] : inspection.blockers.length > 0 ? inspection.blockers : [`Workspace readiness is ${inspection.status}.`],
-                warnings: inspection.warnings,
-            };
-        }
-        const snapshot = await this.readBootstrapPlanSnapshot(artifactPath);
-        const status = snapshot.status === 'ready' || snapshot.status === 'needs_isolation' || snapshot.status === 'unknown'
-            ? snapshot.status
-            : 'unknown';
-        return {
-            status,
-            blockers: status === 'ready' ? [] : snapshot.blockers.length > 0 ? snapshot.blockers : [`Workspace readiness is ${status}.`],
-            warnings: snapshot.warnings,
-        };
-    }
-    async readActiveDispatches(changePath, feature) {
-        const session = await this.readSession(this.getSessionPath(changePath), feature);
-        return session.dispatches
-            .filter(dispatch => dispatch.status === 'DISPATCHED')
-            .sort((left, right) => left.assignedAt.localeCompare(right.assignedAt));
-    }
-    selectParallelSafeActiveDispatches(dispatches, report) {
-        const tasksById = new Map(this.flattenReportTasks(report).map(task => [task.id, task]));
-        const selected = [];
-        const warnings = [];
-        for (const dispatch of dispatches) {
-            const task = tasksById.get(dispatch.taskId);
-            if (!task) {
-                warnings.push(`Skipped active dispatch ${dispatch.id} because task ${dispatch.taskId} is missing from task graph.`);
-                continue;
-            }
-            if (task.status !== 'IN_PROGRESS') {
-                warnings.push(`Skipped active dispatch ${dispatch.id} because task ${dispatch.taskId} is ${task.status}.`);
-                continue;
-            }
-            const conflictsWithSelected = selected.some(selectedDispatch => {
-                const selectedTask = tasksById.get(selectedDispatch.taskId);
-                return selectedTask
-                    ? !task.parallelizable || !selectedTask.parallelizable || tasksConflict(task, selectedTask)
-                    : true;
-            });
-            if (conflictsWithSelected) {
-                warnings.push(`Deferred active dispatch ${dispatch.id} for task ${dispatch.taskId} because it conflicts with another active dispatch in this round.`);
-                continue;
-            }
-            selected.push(dispatch);
-        }
-        return { dispatches: selected, warnings };
-    }
-    async readOrchestrationFinalReadiness(changePath) {
-        try {
-            const report = await this.getReport(changePath);
-            const completed = report.taskCount > 0
-                && report.completedTasks.length === report.taskCount
-                && report.graphStatus.toLowerCase() === 'completed';
-            if (completed) {
-                return { completed: true, reason: 'Task graph is complete.', warnings: [] };
-            }
-            return {
-                completed: false,
-                reason: `Task graph is not complete after orchestration. ${report.nextInstruction}`,
-                warnings: [],
-            };
-        }
-        catch (error) {
-            return {
-                completed: false,
-                reason: 'Task graph could not be inspected after orchestration.',
-                warnings: [`Task graph final readiness check failed: ${error?.message || error}`],
-            };
-        }
-    }
-    async prepareOrchestrationTaskRun(input) {
-        const target = this.normalizeWorkerToolTarget(input.target || input.dispatch.workerProfile?.targetToolMapping?.target || input.dispatch.workerProfile?.recommendedTarget);
-        const packetPath = path.resolve(input.changePath, input.dispatch.packetPath);
-        const recordPath = path.resolve(input.changePath, input.dispatch.recordPath);
-        const environment = this.buildHarnessEnvironment({
-            taskId: input.dispatch.taskId,
-            taskTitle: input.dispatch.taskTitle,
-            dispatchId: input.dispatch.id,
-            target,
-            packetPath,
-            recordPath,
-            changePath: input.changePath,
-            projectRoot: input.projectRoot,
-        });
-        const automaticUsagePath = path.join(input.changePath, 'artifacts', 'agents', USAGE_SIDECARS_DIR, `${input.dispatch.id}.json`);
-        environment.OSPEC_USAGE_FILE = automaticUsagePath;
-        environment.OSPEC_RUN_ID = input.dispatch.id;
-        environment.OSPEC_WORKFLOW_STAGE = input.dispatch.taskId.startsWith('repair-final-') ? 'repair' : 'implementation';
-        if (!input.dryRun)
-            await fs_1.promises.mkdir(path.dirname(automaticUsagePath), { recursive: true });
-        const command = this.renderHarnessCommandTemplate(input.commandTemplate, {
-            taskId: input.dispatch.taskId,
-            taskTitle: input.dispatch.taskTitle,
-            dispatchId: input.dispatch.id,
-            target,
-            packetPath,
-            recordPath,
-            changePath: input.changePath,
-            projectRoot: input.projectRoot,
-        });
-        const taskResult = {
-            taskId: input.dispatch.taskId,
-            taskTitle: input.dispatch.taskTitle,
-            dispatchId: input.dispatch.id,
-            target,
-            command,
-            environment,
-            packetPath: input.dispatch.packetPath,
-            recordPath: input.dispatch.recordPath,
-            runId: null,
-            runRecordPath: null,
-            runReportPath: null,
-            exitCode: null,
-            timedOut: false,
-            completionStatus: null,
-            collected: false,
-            error: null,
-        };
-        if (input.dryRun) {
-            return taskResult;
-        }
-        try {
-            const run = await this.runWorkerCommand({
-                changePath: input.changePath,
-                projectRoot: input.projectRoot,
-                kind: 'worker',
-                feature: input.feature,
-                target,
-                command,
-                taskId: input.dispatch.taskId,
-                dispatchId: input.dispatch.id,
-                reviewStage: null,
-                reviewDispatchId: null,
-                launchPlanPath: null,
-                reviewArtifactPath: null,
-                environment,
-                directoryName: WORKER_RUNS_DIR,
-                timeoutMs: input.timeoutMs ?? undefined,
-                nextInstruction: (record) => `Worker run ${record.id} finished with exit code ${record.exitCode ?? 'unknown'} under orchestration.`,
-            });
-            taskResult.runId = run.record.id;
-            taskResult.runRecordPath = run.record.recordPath;
-            taskResult.runReportPath = run.record.reportPath;
-            taskResult.exitCode = run.record.exitCode;
-            taskResult.timedOut = run.record.timedOut;
-        }
-        catch (error) {
-            taskResult.error = error?.message || String(error);
-        }
-        return taskResult;
-    }
-    buildOrchestrationFailedTasks(input) {
-        const relativeChangePath = this.toProjectRelativeChangePath(input.projectRoot, input.changePath);
-        const failedTasks = [];
-        for (const round of input.rounds) {
-            for (const task of round.tasks) {
-                if (!this.isOrchestrationTaskFailure(task)) {
-                    continue;
-                }
-                failedTasks.push({
-                    taskId: task.taskId,
-                    taskTitle: task.taskTitle,
-                    dispatchId: task.dispatchId,
-                    runId: task.runId,
-                    exitCode: task.exitCode,
-                    timedOut: task.timedOut,
-                    completionStatus: task.completionStatus,
-                    collected: task.collected,
-                    error: task.error,
-                    retryCommand: [
-                        'ospec execute retry',
-                        this.quoteShellArg(relativeChangePath),
-                        '--task',
-                        this.quoteShellArg(task.taskId),
-                        task.runId ? `--run ${this.quoteShellArg(task.runId)}` : '',
-                    ].filter(Boolean).join(' '),
-                });
-            }
-        }
-        return failedTasks;
-    }
-    isOrchestrationTaskFailure(task) {
-        return Boolean(task.error
-            || task.timedOut
-            || (task.exitCode !== null && task.exitCode !== 0)
-            || task.completionStatus === 'BLOCKED'
-            || task.completionStatus === 'NEEDS_CONTEXT');
-    }
-    buildHarnessEnvironment(input) {
-        return {
-            OSPEC_TASK_ID: input.taskId,
-            OSPEC_TASK_TITLE: input.taskTitle,
-            OSPEC_DISPATCH_ID: input.dispatchId,
-            OSPEC_TARGET: input.target,
-            OSPEC_PACKET_PATH: input.packetPath,
-            OSPEC_RECORD_PATH: input.recordPath,
-            OSPEC_CHANGE_PATH: input.changePath,
-            OSPEC_PROJECT_ROOT: input.projectRoot,
-        };
-    }
-    renderHarnessCommandTemplate(template, input) {
-        const values = {
-            taskId: this.quoteHarnessTemplateArg(input.taskId),
-            taskIdRaw: input.taskId,
-            taskTitle: this.quoteHarnessTemplateArg(input.taskTitle),
-            taskTitleRaw: input.taskTitle,
-            dispatchId: this.quoteHarnessTemplateArg(input.dispatchId),
-            dispatchIdRaw: input.dispatchId,
-            target: this.quoteHarnessTemplateArg(input.target),
-            targetRaw: input.target,
-            packet: this.quoteHarnessTemplateArg(input.packetPath),
-            packetPath: this.quoteHarnessTemplateArg(input.packetPath),
-            packetRaw: input.packetPath,
-            promptFile: this.quoteHarnessTemplateArg(input.packetPath),
-            record: this.quoteHarnessTemplateArg(input.recordPath),
-            recordPath: this.quoteHarnessTemplateArg(input.recordPath),
-            recordRaw: input.recordPath,
-            changePath: this.quoteHarnessTemplateArg(input.changePath),
-            changePathRaw: input.changePath,
-            projectRoot: this.quoteHarnessTemplateArg(input.projectRoot),
-            projectRootRaw: input.projectRoot,
-        };
-        return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => values[key] ?? '');
-    }
-    getOrchestrationNextInstruction(status, input) {
-        const relativeChangePath = this.toProjectRelativeChangePath(input.projectRoot, input.changePath);
-        if (status === 'dry_run') {
-            return 'Review the planned worker commands, then rerun without --dry-run when ready.';
-        }
-        if (status === 'blocked' || status === 'partial') {
-            if (input.failedTasks.length > 0) {
-                return `Resolve failed worker task(s), then rerun the first retry command: ${input.failedTasks[0].retryCommand}.`;
-            }
-            return `Resolve orchestration blockers, inspect worker runs, then rerun ospec execute status ${this.quoteShellArg(relativeChangePath)}.`;
-        }
-        if (input.rounds.length === 0) {
-            return `No worker tasks were run. Inspect next task state with ospec execute status ${this.quoteShellArg(relativeChangePath)}.`;
-        }
-        return `Orchestration completed. Continue with ospec execute review ${this.quoteShellArg(relativeChangePath)} --stage spec when task graph is complete.`;
-    }
-    buildOrchestrationRunReport(artifact) {
-        const lines = [
-            `# Orchestration Run: ${artifact.id}`,
-            '',
-            `- Feature: ${artifact.feature}`,
-            `- Status: ${artifact.status}`,
-            `- Started at: ${artifact.startedAt}`,
-            `- Completed at: ${artifact.completedAt}`,
-            `- Target: ${artifact.target || 'per-dispatch'}`,
-            `- Limit: ${artifact.limit ?? 'none'}`,
-            `- Max rounds: ${artifact.maxRounds}`,
-            `- Timeout ms: ${artifact.timeoutMs ?? 'none'}`,
-            `- Dry run: ${artifact.dryRun ? 'yes' : 'no'}`,
-            `- Collect: ${artifact.collect ? 'yes' : 'no'}`,
-            `- Continue on failure: ${artifact.continueOnFailure ? 'yes' : 'no'}`,
-            `- Command source: ${artifact.commandSource}`,
-            `- Workspace status: ${artifact.workspaceStatus}`,
-            '',
-            '## Rounds',
-            '',
-        ];
-        if (artifact.rounds.length === 0) {
-            lines.push('No worker rounds were run.', '');
-        }
-        for (const round of artifact.rounds) {
-            lines.push(`### Round ${round.round}`, '');
-            lines.push(`- Dispatches created: ${round.dispatchesCreated}`);
-            lines.push(`- Active dispatches: ${round.activeDispatches}`);
-            for (const task of round.tasks) {
-                lines.push('');
-                lines.push(`- Task: ${task.taskId} - ${task.taskTitle}`);
-                lines.push(`  - Dispatch: ${task.dispatchId}`);
-                lines.push(`  - Target: ${task.target}`);
-                lines.push(`  - Command: \`${task.command.replace(/`/g, '\\`')}\``);
-                lines.push(`  - Environment: ${Object.entries(task.environment).map(([key, value]) => `${key}=${value}`).join('; ')}`);
-                lines.push(`  - Run: ${task.runId || 'not run'}`);
-                lines.push(`  - Exit code: ${task.exitCode ?? 'unknown'}`);
-                lines.push(`  - Timed out: ${task.timedOut ? 'yes' : 'no'}`);
-                lines.push(`  - Collected: ${task.collected ? 'yes' : 'no'}`);
-                lines.push(`  - Completion: ${task.completionStatus || 'not recorded'}`);
-                if (task.error) {
-                    lines.push(`  - Error: ${task.error}`);
-                }
-            }
-            lines.push('');
-        }
-        if (artifact.failedTasks.length > 0) {
-            lines.push('## Failed Tasks And Retry Guidance', '');
-            for (const task of artifact.failedTasks) {
-                lines.push(`- ${task.taskId}: ${task.taskTitle}`);
-                lines.push(`  - Dispatch: ${task.dispatchId}`);
-                lines.push(`  - Run: ${task.runId || 'not recorded'}`);
-                lines.push(`  - Exit code: ${task.exitCode ?? 'unknown'}`);
-                lines.push(`  - Timed out: ${task.timedOut ? 'yes' : 'no'}`);
-                lines.push(`  - Completion: ${task.completionStatus || 'not recorded'}`);
-                lines.push(`  - Collected: ${task.collected ? 'yes' : 'no'}`);
-                if (task.error) {
-                    lines.push(`  - Error: ${task.error}`);
-                }
-                lines.push(`  - Retry: \`${task.retryCommand.replace(/`/g, '\\`')}\``);
-            }
-            lines.push('');
-        }
-        if (artifact.blockers.length > 0) {
-            lines.push('## Blockers', '');
-            for (const blocker of artifact.blockers) {
-                lines.push(`- ${blocker}`);
-            }
-            lines.push('');
-        }
-        if (artifact.warnings.length > 0) {
-            lines.push('## Warnings', '');
-            for (const warning of artifact.warnings) {
-                lines.push(`- ${warning}`);
-            }
-            lines.push('');
-        }
-        lines.push('## Next Instruction', '', artifact.nextInstruction, '');
-        return lines.join('\n');
     }
     buildHandoffToolMapping(target) {
         return buildWorkerTargetToolMapping(target);
@@ -11325,83 +11461,6 @@ class TaskGraphExecutionService {
             `ospec execute complete ${input.selected.taskId} ${input.relativeChangePath} --dispatch ${input.selected.id} --status DONE --summary "..."`,
         ].join('\n');
     }
-    async runWorkerCommand(input) {
-        throw new Error('Agent command execution was removed. Dispatch through runtimeAdapter.selected.nativeSubagent in the current model harness.');
-        const startedAt = new Date().toISOString();
-        const runId = `${input.kind}-run-${this.toFileSafeTimestamp(startedAt)}-${this.toFileSafeId(input.taskId || input.reviewStage || 'worker')}`;
-        const runDir = path.join(input.changePath, 'artifacts', 'agents', input.directoryName);
-        const recordPath = path.join(runDir, `${runId}.json`);
-        const reportPath = path.join(runDir, `${runId}.md`);
-        const stdoutPath = path.join(runDir, `${runId}.stdout.log`);
-        const stderrPath = path.join(runDir, `${runId}.stderr.log`);
-        const timeoutMs = this.normalizeTimeoutMs(input.timeoutMs);
-        const environment = input.environment && Object.keys(input.environment).length > 0
-            ? input.environment
-            : null;
-        const result = await this.runShellCommand(input.command, input.projectRoot, timeoutMs, environment);
-        const completedAt = new Date().toISOString();
-        const stdout = result.stdout;
-        const stderr = result.stderr;
-        await this.fileService.writeFile(stdoutPath, stdout);
-        await this.fileService.writeFile(stderrPath, stderr);
-        const exitCode = typeof result.status === 'number' ? result.status : null;
-        const record = {
-            id: runId,
-            kind: input.kind,
-            feature: input.feature,
-            target: input.target,
-            command: input.command,
-            environment,
-            cwd: input.projectRoot,
-            status: exitCode === 0 && !result.timedOut ? 'completed' : 'failed',
-            exitCode,
-            signal: result.signal,
-            timedOut: result.timedOut,
-            timeoutMs,
-            startedAt,
-            completedAt,
-            taskId: input.taskId,
-            dispatchId: input.dispatchId,
-            reviewStage: input.reviewStage,
-            reviewDispatchId: input.reviewDispatchId,
-            launchPlanPath: input.launchPlanPath,
-            reviewArtifactPath: input.reviewArtifactPath,
-            recordPath: this.toChangeRelativePath(input.changePath, recordPath),
-            reportPath: this.toChangeRelativePath(input.changePath, reportPath),
-            stdoutPath: this.toChangeRelativePath(input.changePath, stdoutPath),
-            stderrPath: this.toChangeRelativePath(input.changePath, stderrPath),
-            summary: exitCode === 0 && !result.timedOut
-                ? `${input.kind} command exited successfully.`
-                : result.timedOut
-                    ? `${input.kind} command timed out after ${timeoutMs ?? 'unknown'} ms.`
-                    : `${input.kind} command failed with exit code ${exitCode ?? 'unknown'}.`,
-            collectedAt: null,
-            completionStatus: null,
-        };
-        await this.writeWorkerRunRecord(input.changePath, record);
-        await this.writeLocalizedReportFile(input.changePath, reportPath, this.buildWorkerRunReport(record));
-        return {
-            changePath: input.changePath,
-            recordPath,
-            reportPath,
-            stdoutPath,
-            stderrPath,
-            record,
-            nextInstruction: input.nextInstruction(record),
-        };
-    }
-    normalizeTimeoutMs(timeoutMs) {
-        if (timeoutMs === undefined || timeoutMs === null) {
-            return DEFAULT_COMMAND_TIMEOUT_MS;
-        }
-        if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-            return DEFAULT_COMMAND_TIMEOUT_MS;
-        }
-        return Math.floor(timeoutMs);
-    }
-    runShellCommand(_command, _cwd, _timeoutMs, _environment) {
-        throw new Error('Agent shell execution was removed. Use the current model harness native subagent API.');
-    }
     async writeWorkerRunRecord(changePath, record) {
         await this.fileService.writeJSON(path.join(changePath, record.recordPath), record);
         await this.writeLocalizedReportFile(changePath, path.join(changePath, record.reportPath), this.buildWorkerRunReport(record));
@@ -11448,6 +11507,7 @@ class TaskGraphExecutionService {
             `- Exit code: ${record.exitCode ?? 'unknown'}`,
             `- Signal: ${record.signal || 'none'}`,
             `- Timed out: ${record.timedOut ? 'yes' : 'no'}`,
+            `- Infrastructure failure: ${record.infraFailure === true ? 'yes' : 'no'}`,
             `- Timeout ms: ${record.timeoutMs ?? 'none'}`,
             `- Started at: ${record.startedAt}`,
             `- Completed at: ${record.completedAt}`,
@@ -11517,8 +11577,38 @@ class TaskGraphExecutionService {
             '',
         ].join('\n');
     }
+    /**
+     * Every task in the report, once.
+     *
+     * The six lists are NOT a partition, and the overlap is guaranteed rather
+     * than exotic: `TERMINAL_TASK_STATUSES` is `{DONE, DONE_WITH_CONCERNS}` and
+     * drives `completedTasks`, while `concernTasks` is built from
+     * `DONE_WITH_CONCERNS` alone -- so every concern-status task is in both, and
+     * the plain concatenation this used to be yielded it twice on any graph
+     * containing one.
+     *
+     * Most of the 16 call sites were unharmed, because they immediately build a
+     * `new Map` keyed by id or call `.find`, and the duplicate entries are the
+     * same object reference (both filters run over the same `tasks` array).
+     * Two were not:
+     *
+     *  - the derived review summary maps over this list to write
+     *    "- <id>: <decision>" lines, so a DONE_WITH_CONCERNS task was listed
+     *    twice in the "Task Review Decisions" section of the document
+     *    `ospec execute sync` generates;
+     *  - `getUpstreamRegressionTasks` ends in a `.filter` over it, so a
+     *    concern-status upstream task was returned twice and flowed into both
+     *    `writeTaskReviewPackage({ regressionTasks })` and
+     *    `computeTaskReviewContextHash(..., regressionTasks.map(t => t.id), ...)`
+     *    -- a duplicated id changes the hash, so two runs over the same graph
+     *    could disagree about whether the review context had changed.
+     *
+     * Deduped by id rather than by reference: callers already assume ids are
+     * unique within a graph, and keying on the thing they key on means a report
+     * assembled some other way cannot reintroduce the defect.
+     */
     flattenReportTasks(report) {
-        return [
+        const all = [
             ...report.readyTasks,
             ...report.runningTasks,
             ...report.completedTasks,
@@ -11526,31 +11616,13 @@ class TaskGraphExecutionService {
             ...report.blockedTasks.map(item => item.task),
             ...report.invalidTasks.map(item => item.task),
         ];
-    }
-    async applyReviewRunDecision(changePath, reviewArtifactRelativePath, input) {
-        const decision = this.normalizeReviewRunDecision(input.decision);
-        const reviewArtifactPath = path.join(changePath, reviewArtifactRelativePath);
-        const document = (0, helpers_1.parseFrontmatterDocument)(await this.fileService.readFile(reviewArtifactPath));
-        document.data.decision = decision;
-        document.data.status = decision === 'PENDING' ? 'pending' : 'reviewed';
-        document.data.reviewed_at = input.run.record.completedAt;
-        const runNote = [
-            '',
-            '## Automated Review Run',
-            '',
-            `- Run: ${input.run.record.id}`,
-            `- Decision: ${decision}`,
-            `- Exit code: ${input.run.record.exitCode ?? 'unknown'}`,
-            `- Stdout: ${input.run.record.stdoutPath}`,
-            `- Stderr: ${input.run.record.stderrPath}`,
-            input.summary ? `- Summary: ${input.summary}` : '- Summary: no summary recorded',
-            '',
-        ].join('\n');
-        await this.fileService.writeFile(reviewArtifactPath, (0, helpers_1.stringifyFrontmatter)(`${document.content.trimEnd()}\n${runNote}`, document.data));
-        const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
-        if (!(await this.fileService.exists(findingsPath))) {
-            await this.fileService.writeJSON(findingsPath, { version: '1.0', findings: [] });
-        }
+        const seen = new Set();
+        return all.filter(task => {
+            if (seen.has(task.id))
+                return false;
+            seen.add(task.id);
+            return true;
+        });
     }
     normalizeReviewRunDecision(value) {
         const normalized = normalizeStatus(value);
@@ -11614,6 +11686,49 @@ class TaskGraphExecutionService {
             return normalized;
         }
         throw new Error(`Unsupported verification evidence status: ${status}`);
+    }
+    /**
+     * F5: independent validation of the four outcome fields at the record
+     * boundary. Track A's batch validator checks the *shape* of a reported
+     * result and then passes the object through; this checks the things a shape
+     * check cannot see, because these values are read back and rendered.
+     *
+     * Validated here, independently of any caller:
+     * - `exitCode`: when supplied it must be a finite integer. Negative is
+     *   allowed on purpose -- that is the F5 unclamping -- but `NaN`, `Infinity`
+     *   and `2.5` are rejected rather than silently nulled, because a `null`
+     *   already means "no code was ever produced" and quietly turning a
+     *   malformed number into that claim is a lie the reader cannot detect.
+     * - `signal`: when supplied it must look like a signal name. A shape check
+     *   sees "a string"; a newline inside it forges extra rows in the evidence
+     *   markdown, where every outcome field is one list line.
+     *
+     * `timedOut` and `infraFailure` are compared with `=== true`, which no
+     * malformed value can defeat, so they are coerced rather than validated --
+     * stated plainly so the difference is not mistaken for an oversight.
+     */
+    normalizeOutcomeFields(options, context) {
+        let exitCode = null;
+        if (options.exitCode !== undefined && options.exitCode !== null) {
+            if (typeof options.exitCode !== 'number' || !Number.isInteger(options.exitCode)) {
+                throw new Error(`${context} requires an integer exit code; received ${JSON.stringify(options.exitCode)}.`);
+            }
+            exitCode = options.exitCode;
+        }
+        let signal = null;
+        if (options.signal !== undefined && options.signal !== null) {
+            if (typeof options.signal !== 'string') {
+                throw new Error(`${context} requires a string signal name; received ${JSON.stringify(options.signal)}.`);
+            }
+            const trimmed = options.signal.trim();
+            if (trimmed) {
+                if (!/^[A-Za-z][A-Za-z0-9_+-]{0,31}$/.test(trimmed)) {
+                    throw new Error(`${context} requires a signal name like SIGKILL; received ${JSON.stringify(options.signal)}.`);
+                }
+                signal = trimmed;
+            }
+        }
+        return { exitCode, timedOut: options.timedOut === true, signal, infraFailure: options.infraFailure === true };
     }
     normalizeTddEvidencePhase(phase) {
         const normalized = typeof phase === 'string' ? phase.trim().toLowerCase() : 'green';
@@ -11886,13 +12001,25 @@ class TaskGraphExecutionService {
         ].join('\n');
     }
     updateWorkerStatusBody(body, input) {
-        const bodyWithChecklist = /^\s*-\s+\[(?: |x|X)\]\s+.+$/m.test(body)
+        // "Does this document already have a checklist?" is the same question
+        // the gates ask, so it gets the same answer. It used to be a fourth
+        // inline regex, which meant a fenced EXAMPLE of a checklist suppressed
+        // the real one being appended.
+        const bodyWithChecklist = (0, ChecklistScan_1.hasChecklistItem)(body)
             ? body
             : `${body.trim()}\n\n## Checklist\n\n- [ ] Implementer returned \`DONE\` or \`DONE_WITH_CONCERNS\`\n- [ ] Combined code review completed (spec compliance + code quality)\n- [ ] Controller resolved concerns, context requests, or blockers\n- [ ] Final verification commands are recorded in \`verification.md\`\n`;
         const summaryStatusUpdated = this.updateWorkerStatusSummaryStatusLines(bodyWithChecklist, input);
-        const checklistUpdated = summaryStatusUpdated
-            .split(/\r?\n/)
-            .map(line => this.updateWorkerStatusChecklistLine(line, input))
+        // A REWRITER, so it cannot use `blankFencedCodeBlocks`: every line it is
+        // not changing has to go back verbatim. `fencedLineFlags` gives the same
+        // fence decision without discarding the content, so a `- [ ]` inside a
+        // fenced example is left exactly as the author wrote it instead of
+        // having its box toggled.
+        const summaryLines = summaryStatusUpdated.split(/\r?\n/);
+        const fenced = (0, ChecklistScan_1.fencedLineFlags)(summaryStatusUpdated.replace(/\r\n/g, '\n'));
+        const checklistUpdated = summaryLines
+            .map((line, index) => (fenced[index]
+            ? line
+            : this.updateWorkerStatusChecklistLine(line, input)))
             .join('\n');
         const summary = this.buildWorkerStatusSyncSummary(input);
         const managedBlockPattern = new RegExp(`${this.escapeRegex(MANAGED_WORKER_STATUS_START)}[\\s\\S]*?${this.escapeRegex(MANAGED_WORKER_STATUS_END)}\\n?`, 'm');
@@ -11928,7 +12055,11 @@ class TaskGraphExecutionService {
             .join('\n');
     }
     updateWorkerStatusChecklistLine(line, input) {
-        if (!/^\s*-\s+\[(?: |x|X)\]\s+/.test(line)) {
+        // The shared line-level predicate, so this rewriter recognises exactly
+        // the lines the gates count -- including `*` and `+` bullets, which the
+        // old inline `-`-only regex silently refused to update. The caller has
+        // already excluded fenced lines.
+        if (!(0, ChecklistScan_1.isChecklistItemLine)(line)) {
             return line;
         }
         const checked = line.replace(/\[(?: |x|X)\]/, '[x]');
@@ -12176,7 +12307,7 @@ class TaskGraphExecutionService {
             '',
             '- Treat this packet as the task brief and start from the target files listed above.',
             '- Do not load every core change document by default. Open a specific section of `proposal.md`, `design.md`, `implementation-plan.md`, or `tasks.md` only when this packet leaves a named ambiguity.',
-            '- For existing project behavior, consult `SKILL.index.json` and `docs/project/feature-index.md`, then open only the indexed document needed for this task.',
+            '- For existing project behavior, run `ospec docs locate --affects <path>` or `--feature <slug>` to get `path#heading` plus a line range, then read only that range. `docs/project/feature-catalog.md` lists every declared feature if you need the slug.',
             '- Keep changes scoped to the target files unless implementation proves a listed file is wrong.',
             '- Run the verification command(s) listed above or record why they could not be run.',
             '- Perform an implementer self-review before reporting status; record any concern as `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` instead of hiding it.',
@@ -12184,14 +12315,30 @@ class TaskGraphExecutionService {
             '',
             '## Completion',
             '',
-            `Write detailed implementation and test evidence to \`${workerReportPath}\`; keep the controller summary short. Then record the result with:`,
+            `Preferred: write ONE structured JSON report and hand it to the CLI. The CLI validates it and renders the human Markdown view to \`${workerReportPath}\` for you, so do not hand-write that file.`,
             `When the harness exposes authoritative usage, write its normalized counters to \`artifacts/agents/${USAGE_SIDECARS_DIR}/${record.id}.json\`; do not estimate missing token fields.`,
+            '',
+            '```bash',
+            `cat > report.json <<'JSON'`,
+            '{',
+            '  "status": "DONE",',
+            '  "summary": "one short paragraph for the controller",',
+            '  "changedPaths": ["src/a.ts"],',
+            '  "evidence": [{ "kind": "command", "ref": "npm test", "result": "passed" }],',
+            '  "concerns": []',
+            '}',
+            'JSON',
+            `ospec execute complete ${task.id} [change-path] --dispatch ${record.id} --report-file report.json`,
+            '```',
+            '',
+            'All five keys are required. Send `[]` for an empty list; a missing key is an error, not an empty list, and the error text names the field, what was expected, what was found, and the edit to make.',
+            'Use `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` in `status` when the result is not cleanly complete.',
+            '',
+            'Fallback (still supported for one version cycle): write the Markdown report yourself and pass the status inline.',
             '',
             '```bash',
             `ospec execute complete ${task.id} [change-path] --dispatch ${record.id} --status DONE --summary "..."`,
             '```',
-            '',
-            'Use `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED` when the result is not cleanly complete.',
             '',
         ].join('\n');
     }
@@ -12335,6 +12482,22 @@ class TaskGraphExecutionService {
             '',
             '## Review Output',
             '',
+            '- Preferred: write ONE structured JSON decision and hand it to the CLI. It validates the decision, writes the review Markdown body, and writes the structured findings for you, preserving every provenance field:',
+            '',
+            '```bash',
+            `cat > decision.json <<'JSON'`,
+            '{',
+            '  "decision": "APPROVED_WITH_CONCERNS",',
+            '  "summary": "one paragraph explaining the decision",',
+            '  "findings": [{ "id": "F-001", "severity": "medium", "category": "correctness", "message": "...", "evidence": "...", "file": "src/a.ts", "line": 42 }]',
+            '}',
+            'JSON',
+            `ospec execute review-decision [change-path] --review ${record.reviewArtifactPath} --decision-file decision.json`,
+            '```',
+            '',
+            '- Every finding needs an explicit `severity`. A Markdown-only review is parsed as `severity: unknown`, which the planning gate treats as blocking; the JSON path is what avoids that.',
+            '',
+            '- Fallback (still supported for one version cycle), if you write the artifact by hand:',
             `- Update \`${record.reviewArtifactPath}\` frontmatter \`decision\` to one of: \`APPROVED\`, \`APPROVED_WITH_CONCERNS\`, \`NEEDS_CHANGES\`, \`BLOCKED\`, \`PENDING\`.`,
             '- Preserve the controller-written review dispatch, target snapshot, Loop action, controller session, and reviewer executor provenance fields unchanged.',
             '- Set frontmatter `reviewed_at` to the actual completion timestamp. Preserve `review_dispatch_id` and `target_snapshot_hash` exactly as written by the controller.',
@@ -12367,7 +12530,10 @@ class TaskGraphExecutionService {
                 sawFindingSection || (sawFindingSection = collecting);
                 continue;
             }
-            if (!collecting || !line || /^#/.test(line) || /^(-\s*)?TBD\.?$/i.test(line) || /^- \[(?: |x|X)\]/.test(line)) {
+            // Shared predicate again: the `-`-only spelling that used to be here
+            // let a `* [ ]` or `+ [ ]` checklist line through as if it were a
+            // review finding.
+            if (!collecting || !line || /^#/.test(line) || /^(-\s*)?TBD\.?$/i.test(line) || (0, ChecklistScan_1.isChecklistItemLine)(line)) {
                 continue;
             }
             findings.push(line);
@@ -12380,64 +12546,82 @@ class TaskGraphExecutionService {
             .map(line => line.trim())
             .filter(line => line.length > 0)
             .filter(line => !/^#+\s+/.test(line))
-            .filter(line => !/^- \[(?: |x|X)\]/.test(line))
+            .filter(line => !(0, ChecklistScan_1.isChecklistItemLine)(line))
             .filter(line => !/^(-\s*)?TBD\.?$/i.test(line))
             .slice(0, 50);
     }
     getReviewFindingsRelativePath(reviewArtifactPath) {
         return reviewArtifactPath.replace(/\.md$/i, '.findings.json');
     }
+    /**
+     * The findings contract applied to bytes that are already in hand.
+     *
+     * Split out of `readReviewFindings` so the evidence validation judges the
+     * bytes it already read rather than re-reading the path. A verdict derived
+     * from a second, later read of the same file is a verdict about a file that
+     * may have changed in between.
+     */
+    parseReviewFindingsDocument(findingsPath, contents) {
+        let raw;
+        try {
+            raw = JSON.parse(contents.replace(/^﻿/, ''));
+        }
+        catch {
+            throw new Error(`Structured review findings must contain valid JSON: ${findingsPath}`);
+        }
+        if (!raw || !Array.isArray(raw.findings)) {
+            throw new Error(`Structured review findings must contain a findings array: ${findingsPath}`);
+        }
+        const seen = new Set();
+        const structured = raw.findings.map((finding, index) => {
+            const id = String(finding?.id || '').trim();
+            const message = String(finding?.message || '').trim();
+            const evidence = String(finding?.evidence || '').trim();
+            const severity = String(finding?.severity || '').trim().toLowerCase();
+            if (!id || seen.has(id))
+                throw new Error(`Structured review finding ${index + 1} has a missing or duplicate id.`);
+            if (!message || !evidence)
+                throw new Error(`Structured review finding ${id} requires message and evidence.`);
+            if (!['critical', 'high', 'medium', 'low', 'info', 'unknown'].includes(severity)) {
+                throw new Error(`Structured review finding ${id} has unsupported severity: ${severity || '(empty)'}.`);
+            }
+            const line = finding?.line === null || finding?.line === undefined
+                ? null
+                : Number(finding.line);
+            if (line !== null && (!Number.isInteger(line) || line <= 0)) {
+                throw new Error(`Structured review finding ${id} line must be a positive integer or null.`);
+            }
+            seen.add(id);
+            return {
+                id,
+                severity: severity,
+                category: String(finding?.category || 'unspecified').trim() || 'unspecified',
+                message,
+                file: typeof finding?.file === 'string' && finding.file.trim() ? finding.file.trim() : null,
+                line,
+                evidence,
+                requirementRefs: stringArray(finding?.requirement_refs),
+                repairScope: stringArray(finding?.repair_scope),
+            };
+        });
+        return {
+            text: structured.map(finding => this.renderReviewFinding(finding)),
+            structured,
+            path: findingsPath,
+            source: 'structured',
+        };
+    }
     async readReviewFindings(reviewArtifactPath, body) {
         const findingsPath = reviewArtifactPath.replace(/\.md$/i, '.findings.json');
         if (await this.fileService.exists(findingsPath)) {
             let raw;
             try {
-                raw = await this.fileService.readJSON(findingsPath);
+                raw = await this.fileService.readFile(findingsPath);
             }
             catch {
                 throw new Error(`Structured review findings must contain valid JSON: ${findingsPath}`);
             }
-            if (!raw || !Array.isArray(raw.findings)) {
-                throw new Error(`Structured review findings must contain a findings array: ${findingsPath}`);
-            }
-            const seen = new Set();
-            const structured = raw.findings.map((finding, index) => {
-                const id = String(finding?.id || '').trim();
-                const message = String(finding?.message || '').trim();
-                const evidence = String(finding?.evidence || '').trim();
-                const severity = String(finding?.severity || '').trim().toLowerCase();
-                if (!id || seen.has(id))
-                    throw new Error(`Structured review finding ${index + 1} has a missing or duplicate id.`);
-                if (!message || !evidence)
-                    throw new Error(`Structured review finding ${id} requires message and evidence.`);
-                if (!['critical', 'high', 'medium', 'low', 'info', 'unknown'].includes(severity)) {
-                    throw new Error(`Structured review finding ${id} has unsupported severity: ${severity || '(empty)'}.`);
-                }
-                const line = finding?.line === null || finding?.line === undefined
-                    ? null
-                    : Number(finding.line);
-                if (line !== null && (!Number.isInteger(line) || line <= 0)) {
-                    throw new Error(`Structured review finding ${id} line must be a positive integer or null.`);
-                }
-                seen.add(id);
-                return {
-                    id,
-                    severity: severity,
-                    category: String(finding?.category || 'unspecified').trim() || 'unspecified',
-                    message,
-                    file: typeof finding?.file === 'string' && finding.file.trim() ? finding.file.trim() : null,
-                    line,
-                    evidence,
-                    requirementRefs: stringArray(finding?.requirement_refs),
-                    repairScope: stringArray(finding?.repair_scope),
-                };
-            });
-            return {
-                text: structured.map(finding => this.renderReviewFinding(finding)),
-                structured,
-                path: findingsPath,
-                source: 'structured',
-            };
+            return this.parseReviewFindingsDocument(findingsPath, raw);
         }
         const text = this.extractReviewFindings(body);
         const structured = text.map((message, index) => ({
@@ -12619,24 +12803,6 @@ class TaskGraphExecutionService {
         }
         return `Clarify the ${stage} review decision before dispatching more work.`;
     }
-    getTaskReviewRunDecisionNextInstruction(taskId, stage, decision) {
-        if (decision === 'APPROVED' || decision === 'APPROVED_WITH_CONCERNS') {
-            if (stage === 'review') {
-                return `Task ${taskId} combined code review is recorded. Run ospec execute status to dispatch newly unblocked work.`;
-            }
-            if (stage === 'spec') {
-                return `Task ${taskId} spec review is recorded. Run ospec loop tick [change-path] for a controller Goal, or ospec execute review outside a controller Loop, to continue review.`;
-            }
-            return `Task ${taskId} quality review is recorded. Run ospec execute status to dispatch newly unblocked work.`;
-        }
-        if (decision === 'NEEDS_CHANGES') {
-            return `Task ${taskId} review requires changes. Reopen or retry the task, fix the findings, then rerun task review.`;
-        }
-        if (decision === 'BLOCKED') {
-            return `Task ${taskId} review is blocked. Resolve reviewer blockers before dispatching dependent work.`;
-        }
-        return `Task ${taskId} review remains pending. Update the task review artifact and run ospec execute sync.`;
-    }
     buildReviewFeedbackPlanReport(plan) {
         const findings = plan.findings.length > 0
             ? plan.findings.map(item => `- ${item}`).join('\n')
@@ -12790,6 +12956,22 @@ class TaskGraphExecutionService {
             '',
         ].join('\n');
     }
+    /**
+     * F5: render the three non-exit-code outcome fields, and only when one of
+     * them carries information. A line per record per field would cost output
+     * on every evidence read for the common case where all three are false.
+     */
+    outcomeReportLines(record) {
+        const lines = [];
+        if (record.timedOut === true)
+            lines.push('- Timed out: yes');
+        if (record.signal)
+            lines.push(`- Signal: ${record.signal}`);
+        if (record.infraFailure === true) {
+            lines.push('- Infrastructure failure: yes (the harness could not run the command; this is not a failure of the work)');
+        }
+        return lines;
+    }
     buildVerificationEvidenceReport(report, record) {
         return [
             `# Verification Evidence: ${record.id}`,
@@ -12798,6 +12980,7 @@ class TaskGraphExecutionService {
             `- Status: ${record.status}`,
             `- Recorded at: ${record.recordedAt}`,
             `- Exit code: ${record.exitCode === null ? 'not recorded' : record.exitCode}`,
+            ...this.outcomeReportLines(record),
             `- Command: \`${record.command}\``,
             `- Loop action: ${record.loopActionId || 'not bound'}`,
             `- Loop action item: ${record.loopActionItemId || 'not bound'}`,
@@ -12825,6 +13008,7 @@ class TaskGraphExecutionService {
             `- Status: ${record.status}`,
             `- Recorded at: ${record.recordedAt}`,
             `- Exit code: ${record.exitCode === null ? 'not recorded' : record.exitCode}`,
+            ...this.outcomeReportLines(record),
             `- Command: \`${record.command}\``,
             `- Test: ${record.testName || 'not recorded'}`,
             '',
@@ -13276,7 +13460,6 @@ class TaskGraphExecutionService {
                 .map(worktree => `- ${worktree.path}${worktree.branch ? ` (${worktree.branch})` : worktree.detached ? ' (detached)' : ''}`)
                 .join('\n')
             : '- None detected';
-        const checkpointEvidence = this.buildCheckpointEvidenceReportLines(artifact.checkpointEvidence).join('\n');
         return [
             `# Finish Plan: ${artifact.feature}`,
             '',
@@ -13303,11 +13486,6 @@ class TaskGraphExecutionService {
             `- Verification evidence: ${artifact.readiness.verificationEvidence}`,
             `- TDD evidence: ${artifact.readiness.tddEvidence}`,
             `- Debug evidence: ${artifact.readiness.debugEvidence}`,
-            `- Checkpoint evidence: ${artifact.readiness.checkpointEvidence}`,
-            '',
-            '## Checkpoint Evidence',
-            '',
-            checkpointEvidence,
             '',
             '## Blockers',
             '',
@@ -13394,39 +13572,6 @@ class TaskGraphExecutionService {
             '- If the top recommendation is a user decision, present the decision prompt before continuing.',
             '',
         ].join('\n');
-    }
-    buildCheckpointEvidenceReportLines(evidence) {
-        if (!evidence.active) {
-            return ['- Not active for this change.'];
-        }
-        const missing = evidence.missing.length > 0
-            ? evidence.missing.map(item => `  - ${item}`)
-            : ['  - None'];
-        const actions = evidence.nextActions.length > 0
-            ? evidence.nextActions.map(item => `  - ${item}`)
-            : ['  - None'];
-        const steps = evidence.steps.length > 0
-            ? evidence.steps.flatMap(step => [
-                `- ${step.step}: ${step.evidenceStatus} (gate ${step.gateStatus})`,
-                `  - screenshots: ${step.screenshots}, traces: ${step.traces}, visual diffs: ${step.visualDiffs}, routes: ${step.routes}, flows: ${step.flows}, assertions: ${step.assertions}, console events: ${step.consoleEvents}, network events: ${step.networkEvents}, accessibility: ${step.accessibility}`,
-                ...(step.missing.length > 0 ? [`  - missing: ${step.missing.join(', ')}`] : []),
-            ])
-            : ['- No step evidence recorded.'];
-        return [
-            `- Status: ${evidence.status}`,
-            `- Gate status: ${evidence.gateStatus}`,
-            `- Evidence status: ${evidence.evidenceStatus}`,
-            `- Active steps: ${evidence.activeSteps.join(', ') || 'none'}`,
-            `- Counts: screenshots ${evidence.screenshots}, traces ${evidence.traces}, visual diffs ${evidence.visualDiffs}, routes ${evidence.routes}, flows ${evidence.flows}, assertions ${evidence.assertions}, console events ${evidence.consoleEvents}, network events ${evidence.networkEvents}, accessibility ${evidence.accessibility}`,
-            '- Missing evidence:',
-            ...missing,
-            '- Suggested next actions:',
-            ...actions,
-            '',
-            '### Step Evidence',
-            '',
-            ...steps,
-        ];
     }
     buildWorkerLaunchPlanReport(artifact) {
         const blockers = artifact.blockers.length > 0
@@ -13774,7 +13919,6 @@ class TaskGraphExecutionService {
                 .map(phase => `- ${phase.phase}: ${phase.status}${phase.latestRecordId ? ` (${phase.latestRecordId}, ${phase.latestStatus})` : ''}`)
                 .join('\n')
             : '- None';
-        const checkpointEvidence = this.buildCheckpointEvidenceReportLines(artifact.execution.evidence.checkpoint).join('\n');
         return [
             `# Goal Bootstrap: ${artifact.feature}`,
             '',
@@ -13837,15 +13981,10 @@ class TaskGraphExecutionService {
             `- Verification evidence: ${artifact.execution.evidence.verification} (${artifact.execution.evidence.verificationRecords} record(s))`,
             `- TDD evidence: ${artifact.execution.evidence.tdd} (${artifact.execution.evidence.tddRecords} record(s))`,
             `- Debug evidence: ${artifact.execution.evidence.debug} (${artifact.execution.evidence.debugRecords} record(s))`,
-            `- Checkpoint evidence: ${artifact.execution.evidence.checkpoint.status}`,
             '',
             '## Debug Phase Evidence',
             '',
             debugPhases,
-            '',
-            '## Checkpoint Evidence',
-            '',
-            checkpointEvidence,
             '',
             '## User Decisions',
             '',

@@ -73,6 +73,7 @@ class StateManager {
     createInitialState(feature, affects, mode = 'standard', options = {}) {
         const now = new Date().toISOString();
         const workflowProfileId = options.workflowProfileId ?? 'change';
+        const features = Array.isArray(options.features) ? options.features : [];
         const pending = [
             'proposal_complete',
             'tasks_complete',
@@ -93,6 +94,7 @@ class StateManager {
                 status: 'queued',
                 current_step: 'queued',
                 affects,
+                features,
                 completed: [],
                 pending: [...pending],
                 blocked_by: ['awaiting_activation'],
@@ -109,6 +111,7 @@ class StateManager {
             status: 'draft',
             current_step: 'write_proposal',
             affects,
+            features,
             completed: [],
             pending,
             blocked_by: ['missing_proposal'],

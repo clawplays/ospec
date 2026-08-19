@@ -29,8 +29,7 @@
   <a href="usage.ar.md">الاستخدام</a> |
   <a href="project-overview.ar.md">نظرة عامة</a> |
   <a href="installation.ar.md">التثبيت</a> |
-  <a href="external-plugins.ar.md">الإضافات الخارجية</a> |
-  <a href="plugin-release.ar.md">نشر الإضافات</a> |
+  <a href="skills-installation.ar.md">تثبيت المهارات</a> |
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
@@ -162,7 +161,7 @@ ospec finalize changes/active/<change-name> --force-archive --confirm-force-arch
 
 استخدم `ospec goal <goal-name>` فقط عندما تختار صراحة سير العمل الكامل. لا تتم ترقية Change الذي اخترته إلى Goal بسبب التعقيد أو عدد الملفات أو المخاطر أو حجم الدفعة.
 
-تستخدم Change إرشادا مختصرا حسب المرحلة ومراجعة خفيفة واحدة بواسطة AI الحالي وcloseout مشتقا. عندما تمر بوابات verification وdocumentation وplugin وreview، يمكن لـ `APPROVED` أو `APPROVED_WITH_CONCERNS` تنفيذ finalize وarchive تلقائيا. تبقى الدفعات الصريحة متسلسلة في queue.
+تستخدم Change إرشادا مختصرا حسب المرحلة ومراجعة خفيفة واحدة بواسطة AI الحالي وcloseout مشتقا. عندما تمر بوابات verification وdocumentation وreview، يمكن لـ `APPROVED` أو `APPROVED_WITH_CONCERNS` تنفيذ finalize وarchive تلقائيا. تبقى الدفعات الصريحة متسلسلة في queue.
 
 **أنت فقط تبدأ goal وتصف المتطلب.** ينفّذ الذكاء الاصطناعي كل أمر `ospec` بنفسه، وأنت تجيب فقط على الأسئلة في المحادثة (`Zero-Setup`).
 
@@ -188,12 +187,11 @@ ospec session hook --target claude --apply
 
 تُحمَّل الـ hooks عند بدء الجلسة، لذا تسري اعتباراً من جلسة Claude Code التالية.
 
-### طريقة تثبيت الإضافات
+## الميزات الرئيسية
 
-- `ospec plugins list`
-- `ospec plugins install <plugin>`
-- `ospec plugins enable <plugin> [path]`
-- إذا قال المستخدم في المحادثة "افتح Stitch / Checkpoint" فالمقصود هو: افحص أولاً هل الإضافة مثبتة عالمياً، وإذا لم تكن مثبتة فثبّتها، ثم فعّلها داخل المشروع الحالي
+- **وثائق ميزات حيّة مع محدد موقع**: تُعلَن أقسام الميزات داخل الوثائق التي يملكها البشر عبر `<!-- ospec:feature <slug> code:<paths> -->`؛ ويحمل `docs/project/feature-catalog.md` صفاً واحداً لكل ميزة معلنة (slug، جملة واحدة، `وثيقة#قسم`، الحالة، أحدث أرشيف)، ويعيد `ospec docs locate --feature <slug>` أو `--affects <path>` موقع ذلك القسم ونطاق أسطره كي يقرأ الـ AI قسماً واحداً بدلاً من وثيقة كاملة.
+- **عرض الأرشيف عند الطلب**: تكتب الأرشفة إدخال الفهرس، وتحدّث صفوف فهرس الميزات، وتكتب تعليق التتبع `ospec:last-change` بشكل idempotent. لا يُنشأ أي ملف تحت `docs/project/changes/`؛ ويعرض `ospec changes show <archive>` الملخص ونطاق التأثير وقائمة الملفات وأوامر التحقق عند الطلب.
+- **التزامات التوثيق**: أثناء التخطيط يشتق `ospec docs obligations --apply` التزامات هذا التغيير من `change_type` وقائمة الميزات (وعند فراغها يحلّ `affects` عبر إعلانات `code:`) مع هدف محلول حتى `ملف#قسم`. يتحقق الـ fix مما إذا كان القسم يصف السلوك الخاطئ قبل الإصلاح، ويتحقق الـ refactor من دقة القسم ويسجل `verified_unchanged` عبر `ospec docs confirm` عند عدم الحاجة لتعديل. يقرر `docs_contract.mode: warn|strict` في `.skillrc` ما إذا كان الالتزام المطلوب غير المستوفى يحذّر أو يمنع الأرشفة. ويسرد `ospec docs audit` أقسام الميزات التي تغيّرت مسارات `code:` فيها دون تحرك الوثيقة، بينما يحوّل `ospec docs migrate` الوثائق المولدة القديمة إلى وثائق ميزات عبر أربع مراحل ببوابات.
 
 ## الوثائق
 
@@ -204,8 +202,6 @@ ospec session hook --target claude --apply
 - [Project Overview](project-overview.ar.md)
 - [Installation](installation.ar.md)
 - [Skills Installation](skills-installation.ar.md)
-- [External Plugins](external-plugins.ar.md)
-- [Plugin Release](plugin-release.ar.md)
 
 ## هيكل المستودع
 

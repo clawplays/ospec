@@ -1,6 +1,6 @@
 # Usage
 
-If you primarily use OSpec through AI, use a short `/ospec` or `/ospec-change` prompt first. Start with `/ospec-change` for small routine work and `/ospec-goal` for complex full-workflow work. Use the CLI commands on this page as fallback or explicit automation.
+If you primarily use OSpec through AI / `/ospec`, use a short `/ospec` or `/ospec-change` prompt first. Start with `/ospec-change` for small routine work and `/ospec-goal` for complex full-workflow work. Use the CLI commands on this page as fallback or explicit automation.
 
 ## Common Commands
 
@@ -12,7 +12,13 @@ ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
 ospec changes status [path]
-ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
+ospec docs locate --feature <slug> | --affects <path> [--json]
+ospec docs obligations [changes/active/<change>] [--apply] [--json]
+ospec docs confirm [changes/active/<change>] --id <obligation-id> [--note "..."]
+ospec docs audit [path] [--json]
+ospec docs migrate [path] --plan|--verify|--finalize [--apply]
+ospec changes show <archive> [--md|--json]
+ospec index gc [path]ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec change <change-name> [path]
 ospec goal <goal-name> [path] [--target ...] [--execution-model controller]
@@ -65,14 +71,6 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
-ospec plugins list
-ospec plugins install <plugin>
-ospec plugins installed
-ospec plugins update <plugin>
-ospec plugins update --all
-ospec plugins status [path]
-ospec plugins enable stitch [path]
-ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 `loop configure --allow-path`, `--allow-command`, and `--allow-command-policy` configure an optional extra boundary, replace the complete selected allowlist group, and print a diff. Prefer the task-graph `derive -> check -> apply` flow. Apply uses compare-and-swap hashes, and permission expansion requires explicit `--approve-expansion`.
@@ -86,40 +84,6 @@ ospec plugins enable checkpoint [path] --base-url <url>
 - **Documentation closeout:** reviewed creation and deletion are meaningful state transitions. Evidence is aggregated from the first baseline through the final completed dispatch, and the workspace must match the latest declared-owner evidence. A later authoritative APPROVED review may bind the exact final snapshot without replacing the meaningful-change chain. `ospec execute sync` updates localized worker status and combined-review checklists.
 - **Classic Change:** `ospec change` is the preferred fast path and `ospec new` remains an alias. A user-selected Change never auto-promotes to a Goal. It uses compact stage-aware guidance, one lightweight current-AI review, practical documentation rules, derived closeout state, one finalize index rebuild, and sequential queue execution. `APPROVED` and `APPROVED_WITH_CONCERNS` may archive automatically when all other gates pass.
 - **Controller runtime and concurrency:** one native wait returns within 60 seconds, but a live child continues until its absolute deadline while heartbeats are renewed. Unknown native capacity uses an implementation concurrency fallback of three, not two; a larger positive session-bound capacity can support configured batches such as 5-10 when dependencies, file conflicts, shared resources, token funding, and `maxParallel` allow. New serial tasks require `serial_reason`, and tasks with more than six targets must be split or declare `scope_reason`.
-
-## Plugin Quick Start
-
-Recommended prompt:
-
-```text
-/ospec open Stitch for this project.
-/ospec open Checkpoint for this project.
-```
-
-AI / `/ospec`:
-
-- asking to "open Stitch" should first check whether Stitch is already installed globally, install it only when missing, then enable it in the current project
-- asking to "open Checkpoint" should first check whether Checkpoint is already installed globally, install it only when missing, then enable it in the current project
-- detailed plugin setup docs are synced into `.ospec/plugins/<plugin>/docs/` after enable
-- before installing, check `ospec plugins info <plugin>` or `ospec plugins installed`
-- if the plugin is already installed globally, skip install and just enable it in the current project
-- do not run `ospec plugins update --all` unless the user explicitly asks to update every installed plugin on the machine
-
-Command line:
-
-```bash
-ospec plugins list
-ospec plugins info stitch
-ospec plugins install stitch
-ospec plugins enable stitch [path]
-```
-
-```bash
-ospec plugins list
-ospec plugins info checkpoint
-ospec plugins install checkpoint
-ospec plugins enable checkpoint [path] --base-url <url>
-```
 
 ## Recommended Flow
 
@@ -155,7 +119,7 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - Workflow flags can activate built-in agent quality policy steps: `tdd_cycle`, `root_cause_debug`, and `verification_evidence`. Activated steps are written into change frontmatter as `optional_steps` and must be covered in `tasks.md`, `verification.md`, and archive readiness.
 - Use `proposal.md` to capture why the change exists, scope, and acceptance criteria.
 - Use `ospec session [path]` when entering an existing OSpec project to write `.ospec/session-brief.json` and `.ospec/session-brief.md` with active work, its `change` or `goal` profile, queue state, cache fingerprint, and profile-aware next commands. A Change continues directly from its five classic files; only a Goal uses `ospec execute bootstrap`.
-- Use `ospec session hook [path]` to write `.ospec/hooks/session-start.json`, `.ospec/hooks/session-start.md`, `.ospec/hooks/using-ospec.json`, and `.ospec/hooks/using-ospec.md` for opt-in harness startup integration. These artifacts tell Codex, Claude, Gemini, OpenCode, Cursor, Copilot, and generic harnesses to refresh the session brief, follow its profile-aware commands, bootstrap only an active Goal, and read decision/plugin gate sources. The hook must not launch workers, run tests, inspect git, archive, or edit source files. Add `--target claude --apply` to also write a Claude Code hook bundle under `.ospec/hooks/claude/` and idempotently merge it into `.claude/settings.json`; those hooks announce every subagent dispatch and `ospec` command at the tool level, hard-block subagent dispatch while a required decision is pending, and re-affirm the `Announce-Before-Act` / `Brainstorm-First` contract every turn (they take effect from the next Claude Code session).
+- Use `ospec session hook [path]` to write `.ospec/hooks/session-start.json`, `.ospec/hooks/session-start.md`, `.ospec/hooks/using-ospec.json`, and `.ospec/hooks/using-ospec.md` for opt-in harness startup integration. These artifacts tell Codex, Claude, Gemini, OpenCode, Cursor, Copilot, and generic harnesses to refresh the session brief, follow its profile-aware commands, bootstrap only an active Goal, and read decision gate sources. The hook must not launch workers, run tests, inspect git, archive, or edit source files. Add `--target claude --apply` to also write a Claude Code hook bundle under `.ospec/hooks/claude/` and idempotently merge it into `.claude/settings.json`; those hooks announce every subagent dispatch and `ospec` command at the tool level, hard-block subagent dispatch while a required decision is pending, and re-affirm the `Announce-Before-Act` / `Brainstorm-First` contract every turn (they take effect from the next Claude Code session).
 - Use `ospec brainstorm [path] --topic "..."` only when you want a durable pre-change exploration artifact under `.ospec/brainstorms/`; `--visual` also writes a local static HTML companion, and `--decision-gates` turns direction, scope, and verification-risk choices into durable user decision gates when an active change can be resolved. This command does not create a change.
 - Use `ospec plan [path] --change changes/active/<change>` to draft `.ospec/plans/<id>/plan-draft.md`; add `--apply` only when you want to replace that change's `implementation-plan.md`.
 - For `ospec-goal`, use `design.md` to record the chosen approach, tradeoffs, affected boundaries, risks, and open questions before implementation starts.
@@ -177,7 +141,7 @@ A goal runs as a **session-bound task-graph loop** with one fast quality workflo
 - Use `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` to create a parallel-safe batch of `artifacts/agents/dispatches/*` worker packets and `artifacts/agents/execution-session.json`. Each packet includes the project session brief snapshot and a worker profile with capability tier, recommended target, target tool mapping, rationale, and required behavior so complex tasks can be routed to stronger workers and simple tasks can stay lightweight without guessing how each target should read context, edit files, run checks, or record completion. Then use `ospec execute complete <task-id> ...` to record worker results. Use `--task` for one explicit task and `--limit` to cap the batch size. Required pending user decisions block dispatch. Both commands also sync `artifacts/agents/worker-status.md`; when completion records `NEEDS_CONTEXT` or `BLOCKED`, OSpec writes `artifacts/agents/blockers/` escalation files for controller follow-up.
 - Use `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--dry-run]` after dispatch to write the agent launch plan. Its `runtimeAdapter` accepts only a current, target-bound native-subagent capability and exposes the model's native primitive. OSpec writes `artifacts/agents/launch-plan.json` and `artifacts/agents/launch-plan.md`, requires one active dispatch and ready workspace status, and never starts a worker process itself.
 - Multi-worker execution follows `runtimeAdapter.selected.nativeSubagent`: create a parallel-safe batch with `ospec execute dispatch`, inspect `launch-plan.md`, then start one model-native subagent per safe packet when the selected adapter supports parallel execution. Missing, expired, or target-mismatched capability blocks execution; there is no agent CLI or current-controller fallback. Record each result with `ospec execute complete`.
-- `ospec execute orchestrate`, `ospec execute launch ... --run --command "..."`, and `ospec execute review ... --run --command "..."` are removed agent-execution paths. They return migration errors before launching a process or creating run artifacts.
+- There is no agent CLI execution path. `ospec execute orchestrate` no longer exists, and `ospec execute launch ... --run --command "..."` / `ospec execute review ... --run --command "..."` reject those flags before launching a process or creating run artifacts.
 - Use `ospec execute retry [changes/active/<change>] --task task-id` after a blocked, needs-context, or failed worker run has been fixed. It writes `artifacts/agents/retries/`, reopens the task, and creates a fresh dispatch packet. Completed tasks are not retried by default; pass `--force` only for an intentional override.
 - Use `ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."` only after the user explicitly authorizes moving an already-recorded external acceptance obligation to the final gate. The command never marks the task complete or supplies missing evidence; it only permits tasks waiting solely on that blocker to become dispatchable.
 - In a controller-owned Goal, use `ospec loop tick [changes/active/<change>]` after completed worker tasks and after graph completion; it issues task and final reviews with real executor provenance. Use `ospec execute review` directly only in a non-controller workflow.
@@ -211,8 +175,7 @@ Use this flow when an AI harness should drive one active Goal with durable user 
 2. Run `ospec execute bootstrap [changes/active/<goal>]` when resuming the Goal. Follow its next instruction before dispatching work.
 3. If bootstrap or status reports a pending decision, open `artifacts/agents/decisions/index.md`, present the decision report's `Chat Prompt` to the user, and record the answer with `ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user`.
 4. Run `ospec execute workspace [changes/active/<change>]`, then `ospec execute dispatch [changes/active/<change>]`. Use `ospec execute launch ... --json` for the machine-readable native subagent contract, dispatch it with the current model harness, and record the real child result.
-5. For Checkpoint-enabled changes, run `ospec plugins doctor checkpoint [path]` and repair `routes.yaml`, `flows.yaml`, baselines, screenshots, traces, console/network evidence, accessibility evidence, and assertions before closeout.
-6. Use `ospec execute status`, `ospec execute next`, and `ospec execute finish` to confirm Checkpoint evidence readiness. Finish, verify, and archive are blocked until required decisions and active Checkpoint evidence are complete.
+5. Use `ospec execute status`, `ospec execute next`, and `ospec execute finish` to confirm closeout readiness. Finish, verify, and archive are blocked until required decisions are resolved.
 
 ## Upgrading An Existing Project
 
@@ -223,7 +186,7 @@ Recommended prompt:
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.10
+npm install -g @clawplays/ospec-cli@2.0.0
 ospec update [path]
 ```
 
@@ -234,38 +197,10 @@ npm install -g .
 ospec update [path]
 ```
 
-`ospec update [path]` refreshes protocol docs, tooling, managed skills, archive layout metadata, and assets for already-enabled plugins.
-It can also repair older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, and it normalizes legacy root `build-index-auto.*` tooling plus legacy Stitch plugin keys in `.skillrc`.
+`ospec update [path]` refreshes protocol docs, tooling, managed skills, and archive layout metadata.
+It can also repair older OSpec projects that still have an OSpec footprint but are missing newer core runtime directories, and it normalizes legacy root `build-index-auto.*` tooling.
 For nested projects with legacy knowledge still stored under `.ospec/src/` or `.ospec/tests/`, `ospec update [path]` migrates those paths into `.ospec/knowledge/src/` and `.ospec/knowledge/tests/`.
-If an already-enabled plugin is missing globally, `ospec update [path]` attempts to restore that package before syncing project assets.
-When an already-enabled plugin has a newer compatible npm package version available, `ospec update [path]` upgrades that global plugin package automatically and prints the version transition.
-It does not upgrade plugins that are installed globally but not enabled in the current project.
 It does not upgrade the CLI itself.
 It does not migrate a classic project layout to nested automatically.
 Use `ospec layout migrate --to nested` when you want the new nested layout.
-It does not install brand-new plugins automatically, and it does not enable plugins or migrate active / queued changes automatically.
-
-## Updating All Installed Plugins
-
-Recommended prompt:
-
-```text
-/ospec update all installed plugins on this machine.
-```
-
-Use this only when you explicitly want a machine-wide plugin update, not a project-scoped refresh:
-
-```bash
-ospec plugins update --all
-```
-
-Useful variants:
-
-```bash
-ospec plugins update stitch
-ospec plugins update --all --check
-```
-
-`ospec plugins update --all` checks every globally installed plugin recorded by OSpec and upgrades each one when a newer compatible version is available.
-If a recorded installed plugin package was manually deleted, this command also attempts to restore it before upgrading.
-AI / `/ospec` flows should only run `ospec plugins update --all` when the user explicitly asks to update all installed plugins.
+It does not migrate active / queued changes automatically.

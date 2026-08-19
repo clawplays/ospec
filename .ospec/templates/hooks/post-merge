@@ -1,14 +1,28 @@
 #!/bin/sh
 
-if [ -f ".ospec/tools/build-index-auto.cjs" ]; then
-  OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"
-elif [ -f "build-index-auto.cjs" ]; then
-  OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.cjs"
-elif [ -f "build-index-auto.js" ]; then
-  OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.js"
-else
-  echo "[ospec] .ospec/tools/build-index-auto.cjs not found, skip hook check"
-  exit 0
+# 7.10a: prefer the installed CLI's own copy of the tool. It is always current,
+# so a machine with `ospec` on PATH never depends on the project copy being in
+# sync. `ospec index tool-path` prints that path and nothing else; the copy in
+# .ospec/tools is the fallback for a machine without the CLI.
+OSPEC_BUILD_INDEX_SCRIPT=""
+if command -v ospec >/dev/null 2>&1; then
+  OSPEC_PACKAGED_TOOL="$(ospec index tool-path 2>/dev/null)"
+  if [ -n "$OSPEC_PACKAGED_TOOL" ] && [ -f "$OSPEC_PACKAGED_TOOL" ]; then
+    OSPEC_BUILD_INDEX_SCRIPT="$OSPEC_PACKAGED_TOOL"
+  fi
+fi
+
+if [ -z "$OSPEC_BUILD_INDEX_SCRIPT" ]; then
+  if [ -f ".ospec/tools/build-index-auto.cjs" ]; then
+    OSPEC_BUILD_INDEX_SCRIPT=".ospec/tools/build-index-auto.cjs"
+  elif [ -f "build-index-auto.cjs" ]; then
+    OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.cjs"
+  elif [ -f "build-index-auto.js" ]; then
+    OSPEC_BUILD_INDEX_SCRIPT="build-index-auto.js"
+  else
+    echo "[ospec] .ospec/tools/build-index-auto.cjs not found, skip hook check"
+    exit 0
+  fi
 fi
 
 node "$OSPEC_BUILD_INDEX_SCRIPT" hook-check post-merge

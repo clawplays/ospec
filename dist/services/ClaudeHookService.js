@@ -48,6 +48,7 @@ const HOOK_DIR_PARTS = ['.ospec', 'hooks', 'claude'];
 const HOOK_SCRIPT_NAME = 'ospec-claude-hook.cjs';
 const HOOK_SCRIPT_POSIX = '.ospec/hooks/claude/ospec-claude-hook.cjs';
 const HOOK_COMMAND_ARG = `\${CLAUDE_PROJECT_DIR}/${HOOK_SCRIPT_POSIX}`;
+const HOOK_COMMAND = `node "${HOOK_COMMAND_ARG}"`;
 const FRAGMENT_NAME = 'claude-settings.hooks.json';
 const README_NAME = 'README.md';
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse'];
@@ -59,7 +60,7 @@ class ClaudeHookService {
         return path.resolve(__dirname, '../..');
     }
     hookEntry() {
-        return { type: 'command', command: 'node', args: [HOOK_COMMAND_ARG] };
+        return { type: 'command', command: HOOK_COMMAND };
     }
     buildSettingsFragment() {
         return {
@@ -78,8 +79,13 @@ class ClaudeHookService {
         if (!Array.isArray(hooks)) {
             return false;
         }
-        return hooks.some(hook => Array.isArray(hook?.args) &&
-            hook.args.some(arg => typeof arg === 'string' && arg.includes(HOOK_SCRIPT_POSIX)));
+        const referencesHookScript = (value) => typeof value === 'string'
+            && value.replace(/\\/g, '/').includes(HOOK_SCRIPT_POSIX);
+        return hooks.some(hook => {
+            const entry = hook;
+            return referencesHookScript(entry?.command)
+                || (Array.isArray(entry?.args) && entry.args.some(referencesHookScript));
+        });
     }
     /**
      * Idempotently merges the OSpec hook groups into a settings object. Existing
@@ -117,13 +123,17 @@ class ClaudeHookService {
             '- `SessionStart(startup|clear|compact)`: injects the static `Announce-Before-Act` and `Brainstorm-First` contract once; resume does not reinject it.',
             '- `UserPromptSubmit`: stays silent unless a required decision is pending, then injects only that dynamic reminder.',
             '- `PreToolUse(Task)`: announces every subagent dispatch, and blocks dispatch while a required decision is pending.',
-            '- `PreToolUse(Bash)` for `ospec ...`: announces the command; shell-executing fallbacks (`--run`, `orchestrate`) escalate to a user prompt.',
+            '- `PreToolUse(Bash)` for `ospec ...`: shell-tokenizes the command (quote removal and backslash unescaping, exactly as a POSIX shell would) and decides on the resulting tokens, never on the raw string.',
+            '  - Auto-allows a single plain `ospec` invocation built only from plain words, single quotes, double quotes without `$`/backticks, and backslash escapes.',
+            '  - Escalates to a user prompt (`ask`) for: `ospec execute orchestrate`; a `--run` or `--run=<value>` token on any subcommand other than `execute collect` / `execute retry`, where it is a run-id selector; any chaining, redirection, substitution, globbing, brace/tilde expansion or comment; and any command it cannot tokenize unambiguously (unterminated quote, trailing backslash, line continuation). Unrecognized means escalate — the policy is an allowlist.',
+            '  - `--command` is not escalated: its value is recorded as evidence and never reaches a shell.',
+            '  - Anything that is not an `ospec ...` command is left entirely to the normal permission flow.',
             '',
             '## Install',
             '',
             'Run `ospec session hook --target claude --apply` to merge automatically, or merge',
             '`claude-settings.hooks.json` into `.claude/settings.json` by hand. Re-running is idempotent;',
-            'remove the OSpec entries (those whose args reference this script) to uninstall.',
+            'remove the OSpec entries (those whose command references this script) to uninstall.',
             '',
         ].join('\n');
     }

@@ -35,3 +35,26 @@ tags: [conventions, naming, ospec]
 - وثائق التصميم في `docs/design/`
 - وثائق التخطيط في `docs/planning/`
 - وثائق API في `docs/api/`
+- وثائق الميزات الحية في `docs/features/`
+
+## أسماء slug الميزات
+
+- تستخدم slugs الميزات صيغة kebab-case صغيرة وتطابق `^[a-z0-9]+(-[a-z0-9]+)*$`
+- الـ slug فريد على مستوى المشروع كله، والتكرار يُفشل `ospec index build` ويسمي الموقعين معاً
+- يُعلن الـ slug داخل القسم: في أول سطر غير فارغ تحت عنوان `##` داخل `docs/features/<domain>.md` بالشكل `<!-- ospec:feature <slug> code:src/a/,src/b/ -->`
+- سمِّ السلوك لا الـ change: `login-timeout` وليس `fix-login-bug-2026`
+- القسم بلا إعلان ليس ميزة ببساطة، وهذا مسموح
+
+## ملفات البروتوكول الثابتة
+
+- `proposal.md`
+- `tasks.md`
+- `state.json`
+- `verification.md`
+- `review.md`
+
+## متطلبات التنفيذ
+
+- راجع هذا الملف قبل إضافة أي دليل أو وحدة أو change أو flag جديد في workflow
+- إذا انحرف التنفيذ عن هذا الملف، فأعِد الكود والوثائق إلى التوافق أولاً
+

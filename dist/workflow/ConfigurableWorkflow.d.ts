@@ -33,6 +33,23 @@ export declare const WORKFLOW_PRESETS: Record<string, WorkflowConfigType>;
 export declare class ConfigurableWorkflow {
     private config;
     private mode;
+    /**
+     * M-misc6: `WORKFLOW_PRESETS[mode]` with no fallback. An unknown mode -- a
+     * hand-edited `.skillrc`, a mode from a newer CLI, or the empty string --
+     * left `this.config` undefined, and then EVERY method threw
+     * `Cannot read properties of undefined (reading 'optional_steps')` from
+     * somewhere far away from the cause.
+     *
+     * `WorkflowComposer.getBaseConfig` has had `|| WORKFLOW_PRESETS.full`
+     * since it was written; this class is the one that never got it. `full`
+     * is the same default `ConfigManager.normalizeConfig` picks for an
+     * unrecognised mode, so the two agree.
+     *
+     * `mode` is normalised alongside the config rather than kept as given:
+     * `getMode()` and `getSummary().mode` are reported to the user, and
+     * saying "mode: nonsense" while running the full preset is a worse answer
+     * than saying which preset is actually in force.
+     */
     constructor(mode: string);
     /**
      * Resolve activated optional steps from feature flags.

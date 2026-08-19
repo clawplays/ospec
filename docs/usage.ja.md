@@ -1,6 +1,6 @@
 # 使い方
 
-OSpec を主に AI で使う場合は、まず短い `/ospec` または `/ospec-change` プロンプトを使ってください。小さな通常変更には `/ospec-change`、複雑な full workflow には `/ospec-goal` を使ってください。このページの CLI コマンドは、フォールバックや明示的な自動化が必要なときに使います。
+OSpec を主に AI / `/ospec` で使う場合は、まず短い `/ospec` または `/ospec-change` プロンプトを使ってください。小さな通常変更には `/ospec-change`、複雑な full workflow には `/ospec-goal` を使ってください。このページの CLI コマンドは、フォールバックや明示的な自動化が必要なときに使います。
 
 ## よく使うコマンド
 
@@ -12,7 +12,13 @@ ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
 ospec changes status [path]
-ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
+ospec docs locate --feature <slug> | --affects <path> [--json]
+ospec docs obligations [changes/active/<change>] [--apply] [--json]
+ospec docs confirm [changes/active/<change>] --id <obligation-id> [--note "..."]
+ospec docs audit [path] [--json]
+ospec docs migrate [path] --plan|--verify|--finalize [--apply]
+ospec changes show <archive> [--md|--json]
+ospec index gc [path]ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec change <change-name> [path]
 ospec goal <goal-name> [path]
@@ -64,14 +70,6 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
-ospec plugins list
-ospec plugins install <plugin>
-ospec plugins installed
-ospec plugins update <plugin>
-ospec plugins update --all
-ospec plugins status [path]
-ospec plugins enable stitch [path]
-ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 上記の task-graph/controller 用 `ospec execute` command は、`ospec execute decision` を除いて Goal 専用です。`decision` は durable なユーザー選択のため Change と Goal で共有されます。classic Change は `ospec progress`、直接実装、top-level `ospec verify`、軽量 `review.md`、`ospec finalize` を使い、Goal の bootstrap、task graph、worker dispatch、Loop artifact を作成しません。
@@ -87,40 +85,6 @@ ospec plugins enable checkpoint [path] --base-url <url>
 - **Documentation closeout:** review 済みの作成と削除は有意な state transition です。evidence は最初の baseline から最後の completed dispatch まで集約され、workspace は最新の declared-owner evidence と一致する必要があります。後続の authoritative APPROVED review は正確な final snapshot を bind できますが、meaningful-change chain の代わりにはなりません。`ospec execute sync` は多言語 worker status と Combined review checklist を更新します。
 - **Classic Change:** `ospec change` が推奨 fast path で、`ospec new` は alias として残ります。ユーザーが選択した Change は Goal に自動昇格しません。compact な stage-aware guidance、現在の AI による 1 回の lightweight review、実用的な documentation rule、derived closeout、1 回の finalize index rebuild、sequential queue を使います。他の gate がすべて通れば `APPROVED` と `APPROVED_WITH_CONCERNS` は自動 archive できます。
 - **Controller runtime and concurrency:** 1 回の native wait は 60 秒以内に戻りますが、live child は heartbeat を更新しながら absolute deadline まで実行できます。native capacity 不明時の implementation fallback は 2 ではなく 3 です。より大きい正の session-bound capacity があれば、dependency、file conflict、shared resource、token、`maxParallel` が許す範囲で 5-10 などの設定を利用できます。新しい serial task には `serial_reason` が必要で、target が 6 個を超える task は分割するか `scope_reason` を宣言します。
-
-## プラグインの最短手順
-
-推奨プロンプト:
-
-```text
-/ospec このプロジェクトで Stitch プラグインを開いてください。
-/ospec このプロジェクトで Checkpoint プラグインを開いてください。
-```
-
-AI / `/ospec`:
-
-- 「Stitch を開いて」と言われたら、まず Stitch がグローバルインストール済みか確認し、未インストールならインストールし、その後で現在のプロジェクトに対して有効化する意味として扱います
-- 「Checkpoint を開いて」と言われたら、まず Checkpoint がグローバルインストール済みか確認し、未インストールならインストールし、その後で現在のプロジェクトに対して有効化する意味として扱います
-- 詳細なプラグイン文書は、有効化後に `.ospec/plugins/<plugin>/docs/` へ同期されます
-- インストール前に `ospec plugins info <plugin>` または `ospec plugins installed` を確認します
-- プラグインがすでにグローバルインストール済みなら、インストールはスキップして現在のプロジェクトでの有効化だけを行います
-- `ospec plugins update --all` は、ユーザーが「インストール済みプラグインを全部更新したい」と明示した場合にだけ実行します
-
-コマンドライン:
-
-```bash
-ospec plugins list
-ospec plugins info stitch
-ospec plugins install stitch
-ospec plugins enable stitch [path]
-```
-
-```bash
-ospec plugins list
-ospec plugins info checkpoint
-ospec plugins install checkpoint
-ospec plugins enable checkpoint [path] --base-url <url>
-```
 
 ## 推奨フロー
 
@@ -176,7 +140,7 @@ goal は **セッションスコープの task graph ループ** として動作
 - `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` で parallel-safe な `artifacts/agents/dispatches/*` の worker packet batch と `artifacts/agents/execution-session.json` を作成します。各 packet には project session brief snapshot と、capability tier、recommended target、target tool mapping、rationale、required behavior を示す worker profile が含まれ、複雑な task を強い worker に、単純な task を軽量 worker に振り分けやすくします。`ospec execute complete <task-id> ...` で worker 結果を記録します。`--task` は明示的な単一 task、`--limit` は batch size の上限に使います。どちらも `artifacts/agents/worker-status.md` を同期します。completion が `NEEDS_CONTEXT` または `BLOCKED` を記録した場合、OSpec は controller follow-up 用に `artifacts/agents/blockers/` escalation files を書きます。
 - dispatch 後は `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--dry-run]` で agent launch plan を書きます。`runtimeAdapter` は current かつ target-bound な model-native subagent capability のみを受け入れ、native primitive を示します。OSpec 自体は worker process を起動しません。
 - multi-worker execution は `runtimeAdapter.selected.nativeSubagent` に従います。選択された model-native adapter が parallel execution をサポートする場合だけ safe batch を並列起動します。capability がない、期限切れ、または target 不一致の場合は block し、agent CLI や current controller に fallback しません。
-- agent CLI execution は削除されました。`execute orchestrate`、`launch --run --command`、`review --run --command`、`loop watch` は process 起動や run artifact 作成の前に migration error を返します。
+- agent CLI execution は存在しません。`execute orchestrate` と `loop watch` はコマンド自体が存在せず、`launch --run --command` / `review --run --command` は process 起動や run artifact 作成の前にフラグを拒否します。
 - blocked、needs-context、failed の worker run を修正した後は、`ospec execute retry [changes/active/<change>] --task task-id` を使います。`artifacts/agents/retries/` を書き、task を reopen し、新しい dispatch packet を作成します。完了済み task は explicit `--force` が必要です。
 - ユーザーが記録済みの外部 acceptance を final gate へ延期することを明示的に承認した場合だけ、`ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."` を使います。この command は task を完了にせず、欠けた evidence も作りません。その blocker だけを待つ task を dispatchable にします。
 - controller-owned Goal では worker task 完了後と task graph 完了後に `ospec loop tick [changes/active/<change>]` を使い、task/final review を実 executor provenance に関連付けて発行します。`ospec execute review` を直接使うのは non-controller workflow のみです。
@@ -210,8 +174,7 @@ AI harness が 1 つの active Goal を進め、ユーザー判断と runtime ev
 2. Goal を再開するときは `ospec execute bootstrap [changes/active/<goal>]` を実行し、表示された next instruction に従ってから dispatch します。
 3. bootstrap または status が pending decision を示した場合は、`artifacts/agents/decisions/index.md` を開き、該当 decision report の `Chat Prompt` をユーザーに提示し、`ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user` で回答を記録します。
 4. `ospec execute workspace [changes/active/<change>]` の後に `ospec execute dispatch [changes/active/<change>]` を実行します。`ospec execute launch ... --json` で machine-readable native subagent contract を読み、current model harness で dispatch して real child result を記録します。
-5. Checkpoint を有効化した change では `ospec plugins doctor checkpoint [path]` を実行し、closeout 前に `routes.yaml`、`flows.yaml`、baseline、screenshots、traces、console/network evidence、accessibility evidence、assertions を修復します。
-6. `ospec execute status`、`ospec execute next`、`ospec execute finish` で Checkpoint evidence readiness を確認します。required decisions または active Checkpoint evidence が未完了の間は finish、verify、archive がブロックされます。
+5. `ospec execute status`、`ospec execute next`、`ospec execute finish` で closeout readiness を確認します。required decisions が未解決の間は finish、verify、archive がブロックされます。
 
 ## 既存プロジェクトの更新
 
@@ -222,7 +185,7 @@ AI harness が 1 つの active Goal を進め、ユーザー判断と runtime ev
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.10
+npm install -g @clawplays/ospec-cli@2.0.0
 ospec update [path]
 ```
 
@@ -233,38 +196,10 @@ npm install -g .
 ospec update [path]
 ```
 
-`ospec update [path]` は、プロトコル文書、ツール、managed skills、アーカイブレイアウトのメタデータ、そして有効化済みプラグインの資産を更新します。
-さらに、OSpec の痕跡は残っているものの新しいコア実行ディレクトリが欠けている古い OSpec プロジェクトを修復し、ルートの `build-index-auto.*` や `.skillrc` 内の旧 Stitch キーも正規化します。
+`ospec update [path]` は、プロトコル文書、ツール、managed skills、アーカイブレイアウトのメタデータを更新します。
+さらに、OSpec の痕跡は残っているものの新しいコア実行ディレクトリが欠けている古い OSpec プロジェクトを修復し、ルートの `build-index-auto.*` も正規化します。
 もし nested プロジェクトに古い `.ospec/src/` または `.ospec/tests/` の知識ディレクトリが残っている場合、`ospec update [path]` はそれらを `.ospec/knowledge/src/` と `.ospec/knowledge/tests/` に移行します。
-有効化済みプラグインのグローバルパッケージが手動で削除されていた場合、`ospec update [path]` はまずそのパッケージの復旧を試みてからプロジェクト資産の同期を続けます。
-有効化済みプラグインに、より新しい互換 npm バージョンがある場合、`ospec update [path]` はそのグローバルプラグインパッケージを自動で更新し、旧バージョンから新バージョンへの遷移を表示します。
-現在のプロジェクトで有効化されていないグローバルプラグインは更新しません。
 CLI 本体は自動更新しません。
-新規プラグインの自動インストールや自動有効化、active / queued changes の自動移行は行いません。
-
-## インストール済みプラグインを全部更新する
-
-推奨プロンプト:
-
-```text
-/ospec このマシンに入っているプラグインを全部更新してください。
-```
-
-現在のプロジェクトだけでなく、マシン上のインストール済みプラグインをまとめて更新したい場合は、明示的に次を使います。
+active / queued changes の自動移行は行いません。
 
 `ospec update [path]` は classic レイアウトを nested レイアウトへ自動移行することはありません。新しいレイアウトへ切り替えたい場合は、`ospec layout migrate --to nested` を個別に実行してください。
-
-```bash
-ospec plugins update --all
-```
-
-よく使う派生:
-
-```bash
-ospec plugins update stitch
-ospec plugins update --all --check
-```
-
-`ospec plugins update --all` は、OSpec が記録しているグローバルインストール済みプラグインをすべて確認し、より新しい互換バージョンがあれば順に更新します。
-インストール済みプラグインのパッケージが手動で削除されていた場合は、まず復旧を試みてから更新します。
-AI / `/ospec` では、ユーザーが「インストール済みプラグインを全部更新したい」と明示した場合にだけ `ospec plugins update --all` を実行してください。

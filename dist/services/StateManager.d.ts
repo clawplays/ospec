@@ -11,6 +11,8 @@ export declare class StateManager {
         queued?: boolean;
         source?: string;
         workflowProfileId?: WorkflowProfileId;
+        /** 7.5: feature slugs captured at creation; mirrors the proposal's list. */
+        features?: string[];
     }): FeatureState;
 }
 export declare function createStateManager(fileService: FileService): StateManager;

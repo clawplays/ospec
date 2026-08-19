@@ -9,100 +9,72 @@ export interface AgentModelProfileConfig {
 }
 export type ChangeSummaryStatus = 'pass' | 'warn' | 'fail';
 export type FeatureStatus = 'queued' | 'draft' | 'proposed' | 'planned' | 'implementing' | 'verifying' | 'ready_to_archive' | 'archived';
-export interface StitchPageDesignReviewCapabilityConfig {
-    enabled: boolean;
-    step: string;
-    activate_when_flags: string[];
-}
-export interface StitchCommandRunnerConfig {
-    mode: 'command';
-    command: string;
-    args: string[];
-    cwd: string;
-    timeout_ms: number;
-    token_env: string;
-    extra_env: Record<string, string>;
-}
-export interface StitchPluginConfig {
-    enabled: boolean;
-    blocking: boolean;
-    project?: {
-        project_id: string;
-        project_url: string;
-        save_on_first_run: boolean;
-        enforce_single_project: boolean;
-    };
-    gemini?: {
-        model: string;
-        auto_switch_on_limit: boolean;
-        save_on_fallback: boolean;
-    };
-    codex?: {
-        model: string;
-        mcp_server: string;
-    };
-    runner: StitchCommandRunnerConfig;
-    provider?: string;
-    capabilities: {
-        page_design_review: StitchPageDesignReviewCapabilityConfig;
-    };
-}
-export interface CheckpointCapabilityConfig {
-    enabled: boolean;
-    step: string;
-    activate_when_flags: string[];
-}
-export interface CheckpointCommandConfig {
-    command: string;
-    args: string[];
-    cwd: string;
-    timeout_ms: number;
-}
-export interface CheckpointAuthCommandConfig extends CheckpointCommandConfig {
-    when: string;
-}
-export interface CheckpointRuntimeConfig {
-    base_url: string;
-    startup: CheckpointCommandConfig;
-    readiness: {
-        type: string;
-        url: string;
-        timeout_ms: number;
-    };
-    auth: CheckpointAuthCommandConfig;
-    shutdown: CheckpointCommandConfig;
-    storage_state: string;
-}
-export interface CheckpointRunnerConfig {
-    mode: 'command';
-    command: string;
-    args: string[];
-    cwd: string;
-    timeout_ms: number;
-    token_env: string;
-    extra_env: Record<string, string>;
-}
-export interface CheckpointPluginConfig {
-    enabled: boolean;
-    blocking: boolean;
-    runtime: CheckpointRuntimeConfig;
-    runner: CheckpointRunnerConfig;
-    capabilities: {
-        ui_review: CheckpointCapabilityConfig;
-        flow_check: CheckpointCapabilityConfig;
-    };
-    stitch_integration: {
-        enabled: boolean;
-        auto_pass_stitch_review: boolean;
-    };
-}
-export interface SkillrcPluginsConfig {
-    stitch?: StitchPluginConfig;
-    checkpoint?: CheckpointPluginConfig;
-    [name: string]: any;
-}
 export interface ArchiveConfig {
     layout: 'flat' | 'month-day';
+}
+/**
+ * 7.6: how an unmet documentation obligation is reported at the archive gate.
+ * `warn` for one release cycle -- a gate that blocks on day one is a gate that
+ * gets worked around. Only `DocsObligationService.applyMode` reads this; the
+ * satisfaction decision itself is mode-blind, so the two modes cannot drift.
+ */
+export type DocsObligationMode = 'warn' | 'strict';
+export interface DocsContractConfig {
+    mode: DocsObligationMode;
+}
+/** What kind of documentation work an obligation asks for. */
+export type DocsObligationKind = 'update_section' | 'create_section' | 'correct_section' | 'verify_section' | 'mark_status' | 'edit';
+export type DocsObligationLevel = 'required' | 'optional';
+export interface DocsObligationEvidence {
+    /**
+     * The explicit "I looked and it is still accurate" confirmation. Accepted
+     * ONLY for `verification_only` obligations; on any other kind it is refused,
+     * because otherwise every obligation would become self-certifying.
+     */
+    verified_unchanged?: boolean;
+    confirmed_at?: string;
+    note?: string;
+}
+export interface DocsObligationBaseline {
+    exists: boolean;
+    /** sha256 of the target SECTION at planning time; null when absent. */
+    section_hash: string | null;
+    captured_at: string;
+}
+/**
+ * A located documentation obligation. Lives in `state.json.docs_obligations`,
+ * identically for the classic and goal workflows, which is what lets the
+ * archive gate read one place regardless of profile.
+ */
+export interface DocsObligation {
+    id: string;
+    /** Originating `change_type`, verbatim after alias folding. Diagnostic only. */
+    change_type: string;
+    kind: DocsObligationKind;
+    level: DocsObligationLevel;
+    /** Feature slug, when one resolved. Absent when no document exists yet. */
+    feature?: string;
+    /** Repo-relative document path, `/` separators, no fragment. */
+    path: string;
+    /** Heading text exactly as written; '' when the section does not exist yet. */
+    section: string;
+    /**
+     * `path#section`, or bare `path` when there is no section. Split fields are
+     * authoritative: a heading may legally contain '#', so re-splitting this is
+     * lossy. It exists so the AI and the checklist have one string to show.
+     */
+    target: string;
+    verification_only: boolean;
+    reason: string;
+    suggestion?: string;
+    baseline?: DocsObligationBaseline;
+    evidence?: DocsObligationEvidence;
+}
+export interface DocsObligationVerdict {
+    id: string;
+    level: DocsObligationLevel;
+    status: 'satisfied' | 'unsatisfied';
+    message: string;
 }
 export interface SkillrcConfig {
     version: string;
@@ -122,7 +94,8 @@ export interface SkillrcConfig {
         exclude?: string[];
     };
     archive?: ArchiveConfig;
-    plugins?: SkillrcPluginsConfig;
+    /** 7.6. Absent means `warn`, the default for this release cycle. */
+    docs_contract?: DocsContractConfig;
     workflow?: {
         core_required: string[];
         optional_steps: Record<string, {
@@ -149,6 +122,22 @@ export interface FeatureState {
     status: FeatureStatus;
     current_step: string;
     affects: string[];
+    /**
+     * Phase 7 feature slugs this change touches. Written at creation by 7.5's
+     * feature capture and again at archive time by 7.7; both tracks arrived at
+     * the same field, and it is one field rather than two on purpose. The index
+     * unions it with the proposal's `features:` when the change is archived
+     * (contract 6.2), so the two are kept consistent rather than one shadowing
+     * the other.
+     */
+    features?: string[];
+    /**
+     * 7.6: the located documentation obligations for this change. THE record --
+     * the task graph's `documentation_updates` and the classic closeout checklist
+     * are derived delivery surfaces, not sources. If they ever disagree with this
+     * list, this list wins.
+     */
+    docs_obligations?: DocsObligation[];
     completed: string[];
     pending: string[];
     blocked_by: string[];
@@ -157,6 +146,11 @@ export interface FeatureState {
     queue_source?: string;
     activation_source?: string;
     last_updated: string;
+    /**
+     * 7.7: the `path#section` targets this change updated, resolved from the
+     * slugs above against the index's `feature_docs` map at archive time.
+     */
+    doc_updates?: string[];
 }
 export interface ProposalFrontmatter {
     name: string;
@@ -164,6 +158,14 @@ export interface ProposalFrontmatter {
     created: string;
     affects: string[];
     flags: string[];
+    /**
+     * Phase 7 feature slugs this change touches (7.5). Always emitted, possibly
+     * `[]` -- a change may legitimately match no feature, and the list can be
+     * filled in during planning. These are `SkillIndex.feature_docs` slugs, NOT
+     * the unrelated `IndexDocument.features`; see the naming trap in the wave-1
+     * contract 6.1.
+     */
+    features?: string[];
 }
 export interface SkillFrontmatter {
     name: string;
@@ -189,11 +191,53 @@ export interface IndexDocument {
     tags: string[];
     kind: 'project' | 'api' | 'design' | 'planning' | 'other';
     sections: Record<string, SkillSection>;
+    /**
+     * NOT feature slugs. This is the pre-existing `features:` frontmatter list,
+     * merged with the `feature` (= change name) of every archived change that
+     * listed this document in `project_documents`. Phase 7 feature slugs live in
+     * `SkillIndex.feature_docs`, which is a different namespace with a different
+     * meaning. Do not cross-read them.
+     */
     features?: string[];
     modules?: string[];
     aliases?: string[];
 }
+/**
+ * One `<!-- ospec:feature <slug> code:a,b -->` declaration, bound to the
+ * heading it sits under.
+ *
+ * `start`/`end` are indices into the document's NORMALISED BODY -- the file
+ * read as UTF-8, BOM stripped, CRLF/CR folded to LF, with the YAML frontmatter
+ * block removed. That is the same coordinate space as `SkillSection.start/end`,
+ * so one `slice(start, end)` yields the heading line plus the whole section:
+ *
+ *   const body = parseFrontmatterDocument(
+ *     readFileSync(file, 'utf8').replace(/\r\n?/g, '\n'),
+ *   ).content;
+ *   const section = body.slice(declaration.start, declaration.end);
+ *
+ * `end` is the start of the next heading whose level is <= this one's, or the
+ * body length. Sub-headings therefore stay INSIDE the feature -- which is why
+ * this is not `sections[heading].end`, whose next-heading-of-any-level rule
+ * would cut the section at its first `###`.
+ */
+export interface FeatureDeclaration {
+    slug: string;
+    heading: string;
+    level: number;
+    start: number;
+    end: number;
+    /** Repo-relative path prefixes, de-duplicated and sorted. May be empty. */
+    code: string[];
+    /** Archive name from a trailing `<!-- ospec:last-change ... -->`, if present. */
+    last_change?: string;
+}
+/** A `FeatureDeclaration` plus the document it was found in. */
+export interface FeatureDocEntry extends FeatureDeclaration {
+    file: string;
+}
 export interface ArchivedChangeIndexEntry {
+    /** The CHANGE name, not a feature slug. Predates Phase 7; kept as-is. */
     feature: string;
     summary: string;
     affects: string[];
@@ -201,7 +245,10 @@ export interface ArchivedChangeIndexEntry {
     completed_at: string | null;
     documents: string[];
     project_documents?: string[];
-    knowledge_document?: string;
+    /** Phase 7 feature slugs this change touched. Always emitted, possibly `[]`. */
+    features?: string[];
+    /** `path#section` targets this change updated. Always emitted, possibly `[]`. */
+    doc_updates?: string[];
     target_files?: string[];
     verification_commands?: string[];
     workflow_profile?: string;
@@ -226,6 +273,12 @@ export interface SkillIndex {
     tagIndex: Record<string, string[]>;
     documents?: Record<string, IndexDocument>;
     archived_changes?: ArchivedChangeIndexEntry[];
+    /**
+     * Feature slug -> the living feature-document section that declares it.
+     * Keyed by slug (sorted), which is why it is a sibling of `documents` rather
+     * than a field inside it: `documents` is keyed by path.
+     */
+    feature_docs?: Record<string, FeatureDocEntry>;
 }
 export interface CommandResult {
     success: boolean;
@@ -374,6 +427,15 @@ export interface ActiveChangeStatusReport {
     totalActiveChanges: number;
     totals: Record<ChangeSummaryStatus, number>;
     changes: ActiveChangeStatusItem[];
+    /**
+     * M-race1: changes whose `state.json` could not be parsed. They are absent
+     * from `changes` because nothing true can be said about their status, but
+     * they are named here so "unreadable" never renders as "not present".
+     */
+    damagedChanges: Array<{
+        name: string;
+        reason: string;
+    }>;
 }
 export type QueueRunProfileId = 'manual-safe' | 'archive-chain';
 export type QueueRunStatus = 'running' | 'paused' | 'failed' | 'completed';

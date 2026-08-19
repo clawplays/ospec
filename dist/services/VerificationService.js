@@ -39,7 +39,7 @@ const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const helpers_1 = require("../utils/helpers");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
-const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
+const WorkflowComposer_1 = require("../workflow/WorkflowComposer");
 const ReviewArtifacts_1 = require("../utils/ReviewArtifacts");
 /**
  * Structured verification analysis that NEVER calls process.exit (Contract 3).
@@ -54,6 +54,14 @@ class VerificationService {
     }
     /** Run the full protocol verification analysis for a resolved change directory. */
     async verify(targetPath) {
+        const services = await this.deps();
+        // A Goal verification validates the final review, the verification
+        // records and every task review in one sweep. Sharing one validation
+        // scope means `git rev-parse HEAD` is resolved once for the whole
+        // sweep instead of once per check.
+        return services.taskGraphExecutionService.withValidationScope(() => this.verifyUnscoped(targetPath));
+    }
+    async verifyUnscoped(targetPath) {
         const services = await this.deps();
         const statePath = path.join(targetPath, constants_1.FILE_NAMES.STATE);
         const proposalPath = path.join(targetPath, constants_1.FILE_NAMES.PROPOSAL);
@@ -114,7 +122,7 @@ class VerificationService {
         const reviewArtifactsReady = reviewArtifactSet.missing.length === 0;
         const projectRoot = await this.findProjectRoot(targetPath);
         const config = await services.configManager.loadConfig(projectRoot);
-        const workflow = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
+        const workflow = new WorkflowComposer_1.WorkflowComposer(config);
         const analyzer = services.projectService;
         const checks = [
             { name: 'proposal.md', status: proposalExists ? 'pass' : 'fail', message: proposalExists ? 'Proposal file exists' : 'proposal.md is missing' },
@@ -231,7 +239,6 @@ class VerificationService {
                 });
             }
         }
-        await this.addPluginChecks(targetPath, activatedSteps, workflow, checks);
         checks.push({
             name: 'state.json',
             status: 'pass',
@@ -246,85 +253,6 @@ class VerificationService {
                 ? `${warnCount} warning(s) found`
                 : 'All verifications passed';
         return { passed, checks, summary, failCount, warnCount, workflowProfile };
-    }
-    async addPluginChecks(targetPath, activatedSteps, workflow, checks) {
-        const services = await this.deps();
-        if (activatedSteps.includes('stitch_design_review')) {
-            const approvalPath = path.join(targetPath, 'artifacts', 'stitch', 'approval.json');
-            const approvalExists = await services.fileService.exists(approvalPath);
-            checks.push({
-                name: 'stitch.approval',
-                status: approvalExists ? 'pass' : 'fail',
-                message: approvalExists ? 'Stitch approval artifact exists' : 'artifacts/stitch/approval.json is missing',
-            });
-            if (approvalExists) {
-                const approval = await services.fileService.readJSON(approvalPath);
-                const approvalStatus = typeof approval.status === 'string' ? approval.status : 'pending';
-                const validStep = approval.step === 'stitch_design_review';
-                const hasPreviewUrl = typeof approval.preview_url === 'string' && approval.preview_url.trim().length > 0;
-                const hasSubmittedAt = typeof approval.submitted_at === 'string' && approval.submitted_at.trim().length > 0;
-                checks.push({ name: 'stitch.approval.step', status: validStep ? 'pass' : 'fail', message: validStep ? 'Stitch approval step matches stitch_design_review' : 'Stitch approval step does not match stitch_design_review' });
-                checks.push({ name: 'stitch.approval.preview_url', status: hasPreviewUrl ? 'pass' : 'fail', message: hasPreviewUrl ? 'Stitch preview URL is recorded' : 'Stitch preview URL is missing' });
-                checks.push({ name: 'stitch.approval.submitted_at', status: hasSubmittedAt ? 'pass' : 'fail', message: hasSubmittedAt ? 'Stitch submission timestamp is recorded' : 'Stitch submission timestamp is missing' });
-                checks.push({ name: 'stitch.approval.status', status: approvalStatus === 'approved' ? 'pass' : 'fail', message: approvalStatus === 'approved' ? 'Stitch design review approved' : `Stitch design review is ${approvalStatus}` });
-            }
-        }
-        const activeCheckpointSteps = activatedSteps.filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
-        if (activeCheckpointSteps.length > 0) {
-            const checkpointDir = path.join(targetPath, 'artifacts', 'checkpoint');
-            const gatePath = path.join(checkpointDir, 'gate.json');
-            const resultPath = path.join(checkpointDir, 'result.json');
-            const summaryPath = path.join(checkpointDir, 'summary.md');
-            const gateExists = await services.fileService.exists(gatePath);
-            checks.push({ name: 'checkpoint.gate', status: gateExists ? 'pass' : 'fail', message: gateExists ? 'Checkpoint gate artifact exists' : 'artifacts/checkpoint/gate.json is missing' });
-            if (gateExists) {
-                const gate = await services.fileService.readJSON(gatePath);
-                checks.push({ name: 'checkpoint.gate.plugin', status: gate.plugin === 'checkpoint' ? 'pass' : 'fail', message: gate.plugin === 'checkpoint' ? 'Checkpoint gate plugin matches checkpoint' : `Checkpoint gate plugin is ${gate.plugin || '(missing)'}` });
-                checks.push({ name: 'checkpoint.gate.status', status: gate.status === 'passed' ? 'pass' : 'fail', message: gate.status === 'passed' ? 'Checkpoint gate passed' : `Checkpoint gate status is ${gate.status || '(missing)'}` });
-                const evidenceStatus = gate.evidence?.status || 'missing';
-                const evidenceMissing = Array.isArray(gate.evidence?.missing) ? gate.evidence.missing.map((item) => String(item || '').trim()).filter(Boolean) : [];
-                checks.push({ name: 'checkpoint.evidence.status', status: evidenceStatus === 'complete' ? 'pass' : 'fail', message: evidenceStatus === 'complete' ? 'Checkpoint evidence coverage is complete' : `Checkpoint evidence coverage is ${evidenceStatus}; missing ${evidenceMissing.length > 0 ? evidenceMissing.join(', ') : 'coverage metadata'}` });
-                for (const stepName of activeCheckpointSteps) {
-                    const stepStatus = gate.steps?.[stepName]?.status || 'missing';
-                    const stepEvidenceStatus = gate.evidence?.by_step?.[stepName]?.status || 'missing';
-                    const stepMissing = Array.isArray(gate.evidence?.by_step?.[stepName]?.missing) ? gate.evidence.by_step[stepName].missing.map((item) => String(item || '').trim()).filter(Boolean) : [];
-                    checks.push({ name: `checkpoint.${stepName}`, status: stepStatus === 'passed' ? 'pass' : 'fail', message: stepStatus === 'passed' ? `${stepName} passed` : `${stepName} status is ${stepStatus}` });
-                    checks.push({ name: `checkpoint.${stepName}.evidence`, status: stepEvidenceStatus === 'complete' ? 'pass' : 'fail', message: stepEvidenceStatus === 'complete' ? `${stepName} evidence coverage is complete` : `${stepName} evidence coverage is ${stepEvidenceStatus}; missing ${stepMissing.length > 0 ? stepMissing.join(', ') : 'coverage metadata'}` });
-                }
-            }
-            const resultExists = await services.fileService.exists(resultPath);
-            const summaryExists = await services.fileService.exists(summaryPath);
-            checks.push({ name: 'checkpoint.artifacts', status: resultExists || summaryExists ? 'pass' : 'fail', message: resultExists || summaryExists ? `Checkpoint artifacts present${resultExists && summaryExists ? ' (result.json and summary.md)' : resultExists ? ' (result.json)' : ' (summary.md)'}` : 'Checkpoint result.json or summary.md is required' });
-        }
-        const externalPluginCapabilities = workflow.getPluginCapabilities()
-            .filter(capability => capability.plugin !== 'stitch' && capability.plugin !== 'checkpoint')
-            .filter(capability => activatedSteps.includes(capability.step));
-        const externalStepsByPlugin = externalPluginCapabilities.reduce((accumulator, capability) => {
-            accumulator[capability.plugin] = accumulator[capability.plugin] || [];
-            accumulator[capability.plugin].push(capability.step);
-            return accumulator;
-        }, {});
-        for (const [pluginName, pluginSteps] of Object.entries(externalStepsByPlugin)) {
-            const pluginDir = path.join(targetPath, 'artifacts', pluginName);
-            const gatePath = path.join(pluginDir, 'gate.json');
-            const resultPath = path.join(pluginDir, 'result.json');
-            const summaryPath = path.join(pluginDir, 'summary.md');
-            const gateExists = await services.fileService.exists(gatePath);
-            checks.push({ name: `${pluginName}.gate`, status: gateExists ? 'pass' : 'fail', message: gateExists ? `${pluginName} gate artifact exists` : `artifacts/${pluginName}/gate.json is missing` });
-            if (gateExists) {
-                const gate = await services.fileService.readJSON(gatePath);
-                const gateStatus = typeof gate.status === 'string' ? gate.status : 'pending';
-                checks.push({ name: `${pluginName}.gate.plugin`, status: gate.plugin === pluginName ? 'pass' : 'fail', message: gate.plugin === pluginName ? `${pluginName} gate plugin matches ${pluginName}` : `${pluginName} gate plugin is ${gate.plugin || '(missing)'}` });
-                checks.push({ name: `${pluginName}.gate.status`, status: gateStatus === 'passed' || gateStatus === 'approved' ? 'pass' : 'fail', message: `${pluginName} gate status is ${gateStatus}` });
-                for (const stepName of pluginSteps) {
-                    const stepStatus = gate.steps?.[stepName]?.status || 'missing';
-                    checks.push({ name: `${pluginName}.${stepName}`, status: stepStatus === 'passed' || stepStatus === 'approved' ? 'pass' : 'fail', message: `${stepName} status is ${stepStatus}` });
-                }
-            }
-            const resultExists = await services.fileService.exists(resultPath);
-            const summaryExists = await services.fileService.exists(summaryPath);
-            checks.push({ name: `${pluginName}.artifacts`, status: resultExists || summaryExists ? 'pass' : 'fail', message: resultExists || summaryExists ? `${pluginName} artifacts present${resultExists && summaryExists ? ' (result.json and summary.md)' : resultExists ? ' (result.json)' : ' (summary.md)'}` : `${pluginName} result.json or summary.md is required` });
-        }
     }
     async addGoalDocumentReviewChecks(targetPath, checks) {
         const services = await this.deps();

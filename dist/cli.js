@@ -36,7 +36,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const process = __importStar(require("process"));
 const ArchiveCommand_1 = require("./commands/ArchiveCommand");
-const BatchCommand_1 = require("./commands/BatchCommand");
 const BrainstormCommand_1 = require("./commands/BrainstormCommand");
 const ChangesCommand_1 = require("./commands/ChangesCommand");
 const DocsCommand_1 = require("./commands/DocsCommand");
@@ -48,7 +47,6 @@ const GoalCommand_1 = require("./commands/GoalCommand");
 const PlanCommand_1 = require("./commands/PlanCommand");
 const QueueCommand_1 = require("./commands/QueueCommand");
 const ProgressCommand_1 = require("./commands/ProgressCommand");
-const PluginsCommand_1 = require("./commands/PluginsCommand");
 const UpdateCommand_1 = require("./commands/UpdateCommand");
 const SkillCommand_1 = require("./commands/SkillCommand");
 const SkillsCommand_1 = require("./commands/SkillsCommand");
@@ -61,10 +59,13 @@ const SessionCommand_1 = require("./commands/SessionCommand");
 const VerifyCommand_1 = require("./commands/VerifyCommand");
 const WorkflowCommand_1 = require("./commands/WorkflowCommand");
 const LayoutCommand_1 = require("./commands/LayoutCommand");
+const subcommandHelp_1 = require("./utils/subcommandHelp");
 const services_1 = require("./services");
-const CLI_VERSION = '1.9.10';
+const BaseCommand_1 = require("./commands/BaseCommand");
+const outputBudget_1 = require("./utils/outputBudget");
+const CLI_VERSION = '2.0.0';
 function showInitUsage() {
-    console.log('Usage: ospec init [root-dir] [--summary "..."] [--tech-stack node,react] [--architecture "..."] [--document-language en-US|zh-CN|ja-JP|ar]');
+    console.log((0, subcommandHelp_1.getInitUsageText)());
 }
 function parseInitCommandArgs(commandArgs) {
     let rootDir;
@@ -152,8 +153,30 @@ function parseInitCommandArgs(commandArgs) {
         options,
     };
 }
+function parseUpdateCommandArgs(commandArgs) {
+    let rootDir;
+    const options = {};
+    for (const arg of commandArgs) {
+        if (arg === '--help' || arg === '-h' || arg === 'help') {
+            console.log((0, subcommandHelp_1.getUpdateHelpText)());
+            process.exit(0);
+        }
+        if (arg === '--clean-plugin-steps') {
+            options.cleanPluginSteps = true;
+            continue;
+        }
+        if (!rootDir && !arg.startsWith('--')) {
+            rootDir = arg;
+            continue;
+        }
+        console.error(`Error: unexpected argument "${arg}"`);
+        console.log((0, subcommandHelp_1.getUpdateUsageText)());
+        process.exit(1);
+    }
+    return { rootDir, options };
+}
 function showFinalizeUsage() {
-    console.log('Usage: ospec finalize [changes/active/<change>] [--force-archive --confirm-force-archive <exact-change-name> (--reason "..." | --reason-file <path>)]');
+    console.log((0, subcommandHelp_1.getFinalizeUsageText)());
 }
 function parseFinalizeCommandArgs(commandArgs) {
     let featurePath;
@@ -224,15 +247,11 @@ function parseFinalizeCommandArgs(commandArgs) {
     }
     return { featurePath, options };
 }
-function getNewLikeUsage(commandName) {
-    return commandName === 'goal'
-        ? 'Usage: ospec goal <goal-name> [root-dir] [--flags flag1,flag2] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--execution-model controller] [--harness-interactive true|false] [--native-subagents supported|unknown|unsupported] [--native-goal supported|unknown|unsupported]'
-        : `Usage: ospec ${commandName} <change-name> [root-dir] [--flags flag1,flag2]`;
-}
 function parseNewCommandArgs(commandArgs, commandName = 'new') {
     const featureName = commandArgs[0];
     let rootDir;
     const flags = [];
+    const features = [];
     let target;
     let executionModel;
     let harnessInteractive;
@@ -243,7 +262,7 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         if (arg === '--flags') {
             const rawFlags = commandArgs[index + 1];
             if (!rawFlags || rawFlags.startsWith('--')) {
-                console.error(getNewLikeUsage(commandName));
+                console.error((0, subcommandHelp_1.getNewLikeUsage)(commandName));
                 process.exit(1);
             }
             flags.push(...rawFlags.split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
@@ -252,6 +271,24 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         }
         if (arg.startsWith('--flags=')) {
             flags.push(...arg.slice('--flags='.length).split(/[,\s]+/).map(flag => flag.trim()).filter(Boolean));
+            continue;
+        }
+        // 7.5: repeated `--feature <slug>` is the non-interactive capture path,
+        // valid for `change`, `goal` and `new` alike. Commas also split, because
+        // a comma can never be part of a slug, so accepting them can only help.
+        if (arg === '--feature') {
+            const rawFeature = commandArgs[index + 1];
+            if (!rawFeature || rawFeature.startsWith('--')) {
+                console.error('--feature requires a feature slug value.');
+                console.error((0, subcommandHelp_1.getNewLikeUsage)(commandName));
+                process.exit(1);
+            }
+            features.push(...rawFeature.split(/[,\s]+/).map(slug => slug.trim()).filter(Boolean));
+            index += 1;
+            continue;
+        }
+        if (arg.startsWith('--feature=')) {
+            features.push(...arg.slice('--feature='.length).split(/[,\s]+/).map(slug => slug.trim()).filter(Boolean));
             continue;
         }
         const goalOnlyValue = (flag) => arg === flag
@@ -264,12 +301,12 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
                 return undefined;
             if (commandName !== 'goal') {
                 console.error(`Unknown option for ${commandName}: ${flag} (only valid for ospec goal)`);
-                console.error(getNewLikeUsage(commandName));
+                console.error((0, subcommandHelp_1.getNewLikeUsage)(commandName));
                 process.exit(1);
             }
             if (!value || value.startsWith('--')) {
                 console.error(`${flag} requires a value.`);
-                console.error(getNewLikeUsage(commandName));
+                console.error((0, subcommandHelp_1.getNewLikeUsage)(commandName));
                 process.exit(1);
             }
             if (arg === flag)
@@ -278,7 +315,9 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         };
         const targetValue = requireGoalOption('--target', goalOnlyValue('--target'));
         if (targetValue !== undefined) {
-            const allowed = new Set(['codex', 'gpt', 'claude', 'gemini', 'opencode', 'cursor', 'copilot', 'shell', 'generic']);
+            // M-cfg5: see LoopCommand.configure. The goal usage string has
+            // advertised `grok` all along; this validator refused it.
+            const allowed = new Set(['codex', 'gpt', 'claude', 'gemini', 'grok', 'opencode', 'cursor', 'copilot', 'shell', 'generic']);
             if (!allowed.has(targetValue)) {
                 console.error(`Invalid --target value for goal: ${targetValue}`);
                 process.exit(1);
@@ -326,7 +365,7 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
         }
         if (arg.startsWith('--')) {
             console.error(`Unknown option for ${commandName}: ${arg}`);
-            console.error(getNewLikeUsage(commandName));
+            console.error((0, subcommandHelp_1.getNewLikeUsage)(commandName));
             process.exit(1);
         }
         if (!rootDir) {
@@ -334,13 +373,14 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
             continue;
         }
         console.error(`Unexpected argument for new: ${arg}`);
-        console.error(getNewLikeUsage(commandName));
+        console.error((0, subcommandHelp_1.getNewLikeUsage)(commandName));
         process.exit(1);
     }
     return {
         featureName,
         rootDir,
         flags: Array.from(new Set(flags)),
+        features: Array.from(new Set(features)),
         target,
         executionModel,
         harnessInteractive,
@@ -350,313 +390,275 @@ function parseNewCommandArgs(commandArgs, commandName = 'new') {
 }
 async function main() {
     try {
-        const args = process.argv.slice(2);
-        if (args.length === 0) {
-            showHelp();
-            return;
-        }
-        const command = args[0];
-        const commandArgs = args.slice(1);
-        switch (command) {
-            case 'init': {
-                const initCmd = new InitCommand_1.InitCommand();
-                const { rootDir, options } = parseInitCommandArgs(commandArgs);
-                await initCmd.execute(rootDir, options);
-                break;
-            }
-            case 'change':
-            case 'new': {
-                if (commandArgs.length === 0) {
-                    console.error('Error: change name is required');
-                    console.log(getNewLikeUsage(command));
-                    process.exit(1);
-                }
-                const { featureName, rootDir, flags } = parseNewCommandArgs(commandArgs, command);
-                const newCmd = new NewCommand_1.NewCommand();
-                await newCmd.execute(featureName, rootDir, {
-                    flags,
-                    workflowProfile: 'change',
-                });
-                break;
-            }
-            case 'goal': {
-                if (commandArgs.length === 0) {
-                    console.error('Error: goal name is required');
-                    console.log(getNewLikeUsage('goal'));
-                    process.exit(1);
-                }
-                const { featureName, rootDir, flags, target, executionModel, harnessInteractive, nativeSubagentCapability, nativeGoalCapability, } = parseNewCommandArgs(commandArgs, 'goal');
-                const goalCmd = new GoalCommand_1.GoalCommand();
-                await goalCmd.execute(featureName, rootDir, {
-                    flags,
-                    target,
-                    executionModel,
-                    harnessInteractive,
-                    nativeSubagentCapability,
-                    nativeGoalCapability,
-                });
-                break;
-            }
-            case 'brainstorm': {
-                const brainstormCmd = new BrainstormCommand_1.BrainstormCommand();
-                await brainstormCmd.execute(...commandArgs);
-                break;
-            }
-            case 'plan': {
-                const planCmd = new PlanCommand_1.PlanCommand();
-                await planCmd.execute(...commandArgs);
-                break;
-            }
-            case 'verify': {
-                const verifyCmd = new VerifyCommand_1.VerifyCommand();
-                await verifyCmd.execute(commandArgs[0]);
-                break;
-            }
-            case 'progress': {
-                const progressCmd = new ProgressCommand_1.ProgressCommand();
-                await progressCmd.execute(commandArgs[0]);
-                break;
-            }
-            case 'archive': {
-                const checkOnly = commandArgs.includes('--check');
-                const archiveArgs = commandArgs.filter(arg => arg !== '--check');
-                const archiveCmd = new ArchiveCommand_1.ArchiveCommand();
-                await archiveCmd.execute(archiveArgs[0], { checkOnly });
-                break;
-            }
-            case 'finalize': {
-                const finalizeCmd = new FinalizeCommand_1.FinalizeCommand();
-                const { featurePath, options } = parseFinalizeCommandArgs(commandArgs);
-                await finalizeCmd.execute(featurePath, options);
-                break;
-            }
-            case 'status': {
-                const statusCmd = new StatusCommand_1.StatusCommand();
-                await statusCmd.execute(commandArgs[0]);
-                break;
-            }
-            case 'session': {
-                const sessionCmd = new SessionCommand_1.SessionCommand();
-                await sessionCmd.execute(...commandArgs);
-                break;
-            }
-            case 'batch': {
-                if (commandArgs.length === 0) {
-                    console.error('Error: batch action is required');
-                    console.log('Usage: ospec batch <action> [root-dir]');
-                    process.exit(1);
-                }
-                const batchCmd = new BatchCommand_1.BatchCommand();
-                await batchCmd.execute(commandArgs[0], commandArgs[1]);
-                break;
-            }
-            case 'changes': {
-                const changesCmd = new ChangesCommand_1.ChangesCommand();
-                await changesCmd.execute(commandArgs[0] || 'status', commandArgs[1]);
-                break;
-            }
-            case 'queue': {
-                const queueCmd = new QueueCommand_1.QueueCommand();
-                await queueCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
-                break;
-            }
-            case 'run': {
-                const runCmd = new RunCommand_1.RunCommand();
-                await runCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
-                break;
-            }
-            case 'execute': {
-                const executeCmd = new ExecuteCommand_1.ExecuteCommand();
-                await executeCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
-                break;
-            }
-            case 'loop': {
-                const loopCmd = new LoopCommand_1.LoopCommand();
-                await loopCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
-                break;
-            }
-            case 'triage': {
-                const triageCmd = new TriageCommand_1.TriageCommand();
-                await triageCmd.execute(commandArgs[0] || 'list', ...commandArgs.slice(1));
-                break;
-            }
-            case 'docs': {
-                const docsCmd = new DocsCommand_1.DocsCommand();
-                await docsCmd.execute(commandArgs[0] || 'status', commandArgs[1]);
-                break;
-            }
-            case 'skills': {
-                const skillsCmd = new SkillsCommand_1.SkillsCommand();
-                await skillsCmd.execute(commandArgs[0] || 'status', commandArgs[1]);
-                break;
-            }
-            case 'skill': {
-                const skillCmd = new SkillCommand_1.SkillCommand();
-                await skillCmd.execute(commandArgs[0] || 'status', commandArgs[1], commandArgs[2]);
-                break;
-            }
-            case 'index': {
-                const indexCmd = new IndexCommand_1.IndexCommand();
-                await indexCmd.execute(commandArgs[0] || 'check', commandArgs[0] === 'query' ? undefined : commandArgs[1], commandArgs.slice(1));
-                break;
-            }
-            case 'plugins': {
-                const pluginsCmd = new PluginsCommand_1.PluginsCommand();
-                await pluginsCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
-                break;
-            }
-            case 'workflow': {
-                const workflowCmd = new WorkflowCommand_1.WorkflowCommand();
-                await workflowCmd.execute(commandArgs[0] || 'show', ...commandArgs.slice(1));
-                break;
-            }
-            case 'layout': {
-                const layoutCmd = new LayoutCommand_1.LayoutCommand();
-                await layoutCmd.execute(commandArgs[0] || 'help', ...commandArgs.slice(1));
-                break;
-            }
-            case 'update': {
-                const updateCmd = new UpdateCommand_1.UpdateCommand();
-                await updateCmd.execute(commandArgs[0]);
-                break;
-            }
-            case 'help':
-            case '-h':
-            case '--help':
-                showHelp();
-                break;
-            case 'version':
-            case '-v':
-            case '--version':
-                console.log(`OSpec CLI v${CLI_VERSION}`);
-                break;
-            default:
-                console.error(`Unknown command: ${command}`);
-                showHelp();
-                process.exit(1);
-        }
+        // Phase 5 / F3. `--max-output-chars` is a global, output-only flag, so
+        // it is stripped here instead of being taught to every command parser
+        // (all of which reject unknown flags on purpose).
+        const { args, ...budgetFlags } = (0, outputBudget_1.extractOutputBudgetArgs)(process.argv.slice(2));
+        // One install point for the whole CLI: every byte a command writes to
+        // stdout or stderr passes through the budget, whatever wrote it.
+        await BaseCommand_1.BaseCommand.runWithOutputBudget(args, budgetFlags, () => dispatch(args));
     }
     catch (error) {
         services_1.services.logger.error('CLI Error:', error);
         process.exit(1);
     }
 }
-function showHelp() {
-    console.log(`
-OSpec CLI v${CLI_VERSION}
+async function dispatch(args) {
+    if (args.length === 0) {
+        showHelp();
+        return;
+    }
+    const command = args[0];
+    const commandArgs = args.slice(1);
+    // Help routing happens before dispatch so no command class ever sees a
+    // help flag as a positional argument and acts on it.
+    if (command === 'help' || command === '--help' || command === '-h') {
+        const rawTopic = commandArgs[0];
+        if (rawTopic === undefined) {
+            showHelp();
+            return;
+        }
+        // "ospec help --help" asks about the help command itself.
+        const topic = rawTopic === '--help' || rawTopic === '-h' ? 'help' : rawTopic;
+        const topicHelp = (0, subcommandHelp_1.getCommandHelpText)(topic);
+        if (topicHelp === undefined) {
+            console.error((0, subcommandHelp_1.getUnknownHelpTopicText)(topic));
+            process.exit(1);
+        }
+        console.log(topicHelp);
+        return;
+    }
+    if ((0, subcommandHelp_1.isHelpRequest)(commandArgs)) {
+        // The global help promises every command accepts --help, so the
+        // version aliases have to resolve to the topic they dispatch to.
+        const helpTopic = command === '-v' || command === '--version' ? 'version' : command;
+        const commandHelp = (0, subcommandHelp_1.getCommandHelpText)(helpTopic);
+        if (commandHelp === undefined) {
+            console.error(`Unknown command: ${command}`);
+            showHelp();
+            process.exit(1);
+        }
+        console.log(commandHelp);
+        return;
+    }
+    switch (command) {
+        case 'init': {
+            const initCmd = new InitCommand_1.InitCommand();
+            const { rootDir, options } = parseInitCommandArgs(commandArgs);
+            await initCmd.execute(rootDir, options);
+            break;
+        }
+        case 'change':
+        case 'new': {
+            if (commandArgs.length === 0) {
+                console.error('Error: change name is required');
+                console.log((0, subcommandHelp_1.getNewLikeUsage)(command));
+                process.exit(1);
+            }
+            const { featureName, rootDir, flags, features } = parseNewCommandArgs(commandArgs, command);
+            const newCmd = new NewCommand_1.NewCommand();
+            await newCmd.execute(featureName, rootDir, {
+                flags,
+                features,
+                workflowProfile: 'change',
+            });
+            break;
+        }
+        case 'goal': {
+            if (commandArgs.length === 0) {
+                console.error('Error: goal name is required');
+                console.log((0, subcommandHelp_1.getNewLikeUsage)('goal'));
+                process.exit(1);
+            }
+            const { featureName, rootDir, flags, features, target, executionModel, harnessInteractive, nativeSubagentCapability, nativeGoalCapability, } = parseNewCommandArgs(commandArgs, 'goal');
+            const goalCmd = new GoalCommand_1.GoalCommand();
+            await goalCmd.execute(featureName, rootDir, {
+                flags,
+                features,
+                target,
+                executionModel,
+                harnessInteractive,
+                nativeSubagentCapability,
+                nativeGoalCapability,
+            });
+            break;
+        }
+        case 'brainstorm': {
+            const brainstormCmd = new BrainstormCommand_1.BrainstormCommand();
+            await brainstormCmd.execute(...commandArgs);
+            break;
+        }
+        case 'plan': {
+            const planCmd = new PlanCommand_1.PlanCommand();
+            await planCmd.execute(...commandArgs);
+            break;
+        }
+        case 'verify': {
+            const verifyCmd = new VerifyCommand_1.VerifyCommand();
+            await verifyCmd.execute(commandArgs[0]);
+            break;
+        }
+        case 'progress': {
+            const progressCmd = new ProgressCommand_1.ProgressCommand();
+            await progressCmd.execute(commandArgs[0]);
+            break;
+        }
+        case 'archive': {
+            const checkOnly = commandArgs.includes('--check');
+            const repair = commandArgs.includes('--repair');
+            const archiveArgs = commandArgs.filter(arg => arg !== '--check' && arg !== '--repair');
+            const archiveCmd = new ArchiveCommand_1.ArchiveCommand();
+            const archiveResult = await archiveCmd.run(archiveArgs[0], { checkOnly, repair });
+            /*
 
-Usage: ospec <command> [options]
+             * M-misc2: `ArchiveCommand` used to call `process.exit(1)`
 
-Commands:
-  init [root-dir]           Initialize OSpec to a change-ready state
-  change <name> [root]      Create a classic fast-flow change (supports --flags)
-  new <change-name> [root]  Backward-compatible alias for ospec change
-  goal <goal-name> [root]   Create a full OSpec goal (supports --flags)
-  brainstorm [path]         Write an optional pre-change brainstorm artifact
-  plan [path]               Write an optional implementation plan draft
-  verify [path]             Verify change completion
-  progress [path]           Show workflow progress
-  archive [path] [--check]  Archive a ready change or only check readiness
-  status [path]             Show project status
-  session [path]            Write a project session brief and safe next command
-  finalize [path]           Verify and archive, or force-archive with explicit double confirmation
-  batch <action> [path]     Batch operations (export, stats)
-  changes [action] [path]   Active change summaries (status)
-  queue [action] [path]     Explicit queue helpers (status, add, activate, next)
-  run [action] [path]       Explicit queue runner helpers (start, status, step, resume, stop)
-  execute [action] [path]   Task graph controller helpers (bootstrap, handoff, preflight, status, next, workspace, worktree, finish, dispatch, launch, complete, repair)
-  loop [action] [path]      Goal loop controller (run/tick, status, heartbeat, result, recover, configure, pause, resume)
-  triage [action] [path]    Triage inbox helpers (list, claim, promote)
-  docs [action] [path]      Docs helpers (status, generate)
-  skills [action] [path]    Skills status helpers (status)
-  plugins [action] [path]   Plugin helpers (available, info, install, installed, update, list, status, enable, disable, approve, reject)
-  skill [action] [skill] [dir] Skill package helpers (managed skills: ospec, ospec-change, ospec-goal)
-  index [action] [path]     Index helpers (check, build)
-  workflow [action]         Workflow configuration (show, list-flags)
-  layout [action]           Project layout helpers (migrate)
-  update [path]             Repair legacy projects, refresh docs/tooling/skills, and auto-upgrade enabled plugins
-  help, -h, --help          Show this help message
-  version, -v, --version    Show version
+             * itself. The exit code is decided here now, for the same
 
-Examples:
-  ospec init
-  ospec init . --summary "Internal admin portal" --tech-stack node,react,postgres
-  ospec change onboarding-flow
-  ospec change landing-refresh . --flags ui_change,page_design
-  ospec goal billing-refactor . --flags complex_feature,multi_file_change
-  ospec goal billing-refactor . --target codex --execution-model controller --harness-interactive true --native-subagents supported
-  ospec brainstorm . --topic "Improve onboarding conversion" --change onboarding-flow
-  ospec brainstorm . --topic "Explore dashboard UX" --visual
-  ospec plan ./changes/active/onboarding-flow
-  ospec plan . --change ./changes/active/onboarding-flow --apply
-  ospec verify ./changes/active/onboarding-flow
-  ospec progress ./changes/active/onboarding-flow
-  ospec archive ./changes/active/onboarding-flow
-  ospec archive ./changes/active/onboarding-flow --check
-  ospec finalize ./changes/active/onboarding-flow
-  ospec finalize ./changes/active/onboarding-flow --force-archive --confirm-force-archive onboarding-flow --reason "Accepted incomplete verification risk"
-  ospec status
-  ospec session
-  ospec session hook .
-  ospec queue add login-refresh . --flags ui_change
-  ospec queue status
-  ospec queue next
-  ospec run start . --profile manual-safe
-  ospec run step
-  ospec execute status ./changes/active/onboarding-flow
-  ospec execute bootstrap ./changes/active/onboarding-flow
-  ospec execute handoff ./changes/active/onboarding-flow --target codex
-  ospec execute preflight ./changes/active/onboarding-flow --stage design
-  ospec execute next ./changes/active/onboarding-flow
-  ospec execute workspace ./changes/active/onboarding-flow
-  ospec execute worktree ./changes/active/onboarding-flow --branch ospec/onboarding-flow
-  ospec execute worktree ./changes/active/onboarding-flow --create --branch ospec/onboarding-flow
-  ospec execute worktree ./changes/active/onboarding-flow --cleanup --path ../ospec-onboarding-flow
-  ospec execute finish ./changes/active/onboarding-flow --target main --remote origin
-  ospec execute dispatch ./changes/active/onboarding-flow --task task-1
-  ospec execute launch ./changes/active/onboarding-flow --target codex
-  ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --summary "Implemented and verified"
-  ospec execute complete task-1 ./changes/active/onboarding-flow --status DONE --usage-file ./usage.json
-  ospec execute defer-blocker task-1 ./changes/active/onboarding-flow --reason "Device acceptance will be completed before final review"
-  ospec execute repair ./changes/active/onboarding-flow
-  ospec loop heartbeat ./changes/active/onboarding-flow --action-item worker-1 --executor child-1
-  ospec loop result ./changes/active/onboarding-flow --action-item worker-1 --executor child-1 --exit-code 0 --summary "completed"
-  ospec loop recover ./changes/active/onboarding-flow --force
-  ospec docs status
-  ospec docs generate
-  ospec docs sync-protocol
-  ospec skills status
-  ospec plugins list
-  ospec plugins info stitch
-  ospec plugins install stitch
-  ospec plugins installed
-  ospec plugins update stitch
-  ospec plugins update --all
-  ospec plugins status
-  ospec plugins enable stitch
-  ospec plugins enable checkpoint . --base-url http://127.0.0.1:3000
-  # enable checkpoint also auto-installs playwright/pixelmatch/pngjs into the target project
-  ospec plugins run checkpoint ./changes/active/onboarding-flow
-  ospec plugins approve stitch ./changes/active/onboarding-flow
-  ospec skill status ospec
-  ospec skill install ospec
-  ospec skill status ospec-change
-  ospec skill install ospec-change
-  ospec skill status ospec-goal
-  ospec skill install ospec-goal
-  ospec skill install ospec-init
-  ospec skill status-claude ospec
-  ospec skill install-claude ospec
-  ospec index build
-  ospec batch stats
-  ospec changes status
-  ospec workflow show
-  ospec workflow set-mode full
-  ospec layout migrate --to nested
-  ospec update .
-`);
+             * reason every other command's is: the command reports, the
+
+             * CLI translates. `process.exitCode` rather than
+
+             * `process.exit()` so the blockers already written to stdout
+
+             * are flushed before the process ends.
+
+             */
+            if (archiveResult?.status === 'blocked') {
+                // `process` is a NAMESPACE import in this file, and TS
+                // treats namespace members as read-only, so
+                // `process.exitCode = 1` does not compile here.
+                // `globalThis.process` is the same object at run time.
+                globalThis.process.exitCode = 1;
+            }
+            break;
+        }
+        case 'finalize': {
+            const finalizeCmd = new FinalizeCommand_1.FinalizeCommand();
+            const { featurePath, options } = parseFinalizeCommandArgs(commandArgs);
+            await finalizeCmd.execute(featurePath, options);
+            break;
+        }
+        case 'status': {
+            const statusCmd = new StatusCommand_1.StatusCommand();
+            await statusCmd.execute(commandArgs[0]);
+            break;
+        }
+        case 'session': {
+            const sessionCmd = new SessionCommand_1.SessionCommand();
+            await sessionCmd.execute(...commandArgs);
+            break;
+        }
+        case 'changes': {
+            const changesCmd = new ChangesCommand_1.ChangesCommand();
+            // 7.7b: `changes show <archive>` takes flags, so the rest of
+            // the argv goes through rather than just the second token.
+            await changesCmd.execute(commandArgs[0] || 'status', commandArgs[1], commandArgs.slice(2));
+            break;
+        }
+        case 'queue': {
+            const queueCmd = new QueueCommand_1.QueueCommand();
+            await queueCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+            break;
+        }
+        case 'run': {
+            const runCmd = new RunCommand_1.RunCommand();
+            await runCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+            break;
+        }
+        case 'execute': {
+            const executeCmd = new ExecuteCommand_1.ExecuteCommand();
+            await executeCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+            break;
+        }
+        case 'loop': {
+            const loopCmd = new LoopCommand_1.LoopCommand();
+            await loopCmd.execute(commandArgs[0] || 'status', ...commandArgs.slice(1));
+            break;
+        }
+        case 'triage': {
+            const triageCmd = new TriageCommand_1.TriageCommand();
+            await triageCmd.execute(commandArgs[0] || 'list', ...commandArgs.slice(1));
+            break;
+        }
+        case 'docs': {
+            const docsCmd = new DocsCommand_1.DocsCommand();
+            // Every Phase 7 docs subcommand takes flags -- `locate` its
+            // selector, `obligations`/`confirm` their ids, `migrate` its
+            // phase -- so the rest of the argv is forwarded verbatim. The
+            // option readers look only for their own `--flag`, which makes
+            // a positional in that list inert.
+            //
+            // `commandArgs[1]` stays the positional path, and a flag in
+            // that slot is NOT mistaken for one. That guard is load-bearing
+            // now: `ospec docs migrate --plan` run from inside a project
+            // would otherwise resolve its project root to the string
+            // "--plan".
+            await docsCmd.execute(commandArgs[0] || 'status', commandArgs[1] && !commandArgs[1].startsWith('--') ? commandArgs[1] : undefined, commandArgs.slice(1));
+            break;
+        }
+        case 'skills': {
+            const skillsCmd = new SkillsCommand_1.SkillsCommand();
+            await skillsCmd.execute(commandArgs[0] || 'status', commandArgs[1]);
+            break;
+        }
+        case 'skill': {
+            const skillCmd = new SkillCommand_1.SkillCommand();
+            await skillCmd.execute(commandArgs[0] || 'status', commandArgs[1], commandArgs[2]);
+            break;
+        }
+        case 'index': {
+            const indexCmd = new IndexCommand_1.IndexCommand();
+            await indexCmd.execute(commandArgs[0] || 'check', commandArgs[0] === 'query' ? undefined : commandArgs[1], commandArgs.slice(1));
+            break;
+        }
+        case 'workflow': {
+            const workflowCmd = new WorkflowCommand_1.WorkflowCommand();
+            await workflowCmd.execute(commandArgs[0] || 'show', ...commandArgs.slice(1));
+            break;
+        }
+        case 'layout': {
+            const layoutCmd = new LayoutCommand_1.LayoutCommand();
+            await layoutCmd.execute(commandArgs[0] || 'help', ...commandArgs.slice(1));
+            break;
+        }
+        case 'update': {
+            const parsedUpdateArgs = parseUpdateCommandArgs(commandArgs);
+            const updateCmd = new UpdateCommand_1.UpdateCommand();
+            await updateCmd.execute(parsedUpdateArgs.rootDir, parsedUpdateArgs.options);
+            break;
+        }
+        case 'help':
+        case '-h':
+        case '--help':
+            showHelp();
+            break;
+        case 'version':
+        case '-v':
+        case '--version':
+            console.log(`OSpec CLI v${CLI_VERSION}`);
+            break;
+        default:
+            console.error(`Unknown command: ${command}`);
+            showHelp();
+            process.exit(1);
+    }
 }
-main().catch(error => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-});
+function showHelp() {
+    console.log((0, subcommandHelp_1.getGlobalHelpText)(CLI_VERSION));
+}
+/**
+ * Only run the CLI when this module is the process entry point.
+ * Importing the package as a library (dist/index.js -> ./cli) must never
+ * parse the host process argv, print help, or call process.exit.
+ * The dist build emits CommonJS, so require.main identity is the guard.
+ */
+function isProcessEntryPoint() {
+    return typeof require !== 'undefined' && typeof module !== 'undefined' && require.main === module;
+}
+if (isProcessEntryPoint()) {
+    main().catch(error => {
+        console.error('Fatal error:', error);
+        process.exit(1);
+    });
+}

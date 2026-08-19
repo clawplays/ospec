@@ -41,7 +41,9 @@ const crypto_1 = require("crypto");
 const constants_1 = require("../core/constants");
 const VerificationService_1 = require("./VerificationService");
 const CapabilityProbeService_1 = require("./CapabilityProbeService");
+const repeatedFailureGuard_1 = require("../utils/repeatedFailureGuard");
 const RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
+const ShellQuote_1 = require("../utils/ShellQuote");
 const TaskGraphExecutionService_1 = require("./TaskGraphExecutionService");
 const LOOP_DIR = ['artifacts', 'loop'];
 const LOOP_CONFIG_FILE = 'loop.json';
@@ -49,8 +51,12 @@ const LOOP_STATE_FILE = 'state.json';
 const LOOP_RUNLOG_FILE = 'run-log.jsonl';
 const LOOP_STOP_FILE = 'STOP';
 const LOOP_CONTROLLER_LOCK_FILE = 'controller.lock';
-const STALE_CONTROLLER_LOCK_MS = 2 * 60 * 1000;
 const CONTROLLER_LOCK_HEARTBEAT_MS = 30 * 1000;
+// Four missed heartbeats, matching the mutation lease. The threshold was
+// briefly six to cover a blocking git call; git is now async, stdin-closed and
+// timeout-bounded, so the recheck below is what distinguishes slow from dead
+// and the extra minute of recovery latency buys nothing.
+const STALE_CONTROLLER_LOCK_MS = 4 * CONTROLLER_LOCK_HEARTBEAT_MS;
 const DEFAULT_ACTION_LEASE_MS = 5 * 60 * 1000;
 /** Upper bound for a single idle native wait while exactly one pending batch runs and nothing else is dispatchable. */
 const IDLE_MAX_WAIT_MS = 10 * 60 * 1000;
@@ -63,6 +69,9 @@ const DEFAULT_VERIFICATION_MAX_RUNTIME_MS = 60 * 60 * 1000;
 const DEFAULT_EVIDENCE_RESULT_GRACE_MS = 5 * 60 * 1000;
 const UNKNOWN_IMPLEMENTATION_CAPACITY = 3;
 const MIN_ACTION_TOKEN_RESERVATION = 1000;
+// M-race5: the crash window between the task-graph bindings and the loop state
+// that owns them. See `issueAction`.
+const LOOP_BINDING_INTENT_FILE = 'loop-binding-intent.json';
 const CURRENT_LOOP_CONFIG_VERSION = '3.0';
 const APPROVED_REVIEW_DECISIONS = new Set(['APPROVED', 'APPROVED_WITH_CONCERNS']);
 const RETRY_REVIEW_DECISIONS = new Set(['NEEDS_CHANGES']);
@@ -175,6 +184,55 @@ class LoopService {
     async readState(changePath) {
         const raw = await this.fileService.readJSON(this.statePath(changePath));
         return this.normalizeState(raw);
+    }
+    /** M-race5: see the note in `issueAction`. */
+    bindingIntentPath(changePath) {
+        return path.join(path.resolve(changePath), 'artifacts', 'agents', LOOP_BINDING_INTENT_FILE);
+    }
+    /**
+     * M-race5: clears task-graph bindings that no loop state claims.
+     *
+     * Runs at the top of every tick, before anything reads the bindings. The
+     * marker names the action whose bindings were being written; if durable
+     * loop state does not have a `pendingControllerAction` with that id, the
+     * `writeState` that should have adopted them never happened, so they belong
+     * to nothing. Releasing them is what lets the next tick bind a fresh
+     * action instead of dying on "already bound to another Loop action"
+     * forever.
+     *
+     * Deliberately compares the id rather than merely checking that SOME action
+     * is pending: a crash followed by a manual `loop resume` can leave a
+     * different, legitimate action pending, and its bindings must survive.
+     */
+    async releaseOrphanedLoopBindings(changePath) {
+        const markerPath = this.bindingIntentPath(changePath);
+        const marker = await this.fileService.readJsonSafe(markerPath);
+        if (marker.status === 'absent')
+            return null;
+        if (marker.status === 'damaged') {
+            // The marker exists but does not say which action it covers, so
+            // there is nothing safe to release -- guessing would unbind a live
+            // action. Refuse rather than delete it: a marker that cannot be
+            // read is a wedge that needs a person, and silently removing the
+            // only evidence of it would be worse than saying so.
+            throw new Error(`Loop binding-intent marker is unreadable (${marker.message}). `
+                + 'It records task-graph bindings that may belong to no Loop action. '
+                + `Inspect ${markerPath} and delete it once the bindings are reconciled.`);
+        }
+        const actionId = typeof marker.value?.actionId === 'string' ? marker.value.actionId.trim() : '';
+        if (!actionId) {
+            await this.fileService.remove(markerPath);
+            return null;
+        }
+        const state = await this.readState(changePath);
+        if (state.pendingControllerAction?.actionId === actionId) {
+            // `writeState` landed and only the marker cleanup was lost.
+            await this.fileService.remove(markerPath);
+            return null;
+        }
+        await this.taskGraph.releaseLoopActionBindings(changePath, actionId);
+        await this.fileService.remove(markerPath);
+        return actionId;
     }
     async writeState(changePath, state) {
         state.version = CURRENT_LOOP_CONFIG_VERSION;
@@ -685,6 +743,12 @@ class LoopService {
             || resultIds.some(id => !expectedIds.has(id))) {
             throw new Error(`Executor results must be a unique non-empty subset of the current pending action items (${[...expectedIds].join(', ')}).`);
         }
+        // F5: validate the outcome fields independently of whoever built this
+        // batch. Track A's validator checks the batch's shape and then hands the
+        // object straight through, so this is the last boundary before the
+        // values reach durable state and the rendered blocker text.
+        for (const result of results)
+            this.assertOutcomeFields(result);
         const newlyRecorded = [];
         for (const result of results) {
             const executorId = this.requireExecutorId(result.executorId);
@@ -724,6 +788,8 @@ class LoopService {
             itemState.completedAt = now;
             itemState.exitCode = result.exitCode;
             itemState.timedOut = result.timedOut === true;
+            itemState.signal = result.signal ?? null;
+            itemState.infraFailure = result.infraFailure === true;
             itemState.tokensUsed = Math.max(0, Number(result.tokensUsed) || 0);
             itemState.summary = result.summary || null;
             await this.applyItemCompletionSideEffects(changePath, pending, actionItem, executorId, now, !failed);
@@ -732,11 +798,19 @@ class LoopService {
             newlyRecorded.push(result);
         }
         const failures = newlyRecorded.filter(result => result.timedOut || result.exitCode !== 0);
+        // F5: an infrastructure failure is not the work failing, so it must not
+        // consume a no-progress round -- the controller would otherwise burn its
+        // circuit-breaker budget on a broken spawn and stop for the wrong reason.
+        // The retry routing below still runs for both classes: skipping it would
+        // leave the task in a non-dispatchable status and stall the loop instead
+        // of retrying it, which is the opposite of what this bypass is for.
+        const genuineFailures = failures.filter(result => result.infraFailure !== true);
         const tokenDelta = newlyRecorded.reduce((total, result) => total + Math.max(0, Number(result.tokensUsed) || 0), 0);
         this.recomputeTokenUsage(state);
         if (failures.length > 0) {
-            state.noProgressCount += 1;
-            await this.markImplementationAttemptsBlocked(changePath, pending, failures, failures.map(result => result.summary || `${result.actionItemId} exited ${result.exitCode ?? 'without a code'}`).join('; '));
+            if (genuineFailures.length > 0)
+                state.noProgressCount += 1;
+            await this.markImplementationAttemptsBlocked(changePath, pending, failures, failures.map(result => this.describeFailure(result)).join('; '));
         }
         const activeCount = (pending.itemStates || []).filter(item => !this.isTerminalItemStatus(item.status)).length;
         const allFailures = (pending.itemStates || []).filter(item => item.status === 'failed' || item.status === 'expired');
@@ -755,6 +829,8 @@ class LoopService {
             trigger: 'executor',
             tokensEst: tokenDelta || null,
             exitCode: failures[0]?.exitCode ?? 0,
+            signal: failures[0]?.signal ?? null,
+            infraFailure: failures.length > 0 && genuineFailures.length === 0,
             verifyPassed: null,
             summary: state.lastFeedback,
             costToDate: null,
@@ -910,6 +986,8 @@ class LoopService {
                 completedAt: null,
                 exitCode: null,
                 timedOut: false,
+                signal: null,
+                infraFailure: false,
                 tokensUsed: 0,
                 tokenAllowance: item.tokenAllowance ?? null,
                 tokenReservation: Math.max(0, Number(item.tokenAllowance) || 0),
@@ -1022,6 +1100,8 @@ class LoopService {
             itemState.completedAt = nowIso;
             itemState.exitCode = 0;
             itemState.timedOut = false;
+            itemState.signal = null;
+            itemState.infraFailure = false;
             itemState.summary = itemState.summary
                 || `Auto-settled from durable evidence (${itemState.actionItemId}); executor result was not separately recorded.`;
             await this.applyItemCompletionSideEffects(changePath, pending, actionItem, itemState.executorId, nowIso, true);
@@ -1040,8 +1120,73 @@ class LoopService {
         return item.status === expectedStatus
             && item.exitCode === result.exitCode
             && item.timedOut === (result.timedOut === true)
+            // F5: re-reporting the same item with a different infrastructure
+            // verdict is a conflict, not a duplicate -- the two classifications
+            // route differently, so silently keeping the first would hide it.
+            && (item.infraFailure === true) === (result.infraFailure === true)
+            && (item.signal ?? null) === (result.signal ?? null)
             && item.tokensUsed === Math.max(0, Number(result.tokensUsed) || 0)
             && item.summary === (result.summary || null);
+    }
+    /**
+     * F5: the loop-side record boundary. What is validated here, and why a
+     * shape check upstream cannot substitute for it:
+     *
+     * - `exitCode`: any integer including negative, or `null`. Rejects `NaN`,
+     *   `Infinity` and fractions -- all of which are `typeof 'number'` and so
+     *   pass a shape check, but would be written to durable state and then
+     *   rendered into a blocker as a number no reader can act on.
+     * - `signal`: a signal name or `null`. Rejects a string carrying newlines or
+     *   markdown, which a shape check reads as "a string" and which forges rows
+     *   in the blocker text `describeFailure` builds.
+     *
+     * `timedOut` and `infraFailure` are read with `=== true` everywhere they are
+     * used, so no value can subvert them and none is rejected here.
+     */
+    assertOutcomeFields(result) {
+        const { exitCode, signal } = result;
+        if (exitCode !== null && exitCode !== undefined) {
+            if (typeof exitCode !== 'number' || !Number.isInteger(exitCode)) {
+                throw new Error(`Executor result for ${result.actionItemId} requires an integer exit code; received ${JSON.stringify(exitCode)}.`);
+            }
+        }
+        if (signal !== null && signal !== undefined) {
+            if (typeof signal !== 'string' || !/^[A-Za-z][A-Za-z0-9_+-]{0,31}$/.test(signal.trim())) {
+                throw new Error(`Executor result for ${result.actionItemId} requires a signal name like SIGKILL; received ${JSON.stringify(signal)}.`);
+            }
+        }
+    }
+    /**
+     * F5: one failure sentence that names all four outcome fields the reporter
+     * supplied, so a controller reading the blocker knows whether to retry the
+     * work or fix its own environment.
+     */
+    describeFailure(result) {
+        const base = result.summary || `${result.actionItemId} exited ${result.exitCode ?? 'without a code'}`;
+        const facts = [];
+        if (result.infraFailure === true)
+            facts.push('infrastructure failure, not a failure of the work');
+        if (result.timedOut === true)
+            facts.push('timed out');
+        if (result.signal)
+            facts.push(`signal ${result.signal}`);
+        return facts.length > 0 ? `${base} (${facts.join('; ')})` : base;
+    }
+    /**
+     * F6: build the repeated-failure advisory from the run-log tail. A missing
+     * or unreadable run log yields no advisory rather than an error -- a guard
+     * that can break the tick it advises on is worse than no guard.
+     */
+    async readRepeatedFailureAdvisory(changePath) {
+        const logPath = this.runLogPath(path.resolve(changePath));
+        try {
+            if (!(await this.fileService.exists(logPath)))
+                return null;
+            return (0, repeatedFailureGuard_1.detectRepeatedFailures)((0, repeatedFailureGuard_1.parseRunLogTail)(await this.fileService.readFile(logPath)));
+        }
+        catch {
+            return null;
+        }
     }
     async appendRunLog(changePath, entry) {
         const line = `${JSON.stringify(entry)}\n`;
@@ -1086,29 +1231,62 @@ class LoopService {
                 if (attempt === 0
                     && stat
                     && (lockAgeMs >= STALE_CONTROLLER_LOCK_MS || lockAgeMs <= -STALE_CONTROLLER_LOCK_MS)
-                    && (owner
-                        ? ((!this.isProcessAlive(owner.pid) || owner.heartbeat)
-                            && await this.removeControllerLockIfOwned(lockPath, owner.nonce))
-                        : await this.removeCorruptControllerLockIfUnchanged(lockPath, stat))) {
-                    continue;
+                    && (owner ? (!this.isProcessAlive(owner.pid) || owner.heartbeat) : true)) {
+                    // Age alone is not evidence of death: a controller blocked
+                    // in a long call looks identical to a crashed one until you
+                    // look twice. Only a lock whose mtime is still frozen after
+                    // the recheck window is genuinely abandoned.
+                    const verdict = await this.confirmControllerLockStillStale(lockPath, stat);
+                    // Released while we looked: the lock is free, so retry the
+                    // acquisition. Reporting "another tick is active" for a lock
+                    // that no longer exists fails a tick that would have run.
+                    if (verdict === 'released')
+                        continue;
+                    if (verdict === 'stale'
+                        && (owner
+                            ? await this.removeControllerLockIfOwned(lockPath, owner.nonce)
+                            : await this.removeCorruptControllerLockIfUnchanged(lockPath, stat))) {
+                        continue;
+                    }
                 }
                 throw new Error(`Another loop controller tick is active for ${path.resolve(changePath)}.`);
             }
         }
         if (!handle)
             throw new Error(`Could not acquire the loop controller lease for ${path.resolve(changePath)}.`);
+        // Registering the lease lets any synchronous stretch further down the
+        // tick -- including the git calls in TaskGraphExecutionService -- push
+        // the mtime forward without waiting for the heartbeat timer.
+        const lease = (0, TaskGraphExecutionService_1.registerHeldLease)(lockPath, nonce);
         const heartbeat = setInterval(() => {
+            // A wedged operation stops refreshing: keeping the mtime moving
+            // while nothing can progress is what makes a stuck lock immortal.
+            if ((0, TaskGraphExecutionService_1.isHeldLeaseWedged)(lease))
+                return;
             void this.refreshControllerLockIfOwned(lockPath, nonce);
         }, CONTROLLER_LOCK_HEARTBEAT_MS);
         heartbeat.unref();
         try {
-            return await operation();
+            return await (0, TaskGraphExecutionService_1.runWithHeldLease)(lease, operation);
         }
         finally {
+            (0, TaskGraphExecutionService_1.releaseHeldLease)(lease);
             clearInterval(heartbeat);
             await handle.close().catch(() => undefined);
             await this.removeControllerLockIfOwned(lockPath, nonce);
         }
+    }
+    // A controller that is merely slow refreshes the mtime within a heartbeat;
+    // a dead one never does. Waiting one recheck window and re-stating is what
+    // separates the two, and it is cheap next to corrupting a task graph.
+    // Three outcomes, not two: a lock that vanished during the window is free,
+    // which is a retry, not a reason to report someone else as active.
+    async confirmControllerLockStillStale(lockPath, observed) {
+        await new Promise(resolve => setTimeout(resolve, TaskGraphExecutionService_1.STALE_LOCK_STEAL_RECHECK_MS));
+        const current = await fs_1.promises.stat(lockPath).catch(() => null);
+        if (current === null)
+            return 'released';
+        return current.mtimeMs === observed.mtimeMs ? 'stale' : 'alive';
     }
     async readControllerLockOwner(lockPath) {
         try {
@@ -1171,9 +1349,17 @@ class LoopService {
     async runOnce(changePath, options = {}) {
         await this.assertExists(changePath);
         const startedAt = Date.now();
-        return this.withControllerLease(changePath, async () => {
+        // One tick validates the same evidence from several angles (observe,
+        // evidence readiness, the plan step, verification). Sharing one
+        // validation scope for the whole tick resolves git HEAD once for all
+        // of them instead of once per validation.
+        return this.taskGraph.withValidationScope(() => this.withControllerLease(changePath, async () => {
             const before = await this.readState(changePath);
             const result = await this.runOnceUnlocked(changePath, options);
+            // F6: read the log the tick just appended to, so the advisory covers
+            // this tick's own outcome. Output layer only: the advisory is
+            // attached to the result and never written back to loop state.
+            result.repeatedFailureAdvisory = await this.readRepeatedFailureAdvisory(changePath);
             const durationMs = Math.max(0, Date.now() - startedAt);
             const repeatedBlockerCount = result.stopReason
                 ? before.lastFeedback === result.stopReason ? Math.max(2, before.noProgressCount + 1) : 1
@@ -1187,7 +1373,7 @@ class LoopService {
                 repeatedBlockerCount,
             });
             return result;
-        });
+        }));
     }
     /**
      * Lightweight controller liveness poll between full ticks. Refreshes
@@ -1271,6 +1457,11 @@ class LoopService {
     async runOnceUnlocked(changePath, options = {}) {
         await this.assertExists(changePath);
         const resolved = path.resolve(changePath);
+        // M-race5: before ANY binding is read or written this tick. A tick that
+        // reached `issueAction` with orphaned bindings still in place would
+        // die on the one-shot bind guard, which is the wedge the marker exists
+        // to break.
+        await this.releaseOrphanedLoopBindings(resolved);
         const config = await this.readConfig(resolved);
         const state = await this.readState(resolved);
         const usageSnapshot = await this.taskGraph.readAuthoritativeUsageSnapshot(resolved).catch(() => null);
@@ -2006,6 +2197,44 @@ class LoopService {
             && this.isReviewActionKind(kind);
         const allowances = this.allocateTokenAllowances(config, state, items.length);
         const projectRoot = await this.findProjectRootForSafety(changePath);
+        /*
+         * M-race5: the recovery marker, written before the first task-graph
+         * binding and cleared after the loop state that owns those bindings is
+         * durable.
+         *
+         * The order here is task-graph bindings first, loop state last, and the
+         * plan's first option was to swap them. That is not implementable:
+         * `state.pendingControllerAction.items[].verificationBinding` is the
+         * RETURN VALUE of `bindVerificationLoopAction`, and it is read back on
+         * the next tick (`record.targetSnapshotHash === ...
+         * verificationBinding?.targetSnapshotHash`). Writing loop state first
+         * would mean writing it without the binding it exists to carry.
+         *
+         * So: the plan's second option, a marker between the two writes. What
+         * it prevents is specific and permanent. `bindReviewLoopAction` and
+         * `bindPlanningRepairLoopAction` are one-shot -- both throw "already
+         * bound to another Loop action" when the record names a different
+         * action, and neither has an unbind. Crash between the bindings and
+         * `writeState` and the next tick sees no `pendingControllerAction`, so
+         * it issues a batch with a FRESH `actionId`, reaches the same dispatch
+         * record, finds the ghost id, and throws. Every subsequent tick throws
+         * the same way. The change is wedged with no way out short of hand-
+         * editing JSON. The marker is what makes that state recognisable to the
+         * only component that can act on it.
+         *
+         * Worth noting: the planning-repair dispatch in `runOnceUnlocked`
+         * already gets this right the other way round -- it calls `issueAction`
+         * (which persists loop state) and binds afterwards, guarded by an
+         * explicit "action was not persisted before binding" check. The two
+         * orders disagreed inside one file; this is the half that could not
+         * simply adopt the other's.
+         */
+        await this.fileService.writeJSON(this.bindingIntentPath(changePath), {
+            version: '1.0',
+            actionId,
+            kind,
+            issuedAt: now,
+        });
         for (const item of items) {
             const actionRuntimeAdapter = item.modelSelection
                 ? this.runtimeAdapter.resolve({
@@ -2117,6 +2346,10 @@ class LoopService {
             progressFingerprint: state.progressFingerprint,
         };
         await this.writeState(changePath, state);
+        // M-race5: the bindings are now owned by durable loop state, so the
+        // marker has nothing left to recover. Cleared after `writeState` and
+        // never before it.
+        await this.fileService.remove(this.bindingIntentPath(changePath));
         await this.appendRunLog(changePath, {
             ...this.logEntry(state, trigger, null, `Issued ${kind} batch with ${items.length} action item(s).`),
             actionId,
@@ -3010,12 +3243,21 @@ class LoopService {
         if (value !== undefined)
             target[key] = value;
     }
+    /**
+     * See `utils/ShellQuote`. A fifth copy of the rule, and the only one that
+     * branched on `process.platform`: on win32 it doubled `'` as `''`, which is
+     * the PowerShell/cmd convention and is simply wrong for the POSIX sh these
+     * strings are written for -- and it meant the same change emitted different
+     * bytes into its committed artifacts depending on the machine that ran it.
+     * The POSIX branch used `'"'"'`, a valid alternative spelling of the shared
+     * `'\''`, so that half was correct.
+     *
+     * The dropped `!value.startsWith('-')` guard was cosmetic: quoting does not
+     * stop a leading `-` being read as a flag, because the shell removes the
+     * quotes before the receiving CLI ever sees the word.
+     */
     quote(value) {
-        if (/^[a-zA-Z0-9_./:=@-]+$/.test(value) && !value.startsWith('-'))
-            return value;
-        if (process.platform === 'win32')
-            return `'${value.replace(/'/g, "''")}'`;
-        return `'${value.replace(/'/g, `'"'"'`)}'`;
+        return (0, ShellQuote_1.quoteShellArg)(value);
     }
 }
 exports.LoopService = LoopService;

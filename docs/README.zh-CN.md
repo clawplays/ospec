@@ -29,8 +29,7 @@ OSpec 的官方 CLI 包是 `@clawplays/ospec-cli`，官方命令是 `ospec`。OS
   <a href="usage.zh-CN.md">使用说明</a> |
   <a href="project-overview.zh-CN.md">项目介绍</a> |
   <a href="installation.zh-CN.md">安装说明</a> |
-  <a href="external-plugins.zh-CN.md">外接插件</a> |
-  <a href="plugin-release.zh-CN.md">插件发布</a> |
+  <a href="skills-installation.zh-CN.md">Skills 安装说明</a> |
   <a href="https://github.com/clawplays/ospec/issues">Issues</a>
 </p>
 
@@ -174,7 +173,7 @@ ospec finalize changes/active/<change-name> --force-archive --confirm-force-arch
 
 只有你明确选择完整流程时才使用 Goal。用户选择的 Change 不会因为复杂度、文件数量、风险或批量任务升级，使用 `ospec change` 创建即可；`ospec new` 仍是兼容别名。
 
-Change 使用精简分阶段指导、当前 AI 的一次轻量 review 和自动派生 closeout。verification、documentation、plugin 和 review 门禁全部通过后，`APPROVED` 或 `APPROVED_WITH_CONCERNS` 可以自动 finalize 并归档；显式批量任务仍在 queue 中串行执行。
+Change 使用精简分阶段指导、当前 AI 的一次轻量 review 和自动派生 closeout。verification、documentation 和 review 门禁全部通过后，`APPROVED` 或 `APPROVED_WITH_CONCERNS` 可以自动 finalize 并归档；显式批量任务仍在 queue 中串行执行。
 
 可以从终端开始：
 
@@ -198,7 +197,7 @@ ospec goal improve-checkout
 
 在内部，OSpec 会阻止 AI 在重要问题尚未回答时开始实现，inline 检查 design/plan 就绪状态，让实现者和代码审查者彼此独立，并要求有测试证据后才把 goal 标记为完成。
 
-每次成功执行 `ospec finalize` 或 `ospec archive`，都会自动生成一份 `docs/project/changes/<归档路径>.md`（nested 布局下位于 `.ospec/docs/project/changes/`），并写入功能索引和 AI 索引。因此普通 change 和 goal 都至少有一份可检索文档。移动 active change 前，归档预检会拒绝覆盖该目标路径上的人工文档，并验证托管输出目录可写。goal 如果修改了架构、API、模块或运行方式，仍必须更新对应的长期项目文档；自动摘要不能代替这些文档。
+归档时，`ospec finalize` / `ospec archive` 会写入该 change 的索引条目（携带功能与文档更新记录）、刷新 `docs/project/feature-catalog.md` 中受影响的功能行，并幂等替换功能节的 `ospec:last-change` 溯源注释——这是引擎对人工文档的唯一写入，写入失败只警告、不阻塞归档。`docs/project/changes/` 下不再生成任何文件；想查看某个归档 change，用 `ospec changes show <归档名>` 按需渲染摘要、影响范围、文件清单与验证命令。goal 如果修改了架构、API、模块或运行方式，仍必须更新对应的长期项目文档。
 
 Claude Code 硬强制（一次性；在 Claude Code 里 AI 会自动帮你执行）：
 
@@ -214,20 +213,13 @@ ospec session hook --target claude --apply
 
 hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生效。
 
-### 目标执行优化
+### 主要功能
 
-- design/plan 预检不启动 reviewer child；task graph 派生后只运行一次独立 combined planning review。task review、最终 combined review 和验证仍然保留。
-- `.skillrc.workflow.model_profiles` 把逻辑 worker/reviewer profile 映射到各 harness 模型，OSpec 默认配置不硬编码供应商型号。
-- 命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`ospec execute complete --usage-file` 保留为手工入口。`execution-metrics.json` 会区分完整、部分和缺失数据。
-- review 同时保存人类可读 Markdown 和结构化 `*.findings.json`；归档会验证声明的文档确实发生有效变化，并从功能索引直接链接长期项目文档。
-- `ospec execute repair` 把最终 review 的全部 `NEEDS_CHANGES` findings 合成一个 repair task，并复用原有 dispatch、task review 和 final review 门禁。
-
-### 插件安装方式
-
-- `ospec plugins list`
-- `ospec plugins install <plugin>`
-- `ospec plugins enable <plugin> [path]`
-- 如果对话里说“打开 Stitch / Checkpoint”，应理解为“先检查插件是否已全局安装；未安装才安装；然后在当前项目启用”
+- **活功能文档与定位器**：人工维护的文档里用 `<!-- ospec:feature <slug> code:<路径> -->` 声明功能节；`docs/project/feature-catalog.md` 每个已声明功能一行（slug、一句话、`文档#章节`、状态、最近归档）；`ospec docs locate --feature <slug>` 或 `--affects <路径>` 直接返回该节的位置与行区间，AI 只读一节而不是整份文档。
+- **归档按需渲染**：归档写索引条目、刷新功能目录行、幂等写 `ospec:last-change` 溯源注释；`docs/project/changes/` 下不生成文件，`ospec changes show <归档名>` 按需渲染归档详情。
+- **文档义务**：规划期 `ospec docs obligations --apply` 按 `change_type` 与功能列表（为空时用 `affects` 经 `code:` 声明回退解析）生成义务，目标已解析到 `文件#章节`——fix 核对该节是否还写着修复前的错误行为，refactor 验证该节仍准确、零改动时用 `ospec docs confirm` 记录 `verified_unchanged`。`.skillrc` 的 `docs_contract.mode: warn|strict` 决定未满足的必需义务是警告还是阻塞归档。`ospec docs audit` 列出 `code:` 路径已变而文档未动的功能节；`ospec docs migrate` 分四个带门禁的阶段把旧生成文档迁移为功能文档。
+- **review 双格式与合并修复**：review 同时保存人类可读 Markdown 和结构化 `*.findings.json`；归档会验证声明的文档确实发生有效变化。`ospec execute repair` 把最终 review 的全部 `NEEDS_CHANGES` findings 合成一个 repair task，并复用原有 dispatch、task review 和 final review 门禁。
+- **度量入账**：命令执行器通过 `OSPEC_USAGE_FILE` 自动归集标准化 usage；`ospec execute complete --usage-file` 保留为手工入口。`execution-metrics.json` 会区分完整、部分和缺失数据。`.skillrc.workflow.model_profiles` 把逻辑 worker/reviewer profile 映射到各 harness 模型。
 
 ## 文档
 
@@ -238,8 +230,6 @@ hook 在会话启动时加载，因此从下一次 Claude Code 会话开始生�
 - [Project Overview](project-overview.zh-CN.md)
 - [Installation](installation.zh-CN.md)
 - [Skills Installation](skills-installation.zh-CN.md)
-- [External Plugins](external-plugins.zh-CN.md)
-- [Plugin Release](plugin-release.zh-CN.md)
 
 ## 仓库结构
 

@@ -39,6 +39,7 @@ const crypto = __importStar(require("crypto"));
 const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
+const ShellQuote_1 = require("../utils/ShellQuote");
 const BaseCommand_1 = require("./BaseCommand");
 class SessionCommand extends BaseCommand_1.BaseCommand {
     async execute(...args) {
@@ -190,14 +191,24 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
         const knowledgeIndex = skills.skillIndex.exists && skillIndexPath
             ? await services_1.services.fileService.readJSON(skillIndexPath).catch(() => null)
             : null;
-        const featureIndexPath = Object.keys(knowledgeIndex?.documents || {})
-            .find(documentPath => documentPath.replace(/\\/g, '/').endsWith('/docs/project/feature-index.md')
-            || documentPath.replace(/\\/g, '/') === 'docs/project/feature-index.md') || null;
+        // 7.4: the brief points at the feature CATALOGUE, and it is found on
+        // disk rather than in the index's `documents` map. Since 7.2 excluded
+        // `generated: true` documents from that map, looking there returned
+        // null for every project -- the brief has been printing
+        // "Feature index: missing" on healthy projects ever since. Both files
+        // sit under the same managed root as SKILL.index.json, so that file's
+        // directory is the honest anchor.
+        const featureCatalogAbsolute = skillIndexPath
+            ? path.join(path.dirname(skillIndexPath), 'docs', 'project', 'feature-catalog.md')
+            : null;
+        const featureCatalogPath = featureCatalogAbsolute && await services_1.services.fileService.exists(featureCatalogAbsolute)
+            ? path.relative(targetPath, featureCatalogAbsolute).replace(/\\/g, '/')
+            : null;
         const knowledgeSnapshot = {
             indexPath: skills.skillIndex.exists && skillIndexPath
                 ? path.relative(targetPath, skillIndexPath).replace(/\\/g, '/')
                 : null,
-            featureIndexPath,
+            featureCatalogPath,
             documentCount: Object.keys(knowledgeIndex?.documents || {}).length,
             archivedChangeCount: Array.isArray(knowledgeIndex?.archived_changes)
                 ? knowledgeIndex.archived_changes.length
@@ -228,7 +239,8 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             recommendedCommands,
         };
         const cacheKey = this.hashSessionCacheInput(cacheInput);
-        const previousKey = await this.readPreviousSessionCacheKey(artifactPath);
+        const previousArtifact = await this.readPreviousSessionBrief(artifactPath);
+        const previousKey = this.readSessionCacheKey(previousArtifact);
         const cacheStatus = previousKey === null
             ? 'new'
             : previousKey === cacheKey
@@ -270,8 +282,21 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             ],
             nextInstruction,
         };
-        await services_1.services.fileService.writeJSON(artifactPath, artifact);
-        await services_1.services.fileService.writeFile(reportPath, this.renderSessionBrief(artifact));
+        // A cache hit means the brief on disk already says exactly this, so the
+        // only difference a rewrite could produce is a fresh `generatedAt` -- and
+        // two churned mtimes. Both files are checked, because a brief whose
+        // markdown was deleted or edited must still be restored.
+        const briefUnchanged = previousArtifact !== null
+            && JSON.stringify(this.stripSessionBriefTimestamp(previousArtifact))
+                === JSON.stringify(this.stripSessionBriefTimestamp(artifact));
+        const renderedReport = this.renderSessionBrief(briefUnchanged ? previousArtifact : artifact);
+        const reportInSync = briefUnchanged
+            && await services_1.services.fileService.exists(reportPath)
+            && (await services_1.services.fileService.readFile(reportPath).catch(() => null)) === renderedReport;
+        if (!briefUnchanged || !reportInSync) {
+            await services_1.services.fileService.writeJSON(artifactPath, artifact);
+            await services_1.services.fileService.writeFile(reportPath, this.renderSessionBrief(artifact));
+        }
         return {
             projectPath: targetPath,
             artifactPath,
@@ -321,10 +346,31 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             decisionGateSource: activeGoal
                 ? 'active Goal artifacts/agents/bootstrap.json execution.decisions and artifacts/agents/decisions/'
                 : 'active Change artifacts/agents/decisions/',
-            pluginGateSource: 'project .skillrc plugin configuration and active-change plugin artifacts',
+            /*
+             * Phase 5 carry-over: this listed BOTH `.ospec/session-brief.json`
+             * and `.ospec/session-brief.md`, so every session that follows the
+             * hook read two representations of the same data.
+             *
+             * They are not two views. `renderSessionBrief` is a strict, LOSSY
+             * projection of the JSON artifact: it drops `version`, the
+             * `docs.missingRequired` paths (it prints only their count), and
+             * `currentStep` from every active and queued change. Everything
+             * the markdown contains is in the JSON; the reverse is false.
+             *
+             * So the markdown is the one to drop, and the rest of this
+             * artifact already agreed: `safeNextSource` names
+             * `.ospec/session-brief.json recommendedCommands[0]`, and
+             * `injection.afterSessionStart[0]` says to read the JSON. The
+             * markdown was the only line pointing the other way.
+             *
+             * The FILE is still written, and still named in
+             * `artifacts.sessionBriefMarkdown`. It is what
+             * `for-ai/execution-protocol.md` and the `ospec-goal` SKILL point
+             * a human or an agent at for a quick read; what changes is that
+             * the hook no longer requires reading both.
+             */
             requiredReads: [
                 '.ospec/session-brief.json',
-                '.ospec/session-brief.md',
                 ...profileReads,
                 activeDecisionPath,
             ],
@@ -339,7 +385,6 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
                         ? `Continue the classic Change from ${activeChange.path}/proposal.md and tasks.md; do not run Goal bootstrap, task graph, worker dispatch, or Loop commands.`
                         : 'Follow the profile-aware recommendedCommands in the refreshed session brief.',
                 'If active decision artifacts report required pending user decisions, ask the user to choose and record the answer with ospec execute decision before continuing.',
-                'Treat plugin gates as project/change artifacts; do not approve, reject, dispatch, or run plugin work implicitly.',
             ],
         };
         const artifact = {
@@ -393,19 +438,36 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             nextInstruction: artifact.nextInstruction,
         };
     }
-    async readPreviousSessionCacheKey(artifactPath) {
+    async readPreviousSessionBrief(artifactPath) {
         if (!await services_1.services.fileService.exists(artifactPath)) {
             return null;
         }
         try {
-            const previous = await services_1.services.fileService.readJSON(artifactPath);
-            return typeof previous?.cache?.key === 'string' && previous.cache.key.trim().length > 0
-                ? previous.cache.key
-                : null;
+            return await services_1.services.fileService.readJSON(artifactPath);
         }
         catch {
+            // A damaged brief is a cache miss, never a failed command: the whole
+            // point of this command is to write a fresh one.
             return null;
         }
+    }
+    readSessionCacheKey(previous) {
+        return typeof previous?.cache?.key === 'string' && previous.cache.key.trim().length > 0
+            ? previous.cache.key
+            : null;
+    }
+    /**
+     * Everything in the brief except the timestamp that changes on every run.
+     *
+     * The brief is regenerated at every session entry, and it used to be
+     * rewritten unconditionally -- so a cache HIT still churned the mtime of two
+     * files inside .ospec/ and, on projects that commit them, put them in
+     * `git status` for nothing. Comparing without `generatedAt` makes a hit a
+     * true no-op while any real change to the brief still writes.
+     */
+    stripSessionBriefTimestamp(artifact) {
+        const { generatedAt: _generatedAt, ...stable } = artifact || {};
+        return stable;
     }
     hashSessionCacheInput(input) {
         return crypto
@@ -584,7 +646,7 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             `- Skill index: ${brief.skills.indexPresent ? 'present' : 'missing'}`,
             `- Skill index needs rebuild: ${brief.skills.indexNeedsRebuild ? 'yes' : 'no'}`,
             `- Knowledge index: ${brief.knowledge.indexPath || 'missing'}`,
-            `- Feature index: ${brief.knowledge.featureIndexPath || 'missing'}`,
+            `- Feature catalog: ${brief.knowledge.featureCatalogPath || 'missing'}`,
             `- Indexed docs: ${brief.knowledge.documentCount}`,
             `- Archived features: ${brief.knowledge.archivedChangeCount}`,
             '',
@@ -653,7 +715,6 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             `- Active change bootstrap command: ${artifact.bootstrap.activeChangeBootstrapCommand ? `\`${artifact.bootstrap.activeChangeBootstrapCommand}\`` : 'none'}`,
             `- Safe next source: ${artifact.bootstrap.safeNextSource}`,
             `- Decision gate source: ${artifact.bootstrap.decisionGateSource}`,
-            `- Plugin gate source: ${artifact.bootstrap.pluginGateSource}`,
             '',
             '## Required Reads',
             '',
@@ -707,7 +768,6 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             `- Active change bootstrap command: ${artifact.bootstrap.activeChangeBootstrapCommand ? `\`${artifact.bootstrap.activeChangeBootstrapCommand}\`` : 'none'}`,
             `- Safe next source: ${artifact.bootstrap.safeNextSource}`,
             `- Decision gate source: ${artifact.bootstrap.decisionGateSource}`,
-            `- Plugin gate source: ${artifact.bootstrap.pluginGateSource}`,
             '',
             '## Required Reads',
             '',
@@ -731,11 +791,25 @@ class SessionCommand extends BaseCommand_1.BaseCommand {
             '',
         ].join('\n');
     }
+    /**
+     * POSIX-sh quoting for the `integration.shell` line, which is a command a
+     * human or an agent PASTES INTO A SHELL.
+     *
+     * M-misc6 replaced a double-quoted fallback here with single quotes: `!`
+     * still triggers history expansion inside double quotes under bash, so a
+     * project path containing `!` -- legal on every filesystem OSpec supports
+     * -- expanded to something else or aborted with "event not found".
+     *
+     * That fix was made here and not in `TaskGraphExecutionService`, which kept
+     * its own weaker double-quoted copy. The rule now lives in one place,
+     * `utils/ShellQuote`, and both call sites import it; see that module's
+     * header for the guarantee and its platform scope.
+     *
+     * This is the `shell` field only; `integration.powershell` is built
+     * separately with `JSON.stringify`, which is correct for PowerShell.
+     */
     quoteShellArg(value) {
-        if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) {
-            return value;
-        }
-        return `"${value.replace(/(["\\$`])/g, '\\$1')}"`;
+        return (0, ShellQuote_1.quoteShellArg)(value);
     }
     printSessionBrief(result) {
         console.log('\nOSpec Session Brief');

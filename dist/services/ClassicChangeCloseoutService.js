@@ -38,7 +38,19 @@ const path = __importStar(require("path"));
 const fs_1 = require("fs");
 const child_process_1 = require("child_process");
 const helpers_1 = require("../utils/helpers");
-const CHANGE_TYPES = new Set(['bugfix', 'feature', 'maintenance', 'docs']);
+/**
+ * 7.6 widened this ADDITIVELY. The design doc 3 obligation table is written in
+ * the vocabulary `feature|fix|refactor|perf|deprecate|remove|docs`, while this
+ * validator only ever accepted `bugfix|feature|maintenance|docs`. Both are
+ * accepted now: nothing that used to validate stops validating, and the two
+ * legacy spellings fold onto the new ones (`bugfix`->fix, `maintenance`->
+ * refactor) in `DocsObligationService.normalizeChangeType`. Narrowing this set
+ * later is a breaking change and belongs with a major release, not here.
+ */
+const CHANGE_TYPES = new Set([
+    'bugfix', 'feature', 'maintenance', 'docs',
+    'fix', 'refactor', 'perf', 'deprecate', 'remove',
+]);
 const DOCUMENTATION_IMPACTS = new Set(['none', 'required']);
 const REVIEW_DECISIONS = new Set([
     'APPROVED',
@@ -208,7 +220,7 @@ class ClassicChangeCloseoutService {
             status: typeValid ? 'pass' : 'fail',
             message: typeValid
                 ? `Change type is ${changeType}`
-                : 'proposal.md change_type must be bugfix, feature, maintenance, or docs',
+                : 'proposal.md change_type must be one of feature, fix, refactor, perf, deprecate, remove, docs (or the legacy bugfix / maintenance)',
         });
         const impactValid = DOCUMENTATION_IMPACTS.has(impact);
         checks.push({
@@ -337,97 +349,6 @@ class ClassicChangeCloseoutService {
             checks,
         };
     }
-    async analyzePluginGates(changePath, activatedSteps, workflow) {
-        const checks = [];
-        if (activatedSteps.includes('stitch_design_review')) {
-            const approvalPath = path.join(changePath, 'artifacts', 'stitch', 'approval.json');
-            const exists = await this.fileService.exists(approvalPath);
-            let approved = false;
-            if (exists) {
-                const approval = await this.fileService.readJSON(approvalPath);
-                approved =
-                    approval.step === 'stitch_design_review' &&
-                        approval.status === 'approved' &&
-                        typeof approval.preview_url === 'string' &&
-                        approval.preview_url.trim().length > 0 &&
-                        typeof approval.submitted_at === 'string' &&
-                        approval.submitted_at.trim().length > 0;
-            }
-            checks.push({
-                name: 'stitch.approval',
-                status: approved ? 'pass' : 'fail',
-                message: approved
-                    ? 'Stitch design review is approved with complete evidence'
-                    : 'Stitch design review approval with preview URL and submission timestamp is required',
-            });
-        }
-        const checkpointSteps = activatedSteps.filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
-        if (checkpointSteps.length > 0) {
-            const checkpointDir = path.join(changePath, 'artifacts', 'checkpoint');
-            const gatePath = path.join(checkpointDir, 'gate.json');
-            const gateExists = await this.fileService.exists(gatePath);
-            let ready = false;
-            if (gateExists) {
-                const gate = await this.fileService.readJSON(gatePath);
-                ready =
-                    gate.plugin === 'checkpoint' &&
-                        gate.status === 'passed' &&
-                        gate.evidence?.status === 'complete' &&
-                        checkpointSteps.every(step => gate.steps?.[step]?.status === 'passed' &&
-                            gate.evidence?.by_step?.[step]?.status === 'complete') &&
-                        ((await this.fileService.exists(path.join(checkpointDir, 'result.json'))) ||
-                            (await this.fileService.exists(path.join(checkpointDir, 'summary.md'))));
-            }
-            checks.push({
-                name: 'checkpoint.gate',
-                status: ready ? 'pass' : 'fail',
-                message: ready
-                    ? 'Checkpoint gate and evidence are complete'
-                    : 'Checkpoint gate, per-step evidence, and result or summary are required',
-            });
-        }
-        const externalCapabilities = workflow
-            .getPluginCapabilities()
-            .filter(capability => capability.plugin !== 'stitch' &&
-            capability.plugin !== 'checkpoint' &&
-            activatedSteps.includes(capability.step));
-        const stepsByPlugin = new Map();
-        for (const capability of externalCapabilities) {
-            stepsByPlugin.set(capability.plugin, [
-                ...(stepsByPlugin.get(capability.plugin) || []),
-                capability.step,
-            ]);
-        }
-        for (const [pluginName, pluginSteps] of stepsByPlugin) {
-            const pluginDir = path.join(changePath, 'artifacts', pluginName);
-            const gatePath = path.join(pluginDir, 'gate.json');
-            const gateExists = await this.fileService.exists(gatePath);
-            let ready = false;
-            if (gateExists) {
-                const gate = await this.fileService.readJSON(gatePath);
-                ready =
-                    gate.plugin === pluginName &&
-                        (gate.status === 'passed' || gate.status === 'approved') &&
-                        pluginSteps.every(step => {
-                            const status = gate.steps?.[step]?.status;
-                            return status === 'passed' || status === 'approved';
-                        }) &&
-                        ((await this.fileService.exists(path.join(pluginDir, 'result.json'))) ||
-                            (await this.fileService.exists(path.join(pluginDir, 'summary.md'))));
-            }
-            checks.push({
-                name: `${pluginName}.gate`,
-                status: ready ? 'pass' : 'fail',
-                message: ready
-                    ? `${pluginName} gate and artifacts are complete`
-                    : `${pluginName} approved gate plus result or summary is required`,
-            });
-        }
-        return {
-            archiveReady: checks.every(check => check.status !== 'fail'),
-            checks,
-        };
-    }
     deriveCloseoutState(state, input) {
         const completed = new Set(state.completed || []);
         const setStep = (step, ready) => {
@@ -445,8 +366,7 @@ class ClassicChangeCloseoutService {
             input.tasksReady &&
             input.verificationReady &&
             input.reviewReady &&
-            input.documentationReady &&
-            input.pluginsReady;
+            input.documentationReady;
         const managedSteps = [
             'proposal_complete',
             'tasks_complete',

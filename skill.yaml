@@ -4,15 +4,20 @@ description: Document-driven OSpec workflow skill for AI-assisted development wi
 author: OSpec Team
 license: MIT
 
+# This is the single source of truth for the OSpec skill interface.
+# agents/openai.yaml points here instead of duplicating it.
 interface:
   display_name: "OSpec"
   short_description: "Inspect, initialize, and operate OSpec projects"
-  default_prompt: "Use $ospec to initialize this directory according to OSpec rules: use ospec init so the repository ends in change-ready state, reuse existing project docs when available, map an explicit language request or the current conversation language to --document-language during AI-assisted init instead of assuming a brand-new repo will infer it, ask one concise follow-up for missing summary or tech stack in AI-assisted flows, fall back to placeholder docs when the user skips that context, do not assume a web template when the project type is unclear, and do not create the first change automatically."
+  default_prompt: "Use $ospec to initialize this directory according to OSpec rules: use ospec init so the repository ends in change-ready state, reuse existing project docs when available, map an explicit language request or the current conversation language to --document-language during AI-assisted init instead of assuming a brand-new repo will infer it, ask one concise follow-up for missing summary or tech stack in AI-assisted flows, fall back to placeholder docs when the user skips that context, do not assume a web template when the project type is unclear, do not create the first change automatically, and use ospec status or ospec changes status only when you need an explicit summary."
 
 requires_local:
   node: ">=18.0.0"
   npm: ">=8.0.0"
 
+# The CLI catalogue is intentionally not carried here. Run `ospec help` or
+# `ospec help <subcommand>` for the current command surface, and read SKILL.md
+# for routing and for-ai/change-protocol.md for staged read order.
 protocol:
   project_files:
     - ".skillrc"
@@ -34,87 +39,6 @@ protocol:
     - "changes/active/<feature>/review.md"
   feature_name_format: "kebab-case"
 
-commands:
-  - id: status
-    command: "ospec status [project-dir]"
-    purpose: "Show project knowledge, execution status, and the recommended next step."
-  - id: init
-    command: "ospec init [root-dir]"
-    purpose: "Initialize the repository to a change-ready state from CLI."
-  - id: docs_generate
-    command: "ospec docs generate [project-dir]"
-    purpose: "Refresh, repair, or backfill the project knowledge layer for an already initialized repository."
-  - id: new
-    command: "ospec change <feature-name> [root-dir]"
-    purpose: "Create a new change under changes/active with proposal/tasks/state/verification/review."
-  - id: changes_status
-    command: "ospec changes status [project-dir]"
-    purpose: "Show PASS/WARN/FAIL protocol status for every active change."
-  - id: docs_status
-    command: "ospec docs status [project-dir]"
-    purpose: "Show project-doc coverage and missing knowledge docs."
-  - id: skills_status
-    command: "ospec skills status [project-dir]"
-    purpose: "Show layered SKILL coverage, module skills, and index status."
-  - id: index_check
-    command: "ospec index check [project-dir]"
-    purpose: "Show whether the skill index exists, is stale, or needs rebuild."
-  - id: index_build
-    command: "ospec index build [project-dir]"
-    purpose: "Rebuild the project skill index."
-  - id: progress
-    command: "ospec progress [changes/active/<feature>]"
-    purpose: "Show progress for a single active feature."
-  - id: verify
-    command: "ospec verify [changes/active/<feature>]"
-    purpose: "Check protocol completeness and optional-step coverage."
-  - id: archive
-    command: "ospec archive [changes/active/<feature>] [--check]"
-    purpose: "Archive a completed change after gate checks; use --check for readiness only."
-  - id: finalize
-    command: "ospec finalize [changes/active/<feature>]"
-    purpose: "Run verify + index refresh + archive as the standard closeout flow before commit."
-  - id: workflow_show
-    command: "ospec workflow show"
-    purpose: "Show workflow configuration for the current project."
-  - id: workflow_flags
-    command: "ospec workflow list-flags"
-    purpose: "List supported workflow feature flags."
-  - id: skill_status
-    command: "ospec skill status"
-    purpose: "Check whether a Codex-installed OSpec skill is present and in sync. Managed defaults are ospec, ospec-change, and ospec-goal."
-  - id: skill_install
-    command: "ospec skill install"
-    purpose: "Install or sync one OSpec skill package into ~/.codex/skills/. Managed defaults are ospec, ospec-change, and ospec-goal."
-  - id: skill_status_claude
-    command: "ospec skill status-claude"
-    purpose: "Check whether a Claude Code-installed OSpec skill is present and in sync. Managed defaults are ospec, ospec-change, and ospec-goal."
-  - id: skill_install_claude
-    command: "ospec skill install-claude"
-    purpose: "Install or sync one OSpec skill package into ~/.claude/skills/. Managed defaults are ospec, ospec-change, and ospec-goal."
-
-workflow:
-  read_order:
-    - ".skillrc"
-    - "changes/active/<feature>/proposal.md"
-    - "changes/active/<feature>/tasks.md"
-    - "changes/active/<feature>/state.json"
-    - "changes/active/<feature>/verification.md"
-    - "changes/active/<feature>/review.md"
-  archive_requirements:
-    - "state.json.status must be ready_to_archive"
-    - "verification.md must be fully passed"
-    - "activated optional steps must appear in tasks.md and verification.md"
-    - "activated optional steps must be listed in verification.md.passed_optional_steps"
-  preferred_entry:
-    - "Run ospec init [path] when the directory is uninitialized or not yet change-ready."
-    - "Pass --summary, --tech-stack, or --architecture during init when CLI users already know the missing project context."
-    - "Run your project deployment and validation flow before archiving the active change."
-    - "Run ospec verify [changes/active/<change>] before archiving."
-    - "Use ospec status [path] when you want an explicit textual summary or troubleshooting snapshot."
-    - "Run ospec docs generate [path] later when you only need a docs maintenance pass."
-    - "Create the first change explicitly instead of assuming initialization will do it."
-
 guardrails:
   - "Treat init as change-ready initialization, not protocol-shell-only initialization."
   - "If the user intent is simply to initialize the project or current directory, still trigger the mandatory init flow without asking for a longer prompt."
@@ -125,29 +49,6 @@ guardrails:
   - "Do not apply business scaffold during plain init."
   - "Do not generate docs/project/bootstrap-summary.md during plain init or docs generate."
   - "Do not create the first change automatically unless the user explicitly asks for a change."
-  - "Treat presets as planning defaults, not as init-time templates."
-
-prompt_profiles:
-  minimal: "Initialize this project with ospec. Use ospec init and verify the managed files before saying it is initialized."
-  standard: "Initialize this project with ospec according to current OSpec rules. Use ospec init so the repository ends in change-ready state, and do not create the first change automatically."
-  guided_init: "Use ospec to initialize this project. If the repository lacks project context, ask me for a short summary or tech stack first. If I skip it, continue with placeholder docs."
-  knowledge_backfill: "Use ospec to refresh or repair the project knowledge layer for this directory. Focus on docs, layered skills, and index state. Do not create a change yet."
-  change_creation: "Use ospec to create and advance a change for this requirement. Respect the current project state and do not treat init as auto-change creation."
-
-usage:
-  new_project_flow:
-    - "Initialize the repository with ospec init [path]."
-    - "If AI can ask follow-up questions and project context is missing, provide a short summary or tech stack once, or skip it and let placeholder docs be generated."
-    - "Create the first active change explicitly."
-    - "Run your project deployment and validation flow, then use ospec verify [changes/active/<change>]."
-    - "Archive the validated change with ospec finalize [changes/active/<change>]."
-    - "Verify .skillrc, changes/, .ospec/, .ospec/tools/build-index-auto.cjs, for-ai docs, and docs/project/* before claiming init is complete."
-    - "Use presets only as planning defaults; scaffold still requires explicit intent."
-  prompt_shortcuts:
-    - "initialize this project"
-    - "initialize this directory"
-    - "initialize the current project"
-    - "使用 ospec 初始化项目"
-    - "使用 ospec 初始化这个目录"
-    - "use ospec to initialize this directory"
-    - "use ospec to refresh or repair the project knowledge layer"
+  - "Treat presets as planning defaults, not as init-time templates; scaffold still requires explicit intent."
+  - "Read change files by stage: proposal/tasks/state are always in scope, verification.md when entering verification, review.md when entering review. Never front-load the whole change directory."
+  - "Never read SKILL.index.json wholesale; use ospec index query <keyword...> to locate documents."

@@ -42,7 +42,7 @@ const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
 const PathUtils_1 = require("../utils/PathUtils");
-const PluginWorkflowComposer_1 = require("../workflow/PluginWorkflowComposer");
+const WorkflowComposer_1 = require("../workflow/WorkflowComposer");
 const BaseCommand_1 = require("./BaseCommand");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
@@ -86,7 +86,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             createdFeatureDir = featureDir;
             rollbackProjectRoot = targetDir;
             rollbackPlacement = placement;
-            const composer = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
+            const composer = new WorkflowComposer_1.WorkflowComposer(config);
             const flags = this.normalizeFlags(options.flags);
             const workflowProfile = (0, WorkflowProfile_1.normalizeWorkflowProfileId)(options.workflowProfile) || 'change';
             const isGoalWorkflow = workflowProfile === WorkflowProfile_1.GOAL_WORKFLOW_PROFILE;
@@ -97,12 +97,17 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             }
             const projectContext = await services_1.services.projectService.getFeatureProjectContext(targetDir, []);
             const documentLanguage = await this.resolveDocumentLanguage(targetDir, config);
+            // 7.5: capture the feature slugs this change touches. `affects` is
+            // still empty at creation time, so the only signal available here is
+            // the change name; explicit --feature always wins over suggestion.
+            const capture = await services_1.services.featureCaptureService.capture(targetDir, { changeName: featureName, affects: [], features: options.features }, config);
             const templateContext = {
                 feature: featureName,
                 mode: config.mode,
                 placement,
                 workflowProfile,
                 projectContext,
+                features: capture.features,
                 flags,
                 optionalSteps: activatedSteps,
                 documentLanguage,
@@ -113,9 +118,11 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                     queued: true,
                     source: options.source,
                     workflowProfileId: workflowProfile,
+                    features: capture.features,
                 }
                 : {
                     workflowProfileId: workflowProfile,
+                    features: capture.features,
                 }));
             await services_1.services.fileService.writeFile(path.join(featureDir, constants_1.FILE_NAMES.PROPOSAL), services_1.services.templateEngine.generateProposalTemplate({
                 ...templateContext,
@@ -155,7 +162,6 @@ class NewCommand extends BaseCommand_1.BaseCommand {
                 ...templateContext,
                 documentPath: path.join(featureDir, constants_1.FILE_NAMES.REVIEW),
             }));
-            await this.writePluginArtifacts(targetDir, featureDir, activatedSteps);
             if (isGoalWorkflow) {
                 const loopConfig = await services_1.services.loopService.scaffold(featureDir, {
                     primitive: 'goal',
@@ -184,6 +190,7 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             if (activatedSteps.length > 0) {
                 this.info(`  Activated optional steps: ${activatedSteps.join(', ')}`);
             }
+            this.reportFeatureCapture(capture);
             createdFeatureDir = null;
         }
         catch (error) {
@@ -415,7 +422,6 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         catch {
             return null;
         }
-        return null;
     }
     detectDocumentLanguageFromText(content) {
         if (typeof content !== 'string' || content.trim().length === 0) {
@@ -480,88 +486,33 @@ class NewCommand extends BaseCommand_1.BaseCommand {
         const queueCommand = (0, helpers_1.formatCliCommand)('ospec', 'queue', 'add', featureName, targetDir);
         throw new Error(`A single active change is the default workflow, but ${activeNames.length} active changes already exist: ${activeNames.join(', ')}. Resolve the repository back to one active change before creating another, or add new work with "${queueCommand}".`);
     }
-    async writePluginArtifacts(projectRoot, featureDir, activatedSteps) {
-        const config = await services_1.services.configManager.loadConfig(projectRoot);
-        const composer = new PluginWorkflowComposer_1.PluginWorkflowComposer(config);
-        const checkpointSteps = activatedSteps.filter(step => step === 'checkpoint_ui_review' || step === 'checkpoint_flow_check');
-        if (checkpointSteps.length > 0) {
-            const checkpointDir = path.join(featureDir, 'artifacts', 'checkpoint');
-            await services_1.services.fileService.ensureDir(checkpointDir);
-            await services_1.services.fileService.ensureDir(path.join(checkpointDir, 'screenshots'));
-            await services_1.services.fileService.ensureDir(path.join(checkpointDir, 'diffs'));
-            await services_1.services.fileService.ensureDir(path.join(checkpointDir, 'traces'));
-            await services_1.services.fileService.writeJSON(path.join(checkpointDir, 'gate.json'), {
-                plugin: 'checkpoint',
-                status: 'pending',
-                blocking: true,
-                executed_at: '',
-                steps: Object.fromEntries(checkpointSteps.map(step => [step, {
-                        status: 'pending',
-                        issues: [],
-                    }])),
-                stitch_sync: {
-                    attempted: false,
-                    status: 'skipped',
-                    message: '',
-                },
-                issues: [],
-            });
-            await services_1.services.fileService.writeJSON(path.join(checkpointDir, 'result.json'), {
-                plugin: 'checkpoint',
-                status: 'pending',
-                executed_at: '',
-                active_steps: checkpointSteps,
-                output: {},
-            });
-            await services_1.services.fileService.writeFile(path.join(checkpointDir, 'summary.md'), '# Checkpoint Summary\n\n- Status: pending\n- The checkpoint runner has not been executed yet.\n');
+    /**
+     * 7.5: tell the operator (and the AI reading this transcript) exactly what
+     * landed in `features:` and what it might still want to add. Suggestions are
+     * printed, never auto-accepted -- a wrong slug binds the change's
+     * documentation obligation to the wrong section, which is worse than none.
+     */
+    reportFeatureCapture(capture) {
+        for (const slug of capture.invalid) {
+            this.warn(`  Ignored --feature ${slug}: a feature slug is lower-case kebab-case matching ^[a-z0-9]+(-[a-z0-9]+)*$.`);
         }
-        if (!activatedSteps.includes('stitch_design_review')) {
+        if (capture.features.length > 0) {
+            this.info(`  Features: ${capture.features.join(', ')}`);
+        }
+        for (const slug of capture.unknown) {
+            this.info(`  Feature ${slug} has no document section yet; planning will offer to create one.`);
+        }
+        if (capture.features.length === 0 && capture.suggestions.length === 0) {
+            this.info('  Features: none declared. Add them with --feature <slug>, or leave empty and fill in during planning.');
             return;
         }
-        const stitchDir = path.join(featureDir, 'artifacts', 'stitch');
-        await services_1.services.fileService.ensureDir(stitchDir);
-        await services_1.services.fileService.writeJSON(path.join(stitchDir, 'approval.json'), {
-            plugin: 'stitch',
-            capability: 'page_design_review',
-            step: 'stitch_design_review',
-            status: 'pending',
-            blocking: true,
-            preview_url: '',
-            submitted_at: '',
-            reviewed_at: '',
-            reviewer: '',
-            notes: '',
-        });
-        const externalPluginCapabilities = composer.getPluginCapabilities()
-            .filter(capability => capability.plugin !== 'stitch' && capability.plugin !== 'checkpoint')
-            .filter(capability => activatedSteps.includes(capability.step));
-        const externalStepsByPlugin = externalPluginCapabilities.reduce((accumulator, capability) => {
-            accumulator[capability.plugin] = accumulator[capability.plugin] || [];
-            accumulator[capability.plugin].push(capability.step);
-            return accumulator;
-        }, {});
-        for (const [pluginName, pluginSteps] of Object.entries(externalStepsByPlugin)) {
-            const pluginDir = path.join(featureDir, 'artifacts', pluginName);
-            await services_1.services.fileService.ensureDir(pluginDir);
-            await services_1.services.fileService.writeJSON(path.join(pluginDir, 'gate.json'), {
-                plugin: pluginName,
-                status: 'pending',
-                blocking: config.plugins?.[pluginName]?.blocking !== false,
-                executed_at: '',
-                steps: Object.fromEntries(pluginSteps.map(step => [step, {
-                        status: 'pending',
-                        issues: [],
-                    }])),
-                issues: [],
-            });
-            await services_1.services.fileService.writeJSON(path.join(pluginDir, 'result.json'), {
-                plugin: pluginName,
-                status: 'pending',
-                executed_at: '',
-                active_steps: pluginSteps,
-                output: {},
-            });
-            await services_1.services.fileService.writeFile(path.join(pluginDir, 'summary.md'), `# ${pluginName} Summary\n\n- Status: pending\n- The plugin runner has not been executed yet.\n`);
+        if (capture.suggestions.length > 0) {
+            const shown = capture.suggestions.slice(0, 5);
+            this.info(`  Candidate features to confirm (none were applied): ${shown.length} of ${capture.suggestions.length}`);
+            for (const suggestion of shown) {
+                this.info(`    ${suggestion.slug} -> ${suggestion.file}#${suggestion.heading} (${suggestion.reason})`);
+            }
+            this.info('    Confirm with: ospec change ... --feature <slug>, or edit proposal.md features:.');
         }
     }
     normalizeFlags(flags) {

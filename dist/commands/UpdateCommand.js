@@ -7,15 +7,19 @@ const os_1 = require("os");
 const path_1 = require("path");
 const services_1 = require("../services");
 const BaseCommand_1 = require("./BaseCommand");
-const PluginsCommand_1 = require("./PluginsCommand");
 const SkillCommand_1 = require("./SkillCommand");
 const PostSyncMaintenanceService_1 = require("../services/PostSyncMaintenanceService");
+const DocsMigrationService_1 = require("../services/DocsMigrationService");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
+const constants_1 = require("../core/constants");
 class UpdateCommand extends BaseCommand_1.BaseCommand {
-    getPluginRegistryService() {
-        return services_1.services.pluginRegistryService;
-    }
-    async execute(rootDir) {
+    async execute(rootDir, options = {}) {
         const targetPath = rootDir ? (0, path_1.resolve)(rootDir) : process.cwd();
+        // Read-only, and deliberately first: repairLegacyProjectForUpdate below
+        // round-trips `.skillrc` through ConfigManager, whose normalization
+        // drops a legacy `plugins` block. Capturing it here is what keeps the
+        // removal recordable instead of silent on that path.
+        const capturedPluginsConfig = await services_1.services.legacyPluginMigrationService.readRawSkillrcPlugins(targetPath);
         const detectedStructure = await services_1.services.projectService.detectProjectStructure(targetPath);
         const legacyRepair = await this.repairLegacyProjectForUpdate(targetPath, detectedStructure);
         const structure = legacyRepair.performed
@@ -25,11 +29,23 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             throw new Error('Project is not initialized. Run "ospec init" first.');
         }
         this.info(`Updating OSpec project at ${targetPath}`);
+        const currentCliVersion = await this.readCurrentCliVersion();
+        const pluginResidue = await this.cleanLegacyPluginResidue(targetPath, {
+            capturedPluginsConfig,
+            cleanPluginSteps: options.cleanPluginSteps === true,
+        });
         const cliVersionMetadataSync = await this.syncProjectCliVersionMetadata(targetPath);
         const legacyKnowledgeMigration = await this.migrateLegacyKnowledgeLayout(targetPath, cliVersionMetadataSync.effectiveProjectCliVersion);
         const protocolResult = await services_1.services.projectService.syncProtocolGuidance(targetPath);
+        // Written after the protocol sync so one audit record covers both the
+        // `.skillrc` block removed above and the `## Plugin Gates` section the
+        // sync removed from the managed root SKILL.md.
+        const pluginMigrationProvenancePath = await services_1.services.legacyPluginMigrationService.writeProvenance(targetPath, {
+            cliVersion: currentCliVersion,
+            source: 'ospec update',
+            removals: [...pluginResidue.removals, ...protocolResult.pluginGuidanceRemovals],
+        });
         const toolingResult = await this.syncProjectTooling(targetPath, protocolResult.documentLanguage);
-        const pluginResult = await this.syncEnabledPluginAssets(targetPath);
         const archiveResult = await this.syncArchiveLayout(targetPath);
         const skillResult = await this.syncInstalledSkills();
         const postSyncMaintenance = await this.runPostSyncMaintenance();
@@ -38,11 +54,12 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
             ...legacyKnowledgeMigration.refreshedFiles,
             ...protocolResult.refreshedFiles,
             ...toolingResult.refreshedFiles,
-            ...pluginResult.refreshedFiles,
+            ...pluginResidue.rewrittenPaths,
+            ...(pluginMigrationProvenancePath ? [pluginMigrationProvenancePath] : []),
             ...(archiveResult.configSaved ? ['.skillrc'] : []),
         ]));
-        const createdFiles = [...protocolResult.createdFiles, ...toolingResult.createdFiles, ...pluginResult.createdFiles];
-        const skippedFiles = [...protocolResult.skippedFiles, ...toolingResult.skippedFiles, ...pluginResult.skippedFiles];
+        const createdFiles = [...protocolResult.createdFiles, ...toolingResult.createdFiles];
+        const skippedFiles = [...protocolResult.skippedFiles, ...toolingResult.skippedFiles];
         const updateProvenance = await this.writeUpdateProvenance(targetPath, {
             cliVersion: cliVersionMetadataSync.currentCliVersion,
             paths: [
@@ -51,7 +68,6 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
                 ...refreshedFiles,
                 ...protocolResult.verifiedFiles,
                 ...toolingResult.verifiedFiles,
-                ...pluginResult.verifiedFiles,
                 ...legacyRepair.createdPaths,
                 ...legacyRepair.refreshedPaths,
                 ...legacyKnowledgeMigration.migratedPaths,
@@ -109,23 +125,18 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         if (postSyncMaintenance.removedPaths.length > 0) {
             this.info(`  stale plugin skills removed: ${postSyncMaintenance.removedPaths.length}`);
         }
-        if (pluginResult.enabledPlugins.length > 0) {
-            this.info(`  plugin assets refreshed: ${pluginResult.enabledPlugins.join(', ')}`);
+        const pluginMigrationRemovals = [...pluginResidue.removals, ...protocolResult.pluginGuidanceRemovals];
+        if (pluginMigrationRemovals.length > 0) {
+            this.info(`  legacy plugin guidance removed: ${pluginMigrationRemovals.length} item(s)`);
+            for (const removal of pluginMigrationRemovals) {
+                this.info(`    ${removal.path}: ${removal.detail}`);
+            }
+            this.info(`  removal record: ${pluginMigrationProvenancePath}`);
+            this.info('  note: .ospec/plugins/ is user data and is never modified by this migration');
         }
-        const restoredPluginPackages = pluginResult.packageUpdates.filter(result => result.status === 'restored');
-        for (const packageUpdate of restoredPluginPackages) {
-            this.info(`  plugin package restored: ${packageUpdate.pluginName} ${packageUpdate.previousVersion} -> ${packageUpdate.nextVersion} (${packageUpdate.packageName})`);
-        }
-        const upgradedPluginPackages = pluginResult.packageUpdates.filter(result => result.status === 'upgraded');
-        for (const packageUpdate of upgradedPluginPackages) {
-            this.info(`  plugin package upgraded: ${packageUpdate.pluginName} ${packageUpdate.previousVersion} -> ${packageUpdate.nextVersion} (${packageUpdate.packageName})`);
-        }
-        const skippedPluginPackages = pluginResult.packageUpdates.filter(result => result.status === 'missing' || result.status === 'skipped');
-        for (const packageUpdate of skippedPluginPackages) {
-            this.info(`  plugin package check skipped: ${packageUpdate.pluginName} (${packageUpdate.reason})`);
-        }
-        if (pluginResult.configSaved) {
-            this.info('  plugin config normalized: .skillrc');
+        if (pluginResidue.pendingChangeStepPaths.length > 0) {
+            this.info(`  change documents still listing plugin-era optional_steps: ${pluginResidue.pendingChangeStepPaths.join(', ')}`);
+            this.info('  note: those entries are inert; run "ospec update --clean-plugin-steps" to rewrite them');
         }
         if (archiveResult.configSaved) {
             this.info('  archive layout normalized: .skillrc');
@@ -133,11 +144,76 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         if (archiveResult.migratedChanges.length > 0) {
             this.info(`  archived changes migrated: ${archiveResult.migratedChanges.length}`);
         }
-        this.info('  note: update refreshes protocol docs, tooling, hooks, managed skills, managed assets for already-enabled plugins, and the archive layout when needed');
+        // 7.9: MENTION ONLY. `ospec update` must never migrate and never
+        // delete -- the documents below are a project's own history, and an
+        // upgrade that quietly removed them would be the worst possible
+        // reading of the word "update". The migration is a four-phase pipeline
+        // ending in a separately-confirmed destructive step, and a person has
+        // to drive it.
+        const unmigrated = await DocsMigrationService_1.docsMigrationService.detectUnmigrated(targetPath);
+        if (unmigrated.found) {
+            this.info(`  legacy generated documents found: ${unmigrated.counts.knowledgeDocuments} under docs/project/changes/`);
+            this.info('  note: OSpec no longer generates those; "ospec docs migrate --plan" starts the migration that replaces them');
+            this.info('  note: update never migrates and never deletes them');
+        }
+        this.info('  note: update refreshes protocol docs, tooling, hooks, managed skills, and the archive layout when needed');
         this.info('  note: it can repair legacy OSpec projects with an existing OSpec footprint before refreshing assets');
-        this.info('  note: it auto-upgrades already-enabled plugin npm packages only when a newer compatible version is available');
         this.info('  note: it does not upgrade the CLI itself');
         this.info('  note: it does not enable, disable, or migrate active or queued changes automatically');
+    }
+    /**
+     * Repairs the plugin-era residue that OSpec 2.0 can no longer act on.
+     *
+     * Automatic, because both targets are OSpec-managed artifacts that are now
+     * unsatisfiable by construction:
+     *  - the `## Plugin Gates` section (removed by the protocol sync) actively
+     *    tells the agent to block on an approval no command can produce;
+     *  - a `.skillrc` `plugins` block is config for a subsystem that no longer
+     *    exists, and `ConfigManager` already erases it on any write -- just
+     *    silently, and only when some unrelated reason forces a save.
+     * Neither is user-authored, and the `.skillrc` block is archived verbatim
+     * into the removal record, so nothing becomes unrecoverable.
+     *
+     * Opt-in for change documents, because those are the user's own record of
+     * what a change required. The stale `optional_steps` entries there are
+     * inert -- nothing activates them anymore and verification reports them as
+     * satisfied -- so rewriting history by default would be a bigger edit than
+     * the problem.
+     *
+     * `.ospec/plugins/` is never read, moved, or deleted here. It holds
+     * irreplaceable user data (routes.yaml, flows.yaml, project.json, auth
+     * storage-state) that no reinstall can regenerate.
+     */
+    async cleanLegacyPluginResidue(rootDir, input) {
+        const migrationService = services_1.services.legacyPluginMigrationService;
+        const removals = [];
+        const rewrittenPaths = [];
+        const skillrcMigration = await migrationService.migrateSkillrcPlugins(rootDir);
+        if (skillrcMigration.performed) {
+            removals.push(...skillrcMigration.removals);
+            rewrittenPaths.push(...skillrcMigration.rewrittenPaths);
+        }
+        else if (input.capturedPluginsConfig !== undefined) {
+            // The block was already dropped by the legacy-project repair's
+            // config round-trip. It still happened, so it still gets recorded.
+            removals.push(migrationService.describeRemovedSkillrcPlugins(input.capturedPluginsConfig));
+            rewrittenPaths.push('.skillrc');
+        }
+        const config = await services_1.services.configManager.loadConfigOrNull(rootDir);
+        const changeStepMigration = await migrationService.migrateChangePluginSteps(rootDir, config, {
+            dryRun: !input.cleanPluginSteps,
+        });
+        if (input.cleanPluginSteps) {
+            removals.push(...changeStepMigration.removals);
+            rewrittenPaths.push(...changeStepMigration.rewrittenPaths);
+        }
+        return {
+            removals,
+            rewrittenPaths: Array.from(new Set(rewrittenPaths)),
+            pendingChangeStepPaths: input.cleanPluginSteps
+                ? []
+                : Array.from(new Set(changeStepMigration.rewrittenPaths)),
+        };
     }
     async writeUpdateProvenance(rootDir, input) {
         const provenanceRelativePath = '.ospec/update-provenance.json';
@@ -358,7 +434,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         };
     }
     async migrateLegacyKnowledgeLayout(rootDir, effectiveProjectCliVersion) {
-        const config = await services_1.services.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await services_1.services.configManager.loadConfigOrNull(rootDir);
         if (!(await this.isLegacyKnowledgeMigrationEligible(rootDir, config, effectiveProjectCliVersion))) {
             return {
                 performed: false,
@@ -416,7 +492,7 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         };
     }
     async syncProjectCliVersionMetadata(rootDir) {
-        const config = await services_1.services.configManager.loadConfig(rootDir).catch(() => null);
+        const config = await services_1.services.configManager.loadConfigOrNull(rootDir);
         if (!config) {
             return {
                 configSaved: false,
@@ -610,322 +686,28 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
         await services_1.services.fileService.writeFile(filePath, after);
         return true;
     }
-    async syncEnabledPluginAssets(rootDir) {
-        const rawConfig = await services_1.services.fileService.readJSON((0, path_1.join)(rootDir, '.skillrc'));
-        const config = await services_1.services.configManager.loadConfig(rootDir);
-        const nextConfig = JSON.parse(JSON.stringify(config));
-        const pluginsCommand = new PluginsCommand_1.PluginsCommand();
-        const createdFiles = [];
-        const refreshedFiles = [];
-        const skippedFiles = [];
-        const verifiedFiles = [];
-        const enabledPlugins = [];
-        const packageUpdates = [];
-        let configChanged = false;
-        const hasLegacyPluginKeys = Boolean(rawConfig?.plugins?.['stitch-gemini'] || rawConfig?.plugins?.['stitch-codex']);
-        if (nextConfig.plugins?.stitch?.enabled) {
-            enabledPlugins.push('stitch');
-            const stitchRestore = await this.ensureEnabledPluginPackageAvailable('stitch', nextConfig.plugins.stitch);
-            if (stitchRestore.status !== 'current') {
-                packageUpdates.push(stitchRestore);
-            }
-            packageUpdates.push(await this.maybeUpgradeEnabledPluginPackage('stitch'));
-            configChanged = this.normalizeEnabledStitchPlugin(nextConfig.plugins.stitch, pluginsCommand) || configChanged;
-            const installedStitch = await this.getPluginRegistryService().getInstalledPluginManifest('stitch');
-            const stitchWorkspaceRoot = typeof nextConfig.plugins.stitch?.workspace_root === 'string' && nextConfig.plugins.stitch.workspace_root.trim().length > 0
-                ? nextConfig.plugins.stitch.workspace_root.trim()
-                : '.ospec/plugins/stitch';
-            if (installedStitch) {
-                const stitchDefaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedStitch.record.package_name, installedStitch.record.version, installedStitch.manifest);
-                configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins.stitch, installedStitch, stitchDefaultConfig) || configChanged;
-                const stitchAssets = await this.getPluginRegistryService().syncProjectPluginAssetsDetailed('stitch', rootDir, stitchWorkspaceRoot);
-                createdFiles.push(...stitchAssets.created);
-                refreshedFiles.push(...stitchAssets.refreshed);
-                skippedFiles.push(...stitchAssets.skipped);
-                verifiedFiles.push(...stitchAssets.verified);
-            }
-            else {
-                skippedFiles.push('.ospec/plugins/stitch');
-            }
-        }
-        if (nextConfig.plugins?.checkpoint?.enabled) {
-            enabledPlugins.push('checkpoint');
-            const checkpointRestore = await this.ensureEnabledPluginPackageAvailable('checkpoint', nextConfig.plugins.checkpoint);
-            if (checkpointRestore.status !== 'current') {
-                packageUpdates.push(checkpointRestore);
-            }
-            packageUpdates.push(await this.maybeUpgradeEnabledPluginPackage('checkpoint'));
-            configChanged = this.normalizeEnabledCheckpointPlugin(nextConfig.plugins.checkpoint, pluginsCommand) || configChanged;
-            const installedCheckpoint = await this.getPluginRegistryService().getInstalledPluginManifest('checkpoint');
-            const checkpointWorkspaceRoot = typeof nextConfig.plugins.checkpoint?.workspace_root === 'string' && nextConfig.plugins.checkpoint.workspace_root.trim().length > 0
-                ? nextConfig.plugins.checkpoint.workspace_root.trim()
-                : '.ospec/plugins/checkpoint';
-            if (installedCheckpoint) {
-                const checkpointDefaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedCheckpoint.record.package_name, installedCheckpoint.record.version, installedCheckpoint.manifest);
-                configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins.checkpoint, installedCheckpoint, checkpointDefaultConfig) || configChanged;
-                const checkpointAssets = await this.getPluginRegistryService().syncProjectPluginAssetsDetailed('checkpoint', rootDir, checkpointWorkspaceRoot);
-                createdFiles.push(...checkpointAssets.created);
-                refreshedFiles.push(...checkpointAssets.refreshed);
-                skippedFiles.push(...checkpointAssets.skipped);
-                verifiedFiles.push(...checkpointAssets.verified);
-            }
-            else {
-                skippedFiles.push('.ospec/plugins/checkpoint');
-            }
-        }
-        for (const [pluginName, pluginConfig] of Object.entries(nextConfig.plugins || {})) {
-            if (pluginName === 'stitch' || pluginName === 'checkpoint' || !pluginConfig?.enabled) {
-                continue;
-            }
-            enabledPlugins.push(pluginName);
-            const pluginRestore = await this.ensureEnabledPluginPackageAvailable(pluginName, pluginConfig);
-            if (pluginRestore.status !== 'current') {
-                packageUpdates.push(pluginRestore);
-            }
-            packageUpdates.push(await this.maybeUpgradeEnabledPluginPackage(pluginName));
-            const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
-            if (!installedPlugin) {
-                skippedFiles.push(`.ospec/plugins/${pluginName}`);
-                continue;
-            }
-            const before = JSON.stringify(pluginConfig);
-            const defaultConfig = this.getPluginRegistryService().createExternalPluginProjectConfig(installedPlugin.record.package_name, installedPlugin.record.version, installedPlugin.manifest);
-            nextConfig.plugins[pluginName] = pluginsCommand.mergeExternalPluginConfig(defaultConfig, pluginConfig, true);
-            configChanged = this.refreshExternalPluginInstalledMetadata(nextConfig.plugins[pluginName], installedPlugin, defaultConfig) || configChanged;
-            configChanged = before !== JSON.stringify(nextConfig.plugins[pluginName]) || configChanged;
-            const workspaceRoot = typeof nextConfig.plugins[pluginName]?.workspace_root === 'string' && nextConfig.plugins[pluginName].workspace_root.trim().length > 0
-                ? nextConfig.plugins[pluginName].workspace_root.trim()
-                : `.ospec/plugins/${pluginName}`;
-            const externalAssets = await this.getPluginRegistryService().syncProjectPluginAssetsDetailed(pluginName, rootDir, workspaceRoot);
-            createdFiles.push(...externalAssets.created);
-            refreshedFiles.push(...externalAssets.refreshed);
-            skippedFiles.push(...externalAssets.skipped);
-            verifiedFiles.push(...externalAssets.verified);
-        }
-        if (enabledPlugins.length > 0 && (hasLegacyPluginKeys || configChanged)) {
-            await services_1.services.configManager.saveConfig(rootDir, nextConfig);
-            refreshedFiles.push('.skillrc');
-        }
-        return {
-            createdFiles,
-            refreshedFiles,
-            skippedFiles,
-            verifiedFiles: Array.from(new Set(verifiedFiles)),
-            enabledPlugins,
-            configSaved: refreshedFiles.includes('.skillrc'),
-            packageUpdates,
-        };
-    }
-    async ensureEnabledPluginPackageAvailable(pluginName, pluginConfig) {
-        const installedPlugin = await this.getPluginRegistryService().getInstalledPluginManifest(pluginName);
-        if (installedPlugin) {
-            return {
-                pluginName,
-                packageName: installedPlugin.record.package_name,
-                previousVersion: installedPlugin.record.version,
-                nextVersion: installedPlugin.record.version,
-                official: installedPlugin.record.official === true,
-                status: 'current',
-                reason: 'plugin package is already installed',
-            };
-        }
-        const recordedVersion = typeof pluginConfig?.version === 'string' && pluginConfig.version.trim().length > 0
-            ? pluginConfig.version.trim()
-            : 'missing';
-        const packageName = typeof pluginConfig?.package_name === 'string' ? pluginConfig.package_name.trim() : '';
-        const official = pluginName === 'stitch' || pluginName === 'checkpoint' || pluginConfig?.official === true;
-        try {
-            const restored = official
-                ? await this.getPluginRegistryService().installOfficialPlugin(pluginName, 'update-repair-missing')
-                : packageName
-                    ? await this.getPluginRegistryService().reinstallPluginPackage(pluginName, recordedVersion !== 'missing' ? `${packageName}@${recordedVersion}` : packageName, {
-                        reason: 'update-repair-missing',
-                        packageName,
-                        resolvedVersion: recordedVersion !== 'missing' ? recordedVersion : undefined,
-                    })
-                    : null;
-            if (!restored) {
-                throw new Error(`Enabled plugin ${pluginName} is missing globally and cannot be restored because no package_name is recorded in .skillrc.`);
-            }
-            return {
-                pluginName,
-                packageName: restored.package_name,
-                previousVersion: `${recordedVersion} (missing)`,
-                nextVersion: restored.version,
-                official: restored.official === true,
-                status: 'restored',
-                reason: '',
-            };
-        }
-        catch (error) {
-            throw new Error(`Enabled plugin ${pluginName} is missing globally and could not be restored automatically: ${error instanceof Error ? error.message : String(error || 'unknown error')}`);
-        }
-    }
-    async maybeUpgradeEnabledPluginPackage(pluginName) {
-        let inspection;
-        try {
-            inspection = await this.getPluginRegistryService().inspectInstalledPluginUpgrade(pluginName);
-        }
-        catch (error) {
-            return {
-                pluginName,
-                packageName: '',
-                previousVersion: '',
-                nextVersion: '',
-                official: false,
-                status: 'skipped',
-                reason: error instanceof Error ? error.message : String(error || 'unknown error'),
-            };
-        }
-        if (inspection.status !== 'upgrade') {
-            return {
-                pluginName,
-                packageName: inspection.packageName,
-                previousVersion: inspection.installedVersion,
-                nextVersion: inspection.targetVersion || inspection.installedVersion,
-                official: inspection.official,
-                status: inspection.status === 'current'
-                    ? 'current'
-                    : inspection.status === 'missing'
-                        ? 'missing'
-                        : 'skipped',
-                reason: inspection.reason,
-            };
-        }
-        const upgraded = await this.getPluginRegistryService().upgradeInstalledPlugin(pluginName, 'update');
-        return {
-            pluginName,
-            packageName: upgraded.packageName,
-            previousVersion: upgraded.previousVersion,
-            nextVersion: upgraded.current.version,
-            official: upgraded.official,
-            status: 'upgraded',
-            reason: '',
-        };
-    }
-    refreshExternalPluginInstalledMetadata(pluginConfig, installedPlugin, defaultConfig) {
-        const before = JSON.stringify(pluginConfig);
-        pluginConfig.package_name = installedPlugin.record.package_name;
-        pluginConfig.version = installedPlugin.record.version;
-        pluginConfig.display_name = installedPlugin.manifest.displayName;
-        pluginConfig.description = installedPlugin.manifest.description;
-        pluginConfig.official = installedPlugin.manifest.official === true;
-        pluginConfig.kinds = [...installedPlugin.manifest.kinds];
-        if (!pluginConfig.source && defaultConfig?.source) {
-            pluginConfig.source = defaultConfig.source;
-        }
-        return before !== JSON.stringify(pluginConfig);
-    }
-    normalizeEnabledStitchPlugin(stitchConfig, pluginsCommand) {
-        const before = JSON.stringify(stitchConfig);
-        stitchConfig.runner = stitchConfig.runner || pluginsCommand.createDefaultStitchPluginConfig().runner;
-        stitchConfig.gemini = stitchConfig.gemini || {
-            model: 'gemini-3-flash-preview',
-            auto_switch_on_limit: true,
-            save_on_fallback: true,
-        };
-        stitchConfig.codex = stitchConfig.codex || {
-            model: '',
-            mcp_server: 'stitch',
-        };
-        if (!stitchConfig.provider) {
-            stitchConfig.provider = 'gemini';
-        }
-        const provider = pluginsCommand.getStitchProvider(stitchConfig);
-        if (!stitchConfig.runner.command) {
-            stitchConfig.runner.command = 'node';
-        }
-        if (!Array.isArray(stitchConfig.runner.args) ||
-            stitchConfig.runner.args.length === 0 ||
-            pluginsCommand.isBuiltInGeminiRunner(stitchConfig.runner) ||
-            pluginsCommand.isBuiltInCodexRunner(stitchConfig.runner)) {
-            stitchConfig.runner.args = pluginsCommand.getDefaultRunnerArgs(provider);
-        }
-        if (!stitchConfig.runner.cwd) {
-            stitchConfig.runner.cwd = '${project_path}';
-        }
-        if (typeof stitchConfig.runner.token_env !== 'string' ||
-            (provider === 'gemini' &&
-                pluginsCommand.isBuiltInGeminiRunner(stitchConfig.runner) &&
-                stitchConfig.runner.token_env.trim() === 'STITCH_API_TOKEN')) {
-            stitchConfig.runner.token_env = '';
-        }
-        stitchConfig.capabilities = stitchConfig.capabilities || {};
-        stitchConfig.capabilities.page_design_review = stitchConfig.capabilities.page_design_review || {
-            enabled: false,
-            step: 'stitch_design_review',
-            activate_when_flags: ['ui_change', 'page_design', 'landing_page'],
-        };
-        return before !== JSON.stringify(stitchConfig);
-    }
-    normalizeEnabledCheckpointPlugin(checkpointConfig, pluginsCommand) {
-        const before = JSON.stringify(checkpointConfig);
-        const defaultConfig = pluginsCommand.createDefaultCheckpointPluginConfig();
-        checkpointConfig.runtime = checkpointConfig.runtime || defaultConfig.runtime;
-        checkpointConfig.runner = checkpointConfig.runner || defaultConfig.runner;
-        checkpointConfig.capabilities = checkpointConfig.capabilities || {};
-        checkpointConfig.capabilities.ui_review = checkpointConfig.capabilities.ui_review || {
-            enabled: false,
-            step: 'checkpoint_ui_review',
-            activate_when_flags: ['ui_change', 'page_design', 'landing_page'],
-        };
-        checkpointConfig.capabilities.flow_check = checkpointConfig.capabilities.flow_check || {
-            enabled: false,
-            step: 'checkpoint_flow_check',
-            activate_when_flags: ['feature_flow', 'api_change', 'backend_change', 'integration_change'],
-        };
-        checkpointConfig.stitch_integration = checkpointConfig.stitch_integration || {
-            enabled: true,
-            auto_pass_stitch_review: true,
-        };
-        checkpointConfig.runtime.startup = checkpointConfig.runtime.startup || defaultConfig.runtime.startup;
-        checkpointConfig.runtime.readiness = checkpointConfig.runtime.readiness || defaultConfig.runtime.readiness;
-        checkpointConfig.runtime.auth = checkpointConfig.runtime.auth || defaultConfig.runtime.auth;
-        checkpointConfig.runtime.shutdown = checkpointConfig.runtime.shutdown || defaultConfig.runtime.shutdown;
-        if (!checkpointConfig.runner.command) {
-            checkpointConfig.runner.command = 'node';
-        }
-        if (!Array.isArray(checkpointConfig.runner.args) ||
-            checkpointConfig.runner.args.length === 0 ||
-            pluginsCommand.isBuiltInCheckpointRunner(checkpointConfig.runner)) {
-            checkpointConfig.runner.args = pluginsCommand.getDefaultCheckpointRunnerArgs();
-        }
-        if (!checkpointConfig.runner.cwd) {
-            checkpointConfig.runner.cwd = '${project_path}';
-        }
-        if (typeof checkpointConfig.runner.token_env !== 'string') {
-            checkpointConfig.runner.token_env = '';
-        }
-        return before !== JSON.stringify(checkpointConfig);
-    }
-    async ensureManagedPluginAssets(rootDir, relativePaths, ensureAssets) {
-        const uniqueRelativePaths = Array.from(new Set(relativePaths.map(item => item.replace(/\\/g, '/'))));
-        const beforeMap = {};
-        for (const relativePath of uniqueRelativePaths) {
-            beforeMap[relativePath] = await services_1.services.fileService.exists((0, path_1.join)(rootDir, ...relativePath.split('/')));
-        }
-        await ensureAssets();
-        const createdFiles = [];
-        const skippedFiles = [];
-        for (const relativePath of uniqueRelativePaths) {
-            const exists = await services_1.services.fileService.exists((0, path_1.join)(rootDir, ...relativePath.split('/')));
-            if (!exists) {
-                continue;
-            }
-            if (beforeMap[relativePath]) {
-                skippedFiles.push(relativePath);
-            }
-            else {
-                createdFiles.push(relativePath);
-            }
-        }
-        return { createdFiles, skippedFiles };
-    }
     async syncArchiveLayout(rootDir) {
         const rawConfig = await services_1.services.fileService.readJSON((0, path_1.join)(rootDir, '.skillrc'));
         const config = await services_1.services.configManager.loadConfig(rootDir);
         const nextConfig = JSON.parse(JSON.stringify(config));
-        const archivedRoot = (0, path_1.join)(rootDir, 'changes', 'archived');
+        /*
+         * M-cfg6: this was `join(rootDir, 'changes', 'archived')`, the classic
+         * layout spelled out. On a NESTED project the archive lives at
+         * `.ospec/changes/archived`, so the `exists()` below was false, the
+         * whole migration loop never ran, and `ospec update` reported success
+         * while every legacy `YYYY-MM-DD-name` directory stayed flat -- on the
+         * layout `ospec init` produces by default.
+         *
+         * Worse than a no-op: the same call also rewrites `.skillrc` to
+         * `archive.layout: 'month-day'` a few lines down, so the config
+         * afterwards CLAIMS month-day while the tree on disk is still flat.
+         * Everything downstream that trusts the config to describe the tree
+         * was then reading a lie.
+         *
+         * `resolveManagedPath` is the shared resolver every other managed path
+         * in this command already goes through.
+         */
+        const archivedRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ARCHIVED}`, config);
         const migratedChanges = [];
         if (await services_1.services.fileService.exists(archivedRoot)) {
             const entryNames = (await services_1.services.fileService.readDir(archivedRoot)).sort((left, right) => left.localeCompare(right));
@@ -948,7 +730,11 @@ class UpdateCommand extends BaseCommand_1.BaseCommand {
                 const targetPath = await this.resolveArchiveMigrationTarget(archiveDayRoot, archivedState.feature);
                 await services_1.services.fileService.move(entryPath, targetPath);
                 migratedChanges.push({
-                    from: `changes/archived/${entryName}`,
+                    // Reported relative to the project root, so a nested
+                    // project reports `.ospec/changes/archived/...` and a
+                    // classic one reports `changes/archived/...`. It used to
+                    // hardcode the classic spelling on both.
+                    from: this.toRelativePath(rootDir, entryPath),
                     to: this.toRelativePath(rootDir, targetPath),
                 });
             }

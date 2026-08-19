@@ -3,7 +3,13 @@ name: Publish npm Package
 on:
   push:
     tags:
+      # `*` matches any character except `/`, so `plugin-stitch@1.0.0` matches
+      # `*.*.*` too. The plugin publish workflow that used to claim those tags
+      # is gone, and both `plugin-checkpoint@1.0.0` and `plugin-stitch@1.0.0`
+      # still exist in this repository -- without the exclusion, re-pushing one
+      # starts this workflow, and it only stops at the tag/version check.
       - "*.*.*"
+      - "!plugin-*"
 
 permissions:
   contents: read
@@ -11,6 +17,8 @@ permissions:
 
 jobs:
   publish:
+    # Second layer, kept from the pre-2.0 workflow: a tag filter is easy to
+    # widen by accident, and this job holds `id-token: write`.
     if: ${{ !startsWith(github.ref_name, 'plugin-') }}
     runs-on: ubuntu-latest
     steps:

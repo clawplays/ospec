@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StatusCommand = void 0;
-const path = require("path");
 const services_1 = require("../services");
 const helpers_1 = require("../utils/helpers");
 const BaseCommand_1 = require("./BaseCommand");
@@ -19,7 +18,7 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
                 services_1.services.queueService.getQueuedChanges(targetPath),
             ]);
             const projectConfig = structure.initialized
-                ? await services_1.services.configManager.loadConfig(targetPath).catch(() => null)
+                ? await services_1.services.configManager.loadConfigOrNull(targetPath)
                 : null;
             let execution = {
                 totalActiveChanges: summary.activeChangeCount,
@@ -28,6 +27,7 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
             };
             let changes = {
                 totals: { pass: 0, warn: 0, fail: 0 },
+                damagedChanges: [],
             };
             let runReport = {
                 currentRun: undefined,
@@ -91,6 +91,15 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
                 console.log(`  ${status}: ${count}`);
             }
             console.log(`Protocol summary: PASS ${changes.totals.pass} | WARN ${changes.totals.warn} | FAIL ${changes.totals.fail}`);
+            // M-race1: a change whose state.json cannot be parsed is missing
+            // from every count above. Saying so is the whole point of degrading
+            // instead of aborting -- an unreported skip reads as "not present".
+            if (changes.damagedChanges.length > 0) {
+                console.log(`\nUnreadable changes: ${changes.damagedChanges.length} (excluded from the counts above)`);
+                for (const damaged of changes.damagedChanges) {
+                    console.log(`  - ${damaged.name}: ${damaged.reason}`);
+                }
+            }
             if (execution.totalActiveChanges > 1) {
                 console.log('Workflow warning: multiple active changes detected. The default workflow expects one active change unless you are explicitly managing extra work as queued changes.');
             }
@@ -143,8 +152,14 @@ class StatusCommand extends BaseCommand_1.BaseCommand {
             ];
         }
         if (execution.totalActiveChanges === 0 && queuedChanges.length === 0) {
+            // M-misc6: this was a bare "Or run ..." -- the only line in the
+            // branch, opening with a conjunction that referred to a preceding
+            // suggestion this branch does not print. It read as if the status
+            // output had lost a line. The dead `require('path')` at the top of
+            // this file went with it; nothing in the module used it.
             return [
-                `Or run "${formatCommand('new', '<change-name>', projectPath)}" if you want to create the first change from CLI.`,
+                'The repository is change-ready and has no active or queued changes.',
+                `Run "${formatCommand('new', '<change-name>', projectPath)}" to create the first change from the CLI, or start one from your agent.`,
             ];
         }
         if (execution.totalActiveChanges === 0 && queuedChanges.length > 0) {

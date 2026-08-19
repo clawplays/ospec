@@ -76,6 +76,9 @@ class RunService {
             allowActivateNext: true,
         });
         events.push(...initialSync.events);
+        // Whether this step changed anything on disk. Only a finalize does; the
+        // other two branches just describe what they saw.
+        let repositoryChanged = false;
         if (initialSync.run.status === 'running' && initialSync.run.currentChangePath) {
             const activePath = path_1.default.join(resolvedRootDir, initialSync.run.currentChangePath);
             const activeChange = await this.projectService.getActiveChangeStatusItem(activePath);
@@ -87,22 +90,28 @@ class RunService {
                 initialSync.run.failedChange = null;
                 initialSync.run.lastInstruction = `Change ${activeChange.name} was finalized and archived to ${finalized.archivePath}.`;
                 events.push(`Auto-finalized and archived ${activeChange.name} to ${finalized.archivePath}.`);
+                repositoryChanged = true;
             }
             else if (profile.autoFinalize) {
-                initialSync.run.lastInstruction =
-                    `Continue ${activeChange.path} manually. When it becomes archive-ready, run "ospec run step" and ospec will finalize it on that explicit step.`;
                 events.push(`Checked ${activeChange.name}; archive-chain is waiting for the change to become archive-ready.`);
             }
             else {
-                initialSync.run.lastInstruction =
-                    `Manual-safe run is attached to ${activeChange.path}. Continue the change manually, then run "ospec run step" when you want ospec to re-check queue progress.`;
                 events.push(`Checked ${activeChange.name}; manual-safe mode leaves the active change lifecycle fully manual.`);
             }
         }
-        const finalSync = await this.synchronizeRun(resolvedRootDir, initialSync.run, {
-            allowActivateNext: true,
-        });
-        events.push(...finalSync.events);
+        // The second synchronize exists to observe what the finalize above did:
+        // the change left changes/active, so the runner has to detach, activate
+        // the next queued change and recompute the instruction. When nothing was
+        // finalized it re-listed the active and queued changes, re-read the same
+        // state, and recomputed the identical run record -- and then overwrote
+        // `lastInstruction` with the value the first synchronize had already
+        // produced, which is why the two branches above no longer set it.
+        const finalSync = repositoryChanged
+            ? await this.synchronizeRun(resolvedRootDir, initialSync.run, { allowActivateNext: true })
+            : initialSync;
+        if (repositoryChanged) {
+            events.push(...finalSync.events);
+        }
         await this.saveRun(resolvedRootDir, finalSync.run);
         if (events.length > 0) {
             await this.appendLogEvents(resolvedRootDir, finalSync.run, events);
@@ -136,13 +145,20 @@ class RunService {
         if (!run) {
             return this.buildStatusReport(resolvedRootDir, null);
         }
+        // `run status` is a read-only command, and it stayed read-only right up
+        // until it saved: `touchRun` stamps a new `updatedAt` unconditionally, so
+        // every status check rewrote .ospec/runs/current.json and its history
+        // copy, churning two mtimes and putting a tracked file in `git status`
+        // for a command that reports rather than advances.
+        //
+        // Nothing is lost by not persisting. `synchronizeRun` is a pure function
+        // of the run record plus what is on disk, so the next command that does
+        // mutate re-derives the same observations (an archived change spotted
+        // here is spotted again there) and logs the same events then.
         const synchronized = await this.synchronizeRun(resolvedRootDir, run, {
             allowActivateNext: false,
+            touch: false,
         });
-        await this.saveRun(resolvedRootDir, synchronized.run);
-        if (synchronized.events.length > 0) {
-            await this.appendLogEvents(resolvedRootDir, synchronized.run, synchronized.events);
-        }
         return this.buildStatusReport(resolvedRootDir, synchronized.run);
     }
     async getLogTail(rootDir, lineCount = 20) {
@@ -259,7 +275,7 @@ class RunService {
             run.remainingChanges = await this.queueService.listQueuedChangeNames(rootDir);
             events.push(`Runner entered failed state because multiple active changes were detected: ${activeNames.join(', ')}.`);
             return {
-                run: this.touchRun(run),
+                run: options.touch === false ? run : this.touchRun(run),
                 events,
             };
         }
@@ -313,7 +329,7 @@ class RunService {
             run.lastInstruction = await this.buildActiveInstruction(rootDir, run.currentChangePath, run.profileId);
         }
         return {
-            run: this.touchRun(run),
+            run: options.touch === false ? run : this.touchRun(run),
             events,
         };
     }
@@ -491,17 +507,24 @@ class RunService {
     resolveRunFilePath(rootDir, targetPath) {
         return path_1.default.isAbsolute(targetPath) ? targetPath : path_1.default.join(rootDir, targetPath);
     }
+    // FIX-G1: same gate as `QueueService.getProjectConfig` and the index
+    // builders -- this config feeds `resolveManagedPath` /
+    // `toManagedRelativePath`, so degrading it to `null` resolved to
+    // `'classic'` and pointed the runner at the project root of a nested
+    // project. Absent stays absent; damaged now fails loudly.
     async getProjectConfig(rootDir) {
         const configPath = path_1.default.join(rootDir, constants_1.FILE_NAMES.SKILLRC);
         if (!(await this.fileService.exists(configPath))) {
             return null;
         }
+        let raw;
         try {
-            return await this.fileService.readJSON(configPath);
+            raw = await this.fileService.readJSON(configPath);
         }
-        catch {
-            return null;
+        catch (error) {
+            throw (0, ProjectLayout_1.createDamagedConfigError)(configPath, `invalid JSON (${error?.message || 'parse failed'})`);
         }
+        return (0, ProjectLayout_1.assertProjectConfigUsable)(rootDir, configPath, raw);
     }
     async buildActiveInstruction(rootDir, changePath, profileId) {
         const resolvedChangePath = this.resolveRunFilePath(rootDir, changePath);

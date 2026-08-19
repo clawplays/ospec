@@ -1,7 +1,5 @@
 const RELEASE_REPO_EXCLUDED_PREFIXES = [
   'tests/',
-  'docs/checkpoint-plugin-spec',
-  'docs/stitch-plugin-spec',
   'docs/issue-automation.md',
   'docs/dev/',
   'docs/benchmarks/',

@@ -1,11 +1,49 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DocsCommand = void 0;
+const path = __importStar(require("path"));
+const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const DocsMigrationService_1 = require("../services/DocsMigrationService");
+const FeatureLocator_1 = require("../services/FeatureLocator");
+const ProjectLayout_1 = require("../utils/ProjectLayout");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
 const BaseCommand_1 = require("./BaseCommand");
 class DocsCommand extends BaseCommand_1.BaseCommand {
-    async execute(action = 'status', projectPath) {
+    async execute(action = 'status', projectPath, options = []) {
         try {
             if ((0, subcommandHelp_1.isHelpAction)(action)) {
                 this.info((0, subcommandHelp_1.getDocsHelpText)());
@@ -13,6 +51,26 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
             }
             const targetPath = projectPath || process.cwd();
             switch (action) {
+                case 'locate': {
+                    await this.locate(options);
+                    break;
+                }
+                case 'obligations': {
+                    await this.runObligations(targetPath, options);
+                    break;
+                }
+                case 'confirm': {
+                    await this.runConfirm(targetPath, options);
+                    break;
+                }
+                case 'audit': {
+                    await this.runAudit(targetPath, options);
+                    break;
+                }
+                case 'migrate': {
+                    await this.migrate(targetPath, options);
+                    break;
+                }
                 case 'generate': {
                     const structure = await services_1.services.projectService.detectProjectStructure(targetPath);
                     if (!structure.initialized) {
@@ -113,6 +171,421 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
             this.error(`Docs command failed: ${error}`);
             throw error;
         }
+    }
+    /**
+     * 7.3 `ospec docs locate`. Answers "which section describes this?" with a
+     * `path#heading`, a line range to read, and nothing else.
+     *
+     * The output budget is HARD: <= 200 tokens, measured, for every branch
+     * including a multi-hit. A locator that costs more than the section it
+     * saves is worse than no locator, so every line here earns its place --
+     * `--json` is emitted unindented for the same reason (indentation was ~86%
+     * of a previously measured payload in this repository).
+     */
+    async locate(rawArgs) {
+        let feature = null;
+        let affects = null;
+        let json = false;
+        let limit = 5;
+        let targetPath = process.cwd();
+        const takeValue = (flag, inline, next) => {
+            if (inline !== null) {
+                if (!inline)
+                    throw new Error(`${flag} requires a value`);
+                return { value: inline, consumed: false };
+            }
+            if (!next || next.startsWith('--'))
+                throw new Error(`${flag} requires a value`);
+            return { value: next, consumed: true };
+        };
+        for (let index = 0; index < rawArgs.length; index += 1) {
+            const arg = rawArgs[index];
+            if (arg === 'locate')
+                continue;
+            const [flag, ...rest] = arg.startsWith('--') && arg.includes('=')
+                ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)]
+                : [arg];
+            const inline = rest.length > 0 ? rest[0] : null;
+            if (flag === '--json') {
+                json = true;
+                continue;
+            }
+            if (flag === '--feature') {
+                const taken = takeValue('--feature', inline, rawArgs[index + 1]);
+                feature = taken.value;
+                if (taken.consumed)
+                    index += 1;
+                continue;
+            }
+            if (flag === '--affects') {
+                const taken = takeValue('--affects', inline, rawArgs[index + 1]);
+                affects = taken.value;
+                if (taken.consumed)
+                    index += 1;
+                continue;
+            }
+            if (flag === '--path') {
+                const taken = takeValue('--path', inline, rawArgs[index + 1]);
+                targetPath = taken.value;
+                if (taken.consumed)
+                    index += 1;
+                continue;
+            }
+            if (flag === '--limit') {
+                const taken = takeValue('--limit', inline, rawArgs[index + 1]);
+                const value = Number(taken.value);
+                if (!Number.isInteger(value) || value < 1)
+                    throw new Error('--limit requires a positive integer');
+                limit = value;
+                if (taken.consumed)
+                    index += 1;
+                continue;
+            }
+            if (flag.startsWith('--'))
+                throw new Error(`Unknown docs locate flag: ${flag}`);
+            throw new Error('Usage: ospec docs locate --feature <slug> | --affects <path> [--path <dir>] [--limit N] [--json]');
+        }
+        if (!feature && !affects) {
+            throw new Error('Usage: ospec docs locate --feature <slug> | --affects <path> [--path <dir>] [--limit N] [--json]');
+        }
+        if (feature && affects) {
+            throw new Error('ospec docs locate takes --feature or --affects, not both.');
+        }
+        const status = await services_1.services.projectService.getIndexStatus(targetPath);
+        if (!status.exists) {
+            throw new Error(`SKILL.index.json not found at ${status.path}; run "ospec index build" first.`);
+        }
+        const raw = await services_1.services.fileService.readFile(status.path);
+        const index = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
+        const query = feature ? { feature } : { affects: affects };
+        const result = feature
+            ? (0, FeatureLocator_1.locateByFeature)(index, feature)
+            : (0, FeatureLocator_1.locateByAffects)(index, affects);
+        const selected = result.matches.slice(0, limit);
+        await this.attachReadRanges(targetPath, selected);
+        if (json) {
+            // Unindented on purpose: this command's whole value is that its
+            // answer is cheaper than the scan it replaces.
+            console.log(JSON.stringify({
+                version: '1.0',
+                query,
+                totalMatches: result.matches.length,
+                matches: selected.map(entry => ({
+                    slug: entry.slug,
+                    file: entry.file,
+                    heading: entry.heading,
+                    location: `${entry.file}#${entry.heading}`,
+                    lines: entry.lines ?? null,
+                    chars: [entry.start, entry.end],
+                    bytes: entry.bytes ?? null,
+                    code: entry.code,
+                    matched_prefix: entry.matched_prefix ?? null,
+                    last_change: entry.last_change ?? null,
+                })),
+                candidates: result.candidates,
+            }));
+            return;
+        }
+        if (selected.length === 0) {
+            const subject = feature ? `feature "${feature}"` : `path ${affects}`;
+            console.log(`no feature document for ${subject}`);
+            if (result.candidates.length > 0) {
+                console.log(`closest: ${result.candidates.map(item => `${item.slug} (${item.file}#${item.heading})`).join('; ')}`);
+            }
+            else {
+                console.log('no near candidates; run "ospec index query <keyword>" or declare one with <!-- ospec:feature <slug> -->');
+            }
+            return;
+        }
+        if (result.matches.length > selected.length) {
+            console.log(`${result.matches.length} matches, showing ${selected.length} (most specific first; --limit for more)`);
+        }
+        for (const entry of selected) {
+            console.log(`${entry.file}#${entry.heading}`);
+            const range = entry.lines
+                ? `read lines ${entry.lines[0]}-${entry.lines[1]} (${entry.bytes} B)`
+                : `read chars ${entry.start}-${entry.end} (file unreadable; index may be stale)`;
+            const via = entry.matched_prefix ? ` via ${entry.matched_prefix}` : '';
+            console.log(`  ${entry.slug} | ${range}${via}`);
+            if (entry.last_change)
+                console.log(`  last-change ${entry.last_change}`);
+        }
+    }
+    /**
+     * Line ranges come from the document, not the index: the index stores
+     * character offsets into a normalised body (contract 4) and no reader
+     * tool takes those. An unreadable document degrades to the character
+     * range rather than to a guess.
+     */
+    async attachReadRanges(projectRoot, matches) {
+        const cache = new Map();
+        for (const entry of matches) {
+            const file = String(entry.file || '');
+            if (!file)
+                continue;
+            if (!cache.has(file)) {
+                const absolute = path.join(projectRoot, ...file.split('/'));
+                cache.set(file, await services_1.services.fileService.readFile(absolute).catch(() => null));
+            }
+            const content = cache.get(file);
+            if (!content)
+                continue;
+            const located = (0, FeatureLocator_1.locateLines)(content, entry);
+            if (!located)
+                continue;
+            entry.lines = located.lines;
+            entry.bytes = located.bytes;
+        }
+    }
+    /**
+     * `ospec docs obligations [change-path] [--apply] [--json]`
+     *
+     * Read-only unless `--apply`. Generating and showing without writing is the
+     * default because the obligation list changes what the archive gate checks,
+     * and an operator should be able to see it before it takes effect.
+     */
+    async runObligations(inputPath, options) {
+        const apply = options.includes('--apply');
+        const asJson = options.includes('--json');
+        const { projectRoot, changeDir } = await this.resolveChange(inputPath);
+        const config = await services_1.services.configManager.loadConfigOrNull(projectRoot);
+        const result = await services_1.services.docsObligationPlanner.plan(projectRoot, changeDir, { apply, config });
+        if (asJson) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+        console.log('\nDocumentation Obligations');
+        console.log('=========================\n');
+        console.log(`Change: ${path.basename(changeDir)}`);
+        console.log(`Change type: ${result.changeType || '(unset)'}`);
+        console.log(`Features: ${result.features.join(', ') || 'none'}${result.features_via_affects.length > 0
+            ? ' (resolved from affects via code: declarations; confirm them in proposal.md features:)'
+            : ''}`);
+        console.log(`Contract mode: ${result.mode}${result.mode === 'warn' ? ' (unmet obligations warn; they do not block archiving)' : ' (unmet required obligations block archiving)'}`);
+        console.log(`Obligations: ${result.obligations.length}\n`);
+        for (const obligation of result.obligations) {
+            console.log(`  ${obligation.id}  [${obligation.level}] ${obligation.kind}`);
+            console.log(`    target: ${obligation.target}`);
+            console.log(`    ${obligation.reason}`);
+            if (obligation.suggestion)
+                console.log(`    ${obligation.suggestion}`);
+            if (obligation.verification_only) {
+                console.log(`    No edit needed? ospec docs confirm --id ${obligation.id}`);
+            }
+        }
+        if (result.obligations.length === 0) {
+            console.log('  None. This change type generates no documentation obligation,');
+            console.log('  or it declares no features. Neither blocks archiving.');
+        }
+        console.log(apply
+            ? `\nWritten: ${result.written.join(', ') || 'nothing (no writable surface found)'}`
+            : '\nDry run. Re-run with --apply to record these and inject them into the change.');
+        console.log('');
+    }
+    /**
+     * `ospec docs confirm [change-path] --id <obligation-id> [--note "..."]`
+     *
+     * The `verified_unchanged` path: a refactor that genuinely changed no
+     * documented behaviour records that fact instead of making a cosmetic edit.
+     */
+    async runConfirm(inputPath, options) {
+        const readOption = (flag) => {
+            const index = options.indexOf(flag);
+            if (index >= 0 && options[index + 1] && !options[index + 1].startsWith('--')) {
+                return options[index + 1];
+            }
+            const inline = options.find(item => item.startsWith(`${flag}=`));
+            return inline ? inline.slice(flag.length + 1) : undefined;
+        };
+        const id = readOption('--id');
+        if (!id) {
+            throw new Error('ospec docs confirm requires --id <obligation-id>. Run "ospec docs obligations" to list them.');
+        }
+        const { changeDir } = await this.resolveChange(inputPath);
+        const result = await services_1.services.docsObligationPlanner.confirmUnchanged(changeDir, id, readOption('--note'));
+        if (!result.ok)
+            throw new Error(result.message);
+        this.success(result.message);
+    }
+    /**
+     * `ospec docs audit [path] [--json]` -- 7.8 drift detection. Read-only.
+     *
+     * Exit status stays 0 even when drift is found: this is a report people and
+     * AIs are meant to run periodically, not a gate. Making it non-zero would
+     * put it in CI, where a slowly-drifting document would block unrelated work.
+     */
+    async runAudit(projectPath, options) {
+        const targetPath = path.resolve(projectPath);
+        const config = await services_1.services.configManager.loadConfigOrNull(targetPath);
+        const result = await services_1.services.docsAuditService.audit(targetPath, config);
+        if (options.includes('--json')) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+        console.log('\nDocumentation Drift Audit');
+        console.log('=========================\n');
+        if (!result.available) {
+            console.log(result.reason);
+            console.log('');
+            return;
+        }
+        console.log(`Features scanned: ${result.scanned}`);
+        console.log(`Drifted: ${result.drifted.length}`);
+        console.log(`Not examined: ${result.skipped.length}\n`);
+        for (const entry of result.drifted) {
+            console.log(`  ${entry.target}`);
+            console.log(`    ${entry.summary}`);
+        }
+        if (result.drifted.length === 0 && result.scanned > 0) {
+            // Never claim more than was actually examined. "No drift" alongside
+            // "Not examined: 1" would read as a clean bill of health for a
+            // feature this command never compared.
+            const examined = result.scanned - result.skipped.length;
+            console.log(examined === result.scanned
+                ? '  No drift: every feature with code: paths and a traceability comment is current.'
+                : `  No drift among the ${examined} feature(s) that could be compared. The rest were not examined -- see below.`);
+        }
+        if (result.skipped.length > 0) {
+            // Printed, never folded into "clean". A feature that could not be
+            // examined is not a feature that passed.
+            console.log('\n  Not examined:');
+            for (const entry of result.skipped) {
+                console.log(`    ${entry.slug}: ${entry.reason}`);
+            }
+        }
+        console.log('');
+    }
+    /**
+     * Resolve `[change-path]` the same way `ospec execute` and `ospec loop` do:
+     * an explicit path, else the single active change. Refusing to guess
+     * between several active changes is deliberate.
+     */
+    async resolveChange(inputPath) {
+        const resolved = path.resolve(inputPath);
+        if (await services_1.services.fileService.exists(path.join(resolved, 'state.json'))) {
+            return { projectRoot: await this.findProjectRoot(resolved), changeDir: resolved };
+        }
+        const activeNames = await services_1.services.projectService.listActiveChangeNames(resolved);
+        if (activeNames.length === 0) {
+            throw new Error('No active change found. Pass a change path, or run from a project with one active change.');
+        }
+        if (activeNames.length > 1) {
+            throw new Error(`Multiple active changes found: ${activeNames.join(', ')}. Pass one change path explicitly.`);
+        }
+        const config = await services_1.services.configManager.loadConfigOrNull(resolved);
+        return {
+            projectRoot: resolved,
+            changeDir: (0, ProjectLayout_1.resolveManagedPath)(resolved, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}/${activeNames[0]}`, config),
+        };
+    }
+    async findProjectRoot(changeDir) {
+        let current = changeDir;
+        for (let depth = 0; depth < 8; depth += 1) {
+            const parent = path.dirname(current);
+            if (parent === current)
+                break;
+            current = parent;
+            if (await services_1.services.fileService.exists(path.join(current, '.skillrc')))
+                return current;
+        }
+        return path.resolve(changeDir, '..', '..', '..');
+    }
+    /**
+     * 7.9. Four phases, and the flags are the phase selector rather than a
+     * mode: `--plan`, `--verify`, `--finalize`. Nothing writes without
+     * `--apply`, and `--finalize --apply` is the only thing that deletes.
+     */
+    async migrate(projectRoot, options) {
+        const apply = options.includes('--apply');
+        const phase = options.includes('--finalize')
+            ? 'finalize'
+            : options.includes('--verify')
+                ? 'verify'
+                : 'plan';
+        if (phase === 'plan') {
+            const result = await DocsMigrationService_1.docsMigrationService.plan(projectRoot, { apply });
+            const { plan } = result;
+            console.log('\nDocs Migration — Phase 1: plan');
+            console.log('==============================\n');
+            console.log(`Legacy knowledge documents: ${plan.legacy.knowledge_documents.length}`);
+            console.log(`Generated feature index:    ${plan.legacy.feature_index || '-'}`);
+            console.log(`Archived changes:           ${plan.archives.length}`);
+            console.log(`Candidate feature groups:   ${plan.groups.length}`);
+            console.log('');
+            for (const group of plan.groups) {
+                console.log(`  ${group.domain} -> ${group.document} (${group.archives.length} change(s))`);
+            }
+            if (plan.unclassified.length > 0) {
+                console.log('');
+                console.log(`Could not be classified (${plan.unclassified.length}) — group these by hand in the plan file:`);
+                for (const archive of plan.unclassified)
+                    console.log(`  ${archive}`);
+            }
+            if (result.preserved.length > 0) {
+                console.log('');
+                console.log(`Carried your edits forward for ${result.preserved.length} archive(s): ${result.preserved.join(', ')}`);
+            }
+            console.log('');
+            console.log(apply ? 'Wrote:' : 'Would write (re-run with --apply):');
+            for (const target of result.writes)
+                console.log(`  ${target}`);
+            console.log('');
+            console.log('Next: rewrite each draft section as a behaviour description, add its');
+            console.log('<!-- ospec:feature <slug> code:<paths> --> declaration, delete the draft');
+            console.log('markers, then run "ospec docs migrate --verify".');
+            console.log('');
+            return;
+        }
+        if (phase === 'verify') {
+            const result = await DocsMigrationService_1.docsMigrationService.verify(projectRoot);
+            console.log('\nDocs Migration — Phase 3: verify');
+            console.log('================================\n');
+            console.log(`Archives with a legacy document: ${result.checked.archives}`);
+            console.log(`  mapped to a feature section:   ${result.checked.mapped}`);
+            console.log(`  marked historical:             ${result.checked.historical}`);
+            console.log(`Feature declarations found:      ${result.checked.features}`);
+            console.log('');
+            if (result.ok) {
+                console.log('PASS — every old knowledge document is accounted for.');
+                console.log('Next: "ospec docs migrate --finalize" to preview the deletion.');
+                console.log('');
+                return;
+            }
+            console.log(`REFUSED — ${result.gaps.length} gap(s):`);
+            for (const gap of result.gaps)
+                console.log(`  [${gap.kind}] ${gap.detail}`);
+            console.log('');
+            console.log('Nothing will be deleted until every gap above is closed.');
+            console.log('');
+            // A gate that reports failure through stdout only is a gate no
+            // script can act on.
+            throw new Error(`Docs migration verification refused: ${result.gaps.length} gap(s) remain.`);
+        }
+        const result = await DocsMigrationService_1.docsMigrationService.finalize(projectRoot, { apply });
+        console.log('\nDocs Migration — Phase 4: finalize');
+        console.log('==================================\n');
+        // Printed before the deletion happened, which is the point.
+        console.log(`${apply ? 'Deleted' : 'Would delete'} ${result.deleted.length} file(s):`);
+        for (const target of result.deleted)
+            console.log(`  ${target}`);
+        if (result.kept.length > 0) {
+            console.log('');
+            console.log(`Kept ${result.kept.length} file(s):`);
+            for (const target of result.kept)
+                console.log(`  ${target}`);
+        }
+        if (result.notes.length > 0) {
+            console.log('');
+            for (const note of result.notes)
+                console.log(`  note: ${note}`);
+        }
+        console.log('');
+        if (result.applied) {
+            console.log('Recorded in .ospec/docs-migration.json before deleting. Index rebuilt.');
+            console.log('"ospec changes show <archive>" and "ospec index query" still serve every');
+            console.log('archive above — only the carrier changed.');
+        }
+        console.log('');
     }
 }
 exports.DocsCommand = DocsCommand;

@@ -29,7 +29,6 @@ const defaultRoots = [
   'agents',
   'docs',
   'releases',
-  'plugins',
   'SKILL.md',
   'skill.yaml',
   'README.md',

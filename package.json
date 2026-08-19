@@ -1,6 +1,6 @@
 {
   "name": "@clawplays/ospec-cli",
-  "version": "1.9.10",
+  "version": "2.0.0",
   "description": "Official OSpec CLI package for spec-driven development (SDD) and document-driven development in AI coding agent and CLI workflows.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -11,15 +11,15 @@
     "access": "public"
   },
   "scripts": {
+    "index:rebuild": "node dist/tools/build-index.js",
     "postinstall": "node scripts/postinstall.js",
     "prepack": "node scripts/strip-sourcemap-refs.js",
-    "index:rebuild": "node dist/tools/build-index.js",
-    "release:smoke": "node scripts/release-smoke.js",
-    "release:notes": "node scripts/release-notes.js",
-    "release:upload-notes": "node scripts/release-upload-notes.js",
-    "release:scan": "node scripts/release-content-scan.js",
     "release:check": "npm pack --dry-run",
-    "release:publish": "npm publish --access public"
+    "release:notes": "node scripts/release-notes.js",
+    "release:publish": "npm publish --access public",
+    "release:scan": "node scripts/release-content-scan.js",
+    "release:smoke": "node scripts/release-smoke.js",
+    "release:upload-notes": "node scripts/release-upload-notes.js"
   },
   "keywords": [
     "ospec",

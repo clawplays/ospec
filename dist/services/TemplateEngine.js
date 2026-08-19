@@ -50,12 +50,6 @@ class TemplateEngine {
     generateVerificationTemplate(input) {
         return this.executionBuilder.generateVerificationTemplate(input);
     }
-    generateSpecComplianceReviewTemplate(input) {
-        return this.executionBuilder.generateSpecComplianceReviewTemplate(input);
-    }
-    generateCodeQualityReviewTemplate(input) {
-        return this.executionBuilder.generateCodeQualityReviewTemplate(input);
-    }
     generateTaskGraphTemplate(input) {
         return this.executionBuilder.generateTaskGraphTemplate(input);
     }
@@ -73,15 +67,6 @@ class TemplateEngine {
     }
     generateDocsSkillTemplate(fallbackName, input) {
         return this.projectBuilder.generateDocsSkillTemplate(fallbackName, input);
-    }
-    generateSrcSkillTemplate(fallbackName, input) {
-        return this.projectBuilder.generateSrcSkillTemplate(fallbackName, input);
-    }
-    generateCoreSkillTemplate(fallbackName, input) {
-        return this.projectBuilder.generateCoreSkillTemplate(fallbackName, input);
-    }
-    generateTestsSkillTemplate(fallbackName, input) {
-        return this.projectBuilder.generateTestsSkillTemplate(fallbackName, input);
     }
     generateProjectOverviewTemplate(fallbackName, mode, input) {
         return this.projectBuilder.generateProjectOverviewTemplate(fallbackName, mode, input);
@@ -107,9 +92,6 @@ class TemplateEngine {
     generateApiDocsTemplate(fallbackName, input) {
         return this.projectBuilder.generateApiDocsTemplate(fallbackName, input);
     }
-    generateModuleSkillTemplate(fallbackName, moduleName, input, moduleSlug) {
-        return this.projectBuilder.generateModuleSkillTemplate(fallbackName, moduleName, input, moduleSlug);
-    }
     generateApiAreaDocTemplate(fallbackName, apiAreaName, input) {
         return this.projectBuilder.generateApiAreaDocTemplate(fallbackName, apiAreaName, input);
     }
@@ -121,12 +103,6 @@ class TemplateEngine {
     }
     generatePlanningDocTemplate(fallbackName, docName, input) {
         return this.projectBuilder.generatePlanningDocTemplate(fallbackName, docName, input);
-    }
-    generateAiGuideTemplate(input) {
-        return this.projectBuilder.generateAiGuideTemplate(input);
-    }
-    generateExecutionProtocolTemplate(input) {
-        return this.projectBuilder.generateExecutionProtocolTemplate(input);
     }
     generateBuildIndexScriptTemplate() {
         return this.projectBuilder.generateBuildIndexScriptTemplate();

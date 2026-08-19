@@ -39,11 +39,33 @@ class TriageService {
             return [];
         }
         const content = await this.fileService.readFile(inbox);
-        return content
-            .split('\n')
-            .map(line => line.trim())
-            .filter(Boolean)
-            .map(line => JSON.parse(line));
+        /*
+         * M-race1: the inbox is JSONL, so one torn line is one unreadable item
+         * rather than an unreadable file -- but skipping it is the one
+         * degradation that must not happen here. `claim` calls `writeAll`,
+         * which rewrites the inbox from exactly this array; anything this
+         * parser drops is deleted from disk the next time a user claims
+         * anything. Lenient reads and a full-file rewrite cannot coexist.
+         *
+         * So it refuses, and it names the line, because `Unexpected token } in
+         * JSON at position 41` does not tell anyone which of forty triage items
+         * to go and repair.
+         */
+        const items = [];
+        const lines = content.split('\n');
+        for (let index = 0; index < lines.length; index += 1) {
+            const line = lines[index].trim();
+            if (!line)
+                continue;
+            try {
+                items.push(JSON.parse(line));
+            }
+            catch (error) {
+                throw new Error(`Triage inbox ${inbox} is damaged at line ${index + 1}: ${error?.message || 'invalid JSON'}. `
+                    + 'Repair or delete that line; the inbox is not read leniently because claiming an item rewrites the whole file.');
+            }
+        }
+        return items;
     }
     async writeAll(projectRoot, config, items) {
         const inbox = this.inboxPath(projectRoot, config);

@@ -11,7 +11,5 @@ export declare class ExecutionTemplateBuilder extends TemplateBuilderBase {
     generateVerificationTemplate(input: string | FeatureTemplateInput): string;
     generateTaskGraphTemplate(input: string | FeatureTemplateInput): string;
     generateAgentWorkerStatusTemplate(input: string | FeatureTemplateInput): string;
-    generateSpecComplianceReviewTemplate(input: string | FeatureTemplateInput): string;
-    generateCodeQualityReviewTemplate(input: string | FeatureTemplateInput): string;
     generateReviewTemplate(input: string | FeatureTemplateInput): string;
 }

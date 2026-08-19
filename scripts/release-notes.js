@@ -4,6 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+const { readPathOption } = require('./export-release-repo.js');
+
 const rootDir = path.resolve(__dirname, '..');
 const packageJson = require(path.join(rootDir, 'package.json'));
 const RELEASE_OVERRIDE_DIR = path.join(rootDir, 'releases');
@@ -68,8 +70,8 @@ function tryRun(command, args, options = {}) {
   return (result.stdout || '').trim();
 }
 
-function git(args) {
-  return run('git', args);
+function git(args, options = {}) {
+  return run('git', args, options);
 }
 
 function tryGit(args) {
@@ -97,40 +99,61 @@ function isReleaseCommit(subject) {
   return /^Release \d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(subject);
 }
 
-function getCommitFiles(hash) {
-  const output =
-    tryGit(['diff-tree', '--no-commit-id', '--name-only', '-r', hash]) || '';
-  return output
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
+// A NUL can never appear in a commit subject or a path, so it is the one safe
+// record separator for a `git log` that also prints file names. It is spelled
+// `%x00` in the format string because Node refuses to spawn a process with a
+// NUL inside an argv entry -- git is what emits the byte.
+const COMMIT_RECORD_FORMAT_SEPARATOR = '%x00';
+const COMMIT_RECORD_SEPARATOR = '\u0000';
 
-function getCommitEntries(previousTag) {
+/**
+ * Every non-release commit in the range, with the files it touched.
+ *
+ * This used to spawn one `git diff-tree` per commit on top of the `git log`,
+ * so a release covering N commits paid N+1 git processes for data a single
+ * `git log --name-only` already returns. A 30-commit range meant 57 processes.
+ *
+ * Behaviour note: `git log --name-only` reports the files of a root commit,
+ * which `git diff-tree` without `--root` did not. That only matters for a
+ * repository's very first commit, and reporting its files is the correct answer.
+ */
+function getCommitEntries(previousTag, options = {}) {
   const range = previousTag ? `${previousTag}..HEAD` : 'HEAD';
-  const raw = git([
-    'log',
-    '--no-merges',
-    '--pretty=format:%H%x09%h%x09%s',
-    range,
-  ]);
+  const raw = git(
+    [
+      'log',
+      '--no-merges',
+      '--name-only',
+      // `git log` turns on rename detection by default and the plumbing
+      // `diff-tree` this replaced did not, so a rename would have collapsed two
+      // reported paths into one and changed how a commit is classified.
+      '--no-renames',
+      `--pretty=format:${COMMIT_RECORD_FORMAT_SEPARATOR}%H%x09%h%x09%s`,
+      range,
+    ],
+    options,
+  );
 
   if (!raw) {
     return [];
   }
 
   return raw
-    .split('\n')
-    .map((line) => line.trim())
+    .split(COMMIT_RECORD_SEPARATOR)
+    .map((record) => record.trim())
     .filter(Boolean)
-    .map((line) => {
-      const [fullHash, shortHash, ...subjectParts] = line.split('\t');
+    .map((record) => {
+      const lines = record.split('\n');
+      const [fullHash, shortHash, ...subjectParts] = lines[0].split('\t');
       const subject = subjectParts.join('\t').trim();
       return {
         fullHash,
         hash: shortHash,
         subject,
-        files: getCommitFiles(fullHash),
+        files: lines
+          .slice(1)
+          .map((line) => line.trim())
+          .filter(Boolean),
       };
     })
     .filter((entry) => !isReleaseCommit(entry.subject));
@@ -558,6 +581,14 @@ function writeOutput(outputPath, content) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // `--output --format json` parses as `output: true`, because the next token
+  // is another flag rather than a value. Reading that straight into
+  // `path.resolve` raises a bare TypeError that names `paths[1]` instead of the
+  // flag the user left empty. Resolve it up front, before any git work.
+  const outputPath = readPathOption(args, 'output', {
+    what: 'file',
+    placeholder: 'file',
+  });
   const tag = resolveTag(args);
   const previousTag = resolvePreviousTag(tag, args['previous-tag']);
   const commits = getCommitEntries(previousTag);
@@ -571,8 +602,8 @@ async function main() {
 
   if (args.format === 'json') {
     const json = JSON.stringify(metadata, null, 2);
-    if (args.output) {
-      writeOutput(args.output, json);
+    if (outputPath) {
+      writeOutput(outputPath, json);
       return;
     }
     process.stdout.write(json);
@@ -580,8 +611,8 @@ async function main() {
   }
 
   const preview = [`Title: ${metadata.name}`, '', metadata.body].join('\n');
-  if (args.output) {
-    writeOutput(args.output, preview);
+  if (outputPath) {
+    writeOutput(outputPath, preview);
     return;
   }
 

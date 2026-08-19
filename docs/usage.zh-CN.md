@@ -1,6 +1,6 @@
 # 使用说明
 
-如果你主要通过 AI 使用 OSpec，先使用简短的 `/ospec` 或 `/ospec-change` 提示词。小功能优先用 `/ospec-change`，复杂全流程工作用 `/ospec-goal`；这页里的 CLI 命令用于回退方案或显式自动化。
+如果你主要通过 AI / `/ospec` 使用 OSpec，先使用简短的 `/ospec` 或 `/ospec-change` 提示词。小功能优先用 `/ospec-change`，复杂全流程工作用 `/ospec-goal`；这页里的 CLI 命令用于回退方案或显式自动化。
 
 ## 常用命令
 
@@ -12,7 +12,13 @@ ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
 ospec changes status [path]
-ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
+ospec docs locate --feature <slug> | --affects <path> [--json]
+ospec docs obligations [changes/active/<change>] [--apply] [--json]
+ospec docs confirm [changes/active/<change>] --id <obligation-id> [--note "..."]
+ospec docs audit [path] [--json]
+ospec docs migrate [path] --plan|--verify|--finalize [--apply]
+ospec changes show <archive> [--md|--json]
+ospec index gc [path]ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec change <change-name> [path]
 ospec goal <goal-name> [path] [--target ...] [--execution-model controller]
@@ -65,14 +71,6 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
-ospec plugins list
-ospec plugins install <plugin>
-ospec plugins installed
-ospec plugins update <plugin>
-ospec plugins update --all
-ospec plugins status [path]
-ospec plugins enable stitch [path]
-ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 `loop configure --allow-path`、`--allow-command` 和 `--allow-command-policy` 用于配置可选的额外边界，会替换所选的完整白名单分组并打印差异。优先使用基于任务图的 `derive -> check -> apply` 流程；apply 使用 CAS 哈希，权限扩大必须显式传入 `--approve-expansion`。
@@ -86,40 +84,6 @@ ospec plugins enable checkpoint [path] --base-url <url>
 - **文档 closeout：**经过 review 的创建和删除都是有效状态变化。证据从首个 baseline 聚合到最终 completed dispatch，workspace 必须匹配最新 declared-owner evidence。后续权威 APPROVED review 可以绑定精确最终快照，但不能替代 meaningful-change 证据链。`ospec execute sync` 会更新多语言 worker status 和 Combined review checklist。
 - **Classic Change：**`ospec change` 是首选快速流程，`ospec new` 继续作为别名。用户选择的 Change 不会自动升级为 Goal。它使用精简分阶段指导、当前 AI 的一次轻量 review、实用文档规则、自动派生 closeout、一次 finalize 索引重建和串行 queue。其它门禁全部通过时，`APPROVED` 和 `APPROVED_WITH_CONCERNS` 可以自动归档。
 - **Controller 与并发：**单次 native wait 必须在 60 秒内返回，但存活 child 会在持续续 heartbeat 时运行到绝对期限。未知 native capacity 的 implementation 默认并发是 3，不是 2；更大的 session-bound 正整数 capacity 可在依赖、文件冲突、共享资源、token 和 `maxParallel` 都允许时支持 5-10 等配置。新的串行 task 必须填写 `serial_reason`，超过六个 target 的 task 必须拆分或声明 `scope_reason`。
-
-## 插件快速开始
-
-推荐提示词：
-
-```text
-/ospec 帮我在当前项目打开 Stitch 插件。
-/ospec 帮我在当前项目打开 Checkpoint 插件。
-```
-
-AI / `/ospec`：
-
-- 如果用户说“帮我打开 Stitch 插件”，应理解为“先检查 Stitch 是否已经全局安装；未安装才安装；然后在当前项目启用”
-- 如果用户说“帮我打开 Checkpoint 插件”，应理解为“先检查 Checkpoint 是否已经全局安装；未安装才安装；然后在当前项目启用”
-- 插件启用后，详细说明会同步到 `.ospec/plugins/<plugin>/docs/`
-- 真正执行前，先用 `ospec plugins info <plugin>` 或 `ospec plugins installed` 检查插件是否已全局安装
-- 如果插件已经安装，就跳过安装，直接在当前项目里启用
-- 只有用户明确要求“更新所有已安装插件”时，AI 才能运行 `ospec plugins update --all`
-
-命令行：
-
-```bash
-ospec plugins list
-ospec plugins info stitch
-ospec plugins install stitch
-ospec plugins enable stitch [path]
-```
-
-```bash
-ospec plugins list
-ospec plugins info checkpoint
-ospec plugins install checkpoint
-ospec plugins enable checkpoint [path] --base-url <url>
-```
 
 ## 推荐流程
 
@@ -155,7 +119,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - workflow flags 可以激活内建 agent 质量策略步骤：`tdd_cycle`、`root_cause_debug` 和 `verification_evidence`。被激活的步骤会写入 change frontmatter 的 `optional_steps`，并且必须在 `tasks.md`、`verification.md` 和归档就绪检查中被覆盖。
 - 用 `proposal.md` 记录为什么要做、范围和验收标准。
 - 进入已有 OSpec 项目时，用 `ospec session [path]` 写入 `.ospec/session-brief.json` 和 `.ospec/session-brief.md`，记录 active work、`change` 或 `goal` profile、队列、cache fingerprint 和按 profile 生成的下一步命令。Change 直接从五个经典文件继续，只有 Goal 才运行 `ospec execute bootstrap`。
-- 用 `ospec session hook [path]` 写入 `.ospec/hooks/session-start.json`、`.ospec/hooks/session-start.md`、`.ospec/hooks/using-ospec.json` 和 `.ospec/hooks/using-ospec.md`，供不同 harness 按需接入 session-start。这些 artifacts 会告诉 Codex、Claude、Gemini、OpenCode、Cursor、Copilot 和 generic harness：刷新 session brief、按 profile 选择命令、只为 active Goal 运行 bootstrap，并读取 decision/plugin gate 来源。这个 hook 不启动 worker、不运行测试、不检查 git、不归档、不编辑源码。加上 `--target claude --apply` 还会在 `.ospec/hooks/claude/` 写入 Claude Code hook bundle 并幂等合并进 `.claude/settings.json`；这些 hook 在工具层宣告每次子 agent 派发和每条 `ospec` 命令，存在未决 required 决策时硬阻断子 agent 派发，并每轮重申 `Announce-Before-Act` / `Brainstorm-First` 契约（从下一次 Claude Code 会话开始生效）。
+- 用 `ospec session hook [path]` 写入 `.ospec/hooks/session-start.json`、`.ospec/hooks/session-start.md`、`.ospec/hooks/using-ospec.json` 和 `.ospec/hooks/using-ospec.md`，供不同 harness 按需接入 session-start。这些 artifacts 会告诉 Codex、Claude、Gemini、OpenCode、Cursor、Copilot 和 generic harness：刷新 session brief、按 profile 选择命令、只为 active Goal 运行 bootstrap，并读取 decision gate 来源。这个 hook 不启动 worker、不运行测试、不检查 git、不归档、不编辑源码。加上 `--target claude --apply` 还会在 `.ospec/hooks/claude/` 写入 Claude Code hook bundle 并幂等合并进 `.claude/settings.json`；这些 hook 在工具层宣告每次子 agent 派发和每条 `ospec` 命令，存在未决 required 决策时硬阻断子 agent 派发，并每轮重申 `Announce-Before-Act` / `Brainstorm-First` 契约（从下一次 Claude Code 会话开始生效）。
 - 只有需要在创建 change 前保留探索过程时，才用 `ospec brainstorm [path] --topic "..."` 写入 `.ospec/brainstorms/`；加 `--visual` 会额外生成本地静态 HTML companion，加 `--decision-gates` 会在能解析 active change 时，把方向、范围和验证风险选择写成 durable user decision gates。这个命令不会创建 change。
 - 用 `ospec plan [path] --change changes/active/<change>` 在 `.ospec/plans/<id>/plan-draft.md` 生成计划草稿；只有确认要覆盖该 change 的 `implementation-plan.md` 时才加 `--apply`。
 - 在 `ospec-goal` 中，用 `design.md` 在实现前记录选定方案、关键取舍、影响边界、风险和未决问题。
@@ -177,7 +141,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 - 用 `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` 生成一批并行安全的 `artifacts/agents/dispatches/*` worker 任务包和 `artifacts/agents/execution-session.json`。每个 packet 都包含 project session brief snapshot 和 worker profile，说明 capability tier、recommended target、target tool mapping、rationale 和 required behavior，方便把复杂任务交给更强的 worker，把简单任务保持轻量，并明确不同目标工具如何读取上下文、编辑文件、运行验证和记录完成。再用 `ospec execute complete <task-id> ...` 记录 worker 结果。用 `--task` 指定单个任务，用 `--limit` 限制批次大小。required pending user decision 会阻止 dispatch。这两个命令也会同步 `artifacts/agents/worker-status.md`；当 completion 记录 `NEEDS_CONTEXT` 或 `BLOCKED` 时，OSpec 会写入 `artifacts/agents/blockers/` 升级记录，供 controller 跟进。
 - dispatch 后用 `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--dry-run]` 写入 agent 启动计划。`runtimeAdapter` 只接受当前、target 匹配的模型原生 subagent capability，并给出该模型的 native primitive。OSpec 会写入 `artifacts/agents/launch-plan.json` 和 `artifacts/agents/launch-plan.md`，要求存在 active dispatch 且 workspace 为 ready，但不会自行启动 worker 进程。
 - 多 worker 执行服从 `runtimeAdapter.selected.nativeSubagent`：先生成并行安全 batch；所选 adapter 支持并行时，每个安全 packet 启动一个 worker。capability 缺失、过期或 target 不匹配时必须阻断，不得降级到 agent CLI 或当前 controller。所有 native wait 单次最多 60 秒，每个完成结果都立即持久化并重新 tick。
-- `ospec execute orchestrate`、`ospec execute launch ... --run --command "..."` 和 `ospec execute review ... --run --command "..."` 已移除 agent 执行能力；它们会在启动进程或创建 run artifact 之前返回迁移错误。
+- 不存在 agent CLI 执行路径。`ospec execute orchestrate` 命令已不存在；`ospec execute launch ... --run --command "..."` 和 `ospec execute review ... --run --command "..."` 会在启动进程或创建 run artifact 之前拒绝这些 flag。
 - blocked、needs-context 或 failed worker run 的问题修复后，用 `ospec execute retry [changes/active/<change>] --task task-id` 写入 `artifacts/agents/retries/`，把 task 重新打开，并生成新的 dispatch packet。已完成任务不会被默认重试；确需覆盖时必须显式传 `--force`。
 - 只有用户明确授权把已记录的外部验收义务延期到最终门时，才使用 `ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."`。该命令不会把 task 标记完成，也不会补造缺失证据；它只让那些仅等待该 blocker 的任务恢复为可派发。
 - controller-owned Goal 在 worker task 完成后以及 task graph 完成后，都用 `ospec loop tick [changes/active/<change>]` 派发 task/final review 并绑定真实 executor provenance；只有非 controller 流程才直接运行 `ospec execute review`。
@@ -211,8 +175,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 2. 恢复 Goal 时运行 `ospec execute bootstrap [changes/active/<goal>]`，先按它给出的 next instruction 继续，不要直接派发任务。
 3. 如果 bootstrap 或 status 显示 pending decision，打开 `artifacts/agents/decisions/index.md`，把对应 decision report 里的 `Chat Prompt` 展示给用户，再用 `ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user` 记录选择。
 4. 先运行 `ospec execute workspace [changes/active/<change>]`，再运行 `ospec execute dispatch [changes/active/<change>]`。使用 `ospec execute launch ... --json` 读取机器可读的 native subagent contract，由当前模型 harness 派发并记录真实 child result。
-5. 对启用 Checkpoint 的 change，运行 `ospec plugins doctor checkpoint [path]`，并在 closeout 前修复 `routes.yaml`、`flows.yaml`、baseline、screenshots、traces、console/network evidence、accessibility evidence 和 assertions。
-6. 用 `ospec execute status`、`ospec execute next` 和 `ospec execute finish` 确认 Checkpoint evidence readiness。required decisions 未解决或 active Checkpoint evidence 未完整时，finish、verify 和 archive 都会阻塞。
+5. 用 `ospec execute status`、`ospec execute next` 和 `ospec execute finish` 确认 closeout readiness。required decisions 未解决时，finish、verify 和 archive 都会阻塞。
 
 ## 升级已有项目
 
@@ -223,7 +186,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.10
+npm install -g @clawplays/ospec-cli@2.0.0
 ospec update [path]
 ```
 
@@ -234,38 +197,10 @@ npm install -g .
 ospec update [path]
 ```
 
-`ospec update [path]` 会刷新协议文档、工具链、托管 skills、归档布局元数据，以及已启用插件的项目资产。
-它也可以修复仍然保留 OSpec 痕迹、但缺少较新核心运行目录的旧项目，并规范化旧项目结构，例如把根目录里的 `build-index-auto.*` 工具迁移到 `.ospec/tools/`，并整理 `.skillrc` 里的旧版 Stitch 插件键。
+`ospec update [path]` 会刷新协议文档、工具链、托管 skills 和归档布局元数据。
+它也可以修复仍然保留 OSpec 痕迹、但缺少较新核心运行目录的旧项目，并规范化旧项目结构，例如把根目录里的 `build-index-auto.*` 工具迁移到 `.ospec/tools/`。
 如果 nested 项目里还保留着旧的 `.ospec/src/` 或 `.ospec/tests/` 知识目录，`ospec update [path]` 会把它们迁移到 `.ospec/knowledge/src/` 和 `.ospec/knowledge/tests/`。
-如果某个已启用插件已经在全局安装记录中，但包被用户手动删除了，`ospec update [path]` 会先尝试自动补装，再继续同步项目资产。
-如果某个已启用插件存在更新的兼容 npm 版本，`ospec update [path]` 会自动升级这个全局插件包，并输出从旧版本到新版本的升级明细。
-它不会升级当前项目里未启用的全局插件。
 它不会自动升级 CLI 本身。
 它不会自动把 classic 布局迁移成 nested 布局。
 如果你需要切换到新布局，请单独运行 `ospec layout migrate --to nested`。
-它不会自动安装全新插件，也不会自动启用插件，或自动迁移 active / queued changes。
-
-## 更新所有已安装插件
-
-推荐提示词：
-
-```text
-/ospec 更新这台机器上所有已安装的插件。
-```
-
-如果你想显式更新机器上所有已安装插件，而不是只更新当前项目已启用的插件，请使用：
-
-```bash
-ospec plugins update --all
-```
-
-常见变体：
-
-```bash
-ospec plugins update stitch
-ospec plugins update --all --check
-```
-
-`ospec plugins update --all` 会检查 OSpec 记录过的所有全局已安装插件，并在发现更高兼容版本时逐个升级。
-如果某个已安装插件包被手动删除，这个命令也会先尝试补装，再继续升级。
-AI / `/ospec` 只有在用户明确要求“更新所有已安装插件”时，才应该运行 `ospec plugins update --all`。
+它不会自动迁移 active / queued changes。

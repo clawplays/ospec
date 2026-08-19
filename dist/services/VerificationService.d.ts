@@ -22,7 +22,7 @@ export declare class VerificationService {
     private deps;
     /** Run the full protocol verification analysis for a resolved change directory. */
     verify(targetPath: string): Promise<VerificationOutcome>;
-    private addPluginChecks;
+    private verifyUnscoped;
     private addGoalDocumentReviewChecks;
     private findProjectRoot;
 }

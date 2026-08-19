@@ -29,6 +29,21 @@ export interface ArchiveProtocolState {
     goalReviewSummaryMessage?: string | null;
 }
 export declare class ArchiveGate {
+    /**
+     * The message for one required-step check.
+     *
+     * M-cfg2: the false branch used to be the single string "<step> required but
+     * not completed", printed regardless of whether the step was required. So a
+     * project with `require_skill_update: false` -- which is EVERY classic
+     * Change, because `ArchiveCommand` forces that flag off -- printed
+     *
+     *     PASS Skill Updated
+     *       Skill update required but not completed
+     *
+     * a line that contradicts its own verdict on the line above it. Three
+     * states, three messages.
+     */
+    private describeRequirement;
     checkArchiveReadiness(featureState: FeatureState, config: ArchiveGateConfig, protocolState?: ArchiveProtocolState): Promise<ArchiveCheckResult>;
 }
 export declare const archiveGate: ArchiveGate;

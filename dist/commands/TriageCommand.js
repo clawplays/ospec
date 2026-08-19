@@ -145,7 +145,7 @@ class TriageCommand extends BaseCommand_1.BaseCommand {
         let current = start;
         while (true) {
             if (await services_1.services.fileService.exists(path.join(current, constants_1.FILE_NAMES.SKILLRC))) {
-                const config = await services_1.services.configManager.loadConfig(current).catch(() => null);
+                const config = await services_1.services.configManager.loadConfigOrNull(current);
                 return { projectRoot: current, config };
             }
             const parent = path.dirname(current);

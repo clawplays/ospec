@@ -3,7 +3,7 @@
  * Error type definitions.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.VerificationError = exports.WorkflowError = exports.ConfigError = exports.FileOperationError = exports.ValidationError = exports.InvalidStateTransitionError = exports.FeatureAlreadyExistsError = exports.FeatureNotFoundError = exports.ProjectNotInitializedError = exports.OSpecError = void 0;
+exports.VerificationError = exports.WorkflowError = exports.ConfigError = exports.ConcurrentChangeStateError = exports.DamagedChangeStateError = exports.FileOperationError = exports.ValidationError = exports.InvalidStateTransitionError = exports.FeatureAlreadyExistsError = exports.FeatureNotFoundError = exports.ProjectNotInitializedError = exports.OSpecError = void 0;
 class OSpecError extends Error {
     constructor(message, code = 'OSPEC_ERROR', details) {
         super(message);
@@ -51,6 +51,38 @@ class FileOperationError extends OSpecError {
     }
 }
 exports.FileOperationError = FileOperationError;
+/**
+ * M-race1: one change directory whose `state.json` cannot be parsed.
+ *
+ * Thrown rather than returned so a single-change query stays loud, and typed
+ * rather than generic so an enumeration over many changes can catch exactly
+ * this one failure -- degrading the damaged change while still listing the
+ * healthy ones -- without also swallowing a bug in the item builder.
+ */
+class DamagedChangeStateError extends OSpecError {
+    constructor(changeName, reason) {
+        super(`Change '${changeName}' has an unreadable state.json: ${reason}`, 'DAMAGED_CHANGE_STATE', { changeName, reason });
+        this.changeName = changeName;
+        this.name = 'DamagedChangeStateError';
+    }
+}
+exports.DamagedChangeStateError = DamagedChangeStateError;
+/**
+ * M-race2: `state.json` changed underneath a read-assess-write.
+ *
+ * Typed so `finalizeChange` can retry exactly this failure once and let every
+ * other error through untouched -- a bare `catch` around a retry would also
+ * swallow a genuine archive-readiness refusal and try it again.
+ */
+class ConcurrentChangeStateError extends OSpecError {
+    constructor(changeName, reason) {
+        super(`Change '${changeName}' was modified by another process while finalizing: ${reason}. `
+            + 'Nothing was archived. Wait for the other operation to finish, then run finalize again.', 'CONCURRENT_CHANGE_STATE', { changeName, reason });
+        this.changeName = changeName;
+        this.name = 'ConcurrentChangeStateError';
+    }
+}
+exports.ConcurrentChangeStateError = ConcurrentChangeStateError;
 class ConfigError extends OSpecError {
     constructor(message, details) {
         super(message, 'CONFIG_ERROR', details);

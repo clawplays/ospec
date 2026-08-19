@@ -1,6 +1,6 @@
 # الاستخدام
 
-إذا كنت تستخدم OSpec أساسا عبر AI فابدأ بمطالبة قصيرة مثل `/ospec` أو `/ospec-change`. استخدم `/ospec-change` للتغييرات الصغيرة والروتينية، واستخدم `/ospec-goal` للعمل المعقد ذي full workflow. استخدم أوامر CLI في هذه الصفحة عندما تحتاج إلى مسار بديل أو إلى تنفيذ صريح.
+إذا كنت تستخدم OSpec أساسا عبر AI / `/ospec` فابدأ بمطالبة قصيرة مثل `/ospec` أو `/ospec-change`. استخدم `/ospec-change` للتغييرات الصغيرة والروتينية، واستخدم `/ospec-goal` للعمل المعقد ذي full workflow. استخدم أوامر CLI في هذه الصفحة عندما تحتاج إلى مسار بديل أو إلى تنفيذ صريح.
 
 ## الأوامر الشائعة
 
@@ -12,7 +12,13 @@ ospec init [path]
 ospec docs status [path]
 ospec docs generate [path]
 ospec changes status [path]
-ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
+ospec docs locate --feature <slug> | --affects <path> [--json]
+ospec docs obligations [changes/active/<change>] [--apply] [--json]
+ospec docs confirm [changes/active/<change>] --id <obligation-id> [--note "..."]
+ospec docs audit [path] [--json]
+ospec docs migrate [path] --plan|--verify|--finalize [--apply]
+ospec changes show <archive> [--md|--json]
+ospec index gc [path]ospec brainstorm [path] --topic "..." [--change name] [--output id] [--visual]
 ospec plan [path] [--change changes/active/<change>] [--from-brainstorm file] [--output id] [--apply]
 ospec change <change-name> [path]
 ospec goal <goal-name> [path]
@@ -64,14 +70,6 @@ ospec skill install
 ospec skill status-claude
 ospec skill install-claude
 ospec update [path]
-ospec plugins list
-ospec plugins install <plugin>
-ospec plugins installed
-ospec plugins update <plugin>
-ospec plugins update --all
-ospec plugins status [path]
-ospec plugins enable stitch [path]
-ospec plugins enable checkpoint [path] --base-url <url>
 ```
 
 كل أوامر `ospec execute` الخاصة بـ task graph/controller أعلاه مخصصة للـ Goal باستثناء `ospec execute decision` المشترك لتسجيل اختيارات المستخدم الدائمة. يستخدم Change الكلاسيكي `ospec progress` والتنفيذ المباشر و`ospec verify` على المستوى الأعلى و`review.md` الخفيف و`ospec finalize`، ولا ينشئ bootstrap أو task graph أو worker dispatch أو Loop artifacts الخاصة بالـ Goal.
@@ -87,40 +85,6 @@ ospec plugins enable checkpoint [path] --base-url <url>
 - **إغلاق الوثائق:** الإنشاء والحذف اللذان تمت مراجعتهما انتقالان فعليان للحالة. تجمع evidence من أول baseline حتى آخر completed dispatch، ويجب أن تطابق workspace أحدث declared-owner evidence. يمكن لمراجعة authoritative بحالة APPROVED ربط final snapshot الدقيق من دون استبدال meaningful-change chain. يحدث `ospec execute sync` worker status متعدد اللغات وCombined review checklist.
 - **Classic Change:** الأمر `ospec change` هو fast path المفضل ويبقى `ospec new` alias. لا تتم ترقية Change الذي اختاره المستخدم تلقائيا إلى Goal. يستخدم إرشادا مختصرا حسب المرحلة، ومراجعة خفيفة واحدة بواسطة AI الحالي، وقواعد توثيق عملية، وcloseout مشتقا، وإعادة بناء index مرة واحدة في finalize، وqueue متسلسلة. عندما تمر كل البوابات الأخرى يمكن أرشفة `APPROVED` و`APPROVED_WITH_CONCERNS` تلقائيا.
 - **Controller والتوازي:** تعود native wait الواحدة خلال 60 ثانية، لكن child الحي يمكنه العمل حتى absolute deadline مع تجديد heartbeat. fallback لتوازي implementation عند غياب native capacity هو 3 وليس 2. يمكن لـ session-bound capacity موجبة وأكبر دعم إعدادات مثل 5-10 عندما تسمح dependencies وfile conflicts وshared resources وtoken و`maxParallel`. تحتاج serial task الجديدة إلى `serial_reason`، ويجب تقسيم task التي تتجاوز ستة targets أو إعلان `scope_reason`.
-
-## البدء السريع مع الإضافات
-
-البرومبت الموصى به:
-
-```text
-/ospec افتح إضافة Stitch لهذا المشروع.
-/ospec افتح إضافة Checkpoint لهذا المشروع.
-```
-
-AI / `/ospec`:
-
-- طلب "افتح Stitch" يعني: افحص أولا هل Stitch مثبت عالميا، وإن لم يكن مثبتا فثبته، ثم فعله داخل المشروع الحالي
-- طلب "افتح Checkpoint" يعني: افحص أولا هل Checkpoint مثبت عالميا، وإن لم يكن مثبتا فثبته، ثم فعله داخل المشروع الحالي
-- بعد التفعيل ستتم مزامنة وثائق الإضافة التفصيلية إلى `.ospec/plugins/<plugin>/docs/`
-- قبل التثبيت افحص `ospec plugins info <plugin>` أو `ospec plugins installed`
-- إذا كانت الإضافة مثبتة عالميا بالفعل، فتجاوز التثبيت واكتف بتفعيلها داخل المشروع الحالي
-- لا تشغل `ospec plugins update --all` إلا إذا طلب المستخدم صراحة تحديث كل الإضافات المثبتة
-
-سطر الأوامر:
-
-```bash
-ospec plugins list
-ospec plugins info stitch
-ospec plugins install stitch
-ospec plugins enable stitch [path]
-```
-
-```bash
-ospec plugins list
-ospec plugins info checkpoint
-ospec plugins install checkpoint
-ospec plugins enable checkpoint [path] --base-url <url>
-```
 
 ## المسار الموصى به
 
@@ -176,7 +140,7 @@ ospec finalize [changes/active/<change>]
 - استخدم `ospec execute dispatch [changes/active/<change>] [--task task-id] [--limit N]` لإنشاء batch آمن للتوازي من worker packets داخل `artifacts/agents/dispatches/*` و`artifacts/agents/execution-session.json`. يتضمن كل packet project session brief snapshot وworker profile يوضح capability tier وrecommended target وtarget tool mapping وrationale وrequired behavior لتوجيه المهام المعقدة إلى worker أقوى والمهام البسيطة إلى worker أخف. ثم استخدم `ospec execute complete <task-id> ...` لتسجيل نتيجة worker. استخدم `--task` لمهمة واحدة صريحة و`--limit` لتحديد حجم batch. يقوم الأمران أيضا بمزامنة `artifacts/agents/worker-status.md`؛ وعندما تسجل completion الحالة `NEEDS_CONTEXT` أو `BLOCKED` يكتب OSpec ملفات escalation تحت `artifacts/agents/blockers/` لمتابعة controller.
 - بعد dispatch، استخدم `ospec execute launch [changes/active/<change>] [--task task-id] [--target codex|gpt|claude|gemini|grok|opencode|cursor|copilot] [--dry-run]` لكتابة agent launch plan. يقبل `runtimeAdapter` فقط model-native subagent capability حالية ومرتبطة بالـ target ويعرض native primitive. لا يشغّل OSpec worker process بنفسه.
 - نفّذ `runtimeAdapter.selected.nativeSubagent` وشغّل safe batch فقط بالتوازي. عند غياب capability أو انتهاء صلاحيتها يجب block من دون agent CLI أو current-controller fallback.
-- أزيل agent CLI execution. تعيد `execute orchestrate` و`launch --run --command` و`review --run --command` و`loop watch` migration error قبل تشغيل process أو إنشاء run artifact.
+- لا يوجد مسار agent CLI execution. لم يعد الأمران `execute orchestrate` و`loop watch` موجودين أصلاً، بينما يرفض `launch --run --command` / `review --run --command` هذه الـ flags قبل تشغيل process أو إنشاء run artifact.
 - استخدم `ospec execute retry [changes/active/<change>] --task task-id` بعد إصلاح worker run كان blocked أو needs-context أو failed. يكتب `artifacts/agents/retries/`، ويعيد فتح task، وينشئ dispatch packet جديدا. تحتاج المهام المكتملة إلى `--force` صراحة.
 - استخدم `ospec execute defer-blocker <task-id> [changes/active/<change>] --reason "..."` فقط بعد تفويض المستخدم الصريح لتأجيل قبول خارجي مسجل إلى البوابة النهائية. لا يجعل الأمر المهمة مكتملة ولا ينشئ evidence مفقودا؛ بل يجعل المهام التي تنتظر ذلك blocker وحده قابلة للإرسال.
 - في Goal مملوكة لـ controller، استخدم `ospec loop tick [changes/active/<change>]` بعد مهام worker وبعد اكتمال task graph لإصدار task/final reviews مرتبطة بـ executor provenance الحقيقي. استخدم `ospec execute review` مباشرةً فقط خارج controller Loop.
@@ -210,8 +174,7 @@ ospec finalize [changes/active/<change>]
 2. عند استئناف Goal شغّل `ospec execute bootstrap [changes/active/<goal>]` واتبع next instruction قبل dispatch العمل.
 3. إذا أظهر bootstrap أو status وجود pending decision، افتح `artifacts/agents/decisions/index.md`، واعرض `Chat Prompt` من decision report على المستخدم، ثم سجّل الإجابة عبر `ospec execute decision [changes/active/<change>] --id <id> --select <option-id> --answered-by user`.
 4. شغّل `ospec execute workspace [changes/active/<change>]` ثم `ospec execute dispatch [changes/active/<change>]`. استخدم `ospec execute launch ... --json` لقراءة native subagent contract، ثم dispatch عبر current model harness وسجّل real child result.
-5. في changes التي تفعّل Checkpoint، شغّل `ospec plugins doctor checkpoint [path]` وأصلح `routes.yaml` و`flows.yaml` وbaseline وscreenshots وtraces وconsole/network evidence وaccessibility evidence وassertions قبل closeout.
-6. استخدم `ospec execute status` و`ospec execute next` و`ospec execute finish` لتأكيد Checkpoint evidence readiness. يتم حجب finish وverify وarchive حتى تكتمل required decisions وactive Checkpoint evidence.
+5. استخدم `ospec execute status` و`ospec execute next` و`ospec execute finish` لتأكيد جاهزية closeout. يتم حجب finish وverify وarchive حتى تُحل required decisions.
 
 ## تحديث مشروع موجود
 
@@ -222,7 +185,7 @@ ospec finalize [changes/active/<change>]
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@1.9.10
+npm install -g @clawplays/ospec-cli@2.0.0
 ospec update [path]
 ```
 
@@ -233,38 +196,10 @@ npm install -g .
 ospec update [path]
 ```
 
-يقوم `ospec update [path]` بتحديث وثائق البروتوكول والأدوات والمهارات المُدارة وبيانات تخطيط الأرشفة وملفات الإضافات المفعلة.
-كما يمكنه إصلاح مشاريع OSpec القديمة التي ما زالت تحتفظ ببصمة OSpec ولكنها تفتقد بعض المجلدات الأساسية الأحدث، كما ينقل `build-index-auto.*` من الجذر إلى `.ospec/tools/` ويطبع مفاتيح Stitch القديمة داخل `.skillrc` إلى البنية الجديدة.
+يقوم `ospec update [path]` بتحديث وثائق البروتوكول والأدوات والمهارات المُدارة وبيانات تخطيط الأرشفة.
+كما يمكنه إصلاح مشاريع OSpec القديمة التي ما زالت تحتفظ ببصمة OSpec ولكنها تفتقد بعض المجلدات الأساسية الأحدث، كما ينقل `build-index-auto.*` من الجذر إلى `.ospec/tools/`.
 وإذا ظل مشروع nested يحتوي على أدلة معرفة قديمة تحت `.ospec/src/` أو `.ospec/tests/` فإن `ospec update [path]` ينقلها إلى `.ospec/knowledge/src/` و `.ospec/knowledge/tests/`.
-إذا كانت حزمة إضافة مفعلة قد حُذفت يدويا من التثبيت العالمي، فإن `ospec update [path]` يحاول أولا استعادتها قبل متابعة مزامنة أصول المشروع.
-إذا كانت هناك نسخة npm متوافقة أحدث لإضافة مفعلة بالفعل، فإن `ospec update [path]` يرقّي هذه الحزمة العالمية تلقائيا ويعرض الانتقال من النسخة القديمة إلى النسخة الجديدة.
-لكنه لا يرقّي الإضافات العالمية غير المفعلة في المشروع الحالي.
 ولا يرقّي CLI نفسه.
-ولا يثبت إضافات جديدة تلقائيا، ولا يفعّل الإضافات تلقائيا، ولا يرحّل active / queued changes تلقائيا.
-
-## تحديث كل الإضافات المثبتة
-
-البرومبت الموصى به:
-
-```text
-/ospec حدّث كل الإضافات المثبتة على هذا الجهاز.
-```
-
-إذا أردت تحديث كل الإضافات المثبتة على الجهاز، وليس فقط إضافات المشروع الحالي، فاستخدم الأمر الصريح:
+ولا يرحّل active / queued changes تلقائيا.
 
 يقوم `ospec update [path]` فقط بإصلاح المشروع الحالي وتحديثه، لكنه لا يحول تخطيط classic إلى nested تلقائيا. وعندما تريد تغيير التخطيط استخدم `ospec layout migrate --to nested`.
-
-```bash
-ospec plugins update --all
-```
-
-صيغ مفيدة:
-
-```bash
-ospec plugins update stitch
-ospec plugins update --all --check
-```
-
-يقوم `ospec plugins update --all` بفحص كل الإضافات المثبتة عالميا والمسجلة لدى OSpec، ويرقّي كل إضافة عندما يتوفر إصدار متوافق أحدث.
-وإذا كانت حزمة إضافة مثبتة قد حُذفت يدويا، فإنه يحاول أولا استعادتها قبل الترقية.
-وفي مسارات AI / `/ospec` يجب تشغيل `ospec plugins update --all` فقط عندما يطلب المستخدم صراحة تحديث جميع الإضافات المثبتة.

@@ -36,11 +36,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExecuteCommand = void 0;
 const path = __importStar(require("path"));
 const fs_1 = require("fs");
+const fs_2 = require("fs");
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const outputBudget_1 = require("../utils/outputBudget");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
 const WorkflowProfile_1 = require("../utils/WorkflowProfile");
 const subcommandHelp_1 = require("../utils/subcommandHelp");
+const structuredReports_1 = require("../utils/structuredReports");
+const ShellQuote_1 = require("../utils/ShellQuote");
 const BaseCommand_1 = require("./BaseCommand");
 const SessionCommand_1 = require("./SessionCommand");
 class ExecuteCommand extends BaseCommand_1.BaseCommand {
@@ -71,7 +75,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                     await this.preflight(args);
                     return;
                 case 'status':
-                    await this.status(args[0]);
+                    await this.status(args);
                     return;
                 case 'next':
                     await this.next(args[0]);
@@ -90,9 +94,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                     return;
                 case 'dispatch':
                     await this.dispatch(args);
-                    return;
-                case 'orchestrate':
-                    await this.orchestrate(args);
                     return;
                 case 'launch':
                     await this.launch(args);
@@ -124,6 +125,9 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 case 'decision':
                     await this.decision(args);
                     return;
+                case 'review-decision':
+                    await this.reviewDecision(args);
+                    return;
                 case 'debug':
                     await this.debug(args);
                     return;
@@ -145,11 +149,65 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             throw error;
         }
     }
-    async status(inputPath) {
-        const changePath = await this.resolveGoalChangePath(inputPath, 'status');
-        const progressProjection = await services_1.services.taskGraphExecutionService.reconcileGoalProgress(changePath);
+    /*
+     * S7 / P1: `execute status` is a read command, and it used to open with
+     * `reconcileGoalProgress`, which takes the task-graph MUTATION lease and
+     * rewrites the graph, the checklist and the progress projection. Polling
+     * status therefore fought a running controller for the lease and could
+     * change the very state it was reporting. Reconciliation is now opt-in
+     * behind `--repair`; the report itself is unchanged.
+     *
+     * FIX-2 / D4 + D10: "does not repair" is not the same as "does not
+     * report". Dropping the call also dropped every progress-projection line
+     * from the output -- five lines from the human report and the
+     * `progressProjection=` line from `--brief`, which is documented as the
+     * surface controller loops parse. `inspectGoalProgress` recomputes the
+     * projection read-only, so the whole diagnostic is back on the default
+     * path and only the *writes* stay behind `--repair`.
+     */
+    async status(args = []) {
+        const repair = args.includes('--repair');
+        const positional = args.filter(arg => arg !== '--repair');
+        /*
+         * FIX-2 / D13: `main` ignored unknown flags here, so `--repiar` was a
+         * silent no-op that reported an unreconciled projection and looked like
+         * a success. Rejecting is the right call for a flag that changes
+         * whether the command writes; keep it, and name what IS accepted so
+         * the message is actionable rather than just strict.
+         */
+        const unknownFlag = positional.find(arg => arg.startsWith('--'));
+        if (unknownFlag) {
+            throw new Error(`Unexpected execute status argument: ${unknownFlag}. Accepted flags: --brief, --repair.`);
+        }
+        const changePath = await this.resolveGoalChangePath(positional[0], 'status');
+        /*
+         * The projection reads each task's review decision, and reading a
+         * decision validates that task's review evidence -- one `git rev-parse
+         * HEAD` and one cache-file read per task if they are not shared.
+         * Measured on the 15-task hot-path fixture: 894 ms / 15 git spawns
+         * unscoped (which is what `main` paid), 20 ms / 1 inside a scope. The
+         * scope is read-only, so it is opened only on the default path;
+         * `--repair` writes under the mutation lease and must not memoise
+         * across its own invalidation.
+         */
+        const progressProjection = repair
+            ? await services_1.services.taskGraphExecutionService.reconcileGoalProgress(changePath)
+            : await services_1.services.taskGraphExecutionService.withValidationScope(() => services_1.services.taskGraphExecutionService.inspectGoalProgress(changePath));
         const report = await services_1.services.taskGraphExecutionService.getReport(changePath);
         this.printStatus(report, progressProjection);
+        if (!repair && !this.brief) {
+            // Keeps `--repair` discoverable now that the default path no longer
+            // reconciles on the user's behalf, and -- FIX-2 / D16 -- says
+            // whether a repair is actually pending instead of printing an
+            // unconditional note that carries no signal. Suppressed under
+            // `--brief`, whose output is parsed by controller loops.
+            const repairPending = progressProjection.graphChanged
+                || progressProjection.tasksChanged
+                || progressProjection.projectionChanged;
+            this.info(repairPending
+                ? 'Progress projection computed read-only, and a repair IS pending. Re-run with --repair to reconcile and repair the task graph.'
+                : 'Progress projection computed read-only; nothing needs repair. Re-run with --repair to reconcile anyway.');
+        }
     }
     async bootstrap(inputPath) {
         const changePath = await this.resolveGoalChangePath(inputPath, 'bootstrap');
@@ -228,9 +286,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async launch(args) {
         const parsed = this.parseLaunchArgs(args);
-        if (parsed.run) {
-            throw new Error('Execute launch --run was removed. Use the launch artifact nativeSubagent contract with the current model harness.');
-        }
         const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'launch');
         const result = await services_1.services.taskGraphExecutionService.planLaunch(changePath, {
             taskId: parsed.taskId,
@@ -247,9 +302,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         this.printLaunch(result);
     }
-    async orchestrate(_args) {
-        throw new Error('Execute orchestrate was removed. Use ospec loop run --once and dispatch its action batch through model-native subagents.');
-    }
     async collect(args) {
         const parsed = this.parseCollectArgs(args);
         const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'collect');
@@ -257,7 +309,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             taskId: parsed.taskId,
             runId: parsed.runId,
             status: parsed.status,
-            summary: parsed.summary,
+            summary: this.pruneEvidenceText('collect', parsed.summary),
         });
         this.printCollect(result);
     }
@@ -267,7 +319,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const result = await services_1.services.taskGraphExecutionService.retryWorkerRun(changePath, {
             taskId: parsed.taskId,
             runId: parsed.runId,
-            summary: parsed.summary,
+            summary: this.pruneEvidenceText('retry', parsed.summary),
             force: parsed.force,
         });
         this.printRetry(result);
@@ -275,11 +327,25 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     async complete(args) {
         const parsed = this.parseCompleteArgs(args);
         const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'complete');
+        // The JSON report, when present, is the authority for status and
+        // summary. The hand-written Markdown path still works untouched when
+        // --report-file is absent.
+        const report = parsed.reportFile
+            ? (0, structuredReports_1.parseWorkerReport)(await fs_2.promises.readFile(path.resolve(process.cwd(), parsed.reportFile), 'utf8'), path.resolve(process.cwd(), parsed.reportFile))
+            : undefined;
         const result = await services_1.services.taskGraphExecutionService.complete(changePath, parsed.taskId, {
-            status: parsed.status,
-            summary: parsed.summary,
+            status: report ? this.normalizeCompletionStatus(report.status) : parsed.status,
+            // F1/F2 x F3: the report is the authority for WHICH summary is
+            // recorded; F3's budget still bounds WHAT lands in the record, so a
+            // --report-file is not a way around it. At stock settings this is a
+            // no-op on the report path -- the schema caps `summary` at 2000
+            // characters, below the 5120 prose cap -- but the two are
+            // independently configurable and the record must stay bounded
+            // whichever source filled it.
+            summary: this.pruneEvidenceText('complete', report ? report.summary : parsed.summary),
             usageFile: parsed.usageFile,
             dispatchId: parsed.dispatchId,
+            report,
         });
         this.printCompletion(result);
     }
@@ -300,9 +366,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async review(args) {
         const parsed = this.parseReviewArgs(args);
-        if (parsed.run) {
-            throw new Error('Execute review --run was removed. Dispatch the review packet through a fresh model-native subagent.');
-        }
         const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'review');
         if (await services_1.services.loopService.exists(changePath)) {
             const loopConfig = await services_1.services.loopService.readConfig(changePath);
@@ -321,7 +384,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'feedback');
         const result = await services_1.services.taskGraphExecutionService.planReviewFeedback(changePath, {
             stage: parsed.stage,
-            summary: parsed.summary,
+            summary: this.pruneEvidenceText('feedback', parsed.summary),
         });
         this.printReviewFeedback(result);
     }
@@ -332,6 +395,69 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const changePath = await this.resolveGoalChangePath(args[0], 'repair');
         const result = await services_1.services.taskGraphExecutionService.createRepairWave(changePath);
         this.printRepairWave(result);
+    }
+    /**
+     * F2: settle an issued review from a validated JSON decision file.
+     *
+     * The Markdown path is untouched: a reviewer may still edit the artifact's
+     * frontmatter by hand. This is the structured alternative, and it also
+     * writes the sibling `*.findings.json`, which is what stops the review
+     * gates falling back to Markdown parsing and stamping every finding
+     * `severity: unknown` (which they treat as blocking).
+     */
+    async reviewDecision(args) {
+        let inputPath;
+        let reviewPath;
+        let decisionFile;
+        const takeValue = (flag, index) => {
+            const value = args[index + 1];
+            if (!value || value.startsWith('--'))
+                throw new Error(`Execute review-decision requires a value after ${flag}.`);
+            return value;
+        };
+        for (let index = 0; index < args.length; index += 1) {
+            const arg = args[index];
+            if (arg === '--review') {
+                reviewPath = takeValue(arg, index);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--review=')) {
+                reviewPath = arg.slice('--review='.length);
+                continue;
+            }
+            if (arg === '--decision-file') {
+                decisionFile = takeValue(arg, index);
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--decision-file=')) {
+                decisionFile = arg.slice('--decision-file='.length);
+                continue;
+            }
+            if (arg.startsWith('--'))
+                throw new Error(`Unknown execute review-decision flag: ${arg}`);
+            if (!inputPath) {
+                inputPath = arg;
+                continue;
+            }
+            throw new Error(`Unexpected execute review-decision argument: ${arg}`);
+        }
+        if (!decisionFile)
+            throw new Error('Execute review-decision requires --decision-file <json>.');
+        if (!reviewPath)
+            throw new Error('Execute review-decision requires --review <path-to-review.md>, the expectedEvidencePath from the review action.');
+        const changePath = await this.resolveGoalChangePath(inputPath, 'review-decision');
+        const decisionPath = path.resolve(process.cwd(), decisionFile);
+        const decision = (0, structuredReports_1.parseReviewDecision)(await fs_2.promises.readFile(decisionPath, 'utf8'), decisionPath);
+        const result = await services_1.services.taskGraphExecutionService.recordReviewDecision(changePath, {
+            reviewArtifactPath: reviewPath,
+            decision,
+        });
+        this.success(`Review decision recorded: ${result.decision} with ${result.findings} structured finding(s).`);
+        console.log(`Review artifact: ${result.reviewArtifactPath}`);
+        console.log(`Structured findings: ${result.findingsPath}`);
+        console.log(`Next: ${result.nextInstruction}`);
     }
     async decision(args) {
         const parsed = this.parseDecisionArgs(args);
@@ -349,6 +475,21 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         });
         this.printDecision(result);
     }
+    /**
+     * Phase 5 / F3. Evidence gets the same budget as console output.
+     *
+     * `execute verify --command` and its siblings take the raw output of a test
+     * run in `--summary`; a failing suite pastes tens of thousands of characters
+     * in, and every later reader of the evidence record pays for all of them.
+     * The pruned value is still a plain string carrying the head, the notice and
+     * the tail, so nothing about the evidence record's SHAPE changes here -- the
+     * spill path travels inside the text, not in a new field.
+     */
+    pruneEvidenceText(label, text) {
+        if (typeof text !== 'string' || !text)
+            return text;
+        return (0, outputBudget_1.pruneTextWithSpill)(text, { commandLabel: `execute-${label}` }).text;
+    }
     async verify(args) {
         const parsed = this.parseVerificationArgs(args);
         const changePath = await this.resolveGoalChangePath(parsed.inputPath, 'verify');
@@ -356,7 +497,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             command: parsed.command,
             status: parsed.status,
             exitCode: parsed.exitCode,
-            summary: parsed.summary,
+            timedOut: parsed.timedOut,
+            signal: parsed.signal,
+            infraFailure: parsed.infraFailure,
+            summary: this.pruneEvidenceText('verify', parsed.summary),
             satisfies: parsed.satisfies,
             loopActionId: parsed.loopActionId,
             loopActionItemId: parsed.loopActionItemId,
@@ -378,8 +522,11 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             command: parsed.command,
             status: parsed.status,
             exitCode: parsed.exitCode,
+            timedOut: parsed.timedOut,
+            signal: parsed.signal,
+            infraFailure: parsed.infraFailure,
             testName: parsed.testName,
-            summary: parsed.summary,
+            summary: this.pruneEvidenceText('tdd', parsed.summary),
         });
         this.printTddEvidence(result);
     }
@@ -393,7 +540,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             rootCause: parsed.rootCause,
             command: parsed.command,
             status: parsed.status,
-            summary: parsed.summary,
+            summary: this.pruneEvidenceText('debug', parsed.summary),
         });
         this.printDebugEvidence(result);
     }
@@ -426,7 +573,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     async resolveChangePath(inputPath) {
         const cwd = process.cwd();
-        const config = await services_1.services.configManager.loadConfig(cwd).catch(() => null);
+        const config = await services_1.services.configManager.loadConfigOrNull(cwd);
         const candidatePath = inputPath
             ? (path.isAbsolute(inputPath) ? inputPath : (0, ProjectLayout_1.resolveManagedInputPath)(cwd, inputPath, config))
             : cwd;
@@ -441,7 +588,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (activeNames.length > 1) {
             throw new Error(`Multiple active changes found: ${activeNames.join(', ')}. Pass one change path explicitly.`);
         }
-        const projectConfig = await services_1.services.configManager.loadConfig(resolvedCandidatePath).catch(() => null);
+        const projectConfig = await services_1.services.configManager.loadConfigOrNull(resolvedCandidatePath);
         return (0, ProjectLayout_1.resolveManagedPath)(resolvedCandidatePath, `${constants_1.DIR_NAMES.CHANGES}/${constants_1.DIR_NAMES.ACTIVE}/${activeNames[0]}`, projectConfig);
     }
     printStatus(report, progressProjection) {
@@ -483,6 +630,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             console.log(`Accepted tasks projected: ${progressProjection.checkedTaskIds.length}/${report.taskCount}`);
             console.log(`Raw graph review repairs: ${progressProjection.reviewDecisionsRepaired.length}`);
             console.log(`Unmatched accepted task IDs: ${progressProjection.unmatchedAcceptedTaskIds.length}`);
+            // FIX-2 / D4: `status: blocked` on its own never said *what* was
+            // unreconcilable, so the user had to run `--repair` to find out.
+            for (const issue of progressProjection.issues)
+                console.log(`Progress projection issue: ${issue}`);
         }
         console.log(`Graph-safe batch: ${scheduling.graphSafeCount}`);
         console.log(`Serial reason missing: ${scheduling.serialWithoutReason.join(', ') || 'none'}`);
@@ -490,7 +641,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             console.log(`Pending required decisions: ${report.decisions.pendingRequired}`);
             console.log(`Pending optional decisions: ${report.decisions.pendingOptional}`);
         }
-        this.printCheckpointEvidenceSummary(report.checkpointEvidence);
         this.printControllerSummary(report);
         this.printTaskList('\nDispatchable next tasks:', report.dispatchableTasks);
         this.printTaskList('\nRunning tasks:', report.runningTasks);
@@ -505,27 +655,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log('\nNext instruction:');
         console.log(`  ${report.nextInstruction}`);
         console.log('');
-    }
-    printCheckpointEvidenceSummary(evidence) {
-        if (!evidence?.active) {
-            return;
-        }
-        console.log(`Checkpoint evidence: ${evidence.status}`);
-        console.log(`Checkpoint gate: ${evidence.gateStatus}`);
-        console.log(`Checkpoint active steps: ${evidence.activeSteps.join(', ')}`);
-        console.log(`Checkpoint counts: screenshots ${evidence.screenshots}, traces ${evidence.traces}, visual diffs ${evidence.visualDiffs}, routes ${evidence.routes}, flows ${evidence.flows}, assertions ${evidence.assertions}, console events ${evidence.consoleEvents}, network events ${evidence.networkEvents}, accessibility ${evidence.accessibility}`);
-        if (evidence.missing.length > 0) {
-            console.log('Checkpoint missing evidence:');
-            for (const item of evidence.missing) {
-                console.log(`  - ${item}`);
-            }
-        }
-        if (evidence.nextActions.length > 0) {
-            console.log('Checkpoint next actions:');
-            for (const action of evidence.nextActions) {
-                console.log(`  - ${action}`);
-            }
-        }
     }
     printBootstrap(result) {
         if (this.brief) {
@@ -543,7 +672,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Status: ${result.status}`);
         console.log(`Artifact: ${result.artifactPath}`);
         console.log(`Report: ${result.reportPath}`);
-        this.printCheckpointEvidenceSummary(result.checkpointEvidence);
         if (result.blockers.length > 0) {
             console.log('\nBlockers:');
             for (const blocker of result.blockers) {
@@ -764,68 +892,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`  ${result.nextInstruction}`);
         console.log('');
     }
-    printOrchestration(result) {
-        console.log('\nWorker Orchestration');
-        console.log('====================\n');
-        console.log(`Change path: ${result.changePath}`);
-        console.log(`Project root: ${result.projectRoot}`);
-        console.log(`Status: ${result.status}`);
-        console.log(`Artifact: ${result.artifactPath}`);
-        console.log(`Report: ${result.reportPath}`);
-        console.log(`Rounds: ${result.rounds.length}`);
-        for (const round of result.rounds) {
-            console.log(`- Round ${round.round}: ${round.tasks.length} task(s)`);
-            for (const task of round.tasks) {
-                console.log(`  - ${task.taskId}: run=${task.runId || 'not run'} exit=${task.exitCode ?? 'unknown'} collected=${task.collected ? 'yes' : 'no'} completion=${task.completionStatus || 'none'}`);
-                if (task.error) {
-                    console.log(`    Error: ${task.error}`);
-                }
-            }
-        }
-        if (result.failedTasks.length > 0) {
-            console.log('\nFailed tasks:');
-            for (const task of result.failedTasks) {
-                console.log(`  - ${task.taskId}: run=${task.runId || 'not recorded'} exit=${task.exitCode ?? 'unknown'} completion=${task.completionStatus || 'none'}`);
-                console.log(`    Retry: ${task.retryCommand}`);
-            }
-        }
-        if (result.blockers.length > 0) {
-            console.log('\nBlockers:');
-            for (const blocker of result.blockers) {
-                console.log(`  - ${blocker}`);
-            }
-        }
-        if (result.warnings.length > 0) {
-            console.log('\nWarnings:');
-            for (const warning of result.warnings) {
-                console.log(`  - ${warning}`);
-            }
-        }
-        console.log('\nNext instruction:');
-        console.log(`  ${result.nextInstruction}`);
-        console.log('');
-    }
-    printWorkerRun(result) {
-        console.log('\nWorker Run Recorded');
-        console.log('===================\n');
-        console.log(`Change path: ${result.changePath}`);
-        console.log(`Run: ${result.record.id}`);
-        console.log(`Kind: ${result.record.kind}`);
-        console.log(`Target: ${result.record.target}`);
-        console.log(`Task: ${result.record.taskId || 'not applicable'}`);
-        console.log(`Status: ${result.record.status}`);
-        console.log(`Exit code: ${result.record.exitCode ?? 'unknown'}`);
-        console.log(`Timed out: ${result.record.timedOut ? 'yes' : 'no'}`);
-        console.log(`Timeout ms: ${result.record.timeoutMs ?? 'none'}`);
-        console.log(`Command: ${result.record.command}`);
-        console.log(`Record: ${result.recordPath}`);
-        console.log(`Report: ${result.reportPath}`);
-        console.log(`Stdout: ${result.stdoutPath}`);
-        console.log(`Stderr: ${result.stderrPath}`);
-        console.log('\nNext instruction:');
-        console.log(`  ${result.nextInstruction}`);
-        console.log('');
-    }
     printCollect(result) {
         console.log('\nWorker Run Collected');
         console.log('====================\n');
@@ -975,7 +1041,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         console.log(`Report: ${result.reportPath}`);
         console.log(`Target branch: ${result.targetBranch}`);
         console.log(`Remote: ${result.remote}`);
-        this.printCheckpointEvidenceSummary(result.checkpointEvidence);
         if (result.blockers.length > 0) {
             console.log('\nBlockers:');
             for (const blocker of result.blockers) {
@@ -1093,29 +1158,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 console.log(`  - ${warning}`);
             }
         }
-        console.log('\nNext instruction:');
-        console.log(`  ${result.nextInstruction}`);
-        console.log('');
-    }
-    printReviewRun(result) {
-        console.log('\nReview Run Recorded');
-        console.log('===================\n');
-        console.log(`Change path: ${result.changePath}`);
-        console.log(`Stage: ${result.review.dispatch.stage}`);
-        if (result.review.dispatch.taskId) {
-            console.log(`Task: ${result.review.dispatch.taskId}`);
-        }
-        console.log(`Reviewer: ${result.review.dispatch.reviewerRole}`);
-        console.log(`Run: ${result.run.record.id}`);
-        console.log(`Run status: ${result.run.record.status}`);
-        console.log(`Exit code: ${result.run.record.exitCode ?? 'unknown'}`);
-        console.log(`Decision: ${result.decision || 'not recorded'}`);
-        console.log(`Review artifact: ${result.review.dispatch.reviewArtifactPath}`);
-        console.log(`Run record: ${result.run.recordPath}`);
-        console.log(`Run report: ${result.run.reportPath}`);
-        console.log(`Stdout: ${result.run.stdoutPath}`);
-        console.log(`Stderr: ${result.run.stderrPath}`);
-        console.log(`Worker status: ${result.workerStatusPath}`);
         console.log('\nNext instruction:');
         console.log(`  ${result.nextInstruction}`);
         console.log('');
@@ -1396,11 +1438,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         const blocked = [...report.invalidTasks, ...report.blockedTasks];
         return blocked.slice(0, 3).map(item => `${item.task.id}: ${item.reasons.join(', ')}`);
     }
+    /**
+     * See `utils/ShellQuote`. A fourth copy of the rule, with the same two
+     * defects as `BrainstormCommand`'s: only `"` escaped, and `\` in the raw
+     * fast path so Windows paths were emitted unquoted.
+     */
     quoteCommandArg(value) {
-        if (/^[-A-Za-z0-9_./:@\\]+$/.test(value)) {
-            return value;
-        }
-        return `"${value.replace(/"/g, '\\"')}"`;
+        return (0, ShellQuote_1.quoteShellArg)(value);
     }
     printTaskList(title, tasks) {
         if (tasks.length === 0) {
@@ -1466,115 +1510,12 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         return { inputPath, taskId, limit };
     }
-    parseOrchestrateArgs(args) {
-        let inputPath;
-        let command;
-        let target;
-        let limit;
-        let maxRounds;
-        let timeoutMs;
-        let dryRun = false;
-        let collect = true;
-        let continueOnFailure = false;
-        for (let index = 0; index < args.length; index += 1) {
-            const arg = args[index];
-            if (arg === '--command') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute orchestrate requires a value after --command.');
-                }
-                command = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--command=')) {
-                command = arg.slice('--command='.length);
-                continue;
-            }
-            if (arg === '--target') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute orchestrate requires a value after --target.');
-                }
-                target = this.normalizeWorkerToolTarget(value);
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--target=')) {
-                target = this.normalizeWorkerToolTarget(arg.slice('--target='.length));
-                continue;
-            }
-            if (arg === '--limit') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute orchestrate requires a value after --limit.');
-                }
-                limit = this.parsePositiveInteger(value, 'Execute orchestrate --limit');
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--limit=')) {
-                limit = this.parsePositiveInteger(arg.slice('--limit='.length), 'Execute orchestrate --limit');
-                continue;
-            }
-            if (arg === '--max-rounds') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute orchestrate requires a value after --max-rounds.');
-                }
-                maxRounds = this.parsePositiveInteger(value, 'Execute orchestrate --max-rounds');
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--max-rounds=')) {
-                maxRounds = this.parsePositiveInteger(arg.slice('--max-rounds='.length), 'Execute orchestrate --max-rounds');
-                continue;
-            }
-            if (arg === '--timeout-ms') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute orchestrate requires a value after --timeout-ms.');
-                }
-                timeoutMs = this.parsePositiveInteger(value, 'Execute orchestrate --timeout-ms');
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--timeout-ms=')) {
-                timeoutMs = this.parsePositiveInteger(arg.slice('--timeout-ms='.length), 'Execute orchestrate --timeout-ms');
-                continue;
-            }
-            if (arg === '--dry-run') {
-                dryRun = true;
-                continue;
-            }
-            if (arg === '--no-collect') {
-                collect = false;
-                continue;
-            }
-            if (arg === '--continue-on-failure') {
-                continueOnFailure = true;
-                continue;
-            }
-            if (arg.startsWith('--')) {
-                throw new Error(`Unknown execute orchestrate flag: ${arg}`);
-            }
-            if (!inputPath) {
-                inputPath = arg;
-                continue;
-            }
-            throw new Error(`Unexpected execute orchestrate argument: ${arg}`);
-        }
-        return { inputPath, command, target, limit, maxRounds, timeoutMs, dryRun, collect, continueOnFailure };
-    }
     parseLaunchArgs(args) {
         let inputPath;
         let taskId;
         let target;
         let dryRun = false;
-        let run = false;
         let json = false;
-        let command;
-        let timeoutMs;
         let primitive;
         let until;
         let maxIterations;
@@ -1615,35 +1556,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 json = true;
                 continue;
             }
-            if (arg === '--run') {
-                run = true;
-                continue;
-            }
-            if (arg === '--command') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute launch --run requires a value after --command.');
-                }
-                command = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--command=')) {
-                command = arg.slice('--command='.length);
-                continue;
-            }
-            if (arg === '--timeout-ms') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute launch requires a value after --timeout-ms.');
-                }
-                timeoutMs = this.parsePositiveInteger(value, 'Execute launch --timeout-ms');
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--timeout-ms=')) {
-                timeoutMs = this.parsePositiveInteger(arg.slice('--timeout-ms='.length), 'Execute launch --timeout-ms');
-                continue;
+            if (arg === '--run' || arg.startsWith('--run=')) {
+                throw new Error('Execute launch --run was removed. Use the launch artifact nativeSubagent contract with the current model harness.');
             }
             if (arg === '--primitive') {
                 const value = args[index + 1];
@@ -1706,16 +1620,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             }
             throw new Error(`Unexpected execute launch argument: ${arg}`);
         }
-        if (run && !command?.trim()) {
-            throw new Error('Execute launch --run requires --command.');
-        }
-        if (run && json) {
-            throw new Error('Execute launch --json cannot be combined with --run.');
-        }
         if (primitive !== undefined && !['subagent', 'goal', 'loop'].includes(primitive.trim().toLowerCase())) {
             throw new Error(`Execute launch --primitive must be one of subagent, goal, loop (received ${primitive}).`);
         }
-        return { inputPath, taskId, target, dryRun, run, json, command, timeoutMs, primitive, until, maxIterations, interval };
+        return { inputPath, taskId, target, dryRun, json, primitive, until, maxIterations, interval };
     }
     parseWorktreeArgs(args) {
         let inputPath;
@@ -1909,6 +1817,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let summary;
         let usageFile;
         let dispatchId;
+        let reportFile;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--status') {
@@ -1935,6 +1844,19 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             }
             if (arg.startsWith('--summary=')) {
                 summary = arg.slice('--summary='.length);
+                continue;
+            }
+            if (arg === '--report-file') {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error('Execute complete requires a value after --report-file.');
+                }
+                reportFile = value;
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--report-file=')) {
+                reportFile = arg.slice('--report-file='.length);
                 continue;
             }
             if (arg === '--usage-file') {
@@ -1980,7 +1902,13 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (!taskId) {
             throw new Error('Execute complete requires a task id.');
         }
-        return { taskId, inputPath, status, summary, usageFile, dispatchId };
+        if (reportFile && (status !== undefined || summary !== undefined)) {
+            // Two sources of truth for the same field is exactly the ambiguity
+            // the structured report exists to remove, so name both instead of
+            // picking one silently.
+            throw new Error(`Execute complete received --report-file ${reportFile} and also ${status !== undefined ? '--status' : '--summary'}. The report file already carries status and summary; drop the flag or drop the file.`);
+        }
+        return { taskId, inputPath, status, summary, usageFile, dispatchId, reportFile };
     }
     parseDeferBlockerArgs(args) {
         let taskId;
@@ -2160,12 +2088,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let inputPath;
         let stage;
         let taskId;
-        let run = false;
-        let command;
-        let decision;
-        let summary;
-        let timeoutMs;
-        let usageFile;
         for (let index = 0; index < args.length; index += 1) {
             const arg = args[index];
             if (arg === '--stage') {
@@ -2194,74 +2116,8 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 taskId = arg.slice('--task='.length);
                 continue;
             }
-            if (arg === '--run') {
-                run = true;
-                continue;
-            }
-            if (arg === '--command') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute review --run requires a value after --command.');
-                }
-                command = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--command=')) {
-                command = arg.slice('--command='.length);
-                continue;
-            }
-            if (arg === '--decision') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute review --run requires a value after --decision.');
-                }
-                decision = this.normalizeReviewRunDecision(value);
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--decision=')) {
-                decision = this.normalizeReviewRunDecision(arg.slice('--decision='.length));
-                continue;
-            }
-            if (arg === '--summary') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute review --run requires a value after --summary.');
-                }
-                summary = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--summary=')) {
-                summary = arg.slice('--summary='.length);
-                continue;
-            }
-            if (arg === '--timeout-ms') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute review requires a value after --timeout-ms.');
-                }
-                timeoutMs = this.parsePositiveInteger(value, 'Execute review --timeout-ms');
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--timeout-ms=')) {
-                timeoutMs = this.parsePositiveInteger(arg.slice('--timeout-ms='.length), 'Execute review --timeout-ms');
-                continue;
-            }
-            if (arg === '--usage-file') {
-                const value = args[index + 1];
-                if (!value || value.startsWith('--')) {
-                    throw new Error('Execute review requires a value after --usage-file.');
-                }
-                usageFile = value;
-                index += 1;
-                continue;
-            }
-            if (arg.startsWith('--usage-file=')) {
-                usageFile = arg.slice('--usage-file='.length);
-                continue;
+            if (arg === '--run' || arg.startsWith('--run=')) {
+                throw new Error('Execute review --run was removed. Dispatch the review packet through a fresh model-native subagent.');
             }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute review flag: ${arg}`);
@@ -2272,10 +2128,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
             }
             throw new Error(`Unexpected execute review argument: ${arg}`);
         }
-        if (run && !command?.trim()) {
-            throw new Error('Execute review --run requires --command.');
-        }
-        return { inputPath, stage, taskId, run, command, decision, summary, timeoutMs, usageFile };
+        return { inputPath, stage, taskId };
     }
     parseReviewFeedbackArgs(args) {
         let inputPath;
@@ -2495,6 +2348,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let command;
         let status;
         let exitCode;
+        // F5: read before the loop so the loop only has to skip these tokens.
+        const signal = this.parseOutcomeFlag(args, '--signal', 'verify');
+        const timedOut = args.includes('--timed-out');
+        const infraFailure = args.includes('--infra-failure');
         let summary;
         const satisfies = [];
         let loopActionId;
@@ -2593,6 +2450,16 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 executorId = arg.slice('--executor='.length).trim();
                 continue;
             }
+            if (arg === '--timed-out' || arg === '--infra-failure') {
+                continue;
+            }
+            if (arg === '--signal') {
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--signal=')) {
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute verify flag: ${arg}`);
             }
@@ -2609,7 +2476,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (loopValues.some(value => value !== undefined) && loopValues.some(value => !value?.trim())) {
             throw new Error('Execute verify requires --loop-action, --action-item, and --executor together.');
         }
-        return { inputPath, command, status, exitCode, summary, satisfies, loopActionId, loopActionItemId, executorId };
+        return { inputPath, command, status, exitCode, timedOut, signal, infraFailure, summary, satisfies, loopActionId, loopActionItemId, executorId };
     }
     parseVerificationRequirementArgs(args) {
         let inputPath;
@@ -2680,6 +2547,10 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         let command;
         let status;
         let exitCode;
+        // F5: read before the loop so the loop only has to skip these tokens.
+        const signal = this.parseOutcomeFlag(args, '--signal', 'tdd');
+        const timedOut = args.includes('--timed-out');
+        const infraFailure = args.includes('--infra-failure');
         let testName;
         let summary;
         for (let index = 0; index < args.length; index += 1) {
@@ -2762,6 +2633,16 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
                 summary = arg.slice('--summary='.length);
                 continue;
             }
+            if (arg === '--timed-out' || arg === '--infra-failure') {
+                continue;
+            }
+            if (arg === '--signal') {
+                index += 1;
+                continue;
+            }
+            if (arg.startsWith('--signal=')) {
+                continue;
+            }
             if (arg.startsWith('--')) {
                 throw new Error(`Unknown execute tdd flag: ${arg}`);
             }
@@ -2774,7 +2655,7 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         if (!command?.trim()) {
             throw new Error('Execute tdd requires --command.');
         }
-        return { inputPath, phase, command, status, exitCode, testName, summary };
+        return { inputPath, phase, command, status, exitCode, timedOut, signal, infraFailure, testName, summary };
     }
     parseDebugArgs(args) {
         let inputPath;
@@ -2906,13 +2787,6 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         throw new Error(`Unsupported execute review stage: ${value}`);
     }
-    normalizeReviewRunDecision(value) {
-        const normalized = value.trim().toUpperCase();
-        if (normalized === 'APPROVED' || normalized === 'APPROVED_WITH_CONCERNS' || normalized === 'NEEDS_CHANGES' || normalized === 'BLOCKED' || normalized === 'PENDING') {
-            return normalized;
-        }
-        throw new Error(`Unsupported execute review decision: ${value}`);
-    }
     normalizeDocumentReviewStage(value) {
         const normalized = value.trim().toLowerCase();
         if (normalized === 'design' || normalized === 'plan') {
@@ -2922,14 +2796,18 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
     }
     normalizeHandoffTarget(value) {
         const normalized = value.trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
+        // M-cfg5: `grok` was missing here while the help for both `ospec
+        // execute handoff` and `ospec execute launch` documented it.
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'grok' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported execute handoff target: ${value}`);
     }
     normalizeWorkerToolTarget(value) {
         const normalized = value.trim().toLowerCase();
-        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
+        // M-cfg5: `grok` was missing here while the help for both `ospec
+        // execute handoff` and `ospec execute launch` documented it.
+        if (normalized === 'codex' || normalized === 'gpt' || normalized === 'claude' || normalized === 'gemini' || normalized === 'grok' || normalized === 'opencode' || normalized === 'cursor' || normalized === 'copilot' || normalized === 'shell' || normalized === 'generic') {
             return normalized;
         }
         throw new Error(`Unsupported execute launch target: ${value}`);
@@ -2977,12 +2855,36 @@ class ExecuteCommand extends BaseCommand_1.BaseCommand {
         }
         throw new Error(`Unsupported execute debug status: ${value}`);
     }
+    /**
+     * F5: any integer, including negative ones. The `>= 0` guard this replaces
+     * rejected the codes a harness actually produces for "the child never ran"
+     * (-1 by convention, and Node reports a signalled child with a negative
+     * code on some platforms), which forced callers to launder an
+     * infrastructure fault into a plain `1` and lose the distinction the four
+     * orthogonal fields exist to preserve.
+     */
     normalizeExitCode(value) {
         const exitCode = Number(value);
-        if (Number.isInteger(exitCode) && exitCode >= 0) {
+        if (Number.isInteger(exitCode)) {
             return exitCode;
         }
-        throw new Error(`Unsupported execute verify exit code: ${value}`);
+        throw new Error(`Unsupported execute verify exit code: ${value} (an integer is required; negative codes are allowed).`);
+    }
+    /** F5: shared parse for the boolean/signal outcome flags on verify and tdd. */
+    parseOutcomeFlag(args, flag, label) {
+        for (let index = 0; index < args.length; index += 1) {
+            if (args[index] === flag) {
+                const value = args[index + 1];
+                if (!value || value.startsWith('--')) {
+                    throw new Error(`Execute ${label} requires a value after ${flag}.`);
+                }
+                return value.trim();
+            }
+            if (args[index].startsWith(`${flag}=`)) {
+                return args[index].slice(`${flag}=`.length).trim();
+            }
+        }
+        return undefined;
     }
 }
 exports.ExecuteCommand = ExecuteCommand;

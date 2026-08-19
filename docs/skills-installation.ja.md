@@ -25,9 +25,7 @@ OSpec を主に AI で使う場合は、小さな通常変更には `/ospec-chan
 
 `ospec init` と `ospec update` は常に Codex を同期します。また、`CLAUDE_HOME` または既存の `~/.claude` ホームが存在する場合は、Claude Code も同期します。
 
-既存プロジェクトでは、`ospec update [path]` は古い OSpec の痕跡を修復し、現在のプロジェクトで有効化されているプラグインについて、欠けているパッケージの再インストールと互換バージョンへの自動更新を行います。
-現在のプロジェクトで有効化されていないグローバルプラグインは更新しません。
-マシン全体のプラグインを更新したい場合は、明示的に `ospec plugins update --all` を使います。
+既存プロジェクトでは、`ospec update [path]` は管理アセットを更新する前に、古い OSpec の痕跡を修復します。
 
 ## Codex
 

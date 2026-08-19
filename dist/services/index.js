@@ -3,7 +3,8 @@
  * Service layer entrypoints.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.services = exports.ServiceContainer = exports.createRuntimeExecutionAdapterService = exports.RuntimeExecutionAdapterService = exports.createAgentCliRunnerService = exports.AgentCliRunnerService = exports.createCapabilityProbeService = exports.CapabilityProbeService = exports.createVerificationService = exports.VerificationService = exports.createTriageService = exports.TriageService = exports.createLoopService = exports.LoopService = exports.createClaudeHookService = exports.ClaudeHookService = exports.createTaskGraphExecutionService = exports.TaskGraphExecutionService = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
+exports.createVerificationService = exports.VerificationService = exports.createTriageService = exports.TriageService = exports.createLoopService = exports.LoopService = exports.createClaudeHookService = exports.ClaudeHookService = exports.createTaskGraphExecutionService = exports.TaskGraphExecutionService = exports.createRunService = exports.RunService = exports.createQueueService = exports.QueueService = exports.createProjectService = exports.ProjectService = exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = exports.createProjectScaffoldService = exports.ProjectScaffoldService = exports.createProjectAssetService = exports.ProjectAssetService = exports.updateFeatureCatalogRows = exports.FEATURE_CATALOG_RELATIVE_PATH = exports.createIndexBuilder = exports.IndexBuilder = exports.logger = exports.LogLevel = exports.Logger = exports.validationService = exports.ValidationService = exports.templateEngine = exports.TemplateEngine = exports.createFeatureCaptureService = exports.FeatureCaptureService = exports.DOCS_OBLIGATION_CHANGE_TYPES = exports.createDocsObligationService = exports.DocsObligationService = exports.createDocsObligationPlanner = exports.DocsObligationPlanner = exports.createDocsAuditService = exports.DocsAuditService = exports.skillParser = exports.SkillParser = exports.createStateManager = exports.StateManager = exports.createConfigManager = exports.ConfigManager = exports.fileService = exports.FileService = void 0;
+exports.services = exports.ServiceContainer = exports.PLUGIN_MIGRATION_PROVENANCE_RELATIVE_PATH = exports.createLegacyPluginMigrationService = exports.LegacyPluginMigrationService = exports.createRuntimeExecutionAdapterService = exports.RuntimeExecutionAdapterService = exports.createCapabilityProbeService = exports.CapabilityProbeService = void 0;
 var FileService_1 = require("./FileService");
 Object.defineProperty(exports, "FileService", { enumerable: true, get: function () { return FileService_1.FileService; } });
 Object.defineProperty(exports, "fileService", { enumerable: true, get: function () { return FileService_1.fileService; } });
@@ -16,6 +17,19 @@ Object.defineProperty(exports, "createStateManager", { enumerable: true, get: fu
 var SkillParser_1 = require("./SkillParser");
 Object.defineProperty(exports, "SkillParser", { enumerable: true, get: function () { return SkillParser_1.SkillParser; } });
 Object.defineProperty(exports, "skillParser", { enumerable: true, get: function () { return SkillParser_1.skillParser; } });
+var DocsAuditService_1 = require("./DocsAuditService");
+Object.defineProperty(exports, "DocsAuditService", { enumerable: true, get: function () { return DocsAuditService_1.DocsAuditService; } });
+Object.defineProperty(exports, "createDocsAuditService", { enumerable: true, get: function () { return DocsAuditService_1.createDocsAuditService; } });
+var DocsObligationPlanner_1 = require("./DocsObligationPlanner");
+Object.defineProperty(exports, "DocsObligationPlanner", { enumerable: true, get: function () { return DocsObligationPlanner_1.DocsObligationPlanner; } });
+Object.defineProperty(exports, "createDocsObligationPlanner", { enumerable: true, get: function () { return DocsObligationPlanner_1.createDocsObligationPlanner; } });
+var DocsObligationService_1 = require("./DocsObligationService");
+Object.defineProperty(exports, "DocsObligationService", { enumerable: true, get: function () { return DocsObligationService_1.DocsObligationService; } });
+Object.defineProperty(exports, "createDocsObligationService", { enumerable: true, get: function () { return DocsObligationService_1.createDocsObligationService; } });
+Object.defineProperty(exports, "DOCS_OBLIGATION_CHANGE_TYPES", { enumerable: true, get: function () { return DocsObligationService_1.DOCS_OBLIGATION_CHANGE_TYPES; } });
+var FeatureCaptureService_1 = require("./FeatureCaptureService");
+Object.defineProperty(exports, "FeatureCaptureService", { enumerable: true, get: function () { return FeatureCaptureService_1.FeatureCaptureService; } });
+Object.defineProperty(exports, "createFeatureCaptureService", { enumerable: true, get: function () { return FeatureCaptureService_1.createFeatureCaptureService; } });
 var TemplateEngine_1 = require("./TemplateEngine");
 Object.defineProperty(exports, "TemplateEngine", { enumerable: true, get: function () { return TemplateEngine_1.TemplateEngine; } });
 Object.defineProperty(exports, "templateEngine", { enumerable: true, get: function () { return TemplateEngine_1.templateEngine; } });
@@ -29,6 +43,11 @@ Object.defineProperty(exports, "logger", { enumerable: true, get: function () { 
 var IndexBuilder_1 = require("./IndexBuilder");
 Object.defineProperty(exports, "IndexBuilder", { enumerable: true, get: function () { return IndexBuilder_1.IndexBuilder; } });
 Object.defineProperty(exports, "createIndexBuilder", { enumerable: true, get: function () { return IndexBuilder_1.createIndexBuilder; } });
+// 7.4: the catalogue row format and the archive-time update primitive that
+// track C's 7.7 calls instead of reimplementing it.
+var FeatureCatalog_1 = require("./FeatureCatalog");
+Object.defineProperty(exports, "FEATURE_CATALOG_RELATIVE_PATH", { enumerable: true, get: function () { return FeatureCatalog_1.FEATURE_CATALOG_RELATIVE_PATH; } });
+Object.defineProperty(exports, "updateFeatureCatalogRows", { enumerable: true, get: function () { return FeatureCatalog_1.updateFeatureCatalogRows; } });
 var ProjectAssetService_1 = require("./ProjectAssetService");
 Object.defineProperty(exports, "ProjectAssetService", { enumerable: true, get: function () { return ProjectAssetService_1.ProjectAssetService; } });
 Object.defineProperty(exports, "createProjectAssetService", { enumerable: true, get: function () { return ProjectAssetService_1.createProjectAssetService; } });
@@ -65,17 +84,22 @@ Object.defineProperty(exports, "createVerificationService", { enumerable: true, 
 var CapabilityProbeService_1 = require("./CapabilityProbeService");
 Object.defineProperty(exports, "CapabilityProbeService", { enumerable: true, get: function () { return CapabilityProbeService_1.CapabilityProbeService; } });
 Object.defineProperty(exports, "createCapabilityProbeService", { enumerable: true, get: function () { return CapabilityProbeService_1.createCapabilityProbeService; } });
-var AgentCliRunnerService_1 = require("./AgentCliRunnerService");
-Object.defineProperty(exports, "AgentCliRunnerService", { enumerable: true, get: function () { return AgentCliRunnerService_1.AgentCliRunnerService; } });
-Object.defineProperty(exports, "createAgentCliRunnerService", { enumerable: true, get: function () { return AgentCliRunnerService_1.createAgentCliRunnerService; } });
 var RuntimeExecutionAdapterService_1 = require("./RuntimeExecutionAdapterService");
 Object.defineProperty(exports, "RuntimeExecutionAdapterService", { enumerable: true, get: function () { return RuntimeExecutionAdapterService_1.RuntimeExecutionAdapterService; } });
 Object.defineProperty(exports, "createRuntimeExecutionAdapterService", { enumerable: true, get: function () { return RuntimeExecutionAdapterService_1.createRuntimeExecutionAdapterService; } });
+var LegacyPluginMigrationService_1 = require("./LegacyPluginMigrationService");
+Object.defineProperty(exports, "LegacyPluginMigrationService", { enumerable: true, get: function () { return LegacyPluginMigrationService_1.LegacyPluginMigrationService; } });
+Object.defineProperty(exports, "createLegacyPluginMigrationService", { enumerable: true, get: function () { return LegacyPluginMigrationService_1.createLegacyPluginMigrationService; } });
+Object.defineProperty(exports, "PLUGIN_MIGRATION_PROVENANCE_RELATIVE_PATH", { enumerable: true, get: function () { return LegacyPluginMigrationService_1.PLUGIN_MIGRATION_PROVENANCE_RELATIVE_PATH; } });
 // Service container
 const FileService_2 = require("./FileService");
 const ConfigManager_2 = require("./ConfigManager");
 const StateManager_2 = require("./StateManager");
 const SkillParser_2 = require("./SkillParser");
+const FeatureCaptureService_2 = require("./FeatureCaptureService");
+const DocsObligationService_2 = require("./DocsObligationService");
+const DocsObligationPlanner_2 = require("./DocsObligationPlanner");
+const DocsAuditService_2 = require("./DocsAuditService");
 const TemplateEngine_2 = require("./TemplateEngine");
 const ValidationService_2 = require("./ValidationService");
 const Logger_2 = require("./Logger");
@@ -90,13 +114,17 @@ const TaskGraphExecutionService_2 = require("./TaskGraphExecutionService");
 const ClaudeHookService_2 = require("./ClaudeHookService");
 const LoopService_2 = require("./LoopService");
 const TriageService_2 = require("./TriageService");
-const PluginRegistryService_1 = require("./PluginRegistryService");
+const LegacyPluginMigrationService_2 = require("./LegacyPluginMigrationService");
 class ServiceContainer {
     constructor() {
         this.fileService = FileService_2.fileService;
         this.configManager = (0, ConfigManager_2.createConfigManager)(FileService_2.fileService);
         this.stateManager = (0, StateManager_2.createStateManager)(FileService_2.fileService);
         this.skillParser = SkillParser_2.skillParser;
+        this.featureCaptureService = (0, FeatureCaptureService_2.createFeatureCaptureService)(FileService_2.fileService);
+        this.docsObligationService = (0, DocsObligationService_2.createDocsObligationService)(FileService_2.fileService);
+        this.docsAuditService = (0, DocsAuditService_2.createDocsAuditService)(FileService_2.fileService);
+        this.docsObligationPlanner = (0, DocsObligationPlanner_2.createDocsObligationPlanner)(FileService_2.fileService, this.docsObligationService, this.featureCaptureService);
         this.templateEngine = TemplateEngine_2.templateEngine;
         this.validationService = ValidationService_2.validationService;
         this.logger = Logger_2.logger;
@@ -104,6 +132,7 @@ class ServiceContainer {
         this.projectAssetService = (0, ProjectAssetService_2.createProjectAssetService)(FileService_2.fileService);
         this.projectScaffoldService = (0, ProjectScaffoldService_2.createProjectScaffoldService)(FileService_2.fileService);
         this.projectScaffoldCommandService = (0, ProjectScaffoldCommandService_2.createProjectScaffoldCommandService)(FileService_2.fileService, Logger_2.logger);
+        this.legacyPluginMigrationService = (0, LegacyPluginMigrationService_2.createLegacyPluginMigrationService)(FileService_2.fileService);
         this.projectService = (0, ProjectService_2.createProjectService)(FileService_2.fileService, this.configManager, TemplateEngine_2.templateEngine, this.indexBuilder, this.skillParser, this.projectAssetService, this.projectScaffoldService, this.projectScaffoldCommandService);
         this.queueService = (0, QueueService_2.createQueueService)(FileService_2.fileService, this.projectService);
         this.runService = (0, RunService_2.createRunService)(FileService_2.fileService, this.projectService, this.queueService);
@@ -113,12 +142,6 @@ class ServiceContainer {
             taskGraphExecutionService: this.taskGraphExecutionService,
         });
         this.triageService = (0, TriageService_2.createTriageService)(FileService_2.fileService);
-        Object.defineProperty(this, 'pluginRegistryService', {
-            value: (0, PluginRegistryService_1.createPluginRegistryService)(FileService_2.fileService),
-            enumerable: false,
-            configurable: false,
-            writable: false,
-        });
     }
     static getInstance() {
         if (!ServiceContainer.instance) {

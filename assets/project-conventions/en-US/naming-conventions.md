@@ -35,6 +35,15 @@ This file is the project-adopted copy of the OSpec mother spec. It fixes naming 
 - Design docs live in `docs/design/`
 - Planning docs live in `docs/planning/`
 - API docs live in `docs/api/`
+- Living feature docs live in `docs/features/`
+
+## Feature Slugs
+
+- Feature slugs use lowercase kebab-case and match `^[a-z0-9]+(-[a-z0-9]+)*$`
+- A slug is unique across the whole project; a duplicate fails `ospec index build` and names both locations
+- A slug is declared inline, on the first non-blank line under its `##` heading in `docs/features/<domain>.md`: `<!-- ospec:feature <slug> code:src/a/,src/b/ -->`
+- Name the behaviour, not the change: `login-timeout`, not `fix-login-bug-2026`
+- A section with no declaration is simply not a feature, which is allowed
 
 ## Fixed Protocol Files
 

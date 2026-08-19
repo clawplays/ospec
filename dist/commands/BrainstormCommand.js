@@ -38,6 +38,7 @@ const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
+const ShellQuote_1 = require("../utils/ShellQuote");
 const BaseCommand_1 = require("./BaseCommand");
 class BrainstormCommand extends BaseCommand_1.BaseCommand {
     async execute(...args) {
@@ -322,7 +323,7 @@ class BrainstormCommand extends BaseCommand_1.BaseCommand {
             .slice(0, 80) || `brainstorm-${Date.now()}`;
     }
     async resolveBrainstormLanguage(projectPath) {
-        const config = await services_1.services.configManager.loadConfig(projectPath).catch(() => null);
+        const config = await services_1.services.configManager.loadConfigOrNull(projectPath);
         const lang = config?.documentLanguage;
         return lang === 'zh-CN' || lang === 'ja-JP' || lang === 'ar' || lang === 'en-US' ? lang : 'en-US';
     }
@@ -564,7 +565,7 @@ Brainstorm Commands:
                 recommendedOptionId: 'standard',
                 options: [
                     { id: 'standard', label: c('标准', 'Standard'), description: c('用 implementation-plan.md 里的常规验证命令。', 'Use the normal verification commands from implementation-plan.md.') },
-                    { id: 'extra-evidence', label: c('额外证据', 'Extra evidence'), description: c('在 finish 前要求额外的 debug、TDD 或 checkpoint 证据。', 'Require additional debug, TDD, or checkpoint evidence before finish.') },
+                    { id: 'extra-evidence', label: c('额外证据', 'Extra evidence'), description: c('在 finish 前要求额外的 debug、TDD 或验证证据。', 'Require additional debug, TDD, or verification evidence before finish.') },
                     { id: 'block-until-tooling', label: c('阻塞至工具就绪', 'Block until tooling'), description: c('缺失的验证工具就位前不要派发。', 'Do not dispatch until missing verification tooling is available.') },
                 ],
             },
@@ -585,7 +586,7 @@ Brainstorm Commands:
         }));
     }
     async resolveDecisionGateChangePath(projectPath, changeName) {
-        const config = await services_1.services.configManager.loadConfig(projectPath).catch(() => null);
+        const config = await services_1.services.configManager.loadConfigOrNull(projectPath);
         if (changeName) {
             const changePath = (0, ProjectLayout_1.getChangeDir)(projectPath, constants_1.DIR_NAMES.ACTIVE, changeName, config);
             return await services_1.services.fileService.exists(changePath) ? changePath : null;
@@ -614,11 +615,14 @@ Brainstorm Commands:
         }
         return reports;
     }
+    /**
+     * See `utils/ShellQuote`. This was a third copy of the rule, and the worst
+     * of them: as well as escaping only `"`, its raw fast path included `\`, so
+     * a Windows path was returned completely unquoted and sh then ate the
+     * backslashes as escapes.
+     */
     quoteCommandArg(value) {
-        if (/^[A-Za-z0-9_./:@\\-]+$/.test(value)) {
-            return value;
-        }
-        return `"${value.replace(/"/g, '\\"')}"`;
+        return (0, ShellQuote_1.quoteShellArg)(value);
     }
 }
 exports.BrainstormCommand = BrainstormCommand;

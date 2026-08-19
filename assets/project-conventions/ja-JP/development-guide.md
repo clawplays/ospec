@@ -29,3 +29,4 @@ tags: [conventions, development, ospec]
 - AI にその場で命名規則を発明させない
 - 長期作業で `changes/` を迂回しない
 - 知識レイヤーを更新せずにコードだけ変えない
+

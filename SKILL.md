@@ -12,7 +12,7 @@ Use this root skill as a compact router. Keep invariant safety and workflow-sele
 
 When the user asks to initialize a project, run `ospec init [path]`. In AI-assisted initialization, pass the explicit or conversational language with `--document-language`. If useful context is missing, ask once for a short project summary or tech stack; if the user skips it, continue with placeholders. Verify the generated files on disk and stop before creating work unless the user explicitly asks for a change or goal.
 
-Initialization is change-ready only when `.skillrc`, the managed `.ospec/` or classic OSpec directory, active and archived change directories, `SKILL.md`, `SKILL.index.json`, the index builder, `for-ai/` protocol files, and baseline `docs/project/` knowledge files exist.
+Initialization is change-ready only when `.skillrc`, the managed `.ospec/` or classic OSpec directory, active and archived change directories, `SKILL.md`, `SKILL.index.json`, the index builder (`.ospec/tools/build-index-auto.cjs`), `for-ai/` protocol files, and baseline `docs/project/` knowledge files exist. Verify those managed files on disk yourself and never claim initialization is complete before you have: a command that exited zero is not evidence that the files are there.
 
 Do not hand-write an approximation of `ospec init`. Do not assume a web stack, apply business scaffold, generate `docs/project/bootstrap-summary.md`, create queue work, or create the first change without explicit intent.
 
@@ -25,53 +25,44 @@ Do not hand-write an approximation of `ospec init`. Do not assume a web stack, a
 
 For an initialized project, read in this order:
 
-1. `.skillrc` for layout, language, workflow policy, plugins, and model profiles.
-2. `ospec index query <keyword...>` as the router into `SKILL.index.json` and `docs/project/feature-index.md`; never read the whole index file — it grows without bound as changes archive.
+1. `.skillrc` for layout, language, workflow policy, and model profiles.
+2. the `Table of Contents` section of `.ospec/session-brief.md` to see which archived changes and knowledge documents exist, then `ospec docs locate --feature <slug>` / `--affects <path>` to jump straight to the section that describes a behavior, and `ospec index query <keyword...>` as the keyword router into `SKILL.index.json`; never read the whole index file — it grows without bound as changes archive.
 3. The current session brief, bootstrap, dispatch, review, or repair packet.
 4. Only the indexed project documents, change files, and target files named by that packet.
 
-Do not load every historical change or every protocol file by default. Open `for-ai/ai-guide.md` for general execution rules and `for-ai/execution-protocol.md` only when entering the full goal controller layer. Use `ospec help` or subcommand help instead of carrying the complete CLI catalog in context.
+Do not load every historical change or every protocol file by default. `for-ai/ai-guide.md` is a router into the protocol that owns each profile, not a rule file — the `ospec-change` and `ospec-goal` skills carry the operating rules for their profile. Behind them: `for-ai/change-protocol.md` is the classic-change contract in full, and `for-ai/execution-protocol.md` is the goal controller reference, opened only when a named situation needs its detail and never by a classic change, which that file forbids. Use `ospec help` or subcommand help instead of carrying the complete CLI catalog in context.
 
 ## Visibility And Decisions
 
-- `Announce-Before-Act`: before workflow actions, state the OSpec workflow and stage, the command and artifact it writes, native agent count/mechanism, and any blocking gate.
+- `Announce-Before-Act`: before workflow actions, state the OSpec workflow and stage, the command and artifact it writes, and any blocking gate. Only in the goal controller layer, also state the native agent count and the actual native mechanism; the classic change flow launches no subagents and must not announce one.
 - `Brainstorm-First`: before locking a goal design, surface open direction, architecture, API, data, UI, risk, and scope decisions one at a time. Prefer a durable required decision over a silent assumption.
 - `Zero-Setup`: the user states the requirement; the AI runs OSpec controller commands and the user only answers decisions. Do not ask the user to operate routine setup commands.
 - Required pending decisions block worker dispatch. Preserve `PENDING`, `NEEDS_CONTEXT`, `BLOCKED`, `DONE_WITH_CONCERNS`, and `DONE` rather than hiding uncertainty.
 
-In Claude Code, install the managed hook once with `ospec session hook --target claude --apply` when missing. Static workflow context is injected on startup, clear, and compact; prompt hooks should stay silent unless a required decision is pending. `PreToolUse(Task)` remains the hard dispatch gate.
+Decision gates belong to the user on every harness: never auto-select a `recommended` option or resolve a gate yourself, present each gate through the capability ladder — a harness-native question UI (Claude Code `AskUserQuestion`, Gemini `ask_user`), else a plan/approval UI, else the decision report `Chat Prompt` in chat — and wait for the user's actual answer. You always ask; only the presentation differs. The full contract is stated where your profile is already sent: `for-ai/change-protocol.md` for a classic change, the `ospec-goal` skill and `for-ai/execution-protocol.md` for a goal.
 
-## Goal Controller Invariants
+In Claude Code, install the managed hook once with `ospec session hook --target claude --apply` when missing; `PreToolUse(Task)` is then a hard dispatch gate and prompt hooks stay silent unless a required decision is pending. That hook is a Claude-only, opt-in convenience — `ospec session hook --target` accepts no other harness and `ospec init` writes no `.claude/` — so it never replaces the documented contract.
+
+## Goal Controller Layer
 
 Use the full `ospec execute ...` task-graph/controller layer only for Goal work. A classic Change may use the shared `ospec execute decision` command for durable user choices, but it must not enter Goal bootstrap, workspace, dispatch, review, evidence, or Loop commands.
 
-- Start or resume with `ospec session` and `ospec execute bootstrap`.
-- Run `ospec execute preflight ... --stage design`, then `--stage plan`, before deriving the task graph. These zero-token checks validate document readiness, required decisions, ordering, and provenance inline and never launch reviewer children.
-- After task graph derivation, let Loop issue one independent combined planning review across proposal, design, plan, tasks, graph, and acceptance-to-verification coverage. `NEEDS_CHANGES` permits one grouped planning repair and at most one delta-scoped re-review; a repair executor failure with no planning edits re-arms instead of consuming the allowance, all-medium-or-lower findings settle deterministically as `APPROVED_WITH_CONCERNS` after the repair, and another semantic failure is a stable blocker.
-- Progress checklists track reality: tick proposal.md acceptance criteria as verification evidence passes (`[verify:<id>]`-tagged lines are auto-ticked by `ospec execute sync`); unchecked items block archiving. Goal review.md is derived from the final review by sync; never edit it by hand.
-- Resolve required decisions and workspace isolation before dispatch.
-- Dispatch scoped worker packets, use the launch plan with the current harness native agent mechanism, record completion, then perform one combined task review.
-- Treat each task's canonical `artifacts/agents/worker-reports/<task-id>.md` as review-bound evidence. A fresh task review snapshots it alongside declared targets; a repair may edit only that same task's exact report path. If a finding names an unsnapshotted canonical report, let Loop issue a fresh review before repair instead of editing history or widening artifact scope.
-- A worker profile is logical (`mechanical`, `standard`, `strong_reasoning`, `review`, `final_review`). Harness-specific model names come from `.skillrc`; absence is explicit and falls back to the harness default.
-- Record optional provider usage sidecars through the supported completion command. Metrics are evidence, not an archive gate unless project policy says otherwise.
-- When final review requires changes, group all findings into one repair wave and one repair task, run its covering verification once, then run one combined task review and one final re-review. In continuous mode, a stalled task or final finding set may receive one durable root-cause strategy escalation; execute that packet normally, but never reissue the same strategy key or raise a limit to repeat unchanged work.
-- Keep reviewers independent: they read scoped evidence, do not edit implementation, do not accept hidden severity downgrades, and report findings before summaries. Record actionable findings in both Markdown and the sibling structured `*.findings.json`.
-- Do not archive while task graph, review, decision, documentation, optional-step, worker-status, or verification gates are unresolved during normal closeout. Force archive is an explicit user-directed exception only: first report the unresolved gates and `NOT_VERIFIED` evidence, then require `--force-archive`, an exact-name `--confirm-force-archive`, and a non-empty audit reason. Never infer this authorization from urgency, a blocker, or a request to "finish". A pending Loop pointer is safe only when every action item is durably terminal (`completed`, `failed`, or `expired`); any missing, `issued`, or `running` item still blocks archive.
+A router routes: the controller invariants — preflight staging, the combined planning review and its repair allowance, worker profiles, dispatch and review binding, reviewer independence, evidence and archive gates — are not restated here. Load the ones you act on from the `ospec-goal` skill; `for-ai/execution-protocol.md` holds their authoritative detail, including the logical model-profile names, and is opened only when a named situation calls for it. Detailed goal artifacts live under `changes/active/<change>/artifacts/agents/` and `artifacts/reviews/`; read the current dispatch, review, or repair packet for exact paths and commands.
 
-Detailed goal artifacts live under `changes/active/<change>/artifacts/agents/` and `artifacts/reviews/`. Read their current packet or `for-ai/execution-protocol.md` for exact paths and commands instead of expanding the entire inventory here.
+Do not archive while task graph, review, decision, documentation, optional-step, worker-status, or verification gates are unresolved during normal closeout.
 
 ## Documentation And Archive
 
-Every finalized change and goal automatically receives a generated `docs/project/changes/<archive-path>.md` knowledge document with its summary, affected areas, implementation files, verification commands, durable project documents, and archived evidence. This guarantees one indexed document per archived change. Before moving the active change, archive preflight refuses to overwrite a human-owned file at that generated path and verifies the managed output directories are writable. Behavior, architecture, module, API, or operational changes must additionally update the relevant human-maintained `docs/project/` files. When the task graph enables the documentation contract, every task declares `documentation_updates`; use `[]` only when no project documentation changes are needed, include each declared document in `target_files`, and preserve dispatch-to-completion evidence of a meaningful normalized-content change.
+Archiving a finalized change or goal writes its `SKILL.index.json.archived_changes` entry (carrying `features` and `doc_updates`), refreshes the affected `docs/project/feature-catalog.md` rows, and replaces each touched feature section's `ospec:last-change` traceability comment idempotently — the engine's only write into a human-owned document, and a comment failure warns instead of blocking. No file is generated under `docs/project/changes/`; render an archived change on demand with `ospec changes show <archive>`. Behavior, architecture, module, API, or operational changes must additionally update the relevant human-maintained `docs/project/` files. When the task graph enables the documentation contract, every task declares `documentation_updates`; use `[]` only when no project documentation changes are needed, include each declared document in `target_files`, and preserve dispatch-to-completion evidence of a meaningful normalized-content change.
 
-Use `ospec verify` for the active workflow. For normal closeout, use `ospec finalize [changes/active/<change>]`; use `ospec archive --check` only for preview. Finalize must verify completeness, archive, rebuild `docs/project/feature-index.md`, and rebuild `SKILL.index.json` so its `documents` and `archived_changes` sections locate the completed behavior and link declared durable project documents. Git commit remains separate.
+Use `ospec verify` for the active workflow. For normal closeout, use `ospec finalize [changes/active/<change>]`; use `ospec archive --check` only for preview. Finalize must verify completeness, archive, rebuild `docs/project/feature-catalog.md`, and rebuild `SKILL.index.json` so its `documents` and `archived_changes` sections locate the completed behavior and link declared durable project documents. Git commit remains separate.
 
-When the user explicitly accepts incomplete evidence and asks to force archive, use `ospec finalize [changes/active/<change>] --force-archive --confirm-force-archive <exact-change-name> --reason "<accepted risk>"`. This bypasses completion gates only. It preserves failed checks and pending state, writes `artifacts/agents/force-archive.json`, and marks generated knowledge as `forced`, `incomplete`, and `accepted-risk`; it must never be described as completed behavior.
+Force archive requires explicit user acceptance and is never an automatic fallback. First report the failing gates and every `NOT_VERIFIED` item to the user, then take their explicit acceptance; the CLI enforces its own exact-name confirmation and reason flags. Never infer that authorization from urgency, a blocker, or a request to "finish". A forced archive bypasses completion gates only — it preserves failed checks and pending state, and must never be described as completed behavior. The full procedure lives on the path that needs it: `for-ai/change-protocol.md` for a classic change, `for-ai/execution-protocol.md` for a goal.
 
 After archive, verify:
 
-- the completed behavior is discoverable through `docs/project/feature-index.md`;
-- the generated per-change knowledge document exists under `docs/project/changes/` and is linked from both indexes;
+- the completed behavior is discoverable through `docs/project/feature-catalog.md` and `ospec docs locate`;
+- the archived change renders from its index entry via `ospec changes show <archive>`;
 - project docs and archived change records are present in `SKILL.index.json`;
 - section offsets are stable under LF-normalized content;
 - no required documentation update was omitted.

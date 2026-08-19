@@ -35,6 +35,15 @@ tags: [conventions, naming, ospec]
 - 設計文書は `docs/design/`
 - 計画文書は `docs/planning/`
 - API 文書は `docs/api/`
+- 活きた機能文書は `docs/features/`
+
+## 機能 slug の命名
+
+- 機能 slug は小文字 kebab-case で、`^[a-z0-9]+(-[a-z0-9]+)*$` に一致します
+- slug はプロジェクト全体で一意です。重複すると `ospec index build` が失敗し、両方の場所を示します
+- slug はインラインで宣言します。`docs/features/<領域>.md` の `##` 見出し直下、最初の非空行に `<!-- ospec:feature <slug> code:src/a/,src/b/ -->` を置きます
+- change ではなく振る舞いに名前を付けます。`fix-login-bug-2026` ではなく `login-timeout` です
+- 宣言のないセクションは単に機能ではなく、それは許容されます
 
 ## 固定プロトコルファイル
 
@@ -43,3 +52,9 @@ tags: [conventions, naming, ospec]
 - `state.json`
 - `verification.md`
 - `review.md`
+
+## 実行要件
+
+- 新しいディレクトリ、モジュール、change、ワークフロー flag を追加する前にこのファイルを確認する
+- 実装がこのファイルから逸脱した場合は、まずコードと文書を整合させる
+

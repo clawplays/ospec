@@ -476,10 +476,13 @@ class SkillCommand extends BaseCommand_1.BaseCommand {
     async installSkill(provider, skillName, targetDir) {
         const skillPackage = await this.buildSkillPackage(provider, skillName, targetDir);
         await this.syncSkillFiles(skillPackage.assets, skillPackage.targetDir);
-        return this.getInstalledSkillStatus(provider, skillName, targetDir);
+        // The package it just wrote is the same package the sync check needs.
+        // Rebuilding it re-read every packaged source asset a second time for a
+        // result that is byte-identical by construction.
+        return this.getInstalledSkillStatus(provider, skillName, targetDir, skillPackage);
     }
-    async getInstalledSkillStatus(provider, skillName, targetDir) {
-        const skillPackage = await this.buildSkillPackage(provider, skillName, targetDir);
+    async getInstalledSkillStatus(provider, skillName, targetDir, prebuiltPackage) {
+        const skillPackage = prebuiltPackage || await this.buildSkillPackage(provider, skillName, targetDir);
         const assets = await Promise.all(skillPackage.assets.map(async (asset) => {
             const absolutePath = path_1.default.join(skillPackage.targetDir, asset.relativePath);
             const exists = await services_1.services.fileService.exists(absolutePath);
@@ -628,18 +631,6 @@ class SkillCommand extends BaseCommand_1.BaseCommand {
             await services_1.services.fileService.ensureDir(path_1.default.dirname(absolutePath));
             await services_1.services.fileService.writeFile(absolutePath, asset.content);
         }
-    }
-    async isPackageInSync(assets, targetDir) {
-        for (const asset of assets) {
-            const absolutePath = path_1.default.join(targetDir, asset.relativePath);
-            if (!(await services_1.services.fileService.exists(absolutePath))) {
-                return false;
-            }
-            if ((await services_1.services.fileService.readFile(absolutePath)) !== asset.content) {
-                return false;
-            }
-        }
-        return true;
     }
     buildCodexSkillYaml(definition) {
         return `name: ${definition.name}

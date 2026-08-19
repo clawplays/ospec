@@ -4,8 +4,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createProjectScaffoldCommandService = exports.ProjectScaffoldCommandService = void 0;
-const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
+const childEnv_1 = require("../utils/childEnv");
+const spawnSafe_1 = require("../utils/spawnSafe");
 class ProjectScaffoldCommandService {
     constructor(fileService, logger) {
         this.fileService = fileService;
@@ -29,6 +30,7 @@ class ProjectScaffoldCommandService {
                     shellCommand: 'npm install',
                     description: copy.installDescription,
                     phase: 'install',
+                    spawnClass: 'package-manager',
                 },
             ],
             deferredMessage: copy.deferredMessage,
@@ -86,9 +88,11 @@ class ProjectScaffoldCommandService {
     executeStep(rootDir, step) {
         return new Promise(resolve => {
             const startedAt = Date.now();
-            const child = (0, child_process_1.spawn)(step.command, step.args, {
+            const child = (0, spawnSafe_1.spawnSafe)(step.command, step.args, {
                 cwd: rootDir,
-                shell: false,
+                // F7: `npm install` keeps its registry auth; anything else added
+                // to the plan later is stripped by default.
+                env: (0, childEnv_1.sanitizeChildEnv)(process.env, step.spawnClass || 'worker'),
             });
             let stdout = '';
             let stderr = '';
