@@ -1,0 +1,9 @@
+{
+  "title_suffix": "feature-catalog links that actually resolve",
+  "summary": "OSpec 2.0.2 fixes the generated `docs/project/feature-catalog.md` so its links work: heading anchors keep Unicode (CJK headings no longer anchor to an empty fragment), and hrefs resolve through the project layout (nested-layout projects no longer link through a doubled `.ospec/`). No breaking changes. After upgrading, run `ospec index build` in each project — the catalogue regenerates with working links; no re-migration is needed.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/2.0.1...2.0.2",
+  "fixed": [
+    "Heading anchors in `feature-catalog.md` are Unicode-aware. The slugger previously kept ASCII word characters only, so a pure-Chinese section heading anchored to an empty `#` and a mixed heading to fragments like `#-http-`; no rendered link could jump to its section. Anchors now keep Unicode letters and digits, matching how GitHub and VS Code compute heading anchors.",
+    "Catalogue hrefs resolve through the project layout. The link base was hardcoded to the classic `docs/project` location while the targets carried the nested-resolved `.ospec/...` prefix, so on a nested-layout project every section and archive link resolved through a doubled `.ospec/` and pointed at nothing. Classic-layout output is byte-identical to before; nested-layout catalogues now render sibling links such as `../features/<doc>.md#<anchor>`. The standalone `build-index` tool twin carries the same fix, and the tool-vs-CLI byte-parity guard now also runs on a nested zh-CN fixture."
+  ]
+}

@@ -1308,12 +1308,19 @@ function featureStatusFromSection(sectionText) {
     }
     return 'active';
 }
-/** GitHub-style heading anchor, for the href half of the section link. */
+/**
+ * GitHub-style heading anchor, for the href half of the section link.
+ *
+ * Unicode-aware: `\w` matched only `[A-Za-z0-9_]`, which deleted every CJK
+ * character -- a pure-Chinese heading anchored to an empty `#` and a mixed one
+ * to fragments like `#-http-`, so no rendered catalogue link could jump.
+ * GitHub and VS Code both keep Unicode letters and digits; now so does this.
+ */
 function headingAnchor(heading) {
     return String(heading ?? '')
         .trim()
         .toLowerCase()
-        .replace(/[^\w\- ]+/g, '')
+        .replace(/[^\p{L}\p{N}_\- ]+/gu, '')
         .replace(/\s+/g, '-');
 }
 /** A `|` inside a cell would end it; a newline would end the row. */
@@ -1405,8 +1412,14 @@ function featureCatalogCopy(documentLanguage) {
  * entry falls back to the conventional `changes/archived/<name>` -- the link
  * may dangle, and a dangling link to the right place beats no link at all.
  */
-function renderFeatureCatalog(rows, copy, archiveLinks = {}) {
-    const catalogDir = 'docs/project';
+function renderFeatureCatalog(rows, copy, archiveLinks = {}, 
+// The catalogue's own repo-relative directory, which every href is relative
+// to. Hardcoding the classic location made every nested-layout link resolve
+// through a doubled `.ospec/` and 404 -- the caller resolves the real
+// location through the project layout. Classic output is unchanged: from
+// `docs/project` and `.ospec/docs/project` alike, a sibling feature document
+// renders as `../features/<file>`.
+catalogDir = 'docs/project') {
     const lines = [
         '---',
         'name: project-feature-catalog',
@@ -1469,7 +1482,8 @@ async function writeFeatureCatalog(rootDir, layout, index) {
     await fsp.mkdir(docsProjectRoot, { recursive: true });
     const targetPath = path.join(docsProjectRoot, 'feature-catalog.md');
     const config = await readSkillConfig(rootDir);
-    const content = await renderCatalogFromIndex(rootDir, config, index);
+    const catalogDir = path.relative(rootDir, docsProjectRoot).replace(/\\/g, '/');
+    const content = await renderCatalogFromIndex(rootDir, config, index, catalogDir);
     const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
     if (previous !== content)
         await fsp.writeFile(targetPath, content, 'utf8');
@@ -1480,7 +1494,7 @@ async function writeFeatureCatalog(rootDir, layout, index) {
  * `parseFrontmatterDocument` and this one with the hand-rolled `parseFrontmatter` --
  * so the guard on this pair is behavioural, not textual.
  */
-async function renderCatalogFromIndex(rootDir, config, index) {
+async function renderCatalogFromIndex(rootDir, config, index, catalogDir = 'docs/project') {
     const featureDocs = index?.feature_docs && typeof index.feature_docs === 'object'
         ? index.feature_docs
         : {};
@@ -1512,7 +1526,7 @@ async function renderCatalogFromIndex(rootDir, config, index) {
         if (name && archive)
             archiveLinks[name] = archive;
     }
-    return renderFeatureCatalog(rows, featureCatalogCopy(config?.documentLanguage), archiveLinks);
+    return renderFeatureCatalog(rows, featureCatalogCopy(config?.documentLanguage), archiveLinks, catalogDir);
 }
 /**
  * 7.4: `feature-index.md` stops being generated and is frozen once into a

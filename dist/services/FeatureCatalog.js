@@ -114,12 +114,19 @@ function featureStatusFromSection(sectionText) {
     }
     return 'active';
 }
-/** GitHub-style heading anchor, for the href half of the section link. */
+/**
+ * GitHub-style heading anchor, for the href half of the section link.
+ *
+ * Unicode-aware: `\w` matched only `[A-Za-z0-9_]`, which deleted every CJK
+ * character -- a pure-Chinese heading anchored to an empty `#` and a mixed one
+ * to fragments like `#-http-`, so no rendered catalogue link could jump.
+ * GitHub and VS Code both keep Unicode letters and digits; now so does this.
+ */
 function headingAnchor(heading) {
     return String(heading ?? '')
         .trim()
         .toLowerCase()
-        .replace(/[^\w\- ]+/g, '')
+        .replace(/[^\p{L}\p{N}_\- ]+/gu, '')
         .replace(/\s+/g, '-');
 }
 /** A `|` inside a cell would end it; a newline would end the row. */
@@ -211,8 +218,14 @@ function featureCatalogCopy(documentLanguage) {
  * entry falls back to the conventional `changes/archived/<name>` -- the link
  * may dangle, and a dangling link to the right place beats no link at all.
  */
-function renderFeatureCatalog(rows, copy, archiveLinks = {}) {
-    const catalogDir = 'docs/project';
+function renderFeatureCatalog(rows, copy, archiveLinks = {}, 
+// The catalogue's own repo-relative directory, which every href is relative
+// to. Hardcoding the classic location made every nested-layout link resolve
+// through a doubled `.ospec/` and 404 -- the caller resolves the real
+// location through the project layout. Classic output is unchanged: from
+// `docs/project` and `.ospec/docs/project` alike, a sibling feature document
+// renders as `../features/<file>`.
+catalogDir = 'docs/project') {
     const lines = [
         '---',
         'name: project-feature-catalog',
@@ -404,5 +417,8 @@ async function renderCatalogFromIndex(projectRoot, config, index, options = {}) 
             archiveLinks[name] = archive;
     }
     const copy = featureCatalogCopy(config?.documentLanguage);
-    return { content: renderFeatureCatalog(rows, copy, archiveLinks), rows };
+    const catalogDir = path_1.default
+        .relative(projectRoot, path_1.default.dirname((0, ProjectLayout_1.resolveManagedPath)(projectRoot, exports.FEATURE_CATALOG_RELATIVE_PATH, config)))
+        .replace(/\\/g, '/');
+    return { content: renderFeatureCatalog(rows, copy, archiveLinks, catalogDir), rows };
 }

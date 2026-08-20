@@ -72,7 +72,14 @@ export declare function featureSummarySentence(sectionText: string, limit?: numb
  * author see it is still listed as active.
  */
 export declare function featureStatusFromSection(sectionText: string): FeatureDocStatus;
-/** GitHub-style heading anchor, for the href half of the section link. */
+/**
+ * GitHub-style heading anchor, for the href half of the section link.
+ *
+ * Unicode-aware: `\w` matched only `[A-Za-z0-9_]`, which deleted every CJK
+ * character -- a pure-Chinese heading anchored to an empty `#` and a mixed one
+ * to fragments like `#-http-`, so no rendered catalogue link could jump.
+ * GitHub and VS Code both keep Unicode letters and digits; now so does this.
+ */
 export declare function headingAnchor(heading: string): string;
 /** A `|` inside a cell would end it; a newline would end the row. */
 export declare function escapeTableCell(value: string): string;
@@ -103,7 +110,7 @@ export declare function featureCatalogCopy(documentLanguage: string | undefined)
  * entry falls back to the conventional `changes/archived/<name>` -- the link
  * may dangle, and a dangling link to the right place beats no link at all.
  */
-export declare function renderFeatureCatalog(rows: FeatureCatalogRow[], copy: ReturnType<typeof featureCatalogCopy>, archiveLinks?: Record<string, string>): string;
+export declare function renderFeatureCatalog(rows: FeatureCatalogRow[], copy: ReturnType<typeof featureCatalogCopy>, archiveLinks?: Record<string, string>, catalogDir?: string): string;
 /**
  * Build one row from a feature entry and the text of its section.
  *
