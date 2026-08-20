@@ -611,10 +611,24 @@ class IndexBuilder {
         const previousComparable = previous ? this.stripVolatileFields(previous) : null;
         const nextComparable = this.stripVolatileFields(index);
         let writtenIndex = index;
-        if (previous && JSON.stringify(previousComparable) === JSON.stringify(nextComparable)) {
+        const unchanged = previous !== null
+            && JSON.stringify(previousComparable) === JSON.stringify(nextComparable);
+        // 7.4: the catalogue is rendered from the snapshot's `feature_docs` -- the
+        // in-memory index, not the written file -- so it can be written FIRST.
+        // The order is load-bearing: the catalogue is itself an indexed source, so
+        // writing it after the index file left its mtime a few ms newer than the
+        // index's `generated` stamp, and the staleness check then reported
+        // `source:newer` forever -- a content-identical rebuild keeps the old
+        // stamp by design, so nothing ever cleared the flag, and a project with
+        // `index-check: error` had its pre-commit hook blocked. Found by running
+        // `docs migrate --finalize` on a real project.
+        const catalogPath = await this.writeFeatureCatalog(rootDir, config, unchanged ? previous : index);
+        if (unchanged) {
             writtenIndex = previous;
         }
         else {
+            // Stamped AFTER the catalogue write so `generated` upper-bounds every
+            // source mtime this build produced.
             writtenIndex = {
                 ...index,
                 generated: new Date().toISOString(),
@@ -625,10 +639,6 @@ class IndexBuilder {
             // report it as damaged. tmp + rename closes it.
             await FileService_1.fileService.writeFileAtomic(indexPath, JSON.stringify(writtenIndex, null, 2));
         }
-        // 7.4: the catalogue is rendered from the snapshot's `feature_docs`, so it
-        // is written after the index is built, not before it like the old
-        // feature-index was.
-        const catalogPath = await this.writeFeatureCatalog(rootDir, config, writtenIndex);
         await this.saveRunCache(rootDir, config);
         const managedPaths = Array.from(new Set([
             ...(featureIndexPath ? [featureIndexPath] : []),

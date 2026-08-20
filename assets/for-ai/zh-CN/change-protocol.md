@@ -32,7 +32,7 @@
 
 ### 功能文档
 
-活功能文档是 `docs/features/<领域>.md`，每个功能一个 `##` 节。文档由人类拥有，你在 change 内编辑；引擎从不代写正文。
+活功能文档是 `docs/features/<领域>.md`，每个功能一个 `##` 节。文档由人类拥有，你在 change 内编辑；引擎从不代写正文。节标题与正文一律使用项目的 `documentLanguage` 撰写（slug 与 `code:` 路径保持英文 kebab-case 除外）；`ospec docs migrate` 阶段 2 的改写同样遵守。
 
 功能声明写在行内：紧贴节标题下的第一个非空行，且只写在那里。文件 frontmatter 里没有 `features:` 列表——slug 与节的绑定保持就地，节被移动后依然成立，也不会出现同一事实的第二份副本。
 

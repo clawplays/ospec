@@ -32,7 +32,7 @@ Set `change_type` to `feature`, `fix`, `refactor`, `perf`, `deprecate`, `remove`
 
 ### Feature Documents
 
-Living feature documents are `docs/features/<domain>.md`, one `##` section per feature. Humans own them and you edit them inside a change; the engine never writes their prose.
+Living feature documents are `docs/features/<domain>.md`, one `##` section per feature. Humans own them and you edit them inside a change; the engine never writes their prose. Write section headings and prose in the project's `documentLanguage` (slugs and `code:` paths stay English kebab-case); phase-2 rewrites under `ospec docs migrate` follow the same rule.
 
 Declare a feature inline, on the first non-blank line under its heading, and nowhere else. There is no `features:` list in the file frontmatter — the slug-to-section binding stays local, so it survives a section being moved and there is no second copy of the same fact to drift.
 

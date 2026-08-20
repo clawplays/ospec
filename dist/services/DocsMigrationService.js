@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.docsMigrationService = exports.DocsMigrationService = exports.DRAFT_MARKER = exports.LEGACY_GENERATOR = exports.MIGRATION_PLAN_FILE = exports.MIGRATION_STATE_FILE = void 0;
 exports.domainOfPath = domainOfPath;
 exports.clusterArchive = clusterArchive;
+exports.migrationDraftCopy = migrationDraftCopy;
 const path = __importStar(require("path"));
 const fs_1 = require("fs");
 const constants_1 = require("../core/constants");
@@ -134,6 +135,89 @@ function clusterArchive(paths) {
     if (counts.size === 0)
         return null;
     return [...counts.entries()].sort((left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : 1))[0][0];
+}
+/**
+ * Same rule as `featureCatalogCopy` and the obligation engine's copy table:
+ * text the engine writes INTO a project document follows the project's
+ * `documentLanguage`. The `name:` slug, `status: draft` and the DRAFT_MARKER
+ * comment stay machine strings -- verify greps for them verbatim.
+ */
+function migrationDraftCopy(documentLanguage) {
+    if (documentLanguage === 'zh-CN') {
+        return {
+            title: domain => `${domain} 功能`,
+            guide: [
+                '> **这是迁移原始素材，不是文档。** 下面每一节罗列的是过去的变更做了什么。',
+                '> 请把每一节改写成该功能**现在**的行为描述——用途、行为、逻辑流程、边界，',
+                '> 然后在标题下加上 `<!-- ospec:feature <slug> code:<paths> -->` 声明，',
+                '> 并删除本引导块与 frontmatter 的 `status: draft` 行。',
+                '> 整个项目完成后运行 `ospec docs migrate --verify`。',
+            ],
+            toBeRewritten: '_待改写为行为描述。_',
+            whatTheChangeSaid: '变更摘要',
+            affects: '影响范围',
+            files: '文件',
+            verifiedBy: '验证命令',
+            archive: '归档',
+            fullDetail: '完整详情',
+        };
+    }
+    if (documentLanguage === 'ja-JP') {
+        return {
+            title: domain => `${domain} 機能`,
+            guide: [
+                '> **これは移行の生素材であり、文書ではありません。** 以下の各セクションは過去の変更内容の羅列です。',
+                '> 各セクションをその機能の**現在の**挙動の説明——目的・挙動・ロジックフロー・境界——に書き直し、',
+                '> 見出しの下に `<!-- ospec:feature <slug> code:<paths> -->` 宣言を追加した上で、',
+                '> このブロックと frontmatter の `status: draft` 行を削除してください。',
+                '> プロジェクト全体が完了したら `ospec docs migrate --verify` を実行します。',
+            ],
+            toBeRewritten: '_挙動の説明として書き直してください。_',
+            whatTheChangeSaid: '変更の要約',
+            affects: '影響範囲',
+            files: 'ファイル',
+            verifiedBy: '検証コマンド',
+            archive: 'アーカイブ',
+            fullDetail: '詳細',
+        };
+    }
+    if (documentLanguage === 'ar') {
+        return {
+            title: domain => `ميزات ${domain}`,
+            guide: [
+                '> **هذه مادة خام للترحيل، وليست توثيقًا.** كل قسم أدناه يسرد ما فعلته التغييرات السابقة.',
+                '> أعد كتابة كل قسم كوصف لسلوك الميزة **الحالي** — الغرض والسلوك وتدفق المنطق والحدود —',
+                '> ثم أضف إعلان `<!-- ospec:feature <slug> code:<paths> -->` تحت العنوان،',
+                '> واحذف هذه الفقرة وسطر `status: draft` من الـ frontmatter.',
+                '> شغّل `ospec docs migrate --verify` بعد اكتمال المشروع كله.',
+            ],
+            toBeRewritten: '_يُعاد كتابته كوصف للسلوك._',
+            whatTheChangeSaid: 'ملخص التغيير',
+            affects: 'نطاق التأثير',
+            files: 'الملفات',
+            verifiedBy: 'أوامر التحقق',
+            archive: 'الأرشيف',
+            fullDetail: 'التفاصيل الكاملة',
+        };
+    }
+    return {
+        title: domain => `${domain} features`,
+        guide: [
+            '> **This is migration raw material, not documentation.** Every section',
+            '> below lists what past changes did. Rewrite each one as a description of',
+            '> what the feature DOES NOW -- purpose, behaviour, logic flow, boundaries',
+            '> -- then add its `<!-- ospec:feature <slug> code:<paths> -->` declaration',
+            '> under the heading, and delete this block and the `status: draft` line.',
+            '> Run `ospec docs migrate --verify` when the whole project is done.',
+        ],
+        toBeRewritten: '_To be rewritten as a behaviour description._',
+        whatTheChangeSaid: 'What the change said',
+        affects: 'Affects',
+        files: 'Files',
+        verifiedBy: 'Verified by',
+        archive: 'Archive',
+        fullDetail: 'Full detail',
+    };
 }
 class DocsMigrationService {
     async resolve(projectRoot, relativePath) {
@@ -304,9 +388,16 @@ class DocsMigrationService {
             groups,
             unclassified: archives.filter(item => !item.group).map(item => item.archive).sort(),
         };
+        // The skeleton wording follows the project's documentLanguage, exactly as
+        // the catalogue and the obligation copy already do. English used to be
+        // hardcoded here; found on a real zh-CN project whose whole draft guidance
+        // came out in the wrong language.
+        const { services } = await Promise.resolve().then(() => __importStar(require('./index')));
+        const config = await services.configManager.loadConfigOrNull(projectRoot);
+        const copy = migrationDraftCopy(config?.documentLanguage);
         const drafts = groups.map(group => ({
             path: group.document,
-            content: this.renderDraft(projectRoot, group, archives),
+            content: this.renderDraft(projectRoot, group, archives, copy),
         }));
         const planFile = toRelative(projectRoot, await this.planPath(projectRoot));
         const writes = [planFile, ...drafts.map(draft => draft.path)];
@@ -344,43 +435,38 @@ class DocsMigrationService {
      * registered slugs would make the index treat unfinished material as a
      * living feature document.
      */
-    renderDraft(projectRoot, group, archives) {
+    renderDraft(projectRoot, group, archives, copy) {
         const members = archives.filter(item => group.archives.includes(item.archive));
         const lines = [
             '---',
             `name: ${group.domain}-features`,
-            `title: ${group.domain} features`,
+            `title: ${copy.title(group.domain)}`,
             'status: draft',
             '---',
             '',
             exports.DRAFT_MARKER,
             '',
-            `# ${group.domain} features`,
+            `# ${copy.title(group.domain)}`,
             '',
-            '> **This is migration raw material, not documentation.** Every section',
-            '> below lists what past changes did. Rewrite each one as a description of',
-            '> what the feature DOES NOW -- purpose, behaviour, logic flow, boundaries',
-            '> -- then add its `<!-- ospec:feature <slug> code:<paths> -->` declaration',
-            '> under the heading, and delete this block and the `status: draft` line.',
-            '> Run `ospec docs migrate --verify` when the whole project is done.',
+            ...copy.guide,
             '',
         ];
         for (const member of members) {
             lines.push(`## ${member.feature || member.archive}`, '');
             lines.push(exports.DRAFT_MARKER, '');
-            lines.push('_To be rewritten as a behaviour description._', '');
+            lines.push(copy.toBeRewritten, '');
             if (member.summary)
-                lines.push(`- What the change said: ${member.summary}`);
+                lines.push(`- ${copy.whatTheChangeSaid}: ${member.summary}`);
             if (member.affects.length > 0)
-                lines.push(`- Affects: ${member.affects.join(', ')}`);
+                lines.push(`- ${copy.affects}: ${member.affects.join(', ')}`);
             if (member.target_files.length > 0) {
-                lines.push(`- Files: ${member.target_files.map(file => `\`${file}\``).join(', ')}`);
+                lines.push(`- ${copy.files}: ${member.target_files.map(file => `\`${file}\``).join(', ')}`);
             }
             if (member.verification_commands.length > 0) {
-                lines.push(`- Verified by: ${member.verification_commands.map(c => `\`${c}\``).join(', ')}`);
+                lines.push(`- ${copy.verifiedBy}: ${member.verification_commands.map(c => `\`${c}\``).join(', ')}`);
             }
-            lines.push(`- Archive: [${member.archive}](${path.posix.relative(`${constants_1.DIR_NAMES.DOCS}/features`, member.archive)})`);
-            lines.push(`- Full detail: \`ospec changes show ${path.posix.basename(member.archive)}\``);
+            lines.push(`- ${copy.archive}: [${member.archive}](${path.posix.relative(`${constants_1.DIR_NAMES.DOCS}/features`, member.archive)})`);
+            lines.push(`- ${copy.fullDetail}: \`ospec changes show ${path.posix.basename(member.archive)}\``);
             lines.push('');
         }
         return `${lines.join('\n').trimEnd()}\n`;

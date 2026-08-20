@@ -1,0 +1,13 @@
+{
+  "title_suffix": "localized migration drafts, index freshness, and a js-yaml security bump",
+  "summary": "OSpec 2.0.1 fixes three defects found while migrating real projects to 2.0, and bumps js-yaml past a CPU-exhaustion advisory. No breaking changes; upgrade with `npm install -g @clawplays/ospec-cli@2.0.1` and re-run `ospec update` in each project to refresh the protocol documents.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/2.0.0...2.0.1",
+  "fixed": [
+    "`ospec docs migrate --plan` now writes its draft-skeleton guidance in the project's `documentLanguage` (zh-CN, ja-JP, ar, en-US) instead of hardcoded English, following the same rule as the feature catalogue and the obligation copy. The `status: draft` line and the `ospec:migration-draft` marker stay machine strings, so `--verify` detection is unchanged.",
+    "Index rebuilds stamp `generated` after writing `docs/project/feature-catalog.md`, not before. Previously the catalogue's mtime landed a few milliseconds after the stamp, so `ospec index check` reported `source:newer` forever after `docs migrate --finalize` — content-identical rebuilds keep the old stamp by design, so nothing ever cleared the flag, and a project with `index-check: error` had its pre-commit hook blocked. Archive and finalize share the fixed path.",
+    "js-yaml is bumped to `^4.3.1` (declared floor and committed lockfile), past GHSA-5p4m-2wfm-xmqj — quadratic CPU consumption when resolving `!!omap` duplicate keys, a denial-of-service vector for CLI/agent runs that parse `.skillrc` or frontmatter from untrusted repositories. Fresh installs already resolved 4.3.1 through the caret range; lockfile-driven environments now do too. Thanks to the first-time contributor whose automated-scan PR on the release mirror flagged the advisory. `npm audit` on the source tree is now zero findings."
+  ],
+  "docs": [
+    "The change protocol now states the feature-document language rule explicitly, in all four languages: section headings and prose follow the project's `documentLanguage` (slugs and `code:` paths stay English kebab-case), and phase-2 rewrites under `ospec docs migrate` follow the same rule."
+  ]
+}

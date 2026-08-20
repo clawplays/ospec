@@ -120,6 +120,25 @@ export declare function domainOfPath(candidate: string): string | null;
  * agree on. Ties break by code point so two machines produce the same plan.
  */
 export declare function clusterArchive(paths: string[]): string | null;
+/** The draft-skeleton wording an AI or a person reads, per document language. */
+export interface MigrationDraftCopy {
+    title(domain: string): string;
+    guide: string[];
+    toBeRewritten: string;
+    whatTheChangeSaid: string;
+    affects: string;
+    files: string;
+    verifiedBy: string;
+    archive: string;
+    fullDetail: string;
+}
+/**
+ * Same rule as `featureCatalogCopy` and the obligation engine's copy table:
+ * text the engine writes INTO a project document follows the project's
+ * `documentLanguage`. The `name:` slug, `status: draft` and the DRAFT_MARKER
+ * comment stay machine strings -- verify greps for them verbatim.
+ */
+export declare function migrationDraftCopy(documentLanguage: string | undefined): MigrationDraftCopy;
 export declare class DocsMigrationService {
     private resolve;
     statePath(projectRoot: string): Promise<string>;
