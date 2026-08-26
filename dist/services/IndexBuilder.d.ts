@@ -123,6 +123,16 @@ export declare class IndexBuilder {
      */
     private writeFeatureCatalog;
     /**
+     * P8: `docs/project/docs-map.md` -- the generated navigation layer. One
+     * line per indexed document, grouped by kind, carrying its binding count.
+     * Bounded by the number of documents, so it never grows with history.
+     * `generated: true` keeps it out of the `documents` map for exactly the
+     * reason the catalogue carries it. Same write discipline as the catalogue:
+     * rendered from the snapshot, compare-before-write, and its `wrote` feeds
+     * the caller's stamp decision.
+     */
+    private writeDocsMap;
+    /**
      * 7.4: `feature-index.md` stops being generated.
      *
      * It is not deleted -- an existing project's links to it would rot, and
@@ -147,3 +157,16 @@ export declare class IndexBuilder {
     private getFeatureIndexCopy;
 }
 export declare const createIndexBuilder: (skillParser: SkillParser) => IndexBuilder;
+/**
+ * P8: the docs-map body. A pure function of the snapshot, DUPLICATED VERBATIM
+ * in `src/tools/build-index.ts` for the same reason as the declaration parser
+ * (that file is built-ins-only); `tests/services/p8-docs-map.test.mjs` builds
+ * with both entry points and compares the emitted bytes, which is what keeps
+ * the copies honest.
+ *
+ * Shape: one line per indexed document, grouped by kind in a fixed order,
+ * linking relative to `docs/project/` and carrying the document's binding
+ * count. Group headings use the kind vocabulary itself -- it is CLI/config
+ * vocabulary, not prose, so it stays English in every document language.
+ */
+export declare function renderDocsMapContent(index: SkillIndex, documentLanguage: string, mapDirRelativePath: string): string;

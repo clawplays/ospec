@@ -185,7 +185,7 @@ AI harness が 1 つの active Goal を進め、ユーザー判断と runtime ev
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@2.0.2
+npm install -g @clawplays/ospec-cli@2.1.0
 ospec update [path]
 ```
 

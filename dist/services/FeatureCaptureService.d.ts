@@ -4,6 +4,8 @@ export interface FeatureSuggestion {
     slug: string;
     file: string;
     heading: string;
+    /** The binding's documentation kind; `feature` when the index predates kinds. */
+    kind: string;
     /** Why this slug was suggested, in words the AI and a human can both read. */
     reason: string;
     /** Higher is a better match. Used only for ordering. */

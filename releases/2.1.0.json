@@ -1,0 +1,25 @@
+{
+  "title_suffix": "categorised doc bindings, coverage/bind/retire pipelines, and a generated docs map",
+  "summary": "OSpec 2.1.0 extends the living-documentation engine from `docs/features/` to every documentation category. Bindings can now be declared in `docs/api/`, `docs/design/` and `docs/project/` with `<!-- ospec:doc <slug> code:... -->` (same syntax and slug namespace as `ospec:feature`), and every binding carries a `kind` inferred from its path. Obligations become kind-aware: api sections follow the behaviour table, design decisions verify as `verify_decision` (still holds, or mark Superseded), project overviews verify as `verify_structure`, and planning/product documents stay reference-only. New onboarding and lifecycle tooling — `docs coverage`, the `docs bind --plan/--execute/--verify` pipeline, `docs audit --stale` and `docs retire` — brings existing projects under the engine and retires dead documents without ever plain-deleting them. Existing indexes upgrade losslessly; feature-catalog rows and all pre-2.1 behaviour are unchanged.",
+  "compareUrl": "https://github.com/clawplays/ospec/compare/2.0.2...2.1.0",
+  "new": [
+    "`<!-- ospec:doc <slug> code:... -->` declares a binding in any documentation category (`docs/api/`, `docs/design/`, `docs/project/`, `docs/planning/`, `docs/product/`), sharing one project-wide slug namespace with `ospec:feature`; every binding and indexed document carries a `kind` inferred from its path.",
+    "Kind-aware documentation obligations: `api` sections follow the behaviour change_type table; `design` (ADR) sections generate a verification-type `verify_decision` under every code change type — confirm the decision still holds, or mark the section Superseded; `project` overviews generate `verify_structure` the same way; `planning`/`product` documents generate no obligation. A feature change cannot opt out of the documentation gate by declaring only reference-kind slugs.",
+    "`ospec docs coverage` — the inverse of `docs audit`: lists the code areas no binding covers, busiest undocumented areas first, with archived-change evidence counts.",
+    "`ospec docs bind --plan/--execute/--verify` — staged onboarding for existing projects: the engine inventories unbound documents and uncovered areas and suggests slug/heading/code from archives, modules and git co-change; a person adjudicates `docs-binding-plan.json`; the engine inserts declarations and draft skeletons mechanically (fence-aware, slug-collision-safe, never prose); a gate refuses while any entry is unadjudicated, unapplied, or still a draft.",
+    "`ospec docs audit --stale` — deterministic staleness signals: dead bindings (every `code:` path gone from disk), design documents whose every decision is superseded, and documents already marked `status: deprecated` (the retire queue).",
+    "`ospec docs retire` — archival retirement: collects `status: deprecated` documents, refuses one whose bindings still point at living code unless it names `superseded_by`, records a manifest row first, and moves the file into `changes/archived/retired-docs/` — never a plain delete, and a re-retired path never clobbers its previous archive.",
+    "`docs/project/docs-map.md` — a generated navigation map written on every index build: one line per indexed document, grouped by kind, linking relative to `docs/project/` with each document's binding count."
+  ],
+  "improved": [
+    "`ospec index query` now searches section headings inside documents and answers with `file#heading`, the same one-jump answer feature slugs already had.",
+    "`ospec docs locate` labels non-feature bindings with their kind (for example `module-web [api]`), and `ospec change` candidate lists label api/design references worth reading before implementing.",
+    "`docs/project/feature-catalog.md` labels non-feature rows in the status cell (for example `active · api`); feature rows are byte-for-byte unchanged.",
+    "`ospec docs audit` drift entries carry the binding's kind.",
+    "`ospec layout migrate` moves `docs/features/`, `docs/product/` and the persistent engine state files (`docs-binding-plan.json`, `docs-migration-plan.json`, `docs-migration.json`) into the nested layout, and rewrites binding-plan entry paths into the nested index coordinates so adjudications survive the flip.",
+    "Classic change closeout whitelists the persistent docs plan/state files, so an adjudication- or migration-in-progress no longer blocks closeout as an out-of-scope dirty file."
+  ],
+  "docs": [
+    "The change and execution protocols (en-US, zh-CN, ja-JP, ar) document the `ospec:doc` declaration, binding kinds, kind-aware obligation semantics, and the coverage/bind onboarding pipeline."
+  ]
+}

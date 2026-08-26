@@ -1,7 +1,7 @@
 /**
  * SKILL parsing service.
  */
-import { FeatureDeclaration, FeatureDocEntry, SkillFrontmatter, SkillSection } from '../core/types';
+import { DocBindingKind, FeatureDeclaration, FeatureDocEntry, SkillFrontmatter, SkillSection } from '../core/types';
 interface ParsedSkillFrontmatter {
     data: SkillFrontmatter;
     content: string;
@@ -56,6 +56,15 @@ export declare const skillParser: SkillParser;
  * declaration is not a feature, and that is a normal document, not an error.
  */
 export declare function parseFeatureDeclarations(content: string, filePath?: string): FeatureDeclaration[];
+/**
+ * The documentation category a declaring document belongs to, from its
+ * repo-relative path. `docs/features/` maps to `feature`; the sibling
+ * directories map to their own names; anything outside the recognised tree is
+ * `other`, never a guess. Works for classic (`docs/...`) and nested
+ * (`.ospec/docs/...`) layouts alike, because both carry the `docs/<dir>/`
+ * segment pair.
+ */
+export declare function inferBindingKind(relativePath: string): DocBindingKind;
 /**
  * Adds one document's declarations to the project-wide slug map, failing on a
  * duplicate slug.

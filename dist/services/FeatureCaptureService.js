@@ -107,6 +107,7 @@ class FeatureCaptureService {
                     slug: entry.slug,
                     file: entry.file,
                     heading: entry.heading,
+                    kind: entry.kind ?? 'feature',
                     score: 1000 + longestPrefix.length,
                     reason: `declares code:${longestPrefix}, which covers this change's affects scope`,
                 });
@@ -116,6 +117,7 @@ class FeatureCaptureService {
                     slug: entry.slug,
                     file: entry.file,
                     heading: entry.heading,
+                    kind: entry.kind ?? 'feature',
                     score: sharedKeywords.length,
                     reason: `name shares "${sharedKeywords.join('", "')}" with this change`,
                 });

@@ -248,10 +248,26 @@ catalogDir = 'docs/project') {
         const sectionHref = `${catalogRelativeLink(catalogDir, row.file)}#${headingAnchor(row.heading)}`;
         const section = `[${escapeTableCell(row.location)}](${sectionHref})`;
         const summary = escapeTableCell(row.summary) || copy.noSummary;
+        // The href targets the archive's proposal.md, not the archive directory:
+        // an editor's markdown link cannot open a directory (VS Code reports
+        // "cannot open directory" and jumps nowhere), and proposal.md is the one
+        // file every archive is guaranteed to carry -- the archive action moves it
+        // there. The fallback for an unindexed name is resolved through the same
+        // managed prefix as the catalogue itself (catalogDir is always
+        // `<prefix>docs/project` by construction), because the bare classic path
+        // walked OUT of `.ospec/` on a nested project. It may still dangle; a
+        // dangling link to the right FILE path beats one nothing can open.
+        const managedPrefix = catalogDir.replace(/docs\/project$/, '');
         const lastChange = row.lastChange
-            ? `[${escapeTableCell(row.lastChange)}](${catalogRelativeLink(catalogDir, archiveLinks[row.lastChange] || `changes/archived/${row.lastChange}`)})`
+            ? `[${escapeTableCell(row.lastChange)}](${catalogRelativeLink(catalogDir, `${archiveLinks[row.lastChange] || `${managedPrefix}changes/archived/${row.lastChange}`}/proposal.md`)})`
             : copy.noLastChange;
-        lines.push(`| \`${escapeTableCell(row.slug)}\` | ${summary} | ${section} | ${row.status} | ${lastChange} |`);
+        // The kind rides in the status cell (CLI vocabulary, English like the
+        // status values), NOT in the slug cell: readCatalogRows extracts the slug
+        // from the backticked first cell, and the archive-time row assertion
+        // matches on it exactly. Feature rows are unchanged, so a pre-P8
+        // catalogue diff stays empty.
+        const status = row.kind && row.kind !== 'feature' ? `${row.status} · ${row.kind}` : row.status;
+        lines.push(`| \`${escapeTableCell(row.slug)}\` | ${summary} | ${section} | ${status} | ${lastChange} |`);
     }
     lines.push('');
     return `${lines.join('\n').trimEnd()}\n`;
@@ -271,6 +287,7 @@ function buildFeatureCatalogRow(entry, sectionText) {
         location: `${entry.file}#${entry.heading}`,
         summary: featureSummarySentence(sectionText),
         status: featureStatusFromSection(sectionText),
+        kind: entry.kind ?? 'feature',
         lastChange: typeof entry.last_change === 'string' ? entry.last_change : '',
     };
 }

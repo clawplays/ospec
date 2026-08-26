@@ -63,7 +63,7 @@ const subcommandHelp_1 = require("./utils/subcommandHelp");
 const services_1 = require("./services");
 const BaseCommand_1 = require("./commands/BaseCommand");
 const outputBudget_1 = require("./utils/outputBudget");
-const CLI_VERSION = '2.0.2';
+const CLI_VERSION = '2.1.0';
 function showInitUsage() {
     console.log((0, subcommandHelp_1.getInitUsageText)());
 }

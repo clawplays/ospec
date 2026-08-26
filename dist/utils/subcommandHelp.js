@@ -80,6 +80,21 @@ Docs Commands:
   ospec docs audit [path] [--json]
                               - list feature sections whose code: paths changed since the
                                 archive named by their ospec:last-change comment (read-only)
+  ospec docs coverage [path] [--json]
+                              - the inverse of audit: list code areas no binding covers,
+                                busiest undocumented areas first (read-only)
+  ospec docs bind [path] --plan [--apply] [--no-git] - inventory unbound documents and uncovered areas, suggest slug/heading/code for each from archives, modules and git (--no-git skips the git evidence), and write docs-binding-plan.json
+  ospec docs bind [path] --execute [--apply] - insert the adjudicated <!-- ospec:doc --> declarations and write draft skeletons for "create" areas; prose is never written
+  ospec docs bind [path] --verify            - gate: refuse while any plan entry is unadjudicated, unapplied, or still a draft
+  ospec docs audit --stale [path] [--json]
+                              - staleness signals: dead bindings (code: paths all gone),
+                                design documents whose EVERY decision is superseded, and
+                                documents already marked status: deprecated (the retire
+                                queue); read-only
+  ospec docs retire [path] [--apply] [--json]
+                              - collect status: deprecated documents and move them into
+                                changes/archived/retired-docs/ with a manifest row;
+                                dry run without --apply, never a plain delete
   ospec docs migrate [path] --plan [--apply]     - inventory the old generated documents, cluster the archives into candidate feature groups, and write docs/features/<domain>.md draft skeletons
   ospec docs migrate [path] --verify             - gate: refuse to proceed unless every old knowledge document maps to a feature section or is marked historical
   ospec docs migrate [path] --finalize [--apply] - delete the old generated documents, after printing and recording the list

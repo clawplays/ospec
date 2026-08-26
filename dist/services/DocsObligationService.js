@@ -116,6 +116,18 @@ const OBLIGATION_COPY = {
         ja: '挙動は不変：{target} が依然として正確かを確認し、code: パス参照を更新する。修正不要なら verified_unchanged を記録する。',
         ar: 'السلوك لم يتغيّر: تأكّد من أن {target} ما زال دقيقًا وحدّث مراجع مسارات code:. سجّل verified_unchanged عند عدم الحاجة لأي تعديل.',
     },
+    verify_decision: {
+        zh: '核对 {target}：确认该设计决策在本次变更后仍然成立；若已被推翻或修改，在该节标记 Superseded 并链接替代方案或归档。确认无需修改时记录 verified_unchanged。',
+        en: 'Check {target}: confirm the design decision still holds after this change; if it was overturned or amended, mark the section Superseded and link the replacement. Record verified_unchanged when no edit is needed.',
+        ja: '{target} を確認し、本変更後もこの設計判断が成立しているかを確かめる。覆された・修正された場合は該当節に Superseded を記し、代替案や archive をリンクする。修正不要なら verified_unchanged を記録する。',
+        ar: 'راجع {target}: تأكد أن قرار التصميم ما زال قائمًا بعد هذا التغيير؛ وإن نُقض أو عُدّل فضع علامة Superseded في القسم واربط البديل. سجّل verified_unchanged عند عدم الحاجة لأي تعديل.',
+    },
+    verify_structure: {
+        zh: '核对 {target}：确认架构/模块结构描述在本次变更后仍然准确；新增或移除模块时更新该节。确认无需修改时记录 verified_unchanged。',
+        en: 'Check {target}: confirm the architecture/module overview is still accurate after this change; update it when a module was added or removed. Record verified_unchanged when no edit is needed.',
+        ja: '{target} を確認し、本変更後もアーキテクチャ／モジュール構成の記述が正確かを確かめる。モジュールの追加・削除があれば更新する。修正不要なら verified_unchanged を記録する。',
+        ar: 'راجع {target}: تأكد أن وصف البنية/الوحدات ما زال دقيقًا بعد هذا التغيير؛ وحدّثه عند إضافة وحدة أو إزالتها. سجّل verified_unchanged عند عدم الحاجة لأي تعديل.',
+    },
     mark_status: {
         zh: '在 {target} 标记该功能的状态（deprecated / removed），并同步功能目录。',
         en: 'Mark this feature\'s status (deprecated / removed) at {target}, and sync the feature catalogue.',
@@ -187,6 +199,31 @@ class DocsObligationService {
             .map(slug => ({ slug, entry: featureDocs[slug] }))
             .filter((item) => Boolean(item.entry));
         const unresolved = slugs.filter(slug => !featureDocs[slug]);
+        /**
+         * The binding's documentation kind decides which CONTRACT it carries.
+         * `feature` and `api` sections describe living behaviour, so the
+         * change_type table below applies to them unchanged. A `design` section is
+         * a decision -- it is never "updated to the new behaviour", it either
+         * still holds or is superseded, so every code change type maps to one
+         * verification-type obligation. `project` overviews verify the same way.
+         * `planning` and `product` documents are reference material and get NO
+         * obligation: forcing them to move with code is exactly the documentation
+         * bloat the fix degradation exists to avoid. A missing kind is a pre-2.1
+         * index, which only ever indexed feature documents.
+         */
+        const contractOf = (entry) => {
+            const kind = entry.kind ?? 'feature';
+            if (kind === 'planning' || kind === 'product')
+                return 'none';
+            if (kind === 'design')
+                return 'decision';
+            if (kind === 'project')
+                return 'structure';
+            return 'behaviour';
+        };
+        const behaviourBound = resolved.filter(item => contractOf(item.entry) === 'behaviour');
+        const decisionBound = resolved.filter(item => contractOf(item.entry) === 'decision');
+        const structureBound = resolved.filter(item => contractOf(item.entry) === 'structure');
         const obligations = [];
         const push = (kind, level, targetPath, section, feature, suggestion) => {
             const target = section ? `${targetPath}#${section}` : targetPath;
@@ -199,7 +236,7 @@ class DocsObligationService {
                 path: targetPath,
                 section,
                 target,
-                verification_only: kind === 'verify_section',
+                verification_only: kind === 'verify_section' || kind === 'verify_decision' || kind === 'verify_structure',
                 reason: copy(language, OBLIGATION_COPY[kind]).replace('{target}', target),
                 ...(suggestion ? { suggestion } : {}),
             });
@@ -208,25 +245,28 @@ class DocsObligationService {
         const draftPathFor = (slug) => `docs/features/${slug}.md`;
         switch (changeType) {
             case 'feature': {
-                for (const { slug, entry } of resolved) {
+                for (const { slug, entry } of behaviourBound) {
                     push('update_section', 'required', entry.file, entry.heading, slug);
                 }
                 for (const slug of unresolved) {
                     push('create_section', 'required', draftPathFor(slug), '', slug);
                 }
-                // A feature change that declared NO slug at all is the brand-new-feature
-                // case, and it still owes a document. Without this branch the strictest
-                // change type could opt out of the whole contract by omission -- just
-                // leave `features:` empty and the engine generates nothing. That is the
-                // hole the `fix` degradation below is deliberately NOT: a fix may skip
-                // documentation, a new feature may not.
-                if (slugs.length === 0) {
+                // A feature change with NO behaviour-contract binding is the
+                // brand-new-feature case, and it still owes a document. This fires on
+                // an empty `features:` -- the omission hole -- and equally when every
+                // declared slug resolved to a planning/product/design/project
+                // binding: verifying an ADR is not documenting the new behaviour, so
+                // reference-kind slugs must not become the opt-out the empty list was
+                // barred from being. That is the hole the `fix` degradation below is
+                // deliberately NOT: a fix may skip documentation, a new feature may
+                // not.
+                if (behaviourBound.length === 0 && unresolved.length === 0) {
                     push('create_section', 'required', draftPathFor(this.slugify(input.changeName) || 'untitled'), '', undefined);
                 }
                 break;
             }
             case 'fix': {
-                for (const { slug, entry } of resolved) {
+                for (const { slug, entry } of behaviourBound) {
                     push('correct_section', 'required', entry.file, entry.heading, slug);
                 }
                 // The deliberate degradation. A fix with no feature document must not
@@ -236,7 +276,10 @@ class DocsObligationService {
                 for (const slug of unresolved) {
                     push('create_section', 'optional', draftPathFor(slug), '', slug, copy(language, NO_DOCUMENT_SUGGESTION).replace('{target}', draftPathFor(slug)));
                 }
-                if (slugs.length === 0) {
+                // Same trigger shape as the feature branch above: no
+                // behaviour-contract binding at all, whether by omission or because
+                // every declared slug resolved to a reference-kind document.
+                if (behaviourBound.length === 0 && unresolved.length === 0) {
                     const draft = draftPathFor(this.slugify(input.changeName) || 'untitled');
                     push('create_section', 'optional', draft, '', undefined, copy(language, NO_DOCUMENT_SUGGESTION).replace('{target}', draft));
                 }
@@ -245,26 +288,42 @@ class DocsObligationService {
             case 'refactor':
             case 'perf': {
                 // Verification-type: cost is near zero and zero diff is a legal result.
-                for (const { slug, entry } of resolved) {
+                for (const { slug, entry } of behaviourBound) {
                     push('verify_section', 'required', entry.file, entry.heading, slug);
                 }
                 break;
             }
             case 'deprecate':
             case 'remove': {
-                for (const { slug, entry } of resolved) {
+                for (const { slug, entry } of behaviourBound) {
                     push('mark_status', 'required', entry.file, entry.heading, slug);
                 }
                 break;
             }
             case 'docs': {
-                for (const { slug, entry } of resolved) {
+                // The edit is itself the goal for every kind that carries a contract.
+                // Planning and product bindings stay reference material even here --
+                // one rule, no exceptions, so the "planning/product generate no
+                // obligation" statement in the protocol stays literally true.
+                for (const { slug, entry } of [...behaviourBound, ...decisionBound, ...structureBound]) {
                     push('edit', 'required', entry.file, entry.heading, slug);
                 }
                 break;
             }
             default:
                 break;
+        }
+        // Decision and structure bindings verify under EVERY code change type:
+        // the question "does this still hold?" is the same whether the code moved
+        // for a feature, a fix or a refactor. Zero diff plus `ospec docs confirm`
+        // satisfies them, so the cost of a held decision is one command.
+        if (['feature', 'fix', 'refactor', 'perf', 'deprecate', 'remove'].includes(changeType)) {
+            for (const { slug, entry } of decisionBound) {
+                push('verify_decision', 'required', entry.file, entry.heading, slug);
+            }
+            for (const { slug, entry } of structureBound) {
+                push('verify_structure', 'required', entry.file, entry.heading, slug);
+            }
         }
         return obligations;
     }

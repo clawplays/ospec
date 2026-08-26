@@ -37,6 +37,8 @@ export interface FeatureCatalogRow {
     /** The section's first sentence, truncated at 120 characters. */
     summary: string;
     status: FeatureDocStatus;
+    /** The binding's documentation kind; `feature` when the index predates kinds. */
+    kind?: string;
     /** The archive name from `<!-- ospec:last-change -->`, or ''. */
     lastChange: string;
 }

@@ -37,6 +37,7 @@ exports.DocsCommand = void 0;
 const path = __importStar(require("path"));
 const constants_1 = require("../core/constants");
 const services_1 = require("../services");
+const DocsBindingService_1 = require("../services/DocsBindingService");
 const DocsMigrationService_1 = require("../services/DocsMigrationService");
 const FeatureLocator_1 = require("../services/FeatureLocator");
 const ProjectLayout_1 = require("../utils/ProjectLayout");
@@ -65,6 +66,18 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
                 }
                 case 'audit': {
                     await this.runAudit(targetPath, options);
+                    break;
+                }
+                case 'coverage': {
+                    await this.runCoverage(targetPath, options);
+                    break;
+                }
+                case 'bind': {
+                    await this.runBind(targetPath, options);
+                    break;
+                }
+                case 'retire': {
+                    await this.runRetire(targetPath, options);
                     break;
                 }
                 case 'migrate': {
@@ -272,6 +285,7 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
                 totalMatches: result.matches.length,
                 matches: selected.map(entry => ({
                     slug: entry.slug,
+                    kind: entry.kind ?? 'feature',
                     file: entry.file,
                     heading: entry.heading,
                     location: `${entry.file}#${entry.heading}`,
@@ -306,7 +320,11 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
                 ? `read lines ${entry.lines[0]}-${entry.lines[1]} (${entry.bytes} B)`
                 : `read chars ${entry.start}-${entry.end} (file unreadable; index may be stale)`;
             const via = entry.matched_prefix ? ` via ${entry.matched_prefix}` : '';
-            console.log(`  ${entry.slug} | ${range}${via}`);
+            // The kind tells the reader what CONTRACT the section carries --
+            // behaviour (feature), interface (api), decision (design) -- so it
+            // is only worth a token when it is not the default.
+            const kind = entry.kind && entry.kind !== 'feature' ? ` [${entry.kind}]` : '';
+            console.log(`  ${entry.slug}${kind} | ${range}${via}`);
             if (entry.last_change)
                 console.log(`  last-change ${entry.last_change}`);
         }
@@ -417,6 +435,36 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
     async runAudit(projectPath, options) {
         const targetPath = path.resolve(projectPath);
         const config = await services_1.services.configManager.loadConfigOrNull(targetPath);
+        if (options.includes('--stale')) {
+            const staleResult = await services_1.services.docsAuditService.stale(targetPath, config);
+            if (options.includes('--json')) {
+                console.log(JSON.stringify(staleResult, null, 2));
+                return;
+            }
+            console.log('\nDocumentation Staleness Audit');
+            console.log('=============================\n');
+            if (!staleResult.available) {
+                console.log(staleResult.reason);
+                console.log('');
+                return;
+            }
+            console.log(`Bindings and documents scanned: ${staleResult.scanned}`);
+            console.log(`Stale signals: ${staleResult.stale.length}\n`);
+            for (const entry of staleResult.stale) {
+                const target = entry.heading ? `${entry.file}#${entry.heading}` : entry.file;
+                console.log(`  [${entry.signal}] ${target}`);
+                console.log(`    ${entry.detail}`);
+            }
+            if (staleResult.stale.length === 0) {
+                console.log('  No stale signals: no dead bindings, no unmarked superseded decisions, no deprecated documents queued.');
+            }
+            else {
+                console.log('\nNext: mark dead documents "status: deprecated" (plus superseded_by when a');
+                console.log('successor exists), then run "ospec docs retire" to collect them.');
+            }
+            console.log('');
+            return;
+        }
         const result = await services_1.services.docsAuditService.audit(targetPath, config);
         if (options.includes('--json')) {
             console.log(JSON.stringify(result, null, 2));
@@ -433,7 +481,11 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
         console.log(`Drifted: ${result.drifted.length}`);
         console.log(`Not examined: ${result.skipped.length}\n`);
         for (const entry of result.drifted) {
-            console.log(`  ${entry.target}`);
+            // The kind tells the reader what kind of contract drifted --
+            // behaviour, interface or decision -- worth a token only when it
+            // is not the default.
+            const kind = entry.kind && entry.kind !== 'feature' ? ` [${entry.kind}]` : '';
+            console.log(`  ${entry.target}${kind}`);
             console.log(`    ${entry.summary}`);
         }
         if (result.drifted.length === 0 && result.scanned > 0) {
@@ -495,6 +547,174 @@ class DocsCommand extends BaseCommand_1.BaseCommand {
      * mode: `--plan`, `--verify`, `--finalize`. Nothing writes without
      * `--apply`, and `--finalize --apply` is the only thing that deletes.
      */
+    /**
+     * `ospec docs coverage [path] [--json]`. The inverse of `docs audit`:
+     * which code areas have no binding at all, ordered as a work list --
+     * busiest undocumented areas first. Read-only, never fails the build.
+     */
+    async runCoverage(projectRoot, options) {
+        const json = options.includes('--json');
+        const result = await DocsBindingService_1.docsBindingService.coverage(projectRoot);
+        if (json) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+        console.log('\nDocumentation Coverage');
+        console.log('======================\n');
+        if (!result.available) {
+            console.log(`Not available: ${result.reason}`);
+            console.log('');
+            return;
+        }
+        console.log(`Code areas: ${result.areas.length}`);
+        console.log(`Bound code prefixes: ${result.bound_prefixes}`);
+        console.log(`Uncovered: ${result.uncovered}`);
+        if (result.accepted > 0)
+            console.log(`Accepted as uncovered: ${result.accepted}`);
+        const uncovered = result.areas.filter(area => !area.covered && !area.accepted);
+        if (uncovered.length > 0) {
+            console.log('\nUncovered areas (busiest undocumented first):');
+            for (const area of uncovered) {
+                const evidence = area.archive_count > 0
+                    ? ` — ${area.archive_count} archived change(s), ${area.undocumented_count} with no doc update${area.archives.length > 0 ? ` (e.g. ${area.archives.join(', ')})` : ''}`
+                    : '';
+                console.log(`  ${area.area} [${area.source}]${evidence}`);
+            }
+            console.log('\nNext: "ospec docs bind --plan --apply" proposes bindings and draft documents for these.');
+        }
+        else {
+            console.log('\nEvery enumerated code area is covered by at least one binding.');
+        }
+        console.log('');
+    }
+    /**
+     * `ospec docs bind [path] [--plan|--execute|--verify] [--apply] [--json]`.
+     * The staged onboarding pipeline: plan (engine) -> adjudicate (person) ->
+     * execute (engine, mechanical) -> verify (gate). Prose is never written by
+     * the engine; declarations and draft skeletons are.
+     */
+    async runBind(projectRoot, options) {
+        const apply = options.includes('--apply');
+        const json = options.includes('--json');
+        const stage = options.includes('--verify')
+            ? 'verify'
+            : options.includes('--execute')
+                ? 'execute'
+                : 'plan';
+        if (stage === 'plan') {
+            const result = await DocsBindingService_1.docsBindingService.plan(projectRoot, {
+                apply,
+                git: !options.includes('--no-git'),
+            });
+            if (json) {
+                console.log(JSON.stringify({ ...result.plan, writes: result.writes }, null, 2));
+                return;
+            }
+            console.log('\nDocs Binding — Stage 1: plan');
+            console.log('============================\n');
+            console.log(`Unbound documents: ${result.plan.entries.length}`);
+            console.log(`Uncovered code areas: ${result.plan.missing.length}`);
+            if (result.preserved > 0) {
+                console.log(`Carried your adjudications forward for ${result.preserved} entr(ies).`);
+            }
+            const pending = result.plan.entries.filter(entry => entry.verdict === 'pending').length;
+            const missingPending = result.plan.missing.filter(item => item.verdict === 'pending').length;
+            console.log(`Awaiting a verdict: ${pending} document(s), ${missingPending} area(s)`);
+            console.log('');
+            console.log(apply ? 'Wrote:' : 'Would write (re-run with --apply):');
+            for (const target of (apply ? result.writes : [DocsBindingService_1.BINDING_PLAN_FILE]))
+                console.log(`  ${target}`);
+            console.log('');
+            console.log(`Next: set each entry's verdict in ${DocsBindingService_1.BINDING_PLAN_FILE} (bind / reference /`);
+            console.log('historical; create / uncovered_accepted for areas), adjust slugs and code');
+            console.log('paths, then run "ospec docs bind --execute --apply".');
+            console.log('');
+            return;
+        }
+        if (stage === 'execute') {
+            const result = await DocsBindingService_1.docsBindingService.execute(projectRoot, { apply });
+            if (json) {
+                console.log(JSON.stringify(result, null, 2));
+                return;
+            }
+            console.log('\nDocs Binding — Stage 3: execute');
+            console.log('===============================\n');
+            console.log(`${apply ? 'Declared' : 'Would declare'} ${result.declared.length} binding(s):`);
+            for (const item of result.declared)
+                console.log(`  ${item.file} <- ospec:doc ${item.slug}`);
+            console.log(`${apply ? 'Drafted' : 'Would draft'} ${result.drafted.length} skeleton(s):`);
+            for (const item of result.drafted)
+                console.log(`  ${item.file} <- ospec:doc ${item.slug}`);
+            if (result.skipped.length > 0) {
+                console.log('\nSkipped:');
+                for (const item of result.skipped)
+                    console.log(`  ${item.file}: ${item.reason}`);
+            }
+            console.log('');
+            if (apply)
+                console.log('Index rebuilt. Next: "ospec docs bind --verify".');
+            else
+                console.log('Dry run; re-run with --apply to write.');
+            console.log('');
+            return;
+        }
+        const result = await DocsBindingService_1.docsBindingService.verify(projectRoot);
+        if (json) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+        console.log('\nDocs Binding — Stage 4: verify');
+        console.log('==============================\n');
+        console.log(`Plan entries: ${result.checked.entries} document(s), ${result.checked.missing} area(s)`);
+        console.log('');
+        if (result.ok) {
+            console.log('PASS — every entry is adjudicated and applied.');
+            console.log('');
+            return;
+        }
+        console.log(`REFUSED — ${result.gaps.length} gap(s):`);
+        for (const gap of result.gaps)
+            console.log(`  [${gap.kind}] ${gap.detail}`);
+        console.log('');
+        throw new Error(`Docs binding verification refused: ${result.gaps.length} gap(s) remain.`);
+    }
+    /**
+     * `ospec docs retire [path] [--apply] [--json]`. Collects every document
+     * marked `status: deprecated`, prints the list, and -- only with --apply
+     * -- records a manifest row and moves each file into
+     * `changes/archived/retired-docs/`. Deletion always means archival here.
+     */
+    async runRetire(projectRoot, options) {
+        const apply = options.includes('--apply');
+        const json = options.includes('--json');
+        const result = await DocsBindingService_1.docsRetireService.retire(projectRoot, { apply });
+        if (json) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+        console.log('\nDocs Retire');
+        console.log('===========\n');
+        // Printed before anything moved, which is the point.
+        console.log(`${apply ? 'Retired' : 'Would retire'} ${result.retired.length} document(s):`);
+        for (const entry of result.retired) {
+            console.log(`  ${entry.file} -> ${entry.to}${entry.superseded_by ? `  (superseded by ${entry.superseded_by})` : ''}`);
+        }
+        if (result.refused.length > 0) {
+            console.log('\nRefused:');
+            for (const entry of result.refused)
+                console.log(`  ${entry.file}: ${entry.reason}`);
+        }
+        console.log('');
+        if (apply && result.retired.length > 0) {
+            console.log('Recorded in the retired-docs manifest before moving. Index rebuilt;');
+            console.log('the documents map, catalogue and docs map no longer list them.');
+        }
+        else if (!apply) {
+            console.log('Dry run; re-run with --apply to record the manifest and move the files.');
+            console.log('Mark a document with frontmatter "status: deprecated" to queue it here.');
+        }
+        console.log('');
+    }
     async migrate(projectRoot, options) {
         const apply = options.includes('--apply');
         const phase = options.includes('--finalize')

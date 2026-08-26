@@ -510,7 +510,11 @@ class NewCommand extends BaseCommand_1.BaseCommand {
             const shown = capture.suggestions.slice(0, 5);
             this.info(`  Candidate features to confirm (none were applied): ${shown.length} of ${capture.suggestions.length}`);
             for (const suggestion of shown) {
-                this.info(`    ${suggestion.slug} -> ${suggestion.file}#${suggestion.heading} (${suggestion.reason})`);
+                // A non-feature binding is a REFERENCE to read before
+                // implementing (an API contract, a design decision), so its
+                // kind is worth the extra token.
+                const kind = suggestion.kind && suggestion.kind !== 'feature' ? ` [${suggestion.kind}]` : '';
+                this.info(`    ${suggestion.slug}${kind} -> ${suggestion.file}#${suggestion.heading} (${suggestion.reason})`);
             }
             this.info('    Confirm with: ospec change ... --feature <slug>, or edit proposal.md features:.');
         }

@@ -23,7 +23,11 @@ export interface DocsContractConfig {
     mode: DocsObligationMode;
 }
 /** What kind of documentation work an obligation asks for. */
-export type DocsObligationKind = 'update_section' | 'create_section' | 'correct_section' | 'verify_section' | 'mark_status' | 'edit';
+export type DocsObligationKind = 'update_section' | 'create_section' | 'correct_section' | 'verify_section'
+/** Design/ADR binding: confirm the decision still holds, or mark it superseded. */
+ | 'verify_decision'
+/** Project-doc binding: confirm the structural overview is still accurate. */
+ | 'verify_structure' | 'mark_status' | 'edit';
 export type DocsObligationLevel = 'required' | 'optional';
 export interface DocsObligationEvidence {
     /**
@@ -185,11 +189,18 @@ export interface IndexModule {
     tags: string[];
     sections: Record<string, SkillSection>;
 }
+/**
+ * The documentation category a document or binding belongs to, inferred from
+ * its path under `docs/`. `feature` is `docs/features/` (the living feature
+ * documents); the rest mirror the sibling directory names. Anything outside
+ * the recognised tree is `other`, never a guess.
+ */
+export type DocBindingKind = 'project' | 'api' | 'design' | 'planning' | 'feature' | 'product' | 'other';
 export interface IndexDocument {
     file: string;
     title: string;
     tags: string[];
-    kind: 'project' | 'api' | 'design' | 'planning' | 'other';
+    kind: DocBindingKind;
     sections: Record<string, SkillSection>;
     /**
      * NOT feature slugs. This is the pre-existing `features:` frontmatter list,
@@ -235,6 +246,12 @@ export interface FeatureDeclaration {
 /** A `FeatureDeclaration` plus the document it was found in. */
 export interface FeatureDocEntry extends FeatureDeclaration {
     file: string;
+    /**
+     * The documentation category of the declaring document, inferred from its
+     * path at registration time. Absent in indexes built before 2.1; readers
+     * treat a missing value as `feature`.
+     */
+    kind?: DocBindingKind;
 }
 export interface ArchivedChangeIndexEntry {
     /** The CHANGE name, not a feature slug. Predates Phase 7; kept as-is. */

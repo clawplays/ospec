@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createIndexBuilder = exports.IndexBuilder = exports.isDamagedConfigError = exports.findNestedManagedMarker = exports.describeNonObjectConfig = exports.describeAbsentProjectLayout = exports.createContradictoryLayoutError = exports.createDamagedConfigError = void 0;
+exports.renderDocsMapContent = renderDocsMapContent;
 const fs_1 = require("fs");
 const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
@@ -289,7 +290,7 @@ const ARCHIVE_SCAN_CACHE_FILE = 'cache/SKILL.index.cache.json';
 // forever, because the hit path never reads its frontmatter. Bump this and the
 // whole document half of the cache is refused; fingerprints and archive entries
 // are unaffected.
-const DOCUMENT_CACHE_FORMAT = 2;
+const DOCUMENT_CACHE_FORMAT = 3;
 /**
  * The cache key for "has this file changed since we last parsed it".
  *
@@ -597,7 +598,7 @@ class IndexBuilder {
         const config = await this.readProjectConfig(rootDir);
         await this.loadRunCache(rootDir, config);
         const archivedChanges = await this.scanArchivedChangesWithHistory(rootDir, config);
-        const featureIndexPath = await this.freezeLegacyFeatureIndex(rootDir, config, archivedChanges);
+        const frozen = await this.freezeLegacyFeatureIndex(rootDir, config, archivedChanges);
         const indexPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, constants_1.FILE_NAMES.SKILL_INDEX, config);
         // A damaged index reads as absent, which routes into the full rewrite
         // below. `ospec index build` is the command a user runs *because* the
@@ -622,8 +623,18 @@ class IndexBuilder {
         // stamp by design, so nothing ever cleared the flag, and a project with
         // `index-check: error` had its pre-commit hook blocked. Found by running
         // `docs migrate --finalize` on a real project.
-        const catalogPath = await this.writeFeatureCatalog(rootDir, config, unchanged ? previous : index);
-        if (unchanged) {
+        const catalog = await this.writeFeatureCatalog(rootDir, config, unchanged ? previous : index);
+        // P8: the docs map is rendered from the same snapshot, before the index
+        // file, for the same mtime reason as the catalogue.
+        const docsMap = await this.writeDocsMap(rootDir, config, unchanged ? previous : index);
+        // The invariant is that `generated` upper-bounds every source mtime THIS
+        // build produced -- not merely that the index content moved. A catalogue
+        // or freeze write with an unchanged index (a renderer change, a copy-table
+        // change) would otherwise leave a source newer than the kept old stamp,
+        // recreating the permanent source:newer flag through the other door. The
+        // shipped 2.0.1 fix covered only the index-changed door; its own
+        // regression test caught this one when 2.0.3 changed the catalogue hrefs.
+        if (unchanged && !catalog.wrote && !frozen.wrote && !docsMap.wrote) {
             writtenIndex = previous;
         }
         else {
@@ -641,8 +652,9 @@ class IndexBuilder {
         }
         await this.saveRunCache(rootDir, config);
         const managedPaths = Array.from(new Set([
-            ...(featureIndexPath ? [featureIndexPath] : []),
-            ...(catalogPath ? [catalogPath] : []),
+            ...(frozen.relativePath ? [frozen.relativePath] : []),
+            ...(catalog.relativePath ? [catalog.relativePath] : []),
+            ...(docsMap.relativePath ? [docsMap.relativePath] : []),
             path_1.default.relative(rootDir, indexPath).replace(/\\/g, '/'),
         ])).sort((left, right) => compareCodepoints(left, right));
         // 7.7 deleted knowledge-document generation, and it was the only producer of
@@ -818,16 +830,9 @@ class IndexBuilder {
         return normalized.length > 0 ? normalized : undefined;
     }
     inferDocumentKind(relativePath) {
-        const normalized = relativePath.replace(/\\/g, '/');
-        if (normalized.includes('/docs/project/') || normalized.startsWith('docs/project/'))
-            return 'project';
-        if (normalized.includes('/docs/api/') || normalized.startsWith('docs/api/'))
-            return 'api';
-        if (normalized.includes('/docs/design/') || normalized.startsWith('docs/design/'))
-            return 'design';
-        if (normalized.includes('/docs/planning/') || normalized.startsWith('docs/planning/'))
-            return 'planning';
-        return 'other';
+        // One classifier for documents and bindings alike; the shared parser
+        // module carries the implementation, mirrored verbatim in build-index.ts.
+        return (0, SkillParser_1.inferBindingKind)(relativePath);
     }
     async scanArchivedChanges(rootDir, config) {
         const archivedRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'changes/archived', config);
@@ -1260,14 +1265,42 @@ class IndexBuilder {
         const docsProjectRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'docs/project', config);
         const featureCount = Object.keys(index?.feature_docs || {}).length;
         if (!(await pathExists(docsProjectRoot)) && featureCount === 0)
-            return null;
+            return { relativePath: null, wrote: false };
         await fs_1.promises.mkdir(docsProjectRoot, { recursive: true });
         const targetPath = path_1.default.join(docsProjectRoot, 'feature-catalog.md');
         const { content } = await (0, FeatureCatalog_1.renderCatalogFromIndex)(rootDir, config, index);
         const previous = await pathExists(targetPath) ? await fs_1.promises.readFile(targetPath, 'utf8') : null;
-        if (previous !== content)
+        // `wrote` feeds the caller's stamp decision: a catalogue that changed while
+        // the index did not (a renderer change, a copy-table change) still has to
+        // refresh `generated`, or the freshness check reports source:newer forever.
+        const wrote = previous !== content;
+        if (wrote)
             await fs_1.promises.writeFile(targetPath, content, 'utf8');
-        return path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/');
+        return { relativePath: path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/'), wrote };
+    }
+    /**
+     * P8: `docs/project/docs-map.md` -- the generated navigation layer. One
+     * line per indexed document, grouped by kind, carrying its binding count.
+     * Bounded by the number of documents, so it never grows with history.
+     * `generated: true` keeps it out of the `documents` map for exactly the
+     * reason the catalogue carries it. Same write discipline as the catalogue:
+     * rendered from the snapshot, compare-before-write, and its `wrote` feeds
+     * the caller's stamp decision.
+     */
+    async writeDocsMap(rootDir, config, index) {
+        const docsProjectRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'docs/project', config);
+        const documentCount = Object.keys(index?.documents || {}).length;
+        if (!(await pathExists(docsProjectRoot)) && documentCount === 0)
+            return { relativePath: null, wrote: false };
+        await fs_1.promises.mkdir(docsProjectRoot, { recursive: true });
+        const targetPath = path_1.default.join(docsProjectRoot, 'docs-map.md');
+        const mapDirRelativePath = path_1.default.relative(rootDir, docsProjectRoot).replace(/\\/g, '/');
+        const content = renderDocsMapContent(index, String(config?.documentLanguage || 'en-US'), mapDirRelativePath);
+        const previous = await pathExists(targetPath) ? await fs_1.promises.readFile(targetPath, 'utf8') : null;
+        const wrote = previous !== content;
+        if (wrote)
+            await fs_1.promises.writeFile(targetPath, content, 'utf8');
+        return { relativePath: path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/'), wrote };
     }
     /**
      * 7.4: `feature-index.md` stops being generated.
@@ -1289,10 +1322,10 @@ class IndexBuilder {
         const docsProjectRoot = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'docs/project', config);
         const targetPath = path_1.default.join(docsProjectRoot, 'feature-index.md');
         if (!(await pathExists(targetPath)))
-            return null;
+            return { relativePath: null, wrote: false };
         const existing = await fs_1.promises.readFile(targetPath, 'utf8');
         if ((0, helpers_1.parseFrontmatterDocument)(existing).data?.historical === true) {
-            return path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/');
+            return { relativePath: path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/'), wrote: false };
         }
         const copy = this.getFeatureIndexCopy(config?.documentLanguage);
         const lines = [
@@ -1321,9 +1354,10 @@ class IndexBuilder {
         }
         lines.push('');
         const content = `${lines.join('\n').trimEnd()}\n`;
-        if (existing !== content)
+        const wrote = existing !== content;
+        if (wrote)
             await fs_1.promises.writeFile(targetPath, content, 'utf8');
-        return path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/');
+        return { relativePath: path_1.default.relative(rootDir, targetPath).replace(/\\/g, '/'), wrote };
     }
     /**
      * Copy for the FROZEN feature-index (7.4). It kept fifteen labels while it
@@ -1362,3 +1396,62 @@ class IndexBuilder {
 exports.IndexBuilder = IndexBuilder;
 const createIndexBuilder = (skillParser) => new IndexBuilder(skillParser);
 exports.createIndexBuilder = createIndexBuilder;
+/**
+ * P8: the docs-map body. A pure function of the snapshot, DUPLICATED VERBATIM
+ * in `src/tools/build-index.ts` for the same reason as the declaration parser
+ * (that file is built-ins-only); `tests/services/p8-docs-map.test.mjs` builds
+ * with both entry points and compares the emitted bytes, which is what keeps
+ * the copies honest.
+ *
+ * Shape: one line per indexed document, grouped by kind in a fixed order,
+ * linking relative to `docs/project/` and carrying the document's binding
+ * count. Group headings use the kind vocabulary itself -- it is CLI/config
+ * vocabulary, not prose, so it stays English in every document language.
+ */
+function renderDocsMapContent(index, documentLanguage, mapDirRelativePath) {
+    const copy = documentLanguage === 'zh-CN'
+        ? { title: '文档地图', guidance: '由 OSpec 从文档索引生成，请勿手工编辑。定位某一功能节用 `ospec docs locate --feature <slug>`，检索用 `ospec index query <关键词>`。' }
+        : documentLanguage === 'ja-JP'
+            ? { title: '文書マップ', guidance: 'OSpec が文書インデックスから生成します。手で編集しないでください。機能節の特定は `ospec docs locate --feature <slug>`、検索は `ospec index query <キーワード>`。' }
+            : documentLanguage === 'ar'
+                ? { title: 'خريطة الوثائق', guidance: 'يُنشئها OSpec من فهرس الوثائق؛ لا تحررها يدويًا. لتحديد قسم ميزة استخدم `ospec docs locate --feature <slug>`، وللبحث `ospec index query <كلمة>`.' }
+                : { title: 'Documentation Map', guidance: 'Generated by OSpec from the document index; do not edit by hand. Locate one feature section with `ospec docs locate --feature <slug>`; search with `ospec index query <keyword>`.' };
+    const documents = index?.documents && typeof index.documents === 'object' && !Array.isArray(index.documents)
+        ? Object.values(index.documents)
+        : [];
+    const bindingsByFile = new Map();
+    for (const entry of Object.values(index?.feature_docs || {})) {
+        const file = String(entry?.file || '');
+        if (file)
+            bindingsByFile.set(file, (bindingsByFile.get(file) || 0) + 1);
+    }
+    const KIND_ORDER = ['feature', 'api', 'design', 'project', 'planning', 'product', 'other'];
+    const lines = [
+        '---',
+        `title: ${copy.title}`,
+        'generated: true',
+        'tags: [project, docs, map, ai-index]',
+        '---',
+        '',
+        `# ${copy.title}`,
+        '',
+        `> ${copy.guidance}`,
+    ];
+    const mapDir = String(mapDirRelativePath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+    for (const kind of KIND_ORDER) {
+        const group = documents
+            .filter(document => (document?.kind || 'other') === kind)
+            .sort((left, right) => (left.file < right.file ? -1 : left.file > right.file ? 1 : 0));
+        if (group.length === 0)
+            continue;
+        lines.push('', `## ${kind} (${group.length})`, '');
+        for (const document of group) {
+            const file = String(document?.file || '');
+            const href = path_1.default.posix.relative(mapDir, file);
+            const bindings = bindingsByFile.get(file) || 0;
+            lines.push(`- [${document?.title || file}](${href})${bindings > 0 ? ` — ${bindings} binding(s)` : ''}`);
+        }
+    }
+    lines.push('');
+    return lines.join('\n');
+}

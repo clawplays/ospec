@@ -5,6 +5,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.skillParser = exports.SkillParser = void 0;
 exports.parseFeatureDeclarations = parseFeatureDeclarations;
+exports.inferBindingKind = inferBindingKind;
 exports.registerFeatureDeclarations = registerFeatureDeclarations;
 exports.readFeatureSlugList = readFeatureSlugList;
 exports.readDocUpdateList = readDocUpdateList;
@@ -172,35 +173,36 @@ function featureCodePathProblem(value) {
  */
 function readFeatureDirective(line) {
     const trimmed = String(line ?? '').trim();
-    if (!trimmed.startsWith('<!--') || !/ospec:feature\b/.test(trimmed))
+    if (!trimmed.startsWith('<!--') || !/ospec:(?:feature|doc)\b/.test(trimmed))
         return null;
-    const match = /^<!--\s*ospec:feature\b(.*?)-->$/.exec(trimmed);
+    const match = /^<!--\s*ospec:(feature|doc)\b(.*?)-->$/.exec(trimmed);
     if (!match) {
         return { error: 'it is not one complete HTML comment on a single line, opened with "<!--" and closed with "-->"' };
     }
-    const tokens = match[1].trim().split(/\s+/).filter(Boolean);
+    const marker = match[1];
+    const tokens = match[2].trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0)
-        return { error: 'no feature slug was given' };
+        return { marker, error: 'no feature slug was given' };
     const slug = tokens[0];
     if (!FEATURE_SLUG_PATTERN.test(slug)) {
-        return { error: `"${slug}" is not a valid slug; a slug is lower-case kebab-case matching ^[a-z0-9]+(-[a-z0-9]+)*$` };
+        return { marker, error: `"${slug}" is not a valid slug; a slug is lower-case kebab-case matching ^[a-z0-9]+(-[a-z0-9]+)*$` };
     }
     const code = [];
     for (const token of tokens.slice(1)) {
         if (!token.startsWith('code:')) {
-            return { error: `unexpected "${token}"; the only key allowed after the slug is "code:"` };
+            return { marker, error: `unexpected "${token}"; the only key allowed after the slug is "code:"` };
         }
         const value = token.slice('code:'.length);
         if (!value)
-            return { error: '"code:" carries no path; write "code:src/auth/" with no space after the colon' };
+            return { marker, error: '"code:" carries no path; write "code:src/auth/" with no space after the colon' };
         for (const entry of value.split(',')) {
             const problem = featureCodePathProblem(entry);
             if (problem)
-                return { error: `code path "${entry}" ${problem}` };
+                return { marker, error: `code path "${entry}" ${problem}` };
             code.push(entry.replace(/^\.\//, ''));
         }
     }
-    return { slug, code: Array.from(new Set(code)).sort() };
+    return { slug, marker, code: Array.from(new Set(code)).sort() };
 }
 /** Reads one line as an `ospec:last-change` traceability comment. */
 function readLastChangeDirective(line) {
@@ -212,11 +214,11 @@ function readLastChangeDirective(line) {
  * no other context, so the message carries the location, the reason, the form,
  * a worked example, and the rules -- not just "invalid declaration".
  */
-function featureDeclarationError(filePath, lineNumber, heading, reason) {
+function featureDeclarationError(filePath, lineNumber, heading, reason, marker = 'feature') {
     const where = heading ? ` under heading "${heading}"` : '';
-    const error = new Error(`${filePath}:${lineNumber}: invalid <!-- ospec:feature --> declaration${where}: ${reason}.\n`
-        + '  Expected form: <!-- ospec:feature <slug> [code:<path>[,<path>...]] -->\n'
-        + '  Example:       <!-- ospec:feature login-timeout code:src/auth/,src/session/ -->\n'
+    const error = new Error(`${filePath}:${lineNumber}: invalid <!-- ospec:${marker} --> declaration${where}: ${reason}.\n`
+        + `  Expected form: <!-- ospec:${marker} <slug> [code:<path>[,<path>...]] -->\n`
+        + `  Example:       <!-- ospec:${marker} login-timeout code:src/auth/,src/session/ -->\n`
         + '  Rules: exactly one declaration, on the first non-blank line under its "##" heading; '
         + 'the slug is lower-case kebab-case and unique across the whole project; '
         + 'code paths are repository-relative, use "/", and are comma-separated with no spaces.\n'
@@ -279,7 +281,7 @@ function parseFeatureDeclarations(content, filePath = '<document>') {
             continue;
         claimed.add(probe);
         if (directive.error)
-            throw featureDeclarationError(filePath, probe + 1, heading.title, directive.error);
+            throw featureDeclarationError(filePath, probe + 1, heading.title, directive.error, directive.marker);
         let endLine = lines.length;
         for (let next = position + 1; next < headings.length; next += 1) {
             if (headings[next].level > heading.level)
@@ -317,9 +319,29 @@ function parseFeatureDeclarations(content, filePath = '<document>') {
         const directive = readFeatureDirective(lines[index]);
         if (!directive)
             continue;
-        throw featureDeclarationError(filePath, index + 1, null, 'it is not the first non-blank line under a heading, so it is bound to no section');
+        throw featureDeclarationError(filePath, index + 1, null, 'it is not the first non-blank line under a heading, so it is bound to no section', directive.marker);
     }
     return declarations;
+}
+/**
+ * The documentation category a declaring document belongs to, from its
+ * repo-relative path. `docs/features/` maps to `feature`; the sibling
+ * directories map to their own names; anything outside the recognised tree is
+ * `other`, never a guess. Works for classic (`docs/...`) and nested
+ * (`.ospec/docs/...`) layouts alike, because both carry the `docs/<dir>/`
+ * segment pair.
+ */
+function inferBindingKind(relativePath) {
+    const normalized = String(relativePath ?? '').replace(/\\/g, '/');
+    const kinds = [
+        ['project', 'project'], ['api', 'api'], ['design', 'design'],
+        ['planning', 'planning'], ['product', 'product'], ['feature', 'features'],
+    ];
+    for (const [kind, dir] of kinds) {
+        if (normalized.includes(`/docs/${dir}/`) || normalized.startsWith(`docs/${dir}/`))
+            return kind;
+    }
+    return 'other';
 }
 /**
  * Adds one document's declarations to the project-wide slug map, failing on a
@@ -347,7 +369,7 @@ function registerFeatureDeclarations(featureDocs, file, declarations) {
                 + '  A feature slug identifies exactly one section in the whole project. '
                 + 'Rename one of the two declarations, or merge the two sections into one.');
         }
-        featureDocs[declaration.slug] = { ...declaration, file };
+        featureDocs[declaration.slug] = { ...declaration, file, kind: inferBindingKind(file) };
     }
 }
 /**

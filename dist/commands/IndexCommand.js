@@ -279,23 +279,36 @@ class IndexCommand extends BaseCommand_1.BaseCommand {
             // which either builder has ever written, so `aliases` and `modules`
             // — the two fields authors add specifically to be findable — could
             // not be searched at all.
+            // Section headings are in the index already (both builders emit
+            // `sections`); scoring them turns "open this file" answers into
+            // `file#heading` answers, which is the same jump `docs locate`
+            // makes for feature slugs.
+            const sectionTitles = document?.sections && typeof document.sections === 'object' && !Array.isArray(document.sections)
+                ? Object.keys(document.sections)
+                : [];
             const { score, matched } = scoreEntry([
                 [textOf(document?.title).toLowerCase(), 3],
                 [textOf(document?.aliases).toLowerCase(), 3],
                 [textOf(document?.features).toLowerCase(), 2],
                 [textOf(document?.tags).toLowerCase(), 2],
                 [textOf(document?.modules).toLowerCase(), 2],
+                [sectionTitles.join(' ').toLowerCase(), 2],
                 [textOf(document?.file).toLowerCase(), 1],
                 [textOf(document?.kind).toLowerCase(), 1],
                 [documentsAreArray ? '' : documentKey.toLowerCase(), 1],
             ]);
             if (score > 0) {
+                const matchedSections = sectionTitles.filter(title => {
+                    const haystack = title.toLowerCase();
+                    return terms.some(term => haystack.includes(term));
+                });
                 matches.push({
                     kind: 'document',
                     score,
                     matched,
                     entry: document,
                     key: documentsAreArray ? undefined : documentKey,
+                    ...(matchedSections.length > 0 ? { matchedSections } : {}),
                 });
             }
         }
@@ -308,6 +321,7 @@ class IndexCommand extends BaseCommand_1.BaseCommand {
                 [textOf(entry?.heading).toLowerCase(), 3],
                 [textOf(entry?.code).toLowerCase(), 2],
                 [textOf(entry?.file).toLowerCase(), 1],
+                [textOf(entry?.kind).toLowerCase(), 1],
             ]);
             if (score > 0)
                 matches.push({ kind: 'feature', score, matched, entry, key: slug });
@@ -340,6 +354,7 @@ class IndexCommand extends BaseCommand_1.BaseCommand {
                     kind: match.kind,
                     score: match.score,
                     matched: match.matched,
+                    ...(match.matchedSections ? { matched_sections: match.matchedSections } : {}),
                     entry: match.entry,
                 })),
             }, null, 2));
@@ -352,7 +367,11 @@ class IndexCommand extends BaseCommand_1.BaseCommand {
                 const entry = match.entry;
                 // One line that is already the answer: where the section is and
                 // exactly which bytes to read, so the caller never rescans.
-                console.log(`- [feature] ${match.key} -> ${textOf(entry?.file)}#${textOf(entry?.heading)}`);
+                // The label is the binding's documentation kind -- `feature`
+                // for a living feature section, `api`/`design`/... for a
+                // binding declared in the sibling documentation trees.
+                const label = textOf(entry?.kind).trim() || 'feature';
+                console.log(`- [${label}] ${match.key} -> ${textOf(entry?.file)}#${textOf(entry?.heading)}`);
                 console.log(`    bytes: ${entry?.start}-${entry?.end}${(entry?.code || []).length > 0 ? `  code: ${(entry.code || []).join(', ')}` : ''}`);
             }
             else if (match.kind === 'document') {
@@ -364,6 +383,9 @@ class IndexCommand extends BaseCommand_1.BaseCommand {
                 // is missing.
                 const location = textOf(entry?.file).trim() || match.key || 'unknown';
                 console.log(`- [doc] ${location}${entry?.title ? ` — ${entry.title}` : ''}`);
+                for (const heading of (match.matchedSections || []).slice(0, 3)) {
+                    console.log(`    section: ${location}#${heading}`);
+                }
             }
             else {
                 const entry = match.entry;

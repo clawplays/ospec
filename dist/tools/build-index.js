@@ -449,13 +449,15 @@ async function writeIndex(rootDir, options) {
     const layout = await getProjectLayout(rootDir);
     await loadRunCache(rootDir, layout);
     const archivedChanges = await scanArchivedChangesWithHistory(rootDir, layout);
-    await freezeLegacyFeatureIndex(rootDir, layout, archivedChanges);
+    const frozeWrote = await freezeLegacyFeatureIndex(rootDir, layout, archivedChanges);
     const indexPath = resolveManagedPath(rootDir, INDEX_FILE, layout);
     const nextIndex = await buildIndex(rootDir, { layout, archivedChanges });
     // 7.4: rendered from the snapshot, so it happens before the "already up to
     // date" short-circuit below -- an unchanged index still needs a catalogue
     // written on the first build after the upgrade, when the file does not exist.
-    await writeFeatureCatalog(rootDir, layout, nextIndex);
+    const catalogWrote = await writeFeatureCatalog(rootDir, layout, nextIndex);
+    // P8: the docs map follows the same discipline, and for the same reasons.
+    const docsMapWrote = await writeDocsMap(rootDir, layout, nextIndex);
     await saveRunCache(rootDir, layout);
     // A damaged index reads as absent here, which routes straight into the
     // rewrite below: `ospec index build` is the recovery command printed by the
@@ -467,7 +469,12 @@ async function writeIndex(rootDir, options) {
     if (currentOutcome.status === 'damaged') {
         recordBuildWarning(indexPath, currentOutcome.reason);
     }
-    if (currentIndex && currentOutcome.status === 'ok' && !currentOutcome.hadBom && isSameIndex(currentIndex, nextIndex)) {
+    // The invariant is that `generated` upper-bounds every source mtime THIS
+    // build produced -- a catalogue or freeze write with an unchanged index
+    // would otherwise leave a source newer than the kept old stamp, and the
+    // staleness check would report source:newer forever.
+    if (currentIndex && currentOutcome.status === 'ok' && !currentOutcome.hadBom
+        && isSameIndex(currentIndex, nextIndex) && !catalogWrote && !frozeWrote && !docsMapWrote) {
         if (!options.silent) {
             console.log('[ospec] SKILL.index.json already up to date');
             printIndexStats(currentIndex);
@@ -736,16 +743,9 @@ function optionalMetadataList(value) {
     return normalized.length > 0 ? normalized : undefined;
 }
 function inferDocumentKind(relativePath) {
-    const normalized = normalizePath(relativePath);
-    if (normalized.includes('/docs/project/') || normalized.startsWith('docs/project/'))
-        return 'project';
-    if (normalized.includes('/docs/api/') || normalized.startsWith('docs/api/'))
-        return 'api';
-    if (normalized.includes('/docs/design/') || normalized.startsWith('docs/design/'))
-        return 'design';
-    if (normalized.includes('/docs/planning/') || normalized.startsWith('docs/planning/'))
-        return 'planning';
-    return 'other';
+    // One classifier for documents and bindings alike; the parser twin below
+    // carries the shared implementation.
+    return inferBindingKind(normalizePath(relativePath));
 }
 // The cache lives in a self-gitignored cache/ directory: its fingerprints are
 // machine-local mtimes, so committing it would only produce repo churn.
@@ -756,7 +756,7 @@ const ARCHIVE_SCAN_CACHE_FILE = 'cache/SKILL.index.cache.json';
 // forever, because the hit path never reads its frontmatter. Bump this and the
 // whole document half of the cache is refused; fingerprints and archive entries
 // are unaffected.
-const DOCUMENT_CACHE_FORMAT = 2;
+const DOCUMENT_CACHE_FORMAT = 3;
 // One immutable-input cache per run: archived changes never mutate after they
 // are written and markdown documents change rarely, so fingerprinting them
 // turns every rebuild and hook check into O(changed inputs). Deleting the
@@ -1442,10 +1442,26 @@ catalogDir = 'docs/project') {
         const sectionHref = `${catalogRelativeLink(catalogDir, row.file)}#${headingAnchor(row.heading)}`;
         const section = `[${escapeTableCell(row.location)}](${sectionHref})`;
         const summary = escapeTableCell(row.summary) || copy.noSummary;
+        // The href targets the archive's proposal.md, not the archive directory:
+        // an editor's markdown link cannot open a directory (VS Code reports
+        // "cannot open directory" and jumps nowhere), and proposal.md is the one
+        // file every archive is guaranteed to carry -- the archive action moves it
+        // there. The fallback for an unindexed name is resolved through the same
+        // managed prefix as the catalogue itself (catalogDir is always
+        // `<prefix>docs/project` by construction), because the bare classic path
+        // walked OUT of `.ospec/` on a nested project. It may still dangle; a
+        // dangling link to the right FILE path beats one nothing can open.
+        const managedPrefix = catalogDir.replace(/docs\/project$/, '');
         const lastChange = row.lastChange
-            ? `[${escapeTableCell(row.lastChange)}](${catalogRelativeLink(catalogDir, archiveLinks[row.lastChange] || `changes/archived/${row.lastChange}`)})`
+            ? `[${escapeTableCell(row.lastChange)}](${catalogRelativeLink(catalogDir, `${archiveLinks[row.lastChange] || `${managedPrefix}changes/archived/${row.lastChange}`}/proposal.md`)})`
             : copy.noLastChange;
-        lines.push(`| \`${escapeTableCell(row.slug)}\` | ${summary} | ${section} | ${row.status} | ${lastChange} |`);
+        // The kind rides in the status cell (CLI vocabulary, English like the
+        // status values), NOT in the slug cell: readCatalogRows extracts the slug
+        // from the backticked first cell, and the archive-time row assertion
+        // matches on it exactly. Feature rows are unchanged, so a pre-P8
+        // catalogue diff stays empty.
+        const status = row.kind && row.kind !== 'feature' ? `${row.status} · ${row.kind}` : row.status;
+        lines.push(`| \`${escapeTableCell(row.slug)}\` | ${summary} | ${section} | ${status} | ${lastChange} |`);
     }
     lines.push('');
     return `${lines.join('\n').trimEnd()}\n`;
@@ -1465,6 +1481,7 @@ function buildFeatureCatalogRow(entry, sectionText) {
         location: `${entry.file}#${entry.heading}`,
         summary: featureSummarySentence(sectionText),
         status: featureStatusFromSection(sectionText),
+        kind: entry.kind ?? 'feature',
         lastChange: typeof entry.last_change === 'string' ? entry.last_change : '',
     };
 }
@@ -1478,15 +1495,93 @@ async function writeFeatureCatalog(rootDir, layout, index) {
     const docsProjectRoot = resolveManagedPath(rootDir, 'docs/project', layout);
     const featureCount = Object.keys(index?.feature_docs || {}).length;
     if (!(await exists(docsProjectRoot)) && featureCount === 0)
-        return;
+        return false;
     await fsp.mkdir(docsProjectRoot, { recursive: true });
     const targetPath = path.join(docsProjectRoot, 'feature-catalog.md');
     const config = await readSkillConfig(rootDir);
     const catalogDir = path.relative(rootDir, docsProjectRoot).replace(/\\/g, '/');
     const content = await renderCatalogFromIndex(rootDir, config, index, catalogDir);
     const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
-    if (previous !== content)
+    // The caller's stamp decision needs to know: a catalogue that changed while
+    // the index did not still has to refresh `generated`, or the freshness
+    // check reports source:newer forever.
+    const wrote = previous !== content;
+    if (wrote)
         await fsp.writeFile(targetPath, content, 'utf8');
+    return wrote;
+}
+/**
+ * P8: write `docs/project/docs-map.md`. The package copy is
+ * `IndexBuilder.writeDocsMap`; `tests/services/p8-docs-map.test.mjs` builds
+ * the same fixture with both entry points and compares the emitted bytes.
+ */
+async function writeDocsMap(rootDir, layout, index) {
+    const docsProjectRoot = resolveManagedPath(rootDir, 'docs/project', layout);
+    const documentCount = Object.keys(index?.documents || {}).length;
+    if (!(await exists(docsProjectRoot)) && documentCount === 0)
+        return false;
+    await fsp.mkdir(docsProjectRoot, { recursive: true });
+    const targetPath = path.join(docsProjectRoot, 'docs-map.md');
+    const config = await readSkillConfig(rootDir);
+    const mapDirRelativePath = path.relative(rootDir, docsProjectRoot).replace(/\\/g, '/');
+    const content = renderDocsMapContent(index, String(config?.documentLanguage || 'en-US'), mapDirRelativePath);
+    const previous = await exists(targetPath) ? await fsp.readFile(targetPath, 'utf8') : null;
+    const wrote = previous !== content;
+    if (wrote)
+        await fsp.writeFile(targetPath, content, 'utf8');
+    return wrote;
+}
+/**
+ * P8: the docs-map body. A verbatim copy of `renderDocsMapContent` in
+ * `src/services/IndexBuilder.ts`; the byte-comparison test above is what
+ * keeps the two honest.
+ */
+function renderDocsMapContent(index, documentLanguage, mapDirRelativePath) {
+    const copy = documentLanguage === 'zh-CN'
+        ? { title: '文档地图', guidance: '由 OSpec 从文档索引生成，请勿手工编辑。定位某一功能节用 `ospec docs locate --feature <slug>`，检索用 `ospec index query <关键词>`。' }
+        : documentLanguage === 'ja-JP'
+            ? { title: '文書マップ', guidance: 'OSpec が文書インデックスから生成します。手で編集しないでください。機能節の特定は `ospec docs locate --feature <slug>`、検索は `ospec index query <キーワード>`。' }
+            : documentLanguage === 'ar'
+                ? { title: 'خريطة الوثائق', guidance: 'يُنشئها OSpec من فهرس الوثائق؛ لا تحررها يدويًا. لتحديد قسم ميزة استخدم `ospec docs locate --feature <slug>`، وللبحث `ospec index query <كلمة>`.' }
+                : { title: 'Documentation Map', guidance: 'Generated by OSpec from the document index; do not edit by hand. Locate one feature section with `ospec docs locate --feature <slug>`; search with `ospec index query <keyword>`.' };
+    const documents = index?.documents && typeof index.documents === 'object' && !Array.isArray(index.documents)
+        ? Object.values(index.documents)
+        : [];
+    const bindingsByFile = new Map();
+    for (const entry of Object.values(index?.feature_docs || {})) {
+        const file = String(entry?.file || '');
+        if (file)
+            bindingsByFile.set(file, (bindingsByFile.get(file) || 0) + 1);
+    }
+    const KIND_ORDER = ['feature', 'api', 'design', 'project', 'planning', 'product', 'other'];
+    const lines = [
+        '---',
+        `title: ${copy.title}`,
+        'generated: true',
+        'tags: [project, docs, map, ai-index]',
+        '---',
+        '',
+        `# ${copy.title}`,
+        '',
+        `> ${copy.guidance}`,
+    ];
+    const mapDir = String(mapDirRelativePath || '').replace(/\\/g, '/').replace(/\/+$/, '');
+    for (const kind of KIND_ORDER) {
+        const group = documents
+            .filter(document => (document?.kind || 'other') === kind)
+            .sort((left, right) => (left.file < right.file ? -1 : left.file > right.file ? 1 : 0));
+        if (group.length === 0)
+            continue;
+        lines.push('', `## ${kind} (${group.length})`, '');
+        for (const document of group) {
+            const file = String(document?.file || '');
+            const href = path.posix.relative(mapDir, file);
+            const bindings = bindingsByFile.get(file) || 0;
+            lines.push(`- [${document?.title || file}](${href})${bindings > 0 ? ` — ${bindings} binding(s)` : ''}`);
+        }
+    }
+    lines.push('');
+    return lines.join('\n');
 }
 /**
  * Read every declared feature's document once, slice each section, render.
@@ -1537,10 +1632,10 @@ async function freezeLegacyFeatureIndex(rootDir, layout, archivedChanges) {
     const docsProjectRoot = resolveManagedPath(rootDir, 'docs/project', layout);
     const targetPath = path.join(docsProjectRoot, 'feature-index.md');
     if (!(await exists(targetPath)))
-        return;
+        return false;
     const existing = await fsp.readFile(targetPath, 'utf8');
     if (parseFrontmatter(existing).data?.historical === true)
-        return;
+        return false;
     const config = await readSkillConfig(rootDir);
     const copy = getFeatureIndexCopy(config?.documentLanguage);
     const lines = [
@@ -1568,8 +1663,10 @@ async function freezeLegacyFeatureIndex(rootDir, layout, archivedChanges) {
     }
     lines.push('');
     const content = `${lines.join('\n').trimEnd()}\n`;
-    if (existing !== content)
+    const wrote = existing !== content;
+    if (wrote)
         await fsp.writeFile(targetPath, content, 'utf8');
+    return wrote;
 }
 function getFeatureIndexCopy(documentLanguage) {
     if (documentLanguage === 'zh-CN') {
@@ -2751,35 +2848,36 @@ function featureCodePathProblem(value) {
  */
 function readFeatureDirective(line) {
     const trimmed = String(line ?? '').trim();
-    if (!trimmed.startsWith('<!--') || !/ospec:feature\b/.test(trimmed))
+    if (!trimmed.startsWith('<!--') || !/ospec:(?:feature|doc)\b/.test(trimmed))
         return null;
-    const match = /^<!--\s*ospec:feature\b(.*?)-->$/.exec(trimmed);
+    const match = /^<!--\s*ospec:(feature|doc)\b(.*?)-->$/.exec(trimmed);
     if (!match) {
         return { error: 'it is not one complete HTML comment on a single line, opened with "<!--" and closed with "-->"' };
     }
-    const tokens = match[1].trim().split(/\s+/).filter(Boolean);
+    const marker = match[1];
+    const tokens = match[2].trim().split(/\s+/).filter(Boolean);
     if (tokens.length === 0)
-        return { error: 'no feature slug was given' };
+        return { marker, error: 'no feature slug was given' };
     const slug = tokens[0];
     if (!FEATURE_SLUG_PATTERN.test(slug)) {
-        return { error: `"${slug}" is not a valid slug; a slug is lower-case kebab-case matching ^[a-z0-9]+(-[a-z0-9]+)*$` };
+        return { marker, error: `"${slug}" is not a valid slug; a slug is lower-case kebab-case matching ^[a-z0-9]+(-[a-z0-9]+)*$` };
     }
     const code = [];
     for (const token of tokens.slice(1)) {
         if (!token.startsWith('code:')) {
-            return { error: `unexpected "${token}"; the only key allowed after the slug is "code:"` };
+            return { marker, error: `unexpected "${token}"; the only key allowed after the slug is "code:"` };
         }
         const value = token.slice('code:'.length);
         if (!value)
-            return { error: '"code:" carries no path; write "code:src/auth/" with no space after the colon' };
+            return { marker, error: '"code:" carries no path; write "code:src/auth/" with no space after the colon' };
         for (const entry of value.split(',')) {
             const problem = featureCodePathProblem(entry);
             if (problem)
-                return { error: `code path "${entry}" ${problem}` };
+                return { marker, error: `code path "${entry}" ${problem}` };
             code.push(entry.replace(/^\.\//, ''));
         }
     }
-    return { slug, code: Array.from(new Set(code)).sort() };
+    return { slug, marker, code: Array.from(new Set(code)).sort() };
 }
 /** Reads one line as an `ospec:last-change` traceability comment. */
 function readLastChangeDirective(line) {
@@ -2791,11 +2889,11 @@ function readLastChangeDirective(line) {
  * no other context, so the message carries the location, the reason, the form,
  * a worked example, and the rules -- not just "invalid declaration".
  */
-function featureDeclarationError(filePath, lineNumber, heading, reason) {
+function featureDeclarationError(filePath, lineNumber, heading, reason, marker = 'feature') {
     const where = heading ? ` under heading "${heading}"` : '';
-    const error = new Error(`${filePath}:${lineNumber}: invalid <!-- ospec:feature --> declaration${where}: ${reason}.\n`
-        + '  Expected form: <!-- ospec:feature <slug> [code:<path>[,<path>...]] -->\n'
-        + '  Example:       <!-- ospec:feature login-timeout code:src/auth/,src/session/ -->\n'
+    const error = new Error(`${filePath}:${lineNumber}: invalid <!-- ospec:${marker} --> declaration${where}: ${reason}.\n`
+        + `  Expected form: <!-- ospec:${marker} <slug> [code:<path>[,<path>...]] -->\n`
+        + `  Example:       <!-- ospec:${marker} login-timeout code:src/auth/,src/session/ -->\n`
         + '  Rules: exactly one declaration, on the first non-blank line under its "##" heading; '
         + 'the slug is lower-case kebab-case and unique across the whole project; '
         + 'code paths are repository-relative, use "/", and are comma-separated with no spaces.\n'
@@ -2858,7 +2956,7 @@ function parseFeatureDeclarations(content, filePath = '<document>') {
             continue;
         claimed.add(probe);
         if (directive.error)
-            throw featureDeclarationError(filePath, probe + 1, heading.title, directive.error);
+            throw featureDeclarationError(filePath, probe + 1, heading.title, directive.error, directive.marker);
         let endLine = lines.length;
         for (let next = position + 1; next < headings.length; next += 1) {
             if (headings[next].level > heading.level)
@@ -2896,9 +2994,29 @@ function parseFeatureDeclarations(content, filePath = '<document>') {
         const directive = readFeatureDirective(lines[index]);
         if (!directive)
             continue;
-        throw featureDeclarationError(filePath, index + 1, null, 'it is not the first non-blank line under a heading, so it is bound to no section');
+        throw featureDeclarationError(filePath, index + 1, null, 'it is not the first non-blank line under a heading, so it is bound to no section', directive.marker);
     }
     return declarations;
+}
+/**
+ * The documentation category a declaring document belongs to, from its
+ * repo-relative path. `docs/features/` maps to `feature`; the sibling
+ * directories map to their own names; anything outside the recognised tree is
+ * `other`, never a guess. Works for classic (`docs/...`) and nested
+ * (`.ospec/docs/...`) layouts alike, because both carry the `docs/<dir>/`
+ * segment pair.
+ */
+function inferBindingKind(relativePath) {
+    const normalized = String(relativePath ?? '').replace(/\\/g, '/');
+    const kinds = [
+        ['project', 'project'], ['api', 'api'], ['design', 'design'],
+        ['planning', 'planning'], ['product', 'product'], ['feature', 'features'],
+    ];
+    for (const [kind, dir] of kinds) {
+        if (normalized.includes(`/docs/${dir}/`) || normalized.startsWith(`docs/${dir}/`))
+            return kind;
+    }
+    return 'other';
 }
 /**
  * Adds one document's declarations to the project-wide slug map, failing on a
@@ -2926,7 +3044,7 @@ function registerFeatureDeclarations(featureDocs, file, declarations) {
                 + '  A feature slug identifies exactly one section in the whole project. '
                 + 'Rename one of the two declarations, or merge the two sections into one.');
         }
-        featureDocs[declaration.slug] = { ...declaration, file };
+        featureDocs[declaration.slug] = { ...declaration, file, kind: inferBindingKind(file) };
     }
 }
 /**

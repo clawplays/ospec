@@ -34,6 +34,8 @@ Set `change_type` to `feature`, `fix`, `refactor`, `perf`, `deprecate`, `remove`
 
 Living feature documents are `docs/features/<domain>.md`, one `##` section per feature. Humans own them and you edit them inside a change; the engine never writes their prose. Write section headings and prose in the project's `documentLanguage` (slugs and `code:` paths stay English kebab-case); phase-2 rewrites under `ospec docs migrate` follow the same rule.
 
+Bindings are not limited to feature documents: sections under `docs/api/`, `docs/design/` and `docs/project/` declare bindings with `<!-- ospec:doc <slug> code:... -->` — same syntax as `ospec:feature`, one project-wide slug namespace, and the document kind is inferred from the path. `docs/planning/` and `docs/product/` are reference material: they may declare bindings and are searchable, but they generate no obligation.
+
 Declare a feature inline, on the first non-blank line under its heading, and nowhere else. There is no `features:` list in the file frontmatter — the slug-to-section binding stays local, so it survives a section being moved and there is no second copy of the same fact to drift.
 
 ```markdown
@@ -66,11 +68,15 @@ Obligations come from `change_type` and the change's `features:` list. When `fea
 | `deprecate`, `remove` | Mark the section's status and sync the catalogue |
 | `docs` | The edit is itself the obligation |
 
+A binding's kind decides which contract it carries. `feature` and `api` sections describe living behaviour and follow the table above. A `design` (ADR/decision) section generates a verification-type `verify_decision` obligation under every code change type — confirm the decision still holds; if it was overturned or amended, mark the section Superseded and link the replacement. A `project` (architecture/overview) section generates `verify_structure` the same way. Both accept zero diff plus `ospec docs confirm`, exactly like a refactor's verification obligation.
+
 A verification-type obligation accepts **zero diff plus an explicit confirmation**: when a refactor genuinely changed no documented behaviour, record `ospec docs confirm --id <obligation-id>` rather than making a cosmetic edit. That confirmation is refused on every other kind of obligation, because a self-certified obligation verifies nothing.
 
 `docs_contract.mode` in `.skillrc` is `warn` or `strict`, and defaults to `warn` for this release cycle: an unmet obligation is reported at the archive gate but does not block it. Whether an obligation is met is decided identically in both modes; only the consequence differs. An optional obligation never blocks, in either mode.
 
 Run `ospec docs audit` periodically. It lists feature sections whose `code:` paths changed since the archive named in their `ospec:last-change` comment while the document did not — the drift the obligations are meant to prevent. It is read-only and never fails a build.
+
+To onboard an existing project, run `ospec docs coverage` (read-only) to see the code areas no binding covers, then the four-stage bind pipeline: `ospec docs bind --plan --apply` → adjudicate each entry in `docs-binding-plan.json` by hand → `ospec docs bind --execute --apply` → `ospec docs bind --verify`. It binds existing documents and writes draft skeletons for uncovered areas; the engine writes declarations and skeletons only, never prose.
 
 ### Migrating an Existing Project
 

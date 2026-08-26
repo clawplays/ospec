@@ -186,7 +186,7 @@ goal 以**会话内 task graph 循环**运行，并统一使用一条快速质�
 ```
 
 ```bash
-npm install -g @clawplays/ospec-cli@2.0.2
+npm install -g @clawplays/ospec-cli@2.1.0
 ospec update [path]
 ```
 

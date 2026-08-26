@@ -34,6 +34,8 @@
 
 活功能文档是 `docs/features/<领域>.md`，每个功能一个 `##` 节。文档由人类拥有，你在 change 内编辑；引擎从不代写正文。节标题与正文一律使用项目的 `documentLanguage` 撰写（slug 与 `code:` 路径保持英文 kebab-case 除外）；`ospec docs migrate` 阶段 2 的改写同样遵守。
 
+绑定不限于功能文档：`docs/api/`、`docs/design/`、`docs/project/` 下的文档节同样可以用 `<!-- ospec:doc <slug> code:... -->` 声明绑定——与 `ospec:feature` 同语法、同一个全项目 slug 空间，文档类别（kind）由路径自动判定。`docs/planning/` 与 `docs/product/` 是参照资料：可声明、可检索，但不产生义务。
+
 功能声明写在行内：紧贴节标题下的第一个非空行，且只写在那里。文件 frontmatter 里没有 `features:` 列表——slug 与节的绑定保持就地，节被移动后依然成立，也不会出现同一事实的第二份副本。
 
 ```markdown
@@ -66,11 +68,15 @@
 | `deprecate`、`remove` | 标记该节状态，并同步功能目录 |
 | `docs` | 编辑本身即义务 |
 
+绑定的 kind 决定它承载的契约：`feature` 与 `api` 节描述活行为，按上表执行；`design`（ADR/决策）节在任何代码类 change_type 下都生成验证型 `verify_decision` 义务——确认决策仍成立，被推翻或修改时在该节标记 Superseded 并链接替代方案或归档；`project`（架构/总览）节同理生成 `verify_structure`。两者都接受零 diff + `ospec docs confirm`，与 refactor 的验证型义务完全一致。
+
 验证型义务接受**零 diff + 显式确认**：重构确实没有改变任何已记录的行为时，执行 `ospec docs confirm --id <义务 id>` 记录，而不是做一次装饰性修改。该确认在其它类型的义务上一律拒绝——自证的义务等于没有验证。
 
 `.skillrc` 中的 `docs_contract.mode` 取 `warn` 或 `strict`，本版本周期默认 `warn`：未满足的义务会在归档门提示，但不阻塞归档。两种模式对「义务是否满足」的判定完全一致，区别只在后果。可选义务在任何模式下都不阻塞。
 
 定期执行 `ospec docs audit`：它列出那些 `code:` 路径自 `ospec:last-change` 指向的归档以来发生了变更、而文档本身未动的功能节——正是义务机制要预防的漂移。该命令只读，且从不让构建失败。
+
+接入存量项目：先用 `ospec docs coverage`（只读）查看没有任何绑定覆盖的代码区域，再走四阶段 bind 管线——`ospec docs bind --plan --apply` → 人工在 `docs-binding-plan.json` 中逐条判决 → `ospec docs bind --execute --apply` → `ospec docs bind --verify`。它把存量文档绑定进来，并为空白区域生成草稿骨架；引擎只写声明与骨架，从不代写正文。
 
 ### 迁移存量项目
 

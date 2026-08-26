@@ -125,6 +125,15 @@ class ClassicChangeCloseoutService {
             'SKILL.index.json',
             'cache/SKILL.index.cache.json',
             'cache/.gitignore',
+            // Engine-owned plan/state files that legitimately persist across
+            // changes in the classic layout (the binding plan carries
+            // uncovered_accepted records by design; the migration state file spans
+            // all four phases); without this, an adjudication- or
+            // migration-in-progress blocks every closeout as an out-of-scope dirty
+            // file.
+            'docs-binding-plan.json',
+            'docs-migration-plan.json',
+            'docs-migration.json',
         ]);
         const scopes = [...affects, ...documentationUpdates];
         const withinScope = (filePath, scope) => filePath === scope || filePath.startsWith(`${scope}/`);

@@ -54,5 +54,25 @@ export declare class DocsCommand extends BaseCommand {
      * mode: `--plan`, `--verify`, `--finalize`. Nothing writes without
      * `--apply`, and `--finalize --apply` is the only thing that deletes.
      */
+    /**
+     * `ospec docs coverage [path] [--json]`. The inverse of `docs audit`:
+     * which code areas have no binding at all, ordered as a work list --
+     * busiest undocumented areas first. Read-only, never fails the build.
+     */
+    private runCoverage;
+    /**
+     * `ospec docs bind [path] [--plan|--execute|--verify] [--apply] [--json]`.
+     * The staged onboarding pipeline: plan (engine) -> adjudicate (person) ->
+     * execute (engine, mechanical) -> verify (gate). Prose is never written by
+     * the engine; declarations and draft skeletons are.
+     */
+    private runBind;
+    /**
+     * `ospec docs retire [path] [--apply] [--json]`. Collects every document
+     * marked `status: deprecated`, prints the list, and -- only with --apply
+     * -- records a manifest row and moves each file into
+     * `changes/archived/retired-docs/`. Deletion always means archival here.
+     */
+    private runRetire;
     private migrate;
 }

@@ -133,6 +133,14 @@ class LayoutCommand extends BaseCommand_1.BaseCommand {
             await services_1.services.fileService.move(move.sourcePath, move.targetPath);
             movedPaths.push(`${move.sourceRelativePath} -> ${move.targetRelativePath}`);
         }
+        // The binding plan's `entries[].file` values are INDEX-coordinate
+        // paths (repo-relative, like `documents` keys), so the flip that gave
+        // every indexed document an `.ospec/` prefix must rewrite them too.
+        // Moving the file alone left its contents in the old coordinate
+        // space: verify reported a correct binding as [misbound] with advice
+        // that would break it, execute skipped rows as unreadable, and a
+        // re-plan dropped every adjudication because nothing matched by path.
+        await this.rebasePlanEntryPaths(rootDir);
         const nextConfig = {
             ...config,
             projectLayout: 'nested',
@@ -152,6 +160,37 @@ class LayoutCommand extends BaseCommand_1.BaseCommand {
             }
         }
     }
+    async rebasePlanEntryPaths(rootDir) {
+        const planPath = (0, ProjectLayout_1.resolveManagedPath)(rootDir, 'docs-binding-plan.json', 'nested');
+        if (!(await services_1.services.fileService.exists(planPath))) {
+            return;
+        }
+        let plan;
+        try {
+            plan = JSON.parse((await services_1.services.fileService.readFile(planPath)).replace(/^\uFEFF/, ''));
+        }
+        catch {
+            // A damaged plan is the bind pipeline's problem to report, not a
+            // reason to abort a layout migration that already moved files.
+            return;
+        }
+        if (!Array.isArray(plan?.entries)) {
+            return;
+        }
+        let rewrote = false;
+        for (const entry of plan.entries) {
+            if (!entry || typeof entry.file !== 'string')
+                continue;
+            const rebased = (0, ProjectLayout_1.toManagedRelativePath)(entry.file, 'nested');
+            if (rebased !== entry.file) {
+                entry.file = rebased;
+                rewrote = true;
+            }
+        }
+        if (rewrote) {
+            await services_1.services.fileService.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`);
+        }
+    }
     async collectClassicMovePlan(rootDir) {
         const plannedRelativePaths = new Set();
         for (const relativePath of [
@@ -164,7 +203,19 @@ class LayoutCommand extends BaseCommand_1.BaseCommand {
             'docs/design',
             'docs/planning',
             'docs/api',
+            // P8: the binding surface covers every documentation category, and
+            // both builders scan only the MANAGED docs tree -- a category left
+            // behind here silently drops its bindings out of the index after
+            // the move.
+            'docs/features',
+            'docs/product',
             'docs/SKILL.md',
+            // Persistent engine state files that resolve through
+            // resolveManagedPath: their readers look under .ospec/ after the
+            // flip, so they must move with everything else.
+            'docs-binding-plan.json',
+            'docs-migration-plan.json',
+            'docs-migration.json',
         ]) {
             plannedRelativePaths.add(relativePath);
         }

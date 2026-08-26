@@ -19,6 +19,8 @@ import { FileService } from './FileService';
  */
 export interface DocsDriftEntry {
     slug: string;
+    /** The binding's documentation kind; `feature` when the index predates kinds. */
+    kind: string;
     /** `path#heading`, the same coordinate the obligations use. */
     target: string;
     file: string;
@@ -41,6 +43,21 @@ export interface DocsAuditResult {
         reason: string;
     }[];
 }
+/** One staleness signal. `signal` names the deterministic check that fired. */
+export interface DocsStaleEntry {
+    signal: 'dead_binding' | 'superseded_marker' | 'deprecated';
+    slug?: string;
+    kind?: string;
+    file: string;
+    heading?: string;
+    detail: string;
+}
+export interface DocsStaleResult {
+    available: boolean;
+    reason?: string;
+    scanned: number;
+    stale: DocsStaleEntry[];
+}
 export declare class DocsAuditService {
     private readonly fileService;
     constructor(fileService: FileService);
@@ -55,5 +72,26 @@ export declare class DocsAuditService {
      */
     private resolveSince;
     audit(projectRoot: string, config?: Pick<SkillrcConfig, 'projectLayout'> | null): Promise<DocsAuditResult>;
+    /**
+     * P8: `ospec docs audit --stale` -- is a document DEAD, rather than merely
+     * behind? Three deterministic signals, each cheap and each read-only:
+     *
+     *  - `dead_binding`: every one of a binding's `code:` prefixes is gone from
+     *    disk. The code this section answered for no longer exists, which is
+     *    the strongest "this documentation is over" signal there is.
+     *  - `superseded_marker`: EVERY decision a design document carries says
+     *    Superseded, yet the document is not marked `status: deprecated` -- the
+     *    whole file is plausibly retire-ready. Judged per file, never per
+     *    section: one superseded decision next to a living one is correctly
+     *    recorded history, exactly what verify_decision instructs.
+     *  - `deprecated`: the document IS marked `status: deprecated` in its
+     *    frontmatter. Not a problem, a queue: these are what `ospec docs
+     *    retire` collects.
+     *
+     * Signals that would need judgment -- "is this plan fulfilled", "does the
+     * product spec still match" -- are deliberately absent. A staleness report
+     * that guesses trains people to ignore it.
+     */
+    stale(projectRoot: string, config?: Pick<SkillrcConfig, 'projectLayout'> | null): Promise<DocsStaleResult>;
 }
 export declare function createDocsAuditService(fileService: FileService): DocsAuditService;

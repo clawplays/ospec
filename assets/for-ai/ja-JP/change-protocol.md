@@ -34,6 +34,8 @@
 
 活きた機能文書は `docs/features/<領域>.md` で、機能ごとに `##` セクションを 1 つ持ちます。人間が所有し、あなたは change の中で編集します。engine が本文を書くことはありません。セクション見出しと本文はプロジェクトの `documentLanguage` で書きます（slug と `code:` パスは英語 kebab-case のまま）。`ospec docs migrate` フェーズ 2 の書き直しも同じルールに従います。
 
+バインディングは機能文書に限られません。`docs/api/`・`docs/design/`・`docs/project/` 配下の文書セクションも `<!-- ospec:doc <slug> code:... -->` で宣言できます——`ospec:feature` と同じ構文・同じプロジェクト全体の slug 空間で、文書カテゴリ（kind）はパスから自動判定されます。`docs/planning/` と `docs/product/` は参照資料です：宣言も検索も可能ですが、義務は生成されません。
+
 機能宣言はインラインです。見出し直下の最初の非空行に置き、それ以外の場所には書きません。ファイルの frontmatter に `features:` の一覧はありません。slug とセクションの結び付きが局所に留まるため、セクションを移動しても壊れず、同じ事実の二つ目の写しも生まれません。
 
 ```markdown
@@ -66,11 +68,15 @@
 | `deprecate`、`remove` | 当該節の状態を明示し、カタログを同期する |
 | `docs` | 編集そのものが義務である |
 
+バインディングの kind がその契約を決める。`feature` と `api` のセクションは生きた挙動を記述し、上の表に従う。`design`（ADR／決定）のセクションは、どのコード系 change_type でも検証型の `verify_decision` 義務を 1 つ生成する——決定がまだ成立しているかを確認し、覆された・修正された場合はそのセクションに Superseded を記して代替や archive をリンクする。`project`（アーキテクチャ／総覧）のセクションは同様に `verify_structure` を生成する。どちらもゼロ diff + `ospec docs confirm` を受け入れ、refactor の検証型義務と完全に同じ扱いである。
+
 検証型義務は**ゼロ diff + 明示的な確認**を受け入れる。リファクタが記載済みの挙動を実際に何も変えていない場合は、装飾的な修正をせず `ospec docs confirm --id <義務 id>` で記録する。この確認は他の種類の義務では一律拒否される——自己申告の義務は何も検証していないからである。
 
 `.skillrc` の `docs_contract.mode` は `warn` か `strict` を取り、本リリースサイクルの既定は `warn`：未達の義務は Archive ゲートで報告されるがブロックはしない。義務が満たされたかの判定は両モードで同一であり、異なるのは結果だけである。任意の義務はどちらのモードでもブロックしない。
 
 `ospec docs audit` を定期的に実行する。`ospec:last-change` が指す Archive 以降に `code:` パスが変更されたにもかかわらず文書が変わっていない機能節を列挙する——義務機構が防ごうとしているドリフトそのものである。読み取り専用で、ビルドを失敗させることはない。
+
+既存プロジェクトの取り込みには、まず `ospec docs coverage`（読み取り専用）でどのコード領域にもバインディングがないかを確認し、次に 4 段階の bind パイプラインを実行する——`ospec docs bind --plan --apply` → `docs-binding-plan.json` の各エントリを人が判定 → `ospec docs bind --execute --apply` → `ospec docs bind --verify`。既存文書をバインドし、未カバー領域には草案スケルトンを生成する。engine が書くのは宣言とスケルトンだけで、本文は決して書かない。
 
 ### 既存プロジェクトの移行
 
